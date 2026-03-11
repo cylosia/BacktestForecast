@@ -170,6 +170,8 @@ class Settings(BaseSettings):
     forecast_rate_limit: int = 6
     rate_limit_window_seconds: int = 60
 
+    risk_free_rate: float = 0.045
+
     max_backtest_window_days: int = 1_825
     max_scanner_window_days: int = 730
 

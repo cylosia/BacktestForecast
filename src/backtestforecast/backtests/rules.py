@@ -325,6 +325,7 @@ def implied_volatility_from_price(
     strike_price: float,
     time_to_expiry_years: float,
     option_type: str,
+    risk_free_rate: float = 0.045,
 ) -> float | None:
     if option_price <= 0 or underlying_price <= 0 or strike_price <= 0 or time_to_expiry_years <= 0:
         return None
@@ -339,6 +340,7 @@ def implied_volatility_from_price(
             strike_price=strike_price,
             time_to_expiry_years=time_to_expiry_years,
             volatility=midpoint,
+            risk_free_rate=risk_free_rate,
         )
         if abs(theoretical - option_price) < 1e-4:
             return midpoint
@@ -355,6 +357,7 @@ def black_scholes_price(
     strike_price: float,
     time_to_expiry_years: float,
     volatility: float,
+    risk_free_rate: float = 0.045,
 ) -> float:
     if time_to_expiry_years <= 0 or volatility <= 0:
         intrinsic = (
@@ -366,13 +369,15 @@ def black_scholes_price(
 
     sigma_sqrt_t = volatility * math.sqrt(time_to_expiry_years)
     d1 = (
-        math.log(underlying_price / strike_price) + 0.5 * volatility * volatility * time_to_expiry_years
+        math.log(underlying_price / strike_price)
+        + (risk_free_rate + 0.5 * volatility * volatility) * time_to_expiry_years
     ) / sigma_sqrt_t
     d2 = d1 - sigma_sqrt_t
+    discount = math.exp(-risk_free_rate * time_to_expiry_years)
 
     if option_type == "call":
-        return (underlying_price * normal_cdf(d1)) - (strike_price * normal_cdf(d2))
-    return (strike_price * normal_cdf(-d2)) - (underlying_price * normal_cdf(-d1))
+        return (underlying_price * normal_cdf(d1)) - (strike_price * discount * normal_cdf(d2))
+    return (strike_price * discount * normal_cdf(-d2)) - (underlying_price * normal_cdf(-d1))
 
 
 def normal_cdf(value: float) -> float:

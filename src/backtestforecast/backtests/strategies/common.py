@@ -140,6 +140,7 @@ def _approx_bsm_delta(
     dte_days: int,
     contract_type: str,
     vol: float = 0.30,
+    risk_free_rate: float = 0.045,
 ) -> float:
     """Approximate Black-Scholes delta without provider greeks.
 
@@ -147,7 +148,6 @@ def _approx_bsm_delta(
     strike-selection targeting, not for pricing.
     """
     if dte_days <= 0:
-        # At expiration, delta is 0 or 1 based on moneyness
         if contract_type == "call":
             return 1.0 if spot > strike else 0.0
         return -1.0 if spot < strike else 0.0
@@ -155,7 +155,7 @@ def _approx_bsm_delta(
     t = dte_days / 365.0
     sqrt_t = math.sqrt(t)
     try:
-        d1 = (math.log(spot / strike) + 0.5 * vol * vol * t) / (vol * sqrt_t)
+        d1 = (math.log(spot / strike) + (risk_free_rate + 0.5 * vol * vol) * t) / (vol * sqrt_t)
     except (ValueError, ZeroDivisionError):
         return 0.5 if contract_type == "call" else -0.5
 

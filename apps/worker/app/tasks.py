@@ -36,16 +36,20 @@ def nightly_scan_pipeline(
     from backtestforecast.config import get_settings
     from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
     from backtestforecast.integrations.massive_client import MassiveClient
+    from backtestforecast.market_data.service import MarketDataService
     from backtestforecast.pipeline.adapters import (
         PipelineBacktestExecutor,
         PipelineForecaster,
         PipelineMarketDataFetcher,
     )
     from backtestforecast.pipeline.service import NightlyPipelineService
+    from backtestforecast.services.backtest_execution import BacktestExecutionService
 
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
-    executor = PipelineBacktestExecutor()
+    shared_mds = MarketDataService(client)
+    shared_exec = BacktestExecutionService(market_data_service=shared_mds)
+    executor = PipelineBacktestExecutor(execution_service=shared_exec)
     try:
         market_data = PipelineMarketDataFetcher(client)
         forecaster_engine = HistoricalAnalogForecaster()
@@ -150,17 +154,21 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
     from backtestforecast.config import get_settings
     from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
     from backtestforecast.integrations.massive_client import MassiveClient
+    from backtestforecast.market_data.service import MarketDataService
     from backtestforecast.pipeline.adapters import (
         PipelineBacktestExecutor,
         PipelineForecaster,
         PipelineMarketDataFetcher,
     )
     from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
+    from backtestforecast.services.backtest_execution import BacktestExecutionService as _BES
 
     publish_job_status("analysis", UUID(analysis_id), "running")
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
-    executor = PipelineBacktestExecutor()
+    shared_mds = MarketDataService(client)
+    shared_exec = _BES(market_data_service=shared_mds)
+    executor = PipelineBacktestExecutor(execution_service=shared_exec)
     try:
         market_data = PipelineMarketDataFetcher(client)
         forecaster = PipelineForecaster(HistoricalAnalogForecaster(), market_data)
@@ -263,6 +271,8 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
     counts: dict[str, int] = {}
 
     with SessionLocal() as session:
+        dirty = False
+
         stale_runs_stmt = (
             select(BacktestRun.id)
             .where(
@@ -279,10 +289,9 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 session.execute(
                     update(BacktestRun).where(BacktestRun.id == run_id).values(celery_task_id=result.id)
                 )
+                dirty = True
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="BacktestRun", id=str(run_id))
-        if stale_run_ids:
-            session.commit()
         counts["backtest_runs"] = len(stale_run_ids)
 
         stale_exports_stmt = (
@@ -301,10 +310,9 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 session.execute(
                     update(ExportJob).where(ExportJob.id == eid).values(celery_task_id=result.id)
                 )
+                dirty = True
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="ExportJob", id=str(eid))
-        if stale_export_ids:
-            session.commit()
         counts["export_jobs"] = len(stale_export_ids)
 
         stale_scans_stmt = (
@@ -323,10 +331,9 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 session.execute(
                     update(ScannerJob).where(ScannerJob.id == sid).values(celery_task_id=result.id)
                 )
+                dirty = True
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="ScannerJob", id=str(sid))
-        if stale_scan_ids:
-            session.commit()
         counts["scanner_jobs"] = len(stale_scan_ids)
 
         stale_analyses_stmt = (
@@ -345,11 +352,13 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 session.execute(
                     update(SymbolAnalysis).where(SymbolAnalysis.id == aid).values(celery_task_id=result.id)
                 )
+                dirty = True
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="SymbolAnalysis", id=str(aid))
-        if stale_analysis_ids:
-            session.commit()
         counts["symbol_analyses"] = len(stale_analysis_ids)
+
+        if dirty:
+            session.commit()
 
     total = sum(counts.values())
     if total > 0:

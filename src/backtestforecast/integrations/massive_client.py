@@ -7,10 +7,13 @@ from typing import Any, Self
 from urllib.parse import quote
 
 import httpx
+import structlog
 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import ConfigurationError, ExternalServiceError
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+
+logger = structlog.get_logger("massive_client")
 
 MAX_PAGINATION_PAGES = 100
 
@@ -50,20 +53,23 @@ class MassiveClient:
         results = payload.get("results", [])
         bars: list[DailyBar] = []
         for row in results:
-            timestamp = row.get("t")
-            if timestamp is None:
-                continue
-            trade_date = datetime.fromtimestamp(timestamp / 1000, tz=UTC).date()
-            bars.append(
-                DailyBar(
-                    trade_date=trade_date,
-                    open_price=float(row["o"]),
-                    high_price=float(row["h"]),
-                    low_price=float(row["l"]),
-                    close_price=float(row["c"]),
-                    volume=float(row.get("v", 0)),
+            try:
+                timestamp = row.get("t")
+                if timestamp is None:
+                    continue
+                trade_date = datetime.fromtimestamp(timestamp / 1000, tz=UTC).date()
+                bars.append(
+                    DailyBar(
+                        trade_date=trade_date,
+                        open_price=float(row["o"]),
+                        high_price=float(row["h"]),
+                        low_price=float(row["l"]),
+                        close_price=float(row["c"]),
+                        volume=float(row.get("v", 0)),
+                    )
                 )
-            )
+            except (KeyError, ValueError, TypeError):
+                logger.debug("massive_client.bar_parse_skipped", symbol=symbol, row=row)
         return bars
 
     def list_option_contracts(
@@ -309,20 +315,23 @@ class AsyncMassiveClient:
         results = payload.get("results", [])
         bars: list[DailyBar] = []
         for row in results:
-            timestamp = row.get("t")
-            if timestamp is None:
-                continue
-            trade_date = datetime.fromtimestamp(timestamp / 1000, tz=UTC).date()
-            bars.append(
-                DailyBar(
-                    trade_date=trade_date,
-                    open_price=float(row["o"]),
-                    high_price=float(row["h"]),
-                    low_price=float(row["l"]),
-                    close_price=float(row["c"]),
-                    volume=float(row.get("v", 0)),
+            try:
+                timestamp = row.get("t")
+                if timestamp is None:
+                    continue
+                trade_date = datetime.fromtimestamp(timestamp / 1000, tz=UTC).date()
+                bars.append(
+                    DailyBar(
+                        trade_date=trade_date,
+                        open_price=float(row["o"]),
+                        high_price=float(row["h"]),
+                        low_price=float(row["l"]),
+                        close_price=float(row["c"]),
+                        volume=float(row.get("v", 0)),
+                    )
                 )
-            )
+            except (KeyError, ValueError, TypeError):
+                logger.debug("massive_client.async_bar_parse_skipped", symbol=symbol, row=row)
         return bars
 
     async def list_option_contracts(

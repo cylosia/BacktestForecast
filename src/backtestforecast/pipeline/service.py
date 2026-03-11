@@ -150,11 +150,9 @@ class NightlyPipelineService:
             # Stage 1: Universe screening
             run.stage = "universe_screen"
             run.symbols_screened = len(symbols)
-            self.session.commit()
 
             regime_snapshots = self._stage1_screen(symbols, trade_date)
             run.symbols_after_screen = len(regime_snapshots)
-            self.session.commit()
             logger.info(
                 "pipeline.stage1_complete",
                 run_id=str(run.id),
@@ -164,11 +162,10 @@ class NightlyPipelineService:
 
             # Stage 2: Strategy matching
             run.stage = "strategy_match"
-            self.session.commit()
 
             pairs = self._stage2_match(regime_snapshots)
             run.pairs_generated = len(pairs)
-            self.session.commit()
+            self.session.flush()
             logger.info(
                 "pipeline.stage2_complete",
                 run_id=str(run.id),
@@ -177,13 +174,10 @@ class NightlyPipelineService:
 
             # Stage 3: Quick backtests
             run.stage = "quick_backtest"
-            self.session.commit()
 
             quick_results = self._stage3_quick_backtest(pairs, trade_date)
             run.quick_backtests_run = len(quick_results)
-            self.session.commit()
 
-            # Sort by score, take top N
             quick_results.sort(key=lambda r: r.score, reverse=True)
             top_candidates = quick_results[:max_full_candidates]
             logger.info(
@@ -195,11 +189,10 @@ class NightlyPipelineService:
 
             # Stage 4: Full backtests
             run.stage = "full_backtest"
-            self.session.commit()
 
             full_results = self._stage4_full_backtest(top_candidates, trade_date)
             run.full_backtests_run = len(full_results)
-            self.session.commit()
+            self.session.flush()
             logger.info(
                 "pipeline.stage4_complete",
                 run_id=str(run.id),
@@ -208,7 +201,6 @@ class NightlyPipelineService:
 
             # Stage 5: Forecast + ranking
             run.stage = "forecast_rank"
-            self.session.commit()
 
             final_ranked = self._stage5_forecast_and_rank(full_results, trade_date)
             final_ranked = final_ranked[:max_recommendations]

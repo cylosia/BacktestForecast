@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 
 
 def sma(values: list[float], period: int) -> list[float | None]:
@@ -28,7 +29,7 @@ def rolling_stddev(values: list[float], period: int) -> list[float | None]:
     for index in range(period - 1, len(values)):
         window = values[index - period + 1 : index + 1]
         mean = sum(window) / period
-        variance = sum((value - mean) ** 2 for value in window) / period
+        variance = sum((value - mean) ** 2 for value in window) / (period - 1)
         result[index] = math.sqrt(variance)
     return result
 
@@ -37,8 +38,15 @@ def rolling_min(values: list[float], period: int) -> list[float | None]:
     result: list[float | None] = [None] * len(values)
     if period <= 0:
         return result
-    for index in range(period - 1, len(values)):
-        result[index] = min(values[index - period + 1 : index + 1])
+    dq: deque[int] = deque()
+    for index in range(len(values)):
+        while dq and dq[0] <= index - period:
+            dq.popleft()
+        while dq and values[dq[-1]] >= values[index]:
+            dq.pop()
+        dq.append(index)
+        if index >= period - 1:
+            result[index] = values[dq[0]]
     return result
 
 
@@ -46,8 +54,15 @@ def rolling_max(values: list[float], period: int) -> list[float | None]:
     result: list[float | None] = [None] * len(values)
     if period <= 0:
         return result
-    for index in range(period - 1, len(values)):
-        result[index] = max(values[index - period + 1 : index + 1])
+    dq: deque[int] = deque()
+    for index in range(len(values)):
+        while dq and dq[0] <= index - period:
+            dq.popleft()
+        while dq and values[dq[-1]] <= values[index]:
+            dq.pop()
+        dq.append(index)
+        if index >= period - 1:
+            result[index] = values[dq[0]]
     return result
 
 

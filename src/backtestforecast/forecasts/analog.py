@@ -28,6 +28,7 @@ class HistoricalAnalogForecaster:
         strategy_type: str | None = None,
     ) -> HistoricalAnalogForecastResponse:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
+        horizon_days = self._calendar_to_trading_days(horizon_days)
         if len(sorted_bars) < max(80, horizon_days + 40):
             raise ValueError("Not enough historical bars were available to build a forecast.")
 
@@ -239,6 +240,10 @@ class HistoricalAnalogForecaster:
             f"from {low_return:.2f}% to {high_return:.2f}% "
             f"with a median of {median_return:.2f}% and {positive_rate:.1f}% positive analogs; this {alignment}."
         )
+
+    @staticmethod
+    def _calendar_to_trading_days(calendar_days: int) -> int:
+        return max(1, int(calendar_days * 5 / 7))
 
     @staticmethod
     def _to_decimal(value: float) -> Decimal:

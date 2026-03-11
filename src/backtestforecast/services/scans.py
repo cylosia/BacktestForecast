@@ -15,6 +15,7 @@ from backtestforecast.billing.entitlements import (
 )
 from backtestforecast.errors import AppError, NotFoundError, ValidationError
 from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
+from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import ScannerJob, ScannerRecommendation, User
 from backtestforecast.repositories.scanner_jobs import ScannerJobRepository
 from backtestforecast.scans.ranking import (
@@ -152,6 +153,8 @@ class ScanService:
         candidates: list[dict[str, Any]] = []
         forecast_cache: dict[tuple[str, str], HistoricalAnalogForecastResponse] = {}
 
+        bundle_cache = self._prepare_bundles(payload, warnings)
+
         for symbol in payload.symbols:
             for strategy in payload.strategy_types:
                 for rule_set in payload.rule_sets:
@@ -173,7 +176,9 @@ class ScanService:
                     )
                     candidate_rule_set_hash = rule_set_hash(rule_set.entry_rules)
                     try:
-                        bundle = self.execution_service.market_data_service.prepare_backtest(request)
+                        bundle = bundle_cache.get(symbol)
+                        if bundle is None:
+                            continue
                         execution_result = self.execution_service.execute_request(request, bundle=bundle)
                         forecast = forecast_cache.get((symbol, strategy.value))
                         if forecast is None:
@@ -356,13 +361,16 @@ class ScanService:
                 engine_version=source.engine_version,
             )
             try:
+                nested = self.session.begin_nested()
                 self.repository.add(job)
-                self.session.commit()
+                nested.commit()
                 self.session.refresh(job)
                 created_jobs.append(job)
             except IntegrityError:
-                self.session.rollback()
+                nested.rollback()
                 continue
+        if created_jobs:
+            self.session.commit()
         return created_jobs
 
     def build_forecast(
@@ -434,6 +442,38 @@ class ScanService:
                 count += len(payload.symbols)
         unique_warnings = {warning["message"]: warning for warning in warnings}
         return count, list(unique_warnings.values())
+
+    def _prepare_bundles(
+        self,
+        payload: CreateScannerJobRequest,
+        warnings: list[dict[str, Any]],
+    ) -> dict[str, HistoricalDataBundle]:
+        all_rules = [rule for rule_set in payload.rule_sets for rule in rule_set.entry_rules]
+        representative = CreateBacktestRunRequest(
+            symbol=payload.symbols[0],
+            strategy_type=payload.strategy_types[0],
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            target_dte=payload.target_dte,
+            dte_tolerance_days=payload.dte_tolerance_days,
+            max_holding_days=payload.max_holding_days,
+            account_size=payload.account_size,
+            risk_per_trade_pct=payload.risk_per_trade_pct,
+            commission_per_contract=payload.commission_per_contract,
+            entry_rules=all_rules or [{"type": "rsi", "operator": "lte", "threshold": "40", "period": 14}],
+        )
+        bundles: dict[str, HistoricalDataBundle] = {}
+        for symbol in payload.symbols:
+            try:
+                req = representative.model_copy(update={"symbol": symbol})
+                bundles[symbol] = self.execution_service.market_data_service.prepare_backtest(req)
+            except AppError as exc:
+                warnings.append({
+                    "code": "symbol_data_unavailable",
+                    "message": f"{symbol} could not be loaded: {exc.message}",
+                    "error_code": exc.code,
+                })
+        return bundles
 
     def _historical_performance(
         self,

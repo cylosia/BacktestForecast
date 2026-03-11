@@ -41,11 +41,13 @@ class PipelineBacktestExecutor:
       - run_full_backtest: 365-day lookback, returns full results
     """
 
-    def __init__(self) -> None:
-        self._execution_service = BacktestExecutionService()
+    def __init__(self, execution_service: BacktestExecutionService | None = None) -> None:
+        self._owns_service = execution_service is None
+        self._execution_service = execution_service or BacktestExecutionService()
 
     def close(self) -> None:
-        self._execution_service.close()
+        if self._owns_service:
+            self._execution_service.close()
 
     def __enter__(self) -> Self:
         return self

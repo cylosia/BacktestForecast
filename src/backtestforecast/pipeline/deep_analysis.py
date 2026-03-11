@@ -345,14 +345,16 @@ class SymbolDeepAnalysisService:
 
         cells: list[LandscapeCell] = []
 
+        from backtestforecast.pipeline.adapters import PipelineBacktestExecutor
+
+        shared_executor = PipelineBacktestExecutor()
+
         def _run_cell(item: tuple[str, str, dict[str, Any]]) -> LandscapeCell | None:
-            from backtestforecast.pipeline.adapters import PipelineBacktestExecutor
-            thread_executor = PipelineBacktestExecutor()
             strategy_type, label, param_config = item
             try:
                 target_dte = param_config["target_dte"]
                 overrides = param_config.get("strategy_overrides")
-                summary = thread_executor.run_quick_backtest(
+                summary = shared_executor.run_quick_backtest(
                     symbol=symbol,
                     strategy_type=strategy_type,
                     start_date=lookback_start,
@@ -387,16 +389,17 @@ class SymbolDeepAnalysisService:
                     exc_info=True,
                 )
                 return None
-            finally:
-                thread_executor.close()
 
         max_workers = min(4, len(work_items))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_run_cell, item): item for item in work_items}
-            for future in as_completed(futures):
-                cell = future.result()
-                if cell is not None:
-                    cells.append(cell)
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_run_cell, item): item for item in work_items}
+                for future in as_completed(futures):
+                    cell = future.result()
+                    if cell is not None:
+                        cells.append(cell)
+        finally:
+            shared_executor.close()
 
         return cells
 

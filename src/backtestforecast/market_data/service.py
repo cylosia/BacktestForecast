@@ -4,6 +4,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+import structlog
+
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError, ValidationError
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
@@ -19,6 +21,8 @@ from backtestforecast.schemas.backtests import (
     SupportResistanceRule,
     VolumeSpikeRule,
 )
+
+logger = structlog.get_logger("market_data")
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,8 +147,8 @@ class MarketDataService:
             days=max(request.max_holding_days, request.target_dte + request.dte_tolerance_days) + 45
         )
 
-        bars = self.client.get_stock_daily_bars(request.symbol, extended_start, extended_end)
-        bars = sorted(bars, key=lambda bar: bar.trade_date)
+        raw_bars = self.client.get_stock_daily_bars(request.symbol, extended_start, extended_end)
+        bars = self._validate_bars(raw_bars, request.symbol)
 
         if not bars:
             raise DataUnavailableError(f"No daily bar data was returned for {request.symbol}.")
@@ -191,6 +195,19 @@ class MarketDataService:
                 "The avoid_earnings rule requires an earnings-capable Massive endpoint, "
                 "but earnings data could not be retrieved."
             ) from exc
+
+    @staticmethod
+    def _validate_bars(raw_bars: list[DailyBar], symbol: str) -> list[DailyBar]:
+        seen_dates: dict[date, DailyBar] = {}
+        dropped = 0
+        for bar in raw_bars:
+            if bar.close_price <= 0 or bar.open_price <= 0 or bar.high_price < bar.low_price:
+                dropped += 1
+                continue
+            seen_dates[bar.trade_date] = bar
+        if dropped:
+            logger.warning("market_data.bars_filtered", symbol=symbol, dropped=dropped)
+        return sorted(seen_dates.values(), key=lambda b: b.trade_date)
 
     @staticmethod
     def _resolve_warmup_trading_days(request: CreateBacktestRunRequest) -> int:
