@@ -1,0 +1,11 @@
+{
+  "name": "@backtestforecast/api-client",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "generate": "openapi-typescript openapi.json -o src/schema.d.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.6.1"
+  }
+}

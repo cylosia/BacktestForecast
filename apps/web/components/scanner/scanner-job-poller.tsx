@@ -1,16 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
 import { fetchScannerJob } from "@/lib/api/client";
 import { isTerminalStatus, statusLabel } from "@/lib/backtests/format";
-import type { ScannerJobStatus } from "@/lib/backtests/types";
+import type { ScannerJobResponse, ScannerJobStatus } from "@/lib/backtests/types";
+import { usePolling } from "@/hooks/use-polling";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const POLL_INTERVAL_MS = 3_000;
-const MAX_POLLS = 200; // ~10 minutes max
+const MAX_POLLS = 200;
 
 export function ScannerJobPoller({
   jobId,
@@ -25,45 +26,25 @@ export function ScannerJobPoller({
   const { getToken } = useAuth();
   const [status, setStatus] = useState<ScannerJobStatus | string>(initialStatus);
   const [evaluated, setEvaluated] = useState(0);
-  const [pollCount, setPollCount] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const poll = useCallback(async () => {
-    try {
-      const token = await getToken();
-      if (!token) return;
+  const fetcher = useCallback(async () => {
+    const token = await getToken();
+    if (!token) throw new Error("No token");
+    return fetchScannerJob(token, jobId);
+  }, [getToken, jobId]);
 
-      const job = await fetchScannerJob(token, jobId);
+  const { status: pollStatus, attempts } = usePolling<ScannerJobResponse>({
+    fetcher,
+    onComplete: () => router.refresh(),
+    onProgress: (job) => {
       setStatus(job.status);
       setEvaluated(job.evaluated_candidate_count);
-
-      if (isTerminalStatus(job.status)) {
-        router.refresh();
-        return;
-      }
-
-      setPollCount((count) => {
-        if (count + 1 >= MAX_POLLS) return count + 1;
-        timerRef.current = setTimeout(poll, POLL_INTERVAL_MS);
-        return count + 1;
-      });
-    } catch {
-      setPollCount((count) => {
-        if (count + 1 >= MAX_POLLS) return count + 1;
-        timerRef.current = setTimeout(poll, POLL_INTERVAL_MS * 2);
-        return count + 1;
-      });
-    }
-  }, [getToken, jobId, router]);
-
-  useEffect(() => {
-    if (!isTerminalStatus(initialStatus)) {
-      timerRef.current = setTimeout(poll, POLL_INTERVAL_MS);
-    }
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [initialStatus, poll]);
+    },
+    isComplete: (job) => isTerminalStatus(job.status),
+    interval: POLL_INTERVAL_MS,
+    maxAttempts: MAX_POLLS,
+    autoStart: !isTerminalStatus(initialStatus),
+  });
 
   if (isTerminalStatus(status)) return null;
 
@@ -92,7 +73,7 @@ export function ScannerJobPoller({
           </div>
         </CardContent>
       ) : null}
-      {pollCount >= MAX_POLLS ? (
+      {pollStatus === "timeout" ? (
         <CardContent>
           <p className="text-sm text-muted-foreground">
             Polling timed out. Refresh the page to check the latest status.

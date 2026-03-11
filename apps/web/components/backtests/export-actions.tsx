@@ -35,11 +35,11 @@ export function ExportActions({
 
   const pollAndDownload = useCallback(
     async (token: string, exportJobId: string, fileName: string) => {
-      for (let i = 0; i < MAX_POLLS; i++) {
+      for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-        const status = await fetchExportStatus(token, exportJobId);
+        const result = await fetchExportStatus(token, exportJobId);
 
-        if (status.status === "succeeded") {
+        if (result.status === "succeeded") {
           const response = await downloadExport(token, exportJobId);
           const blob = await response.blob();
           const blobUrl = window.URL.createObjectURL(blob);
@@ -51,7 +51,7 @@ export function ExportActions({
           return;
         }
 
-        if (status.status === "failed") {
+        if (result.status === "failed") {
           throw new Error("Export generation failed on the server.");
         }
       }

@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.models import AuditEvent
+from backtestforecast.observability.metrics import AUDIT_DEDUPE_CONFLICTS_TOTAL
 
 
 class AuditEventRepository:
@@ -18,6 +19,7 @@ class AuditEventRepository:
             nested.commit()
         except IntegrityError:
             nested.rollback()
+            AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
         return event
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:

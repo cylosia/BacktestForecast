@@ -6,7 +6,7 @@ import { strategyLabel } from "@/lib/backtests/format";
 import type { BacktestFormValues } from "@/lib/backtests/validation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> {
+export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> {
   const config = template.config;
   const patch: Partial<BacktestFormValues> = {
     strategyType: config.strategy_type as BacktestFormValues["strategyType"],

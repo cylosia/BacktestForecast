@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Generator
 
 import pytest
@@ -15,13 +16,21 @@ from backtestforecast.db.base import Base
 from backtestforecast.security.rate_limits import rate_limiter
 
 
-@pytest.fixture()
-def session_factory() -> Generator[sessionmaker[Session], None, None]:
-    engine = create_engine(
+def _make_engine():
+    """Use Postgres when DATABASE_URL is set (CI), otherwise in-memory SQLite."""
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return create_engine(url)
+    return create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+
+@pytest.fixture()
+def session_factory() -> Generator[sessionmaker[Session], None, None]:
+    engine = _make_engine()
     Base.metadata.create_all(engine)
     testing_session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     try:

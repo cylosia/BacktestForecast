@@ -44,6 +44,17 @@ STRIPE_WEBHOOK_EVENTS_TOTAL = Counter(
     ["event_type", "result"],
 )
 
+AUDIT_DEDUPE_CONFLICTS_TOTAL = Counter(
+    "audit_dedupe_conflicts_total",
+    "Audit event inserts rejected by uq_audit_events_dedup",
+)
+
+JOBS_STUCK_REDISPATCHED_TOTAL = Counter(
+    "jobs_stuck_redispatched_total",
+    "Stale jobs re-dispatched by the reaper",
+    ["model"],
+)
+
 
 def _normalize_path(path: str) -> str:
     """Collapse path parameters to avoid high-cardinality labels."""

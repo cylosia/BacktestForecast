@@ -1,0 +1,66 @@
+groups:
+  - name: backtestforecast-job-health
+    interval: 60s
+    rules:
+      - alert: StuckJobsHigh
+        expr: |
+          sum(increase(jobs_stuck_redispatched_total[10m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reaper re-dispatched >5 stuck jobs in 10 minutes"
+          description: >-
+            The job reaper has re-dispatched {{ $value }} stale jobs in the
+            last 10 minutes.  Investigate worker health and queue depth.
+
+      - alert: HighTaskFailureRate
+        expr: |
+          sum(rate(celery_tasks_total{status="failed"}[5m]))
+          / sum(rate(celery_tasks_total[5m]))
+          > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery task failure rate >10%"
+          description: >-
+            More than 10% of Celery tasks are failing.  Check worker logs.
+
+      - alert: AuditDedupeConflictsSpike
+        expr: |
+          increase(audit_dedupe_conflicts_total[15m]) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audit dedupe constraint hit >20 times in 15 minutes"
+          description: >-
+            Unusually high duplicate audit event insertion attempts.
+            May indicate duplicate webhook deliveries or retry storms.
+
+      - alert: HighHTTPErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          / sum(rate(http_requests_total[5m]))
+          > 0.05
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP 5xx error rate >5%"
+          description: >-
+            More than 5% of HTTP requests are returning server errors.
+
+      - alert: HighP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket[5m]))
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 HTTP latency >5 seconds"
+          description: >-
+            API response time at p95 has exceeded 5 seconds.

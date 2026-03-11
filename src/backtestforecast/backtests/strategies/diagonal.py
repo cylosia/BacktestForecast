@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from backtestforecast.backtests.margin import naked_call_margin, short_straddle_strangle_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_primary_expiration,
@@ -64,7 +65,14 @@ class PMCCStrategy(StrategyDefinition):
         if sq is None or lq is None:
             return None
 
-        debit = (lq.mid_price - sq.mid_price) * 100.0
+        entry_value = (lq.mid_price - sq.mid_price) * 100.0
+        if entry_value >= 0:
+            capital = entry_value
+            max_loss: float | None = entry_value
+        else:
+            capital = naked_call_margin(bar.close_price, short_strike, sq.mid_price)
+            max_loss = None
+
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([long_c.ticker, short_c.ticker]),
             strategy_type=self.strategy_type,
@@ -78,8 +86,8 @@ class PMCCStrategy(StrategyDefinition):
                 OpenOptionLeg(short_c.ticker, "call", -1, short_strike, near_exp, 1, sq.mid_price, sq.mid_price),
             ],
             scheduled_exit_date=near_exp,
-            capital_required_per_unit=max(debit, 0.0),
-            max_loss_per_unit=max(debit, 0.0),
+            capital_required_per_unit=capital,
+            max_loss_per_unit=max_loss,
             detail_json={"long_expiration": far_exp.isoformat(), "short_expiration": near_exp.isoformat()},
         )
 
@@ -117,7 +125,14 @@ class DiagonalSpreadStrategy(StrategyDefinition):
         if sq is None or lq is None:
             return None
 
-        debit = (lq.mid_price - sq.mid_price) * 100.0
+        entry_value = (lq.mid_price - sq.mid_price) * 100.0
+        if entry_value >= 0:
+            capital = entry_value
+            max_loss: float | None = entry_value
+        else:
+            capital = naked_call_margin(bar.close_price, near_strike, sq.mid_price)
+            max_loss = None
+
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([long_c.ticker, short_c.ticker]),
             strategy_type=self.strategy_type,
@@ -131,8 +146,8 @@ class DiagonalSpreadStrategy(StrategyDefinition):
                 OpenOptionLeg(short_c.ticker, "call", -1, near_strike, near_exp, 1, sq.mid_price, sq.mid_price),
             ],
             scheduled_exit_date=near_exp,
-            capital_required_per_unit=max(debit, 0.0),
-            max_loss_per_unit=max(debit, 0.0),
+            capital_required_per_unit=capital,
+            max_loss_per_unit=max_loss,
             detail_json={"long_expiration": far_exp.isoformat(), "short_expiration": near_exp.isoformat()},
         )
 
@@ -187,7 +202,20 @@ class DoubleDiagonalStrategy(StrategyDefinition):
         if any(q is None for q in [scq, spq, lcq, lpq]):
             return None
 
-        debit = (lcq.mid_price + lpq.mid_price - scq.mid_price - spq.mid_price) * 100.0  # type: ignore[union-attr]
+        entry_value = (lcq.mid_price + lpq.mid_price - scq.mid_price - spq.mid_price) * 100.0  # type: ignore[union-attr]
+        if entry_value >= 0:
+            capital = entry_value
+            max_loss: float | None = entry_value
+        else:
+            capital = short_straddle_strangle_margin(
+                bar.close_price,
+                near_call_strike,
+                near_put_strike,
+                scq.mid_price,  # type: ignore[union-attr]
+                spq.mid_price,  # type: ignore[union-attr]
+            )
+            max_loss = None
+
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([lc.ticker, sc.ticker, lp.ticker, sp.ticker]),
             strategy_type=self.strategy_type,
@@ -203,8 +231,8 @@ class DoubleDiagonalStrategy(StrategyDefinition):
                 OpenOptionLeg(sp.ticker, "put", -1, near_put_strike, near_exp, 1, spq.mid_price, spq.mid_price),  # type: ignore[union-attr]
             ],
             scheduled_exit_date=near_exp,
-            capital_required_per_unit=max(debit, 0.0),
-            max_loss_per_unit=max(debit, 0.0),
+            capital_required_per_unit=capital,
+            max_loss_per_unit=max_loss,
             detail_json={"near_expiration": near_exp.isoformat(), "far_expiration": far_exp.isoformat()},
         )
 

@@ -28,4 +28,10 @@ test.describe("Backtest Flow", () => {
       await expect(errorMessages.first()).toBeVisible({ timeout: 5000 });
     }
   });
+
+  test("compare page renders with ids query param", async ({ page }) => {
+    const fakeIds = "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002";
+    await page.goto(`/app/backtests/compare?ids=${fakeIds}`);
+    await expect(page.locator("body")).toBeVisible();
+  });
 });

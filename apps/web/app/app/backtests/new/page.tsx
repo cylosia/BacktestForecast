@@ -3,12 +3,17 @@ import { buildBacktestQuota } from "@/lib/backtests/quota";
 import { BacktestForm } from "@/components/backtests/backtest-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default async function NewBacktestPage() {
+export default async function NewBacktestPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ template?: string }>;
+}) {
   try {
-    const [user, templateData, catalog] = await Promise.all([
+    const [user, templateData, catalog, params] = await Promise.all([
       getCurrentUser(),
       getTemplates(),
       getStrategyCatalog(),
+      searchParams,
     ]);
     const quota = buildBacktestQuota(user);
 
@@ -27,6 +32,7 @@ export default async function NewBacktestPage() {
           quota={quota}
           templates={templateData.items}
           catalogGroups={catalog.groups}
+          initialTemplateId={params.template}
         />
       </div>
     );

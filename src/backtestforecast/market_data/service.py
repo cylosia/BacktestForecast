@@ -52,21 +52,23 @@ class MassiveOptionGateway:
     ) -> list[OptionContractRecord]:
         cache_key = (entry_date, contract_type, target_dte, dte_tolerance_days)
         contracts = self._contract_cache.get(cache_key)
-        if contracts is None:
-            expiration_gte = entry_date + timedelta(days=max(1, target_dte - dte_tolerance_days))
-            expiration_lte = entry_date + timedelta(days=target_dte + dte_tolerance_days)
-            contracts = self.client.list_option_contracts(
-                symbol=self.symbol,
-                as_of_date=entry_date,
-                contract_type=contract_type,
-                expiration_gte=expiration_gte,
-                expiration_lte=expiration_lte,
-            )
-            contracts = [contract for contract in contracts if contract.shares_per_contract == 100]
-            if len(self._contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX:
-                for _ in range(len(self._contract_cache) // 4):
-                    self._contract_cache.popitem(last=False)
-            self._contract_cache[cache_key] = contracts
+        if contracts is not None:
+            self._contract_cache.move_to_end(cache_key)
+            return contracts
+        expiration_gte = entry_date + timedelta(days=max(1, target_dte - dte_tolerance_days))
+        expiration_lte = entry_date + timedelta(days=target_dte + dte_tolerance_days)
+        contracts = self.client.list_option_contracts(
+            symbol=self.symbol,
+            as_of_date=entry_date,
+            contract_type=contract_type,
+            expiration_gte=expiration_gte,
+            expiration_lte=expiration_lte,
+        )
+        contracts = [contract for contract in contracts if contract.shares_per_contract == 100]
+        if len(self._contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX:
+            for _ in range(len(self._contract_cache) // 4):
+                self._contract_cache.popitem(last=False)
+        self._contract_cache[cache_key] = contracts
         return contracts
 
     def select_contract(
@@ -111,11 +113,13 @@ class MassiveOptionGateway:
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         cache_key = (option_ticker, trade_date)
-        if cache_key not in self._quote_cache:
-            if len(self._quote_cache) >= _GATEWAY_QUOTE_CACHE_MAX:
-                for _ in range(len(self._quote_cache) // 4):
-                    self._quote_cache.popitem(last=False)
-            self._quote_cache[cache_key] = self.client.get_option_quote_for_date(option_ticker, trade_date)
+        if cache_key in self._quote_cache:
+            self._quote_cache.move_to_end(cache_key)
+            return self._quote_cache[cache_key]
+        if len(self._quote_cache) >= _GATEWAY_QUOTE_CACHE_MAX:
+            for _ in range(len(self._quote_cache) // 4):
+                self._quote_cache.popitem(last=False)
+        self._quote_cache[cache_key] = self.client.get_option_quote_for_date(option_ticker, trade_date)
         return self._quote_cache[cache_key]
 
     @staticmethod

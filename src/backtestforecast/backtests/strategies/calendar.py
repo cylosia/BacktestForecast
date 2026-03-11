@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from backtestforecast.backtests.margin import naked_call_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_atm_strike,
@@ -56,6 +57,13 @@ class CalendarSpreadStrategy(StrategyDefinition):
             return None
 
         entry_value_per_unit = (long_quote.mid_price - short_quote.mid_price) * 100.0
+        if entry_value_per_unit >= 0:
+            capital = entry_value_per_unit
+            max_loss: float | None = entry_value_per_unit
+        else:
+            capital = naked_call_margin(bar.close_price, short_near.strike_price, short_quote.mid_price)
+            max_loss = None
+
         detail_json = {
             "legs": [
                 {
@@ -86,8 +94,8 @@ class CalendarSpreadStrategy(StrategyDefinition):
                 "The package exits at the near-leg expiration, max_holding_days, or backtest end;"
                 " the far leg is closed at market on that exit date.",
             ],
-            "capital_required_per_unit": max(entry_value_per_unit, 0.0),
-            "max_loss_per_unit": max(entry_value_per_unit, 0.0),
+            "capital_required_per_unit": capital,
+            "max_loss_per_unit": max_loss,
             "max_profit_per_unit": None,
             "entry_package_market_value": entry_value_per_unit,
         }
@@ -122,8 +130,8 @@ class CalendarSpreadStrategy(StrategyDefinition):
                 ),
             ],
             scheduled_exit_date=near_expiration,
-            capital_required_per_unit=max(entry_value_per_unit, 0.0),
-            max_loss_per_unit=max(entry_value_per_unit, 0.0),
+            capital_required_per_unit=capital,
+            max_loss_per_unit=max_loss,
             max_profit_per_unit=None,
             detail_json=detail_json,
         )

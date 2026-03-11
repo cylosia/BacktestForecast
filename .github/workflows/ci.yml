@@ -48,6 +48,9 @@ jobs:
       - name: Import API app smoke check
         run: python -c "from apps.api.app.main import app; print(app.title)"
 
+      - name: OpenAPI schema export smoke check
+        run: python scripts/export_openapi.py > /dev/null
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -70,3 +73,49 @@ jobs:
 
       - name: Build web app
         run: pnpm --filter @backtestforecast/web build
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src:.
+      APP_ENV: test
+      LOG_JSON: false
+      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: backtest_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Check migration-model drift
+        run: python scripts/check_migration_drift.py
+
+      - name: Run integration tests against Postgres
+        run: pytest tests/integration/ -q
+
+      - name: Worker task registration smoke check
+        run: python scripts/check_worker_tasks.py

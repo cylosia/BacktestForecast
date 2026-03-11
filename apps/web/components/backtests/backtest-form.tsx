@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { AlertTriangle, Loader2 } from "lucide-react";
@@ -21,7 +21,7 @@ import { StrategySelector } from "@/components/backtests/strategy-selector";
 import { SymbolInput } from "@/components/backtests/symbol-input";
 import { TaRuleControls } from "@/components/backtests/ta-rule-controls";
 import { TimeframeControls } from "@/components/backtests/timeframe-controls";
-import { TemplatePicker } from "@/components/templates/template-picker";
+import { TemplatePicker, templateToFormValues } from "@/components/templates/template-picker";
 import { SaveAsTemplate } from "@/components/templates/save-as-template";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 
@@ -29,10 +29,12 @@ export function BacktestForm({
   quota,
   templates = [],
   catalogGroups,
+  initialTemplateId,
 }: {
   quota: BacktestQuota;
   templates?: TemplateResponse[];
   catalogGroups?: StrategyCatalogGroup[];
+  initialTemplateId?: string;
 }) {
   const router = useRouter();
   const { getToken } = useAuth();
@@ -41,6 +43,14 @@ export function BacktestForm({
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!initialTemplateId) return;
+    const match = templates.find((t) => t.id === initialTemplateId);
+    if (match) {
+      setValues((current) => ({ ...current, ...templateToFormValues(match) }));
+    }
+  }, [initialTemplateId, templates]);
 
   const submitDisabled = useMemo(() => quota.reached || status === "submitting", [quota.reached, status]);
 
