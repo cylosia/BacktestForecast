@@ -139,6 +139,8 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             session.rollback()
             delay = 15 * (self.request.retries + 1)
             raise self.retry(exc=exc, countdown=delay)
+        finally:
+            service.close()
 
         publish_job_status("export", UUID(export_job_id), job.status)
         return {

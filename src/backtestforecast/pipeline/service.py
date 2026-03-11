@@ -236,9 +236,9 @@ class NightlyPipelineService:
                 duration_seconds=float(run.duration_seconds),
             )
 
-        except Exception as exc:
+        except Exception:
             run.status = "failed"
-            run.error_message = str(exc)[:2000]
+            run.error_message = "Pipeline execution failed. See logs for details."
             run.completed_at = datetime.now(UTC)
             run.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
             self.session.commit()

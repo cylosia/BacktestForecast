@@ -165,12 +165,15 @@ def stub_execution(monkeypatch):
 
 @pytest.fixture()
 def immediate_scan_execution(monkeypatch, session_factory, stub_execution):
+    import types
+
     import apps.api.app.routers.scans as scan_router
 
     def send_task(name, kwargs):
         assert name == "scans.run_job"
         with session_factory() as session:
             ScanService(session).run_job(UUID(kwargs["job_id"]))
+        return types.SimpleNamespace(id="fake-scan-task-id")
 
     monkeypatch.setattr(scan_router.celery_app, "send_task", send_task)
 
@@ -260,7 +263,7 @@ def test_async_backtest_full_lifecycle(client, auth_headers, immediate_backtest_
     assert len(history["items"]) == 1
 
 
-def test_backtest_stays_queued_without_worker(client, auth_headers, stub_execution, monkeypatch):
+def test_backtest_fails_on_enqueue_error(client, auth_headers, stub_execution, monkeypatch):
     import apps.api.app.routers.backtests as br
 
     class BrokenCelery:
@@ -269,7 +272,8 @@ def test_backtest_stays_queued_without_worker(client, auth_headers, stub_executi
 
     monkeypatch.setattr(br, "celery_app", BrokenCelery(), raising=False)
     created = _create_backtest(client, auth_headers)
-    assert created["status"] == "queued"
+    assert created["status"] == "failed"
+    assert created["error_code"] == "enqueue_failed"
 
 
 def test_backtest_idempotency(client, auth_headers, immediate_backtest_execution):

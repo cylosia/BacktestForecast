@@ -14,4 +14,7 @@ COPY alembic.ini /app/alembic.ini
 
 RUN pip install --upgrade pip && pip install -e .
 
+RUN addgroup --system app && adduser --system --ingroup app app
+USER app
+
 CMD ["celery", "-A", "apps.worker.app.celery_app.celery_app", "worker", "--loglevel=INFO", "--queues=research,market_data,exports,maintenance,pipeline"]

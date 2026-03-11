@@ -14,6 +14,9 @@ COPY alembic.ini /app/alembic.ini
 
 RUN pip install --upgrade pip && pip install -e .
 
+RUN addgroup --system app && adduser --system --ingroup app app
+USER app
+
 EXPOSE 8000
 
 CMD ["uvicorn", "apps.api.app.main:app", "--host", "0.0.0.0", "--port", "8000"]

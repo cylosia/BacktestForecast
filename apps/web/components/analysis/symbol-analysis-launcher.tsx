@@ -296,7 +296,7 @@ export function SymbolAnalysisLauncher() {
                 <Input
                   id="analysisSymbol"
                   placeholder="AAPL"
-                  maxLength={16}
+                  maxLength={10}
                   value={symbol}
                   onChange={(e) => setSymbol(e.target.value.toUpperCase())}
                   disabled={phase === "polling"}

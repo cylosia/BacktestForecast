@@ -163,7 +163,10 @@ class CustomNLegStrategy(StrategyDefinition):
             option_legs=option_legs,
             stock_legs=stock_legs,
             scheduled_exit_date=earliest_exp,
-            capital_required_per_unit=capital if capital > 0 else max(abs(net_cost) * 0.2 + total_credit * 0.15, total_debit * 0.1, 1.0),
+            capital_required_per_unit=(
+                capital if capital > 0
+                else max(abs(net_cost) * 0.2 + total_credit * 0.15, total_debit * 0.1, 1.0)
+            ),
             max_loss_per_unit=None,
             max_profit_per_unit=None,
             detail_json={

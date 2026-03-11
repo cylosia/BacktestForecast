@@ -51,6 +51,9 @@ jobs:
       - name: OpenAPI schema export smoke check
         run: python scripts/export_openapi.py > /dev/null
 
+      - name: Check OpenAPI schema drift
+        run: python scripts/check_openapi_drift.py
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -119,3 +122,26 @@ jobs:
 
       - name: Worker task registration smoke check
         run: python scripts/check_worker_tasks.py
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -f apps/api/Dockerfile -t backtestforecast-api:ci .
+
+      - name: Build Worker image
+        run: docker build -f apps/worker/Dockerfile -t backtestforecast-worker:ci .
+
+      - name: Build Web image
+        run: >
+          docker build -f apps/web/Dockerfile
+          --build-arg NEXT_PUBLIC_APP_URL=http://localhost:3000
+          --build-arg NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+          --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_dummy
+          --build-arg NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+          --build-arg NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app/dashboard
+          --build-arg NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app/dashboard
+          -t backtestforecast-web:ci .

@@ -301,9 +301,9 @@ class SymbolDeepAnalysisService:
                 duration=float(analysis.duration_seconds),
             )
 
-        except Exception as exc:
+        except Exception:
             analysis.status = "failed"
-            analysis.error_message = str(exc)[:2000]
+            analysis.error_message = "Analysis failed. Please try again."
             analysis.completed_at = datetime.now(UTC)
             analysis.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
             self.session.commit()

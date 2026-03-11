@@ -69,7 +69,10 @@ def create_backtest(
             )
         except Exception:
             logger.exception("backtest.enqueue_failed", run_id=str(run.id))
-            # Run stays queued — a retry mechanism or manual re-dispatch can pick it up
+            run.status = "failed"
+            run.error_code = "enqueue_failed"
+            run.error_message = "Unable to dispatch job. Please try again."
+            db.commit()
 
     db.expire_all()
     return service.get_run(user, run.id)

@@ -1,0 +1,17 @@
+node_modules
+.next
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.git
+.github
+.cursor
+.env
+.env.*
+infra
+*.egg-info
+dist
+build
+agent-transcripts
+terminals

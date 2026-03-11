@@ -22,6 +22,23 @@ logger = structlog.get_logger("api.events")
 SSE_TIMEOUT_SECONDS = 300
 SSE_HEARTBEAT_SECONDS = 15
 
+_async_redis_pool = None
+
+
+async def _get_async_redis():
+    """Return a lazily-initialised shared async Redis connection pool."""
+    global _async_redis_pool
+    if _async_redis_pool is None:
+        import redis.asyncio as aioredis
+
+        settings = get_settings()
+        _async_redis_pool = aioredis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            max_connections=50,
+        )
+    return _async_redis_pool
+
 
 def _verify_ownership(db: Session, model: type, resource_id: UUID, user_id: UUID) -> None:
     """Raise NotFoundError unless the resource belongs to the user."""
@@ -32,26 +49,20 @@ def _verify_ownership(db: Session, model: type, resource_id: UUID, user_id: UUID
 
 async def _subscribe_redis(channel: str) -> AsyncGenerator[str, None]:
     """Subscribe to a Redis Pub/Sub channel and yield messages."""
-    import redis.asyncio as aioredis
-
-    settings = get_settings()
-    client = aioredis.from_url(settings.redis_url, decode_responses=True)
+    pool = await _get_async_redis()
+    pubsub = pool.pubsub()
+    await pubsub.subscribe(channel)
     try:
-        pubsub = client.pubsub()
-        await pubsub.subscribe(channel)
-        try:
-            while True:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True,
-                    timeout=SSE_HEARTBEAT_SECONDS,
-                )
-                if message and message["type"] == "message":
-                    yield message["data"]
-        finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.close()
+        while True:
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=SSE_HEARTBEAT_SECONDS,
+            )
+            if message and message["type"] == "message":
+                yield message["data"]
     finally:
-        await client.aclose()
+        await pubsub.unsubscribe(channel)
+        await pubsub.close()
 
 
 async def _event_stream(

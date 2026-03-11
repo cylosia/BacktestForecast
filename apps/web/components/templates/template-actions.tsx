@@ -18,6 +18,7 @@ export function TemplateActions({
   const router = useRouter();
   const { getToken } = useAuth();
   const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleDelete() {
     if (!confirm(`Delete template "${templateName}"? This cannot be undone.`)) {
@@ -25,12 +26,14 @@ export function TemplateActions({
     }
 
     setDeleting(true);
+    setError(null);
     try {
       const token = await getToken();
       if (!token) return;
       await deleteTemplate(token, templateId);
       router.refresh();
     } catch {
+      setError("Failed to delete template. Please try again.");
       setDeleting(false);
     }
   }
@@ -51,6 +54,7 @@ export function TemplateActions({
       >
         <Trash2 className="h-3.5 w-3.5 text-destructive" />
       </Button>
+      {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   );
 }

@@ -115,34 +115,32 @@ def test_scan_events_owned_resource_accepted(client, auth_headers, db_session):
 def test_publish_job_status_format():
     """Verify publish_job_status produces correct channel and JSON payload."""
     job_id = uuid.uuid4()
+    mock_client = MagicMock()
 
-    with patch("redis.Redis") as MockRedis:
-        mock_client = MagicMock()
-        MockRedis.from_url.return_value = mock_client
-
+    with patch("backtestforecast.events._get_redis", return_value=mock_client):
         from backtestforecast.events import publish_job_status
 
         publish_job_status("backtest", job_id, "succeeded", metadata={"trade_count": 5})
 
-        mock_client.publish.assert_called_once()
-        call_args = mock_client.publish.call_args
-        channel = call_args[0][0]
-        payload = json.loads(call_args[0][1])
+    mock_client.publish.assert_called_once()
+    call_args = mock_client.publish.call_args
+    channel = call_args[0][0]
+    payload = json.loads(call_args[0][1])
 
-        assert channel == f"job:backtest:{job_id}:status"
-        assert payload["status"] == "succeeded"
-        assert payload["job_id"] == str(job_id)
-        assert payload["trade_count"] == 5
-        mock_client.close.assert_called_once()
+    assert channel == f"job:backtest:{job_id}:status"
+    assert payload["status"] == "succeeded"
+    assert payload["job_id"] == str(job_id)
+    assert payload["trade_count"] == 5
 
 
 def test_publish_job_status_handles_redis_failure():
     """publish_job_status must not raise when Redis is unavailable."""
     from redis.exceptions import RedisError
 
-    with patch("redis.Redis") as MockRedis:
-        MockRedis.from_url.side_effect = RedisError("Connection refused")
+    mock_client = MagicMock()
+    mock_client.publish.side_effect = RedisError("Connection refused")
 
+    with patch("backtestforecast.events._get_redis", return_value=mock_client):
         from backtestforecast.events import publish_job_status
 
         publish_job_status("backtest", uuid.uuid4(), "running")

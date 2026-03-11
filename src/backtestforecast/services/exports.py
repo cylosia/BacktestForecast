@@ -13,6 +13,7 @@ from backtestforecast.errors import NotFoundError
 from backtestforecast.models import ExportJob, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
+from backtestforecast.schemas.backtests import BacktestRunDetailResponse
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
@@ -25,6 +26,9 @@ class ExportService:
         self.backtests = BacktestRunRepository(session)
         self.audit = AuditService(session)
         self.backtest_service = BacktestService(session)
+
+    def close(self) -> None:
+        self.backtest_service.close()
 
     def enqueue_export(
         self,
@@ -84,21 +88,24 @@ class ExportService:
         self.session.flush()
 
         try:
+            detail = self.backtest_service.get_run_for_owner(
+                user_id=export_job.user_id, run_id=export_job.backtest_run_id
+            )
             fmt = ExportFormat(export_job.export_format)
             if fmt == ExportFormat.CSV:
-                content = self._build_csv(export_job.backtest_run_id, export_job.user_id)
+                content = self._build_csv(detail)
             else:
-                content = self._build_pdf(export_job.backtest_run_id, export_job.user_id)
+                content = self._build_pdf(detail)
             export_job.content_bytes = content
             export_job.size_bytes = len(content)
             export_job.sha256_hex = hashlib.sha256(content).hexdigest()
             export_job.status = "succeeded"
             export_job.completed_at = datetime.now(UTC)
             self.session.commit()
-        except Exception as exc:
+        except Exception:
             export_job.status = "failed"
             export_job.error_code = "export_generation_failed"
-            export_job.error_message = str(exc)
+            export_job.error_message = "Export generation failed. Please try again."
             export_job.completed_at = datetime.now(UTC)
             self.session.commit()
             raise
@@ -122,38 +129,9 @@ class ExportService:
         ip_address: str | None = None,
     ) -> ExportJobResponse:
         """Synchronous create-and-execute. Preserved for tests/fallback."""
-        ensure_export_access(user.plan_tier, user.subscription_status, payload.export_format)
-        if payload.idempotency_key:
-            existing = self.exports.get_by_idempotency_key(user.id, payload.idempotency_key)
-            if existing is not None:
-                return self._to_response(existing)
-
-        run = self.backtests.get_for_user(payload.run_id, user.id)
-        if run is None:
-            raise NotFoundError("Backtest run not found.")
-
-        export_job = ExportJob(
-            user_id=user.id,
-            backtest_run_id=run.id,
-            export_format=payload.export_format.value,
-            status="queued",
-            file_name=self._build_file_name(run.symbol, run.strategy_type, payload.export_format),
-            mime_type=self._mime_type(payload.export_format),
-            idempotency_key=payload.idempotency_key,
-        )
-        self.exports.add(export_job)
-        self.session.flush()
-
-        try:
-            if payload.export_format == ExportFormat.CSV:
-                content = self._build_csv(run.id, user.id)
-            else:
-                content = self._build_pdf(run.id, user.id)
-            export_job.content_bytes = content
-            export_job.size_bytes = len(content)
-            export_job.sha256_hex = hashlib.sha256(content).hexdigest()
-            export_job.status = "succeeded"
-            export_job.completed_at = datetime.now(UTC)
+        enqueued = self.enqueue_export(user, payload, request_id=request_id, ip_address=ip_address)
+        export_job = self.execute_export_by_id(enqueued.id)
+        if export_job.status == "succeeded":
             self.audit.record(
                 event_type="export.created",
                 subject_type="export_job",
@@ -162,21 +140,12 @@ class ExportService:
                 request_id=request_id,
                 ip_address=ip_address,
                 metadata={
-                    "run_id": str(run.id),
-                    "format": payload.export_format.value,
+                    "run_id": str(export_job.backtest_run_id),
+                    "format": export_job.export_format,
                     "size_bytes": export_job.size_bytes,
                 },
             )
             self.session.commit()
-        except Exception as exc:
-            export_job.status = "failed"
-            export_job.error_code = "export_generation_failed"
-            export_job.error_message = str(exc)
-            export_job.completed_at = datetime.now(UTC)
-            self.session.commit()
-            raise
-
-        self.session.refresh(export_job)
         return self._to_response(export_job)
 
     def get_export_for_download(
@@ -220,8 +189,7 @@ class ExportService:
             return "text/csv; charset=utf-8"
         return "application/pdf"
 
-    def _build_csv(self, run_id: UUID, user_id: UUID) -> bytes:
-        detail = self.backtest_service.get_run_for_owner(user_id=user_id, run_id=run_id)
+    def _build_csv(self, detail: BacktestRunDetailResponse) -> bytes:
         output = io.StringIO()
         writer = csv.writer(output)
 
@@ -295,8 +263,7 @@ class ExportService:
 
         return output.getvalue().encode("utf-8")
 
-    def _build_pdf(self, run_id: UUID, user_id: UUID) -> bytes:
-        detail = self.backtest_service.get_run_for_owner(user_id=user_id, run_id=run_id)
+    def _build_pdf(self, detail: BacktestRunDetailResponse) -> bytes:
         try:
             from reportlab.lib.pagesizes import letter  # type: ignore
             from reportlab.lib.units import inch  # type: ignore
