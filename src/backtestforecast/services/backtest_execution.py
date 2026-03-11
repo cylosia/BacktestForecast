@@ -4,6 +4,7 @@ from typing import Self
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.types import BacktestConfig, BacktestExecutionResult
+from backtestforecast.config import get_settings
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
@@ -47,6 +48,7 @@ class BacktestExecutionService:
             risk_per_trade_pct=float(request.risk_per_trade_pct),
             commission_per_contract=float(request.commission_per_contract),
             entry_rules=request.entry_rules,
+            risk_free_rate=get_settings().risk_free_rate,
             strategy_overrides=request.strategy_overrides,
             custom_legs=request.custom_legs,
         )

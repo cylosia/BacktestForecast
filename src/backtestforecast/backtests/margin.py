@@ -209,7 +209,7 @@ def jade_lizard_margin(
     total_credit = total_credit_per_share * 100.0
     if total_credit >= call_spread:
         return put_naked
-    return max(put_naked, call_spread)
+    return max(0.0, max(put_naked, call_spread) - total_credit)
 
 
 # ---------------------------------------------------------------------------

@@ -157,7 +157,7 @@ class WheelStrategyBacktestEngine:
                                 expiration_date=active_option.expiration_date,
                                 quantity=active_option.quantity,
                                 dte_at_open=(active_option.expiration_date - active_option.entry_date).days,
-                                holding_period_days=index - active_option.entry_index,
+                                holding_period_days=(bar.trade_date - active_option.entry_date).days,
                                 entry_underlying_close=sorted_bars[active_option.entry_index].close_price,
                                 exit_underlying_close=bar.close_price,
                                 entry_mid=active_option.entry_mid,
@@ -188,7 +188,7 @@ class WheelStrategyBacktestEngine:
                                 expiration_date=active_option.expiration_date,
                                 quantity=active_option.quantity,
                                 dte_at_open=(active_option.expiration_date - active_option.entry_date).days,
-                                holding_period_days=index - active_option.entry_index,
+                                holding_period_days=(bar.trade_date - active_option.entry_date).days,
                                 entry_underlying_close=sorted_bars[active_option.entry_index].close_price,
                                 exit_underlying_close=bar.close_price,
                                 entry_mid=active_option.entry_mid,
@@ -202,7 +202,8 @@ class WheelStrategyBacktestEngine:
                                 detail_json={**option_detail, "assignment": True},
                             )
                         )
-                        stock_gross = (bar.close_price - held_shares.entry_price) * 100.0 * held_shares.quantity
+                        called_away_price = active_option.strike_price
+                        stock_gross = (called_away_price - held_shares.entry_price) * 100.0 * held_shares.quantity
                         trades.append(
                             TradeResult(
                                 option_ticker=f"stock:{config.symbol}",
@@ -215,9 +216,9 @@ class WheelStrategyBacktestEngine:
                                 dte_at_open=0,
                                 holding_period_days=max((bar.trade_date - held_shares.entry_date).days, 0),
                                 entry_underlying_close=held_shares.entry_price,
-                                exit_underlying_close=bar.close_price,
+                                exit_underlying_close=called_away_price,
                                 entry_mid=held_shares.entry_price,
-                                exit_mid=bar.close_price,
+                                exit_mid=called_away_price,
                                 gross_pnl=stock_gross,
                                 net_pnl=stock_gross,
                                 total_commissions=0.0,
@@ -246,7 +247,7 @@ class WheelStrategyBacktestEngine:
                                 expiration_date=active_option.expiration_date,
                                 quantity=active_option.quantity,
                                 dte_at_open=(active_option.expiration_date - active_option.entry_date).days,
-                                holding_period_days=index - active_option.entry_index,
+                                holding_period_days=(bar.trade_date - active_option.entry_date).days,
                                 entry_underlying_close=sorted_bars[active_option.entry_index].close_price,
                                 exit_underlying_close=bar.close_price,
                                 entry_mid=active_option.entry_mid,
@@ -451,7 +452,7 @@ class WheelStrategyBacktestEngine:
     ) -> tuple[bool, str]:
         if bar.trade_date >= position.expiration_date:
             return True, "expiration"
-        if (bar_index - position.entry_index) >= max_holding_days:
+        if (bar.trade_date - position.entry_date).days >= max_holding_days:
             return True, "max_holding_days"
         if bar.trade_date > backtest_end_date and bar.trade_date == last_bar_date:
             return True, "backtest_end"

@@ -338,4 +338,5 @@ def test_wheel_records_assignment_callaway_and_stock_exit() -> None:
     assert result.trades[0].exit_reason == "assignment"
     assert result.trades[1].exit_reason == "call_assignment"
     assert result.trades[2].exit_reason == "called_away"
-    assert round(result.summary.total_net_pnl, 2) == -400.0
+    assert result.trades[2].exit_mid == 100.0, "shares called away at strike, not close"
+    assert round(result.summary.total_net_pnl, 2) == -1400.0

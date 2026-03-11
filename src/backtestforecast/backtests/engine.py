@@ -99,7 +99,7 @@ class OptionsBacktestEngine:
                             expiration_date=expiration_date,
                             quantity=position.quantity,
                             dte_at_open=position.dte_at_open,
-                            holding_period_days=index - position.entry_index,
+                            holding_period_days=(bar.trade_date - position.entry_date).days,
                             entry_underlying_close=self._entry_underlying_close(position),
                             exit_underlying_close=bar.close_price,
                             entry_mid=entry_value_per_unit / 100.0,
@@ -321,7 +321,7 @@ class OptionsBacktestEngine:
         exit_date = position.scheduled_exit_date or max(leg.expiration_date for leg in position.option_legs)
         if bar.trade_date >= exit_date:
             return True, "expiration"
-        if (bar_index - position.entry_index) >= max_holding_days:
+        if (bar.trade_date - position.entry_date).days >= max_holding_days:
             return True, "max_holding_days"
         if bar.trade_date > backtest_end_date and bar.trade_date == last_bar_date:
             return True, "backtest_end"

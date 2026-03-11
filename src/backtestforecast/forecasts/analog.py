@@ -243,6 +243,8 @@ class HistoricalAnalogForecaster:
 
     @staticmethod
     def _calendar_to_trading_days(calendar_days: int) -> int:
+        if calendar_days <= 0:
+            return 0
         return max(1, int(calendar_days * 5 / 7))
 
     @staticmethod

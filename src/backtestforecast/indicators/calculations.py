@@ -23,14 +23,23 @@ def rolling_mean(values: list[float], period: int) -> list[float | None]:
 
 
 def rolling_stddev(values: list[float], period: int) -> list[float | None]:
+    """O(n) rolling sample standard deviation using an online sliding window."""
     result: list[float | None] = [None] * len(values)
     if period <= 1:
         return result
-    for index in range(period - 1, len(values)):
-        window = values[index - period + 1 : index + 1]
-        mean = sum(window) / period
-        variance = sum((value - mean) ** 2 for value in window) / (period - 1)
-        result[index] = math.sqrt(variance)
+    sum_x = 0.0
+    sum_x2 = 0.0
+    for index in range(len(values)):
+        sum_x += values[index]
+        sum_x2 += values[index] * values[index]
+        if index >= period:
+            old = values[index - period]
+            sum_x -= old
+            sum_x2 -= old * old
+        if index >= period - 1:
+            mean = sum_x / period
+            variance = (sum_x2 - period * mean * mean) / (period - 1)
+            result[index] = math.sqrt(max(variance, 0.0))
     return result
 
 
@@ -100,7 +109,7 @@ def rsi(values: list[float], period: int) -> list[float | None]:
     avg_loss = sum(losses[1 : period + 1]) / period
 
     if avg_loss == 0:
-        result[period] = 100.0
+        result[period] = 100.0 if avg_gain > 0 else 50.0
     else:
         rs = avg_gain / avg_loss
         result[period] = 100.0 - (100.0 / (1.0 + rs))
@@ -110,7 +119,7 @@ def rsi(values: list[float], period: int) -> list[float | None]:
         avg_loss = ((avg_loss * (period - 1)) + losses[index]) / period
 
         if avg_loss == 0:
-            result[index] = 100.0
+            result[index] = 100.0 if avg_gain > 0 else 50.0
         else:
             rs = avg_gain / avg_loss
             result[index] = 100.0 - (100.0 / (1.0 + rs))

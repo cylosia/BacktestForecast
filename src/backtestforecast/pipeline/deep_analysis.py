@@ -209,7 +209,7 @@ class SymbolDeepAnalysisService:
                 "close_price": regime.close_price,
             }
             analysis.stage = "landscape"
-            self.session.commit()
+            self.session.flush()
             logger.info("deep_analysis.regime_done", analysis_id=str(analysis_id), symbol=symbol)
 
             # --- Stage 2: Strategy landscape ---
@@ -231,7 +231,7 @@ class SymbolDeepAnalysisService:
             analysis.strategies_tested = len({c.strategy_type for c in landscape})
             analysis.configs_tested = len(landscape)
             analysis.stage = "deep_dive"
-            self.session.commit()
+            self.session.flush()
             logger.info(
                 "deep_analysis.landscape_done",
                 analysis_id=str(analysis_id),
@@ -268,7 +268,7 @@ class SymbolDeepAnalysisService:
             ]
             analysis.top_results_count = len(top_results)
             analysis.stage = "forecast"
-            self.session.commit()
+            self.session.flush()
 
             # --- Stage 4: Forecast on best result ---
             if top_results and self.forecaster:
@@ -345,16 +345,12 @@ class SymbolDeepAnalysisService:
 
         cells: list[LandscapeCell] = []
 
-        from backtestforecast.pipeline.adapters import PipelineBacktestExecutor
-
-        shared_executor = PipelineBacktestExecutor()
-
         def _run_cell(item: tuple[str, str, dict[str, Any]]) -> LandscapeCell | None:
             strategy_type, label, param_config = item
             try:
                 target_dte = param_config["target_dte"]
                 overrides = param_config.get("strategy_overrides")
-                summary = shared_executor.run_quick_backtest(
+                summary = self.executor.run_quick_backtest(
                     symbol=symbol,
                     strategy_type=strategy_type,
                     start_date=lookback_start,
@@ -391,15 +387,12 @@ class SymbolDeepAnalysisService:
                 return None
 
         max_workers = min(4, len(work_items))
-        try:
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(_run_cell, item): item for item in work_items}
-                for future in as_completed(futures):
-                    cell = future.result()
-                    if cell is not None:
-                        cells.append(cell)
-        finally:
-            shared_executor.close()
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_run_cell, item): item for item in work_items}
+            for future in as_completed(futures):
+                cell = future.result()
+                if cell is not None:
+                    cells.append(cell)
 
         return cells
 
@@ -409,13 +402,12 @@ class SymbolDeepAnalysisService:
         trade_date: date,
         candidates: list[LandscapeCell],
     ) -> list[TopResult]:
-        """Full 1-year backtests on the top candidates."""
-        results: list[TopResult] = []
+        """Full 1-year backtests on the top candidates (parallelized)."""
         lookback_start = trade_date - timedelta(days=365)
 
-        for rank_idx, cell in enumerate(candidates, start=1):
+        def _run_candidate(cell: LandscapeCell) -> tuple[LandscapeCell, dict[str, Any] | None]:
             try:
-                full = self.executor.run_full_backtest(
+                return cell, self.executor.run_full_backtest(
                     symbol=symbol,
                     strategy_type=cell.strategy_type,
                     start_date=lookback_start,
@@ -423,59 +415,70 @@ class SymbolDeepAnalysisService:
                     target_dte=cell.target_dte,
                     strategy_overrides=cell.config_snapshot.get("strategy_overrides"),
                 )
-                if full is None or full.get("trade_count", 0) == 0:
-                    continue
-
-                roi = full.get("total_roi_pct", 0.0)
-                win_rate = full.get("win_rate", 0.0) / 100.0
-                drawdown = min(full.get("max_drawdown_pct", 50.0), 99.0)
-                trade_count = full.get("trade_count", 1)
-                sample_factor = min(trade_count / 10.0, 1.0)
-                score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
-
-                # Forecast overlay per candidate
-                forecast: dict[str, Any] = {}
-                if self.forecaster:
-                    try:
-                        f = self.forecaster.get_forecast(
-                            symbol=symbol,
-                            strategy_type=cell.strategy_type,
-                            horizon_days=cell.target_dte,
-                        )
-                        if f:
-                            forecast = f
-                            median_return = f.get("expected_return_median_pct", 0)
-                            if (roi > 0) == (float(median_return) > 0):
-                                score *= 1.2
-                    except Exception:
-                        logger.debug(
-                            "deep_analysis.candidate_forecast_failed",
-                            strategy_type=cell.strategy_type,
-                            exc_info=True,
-                        )
-
-                results.append(
-                    TopResult(
-                        rank=rank_idx,
-                        strategy_type=cell.strategy_type,
-                        strategy_label=cell.strategy_label,
-                        target_dte=cell.target_dte,
-                        config_snapshot=cell.config_snapshot,
-                        summary=full,
-                        trades=full.get("trades", [])[:25],
-                        equity_curve=full.get("equity_curve", []),
-                        forecast=forecast,
-                        score=score,
-                    )
-                )
-
             except Exception:
                 logger.debug(
                     "deep_analysis.deep_dive_candidate_failed",
                     strategy_type=cell.strategy_type,
                     exc_info=True,
                 )
+                return cell, None
+
+        max_workers = min(4, len(candidates))
+        backtest_results: list[tuple[LandscapeCell, dict[str, Any] | None]] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_run_candidate, c): c for c in candidates}
+            for future in as_completed(futures):
+                backtest_results.append(future.result())
+
+        cell_order = {id(c): idx for idx, c in enumerate(candidates)}
+        backtest_results.sort(key=lambda pair: cell_order.get(id(pair[0]), 0))
+
+        results: list[TopResult] = []
+        for rank_idx, (cell, full) in enumerate(backtest_results, start=1):
+            if full is None or full.get("trade_count", 0) == 0:
                 continue
+
+            roi = full.get("total_roi_pct", 0.0)
+            win_rate = full.get("win_rate", 0.0) / 100.0
+            drawdown = min(full.get("max_drawdown_pct", 50.0), 99.0)
+            trade_count = full.get("trade_count", 1)
+            sample_factor = min(trade_count / 10.0, 1.0)
+            score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
+
+            forecast: dict[str, Any] = {}
+            if self.forecaster:
+                try:
+                    f = self.forecaster.get_forecast(
+                        symbol=symbol,
+                        strategy_type=cell.strategy_type,
+                        horizon_days=cell.target_dte,
+                    )
+                    if f:
+                        forecast = f
+                        median_return = f.get("expected_return_median_pct", 0)
+                        if (roi > 0) == (float(median_return) > 0):
+                            score *= 1.2
+                except Exception:
+                    logger.debug(
+                        "deep_analysis.candidate_forecast_failed",
+                        strategy_type=cell.strategy_type,
+                        exc_info=True,
+                    )
+
+            results.append(
+                TopResult(
+                    rank=rank_idx,
+                    strategy_type=cell.strategy_type,
+                    strategy_label=cell.strategy_label,
+                    target_dte=cell.target_dte,
+                    config_snapshot=cell.config_snapshot,
+                    summary=full,
+                    trades=full.get("trades", [])[:25],
+                    equity_curve=full.get("equity_curve", []),
+                    forecast=forecast,
+                    score=score,
+                )
+            )
 
         results.sort(key=lambda r: r.score, reverse=True)
         for i, r in enumerate(results, start=1):

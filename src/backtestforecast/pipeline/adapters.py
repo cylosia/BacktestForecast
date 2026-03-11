@@ -7,6 +7,7 @@ MarketDataService, BacktestExecutionService, and HistoricalAnalogForecaster.
 
 from __future__ import annotations
 
+import threading
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Self
@@ -15,6 +16,7 @@ import structlog
 
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError, ValidationError
 from backtestforecast.integrations.massive_client import MassiveClient
+from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.market_data.types import DailyBar
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.services.backtest_execution import BacktestExecutionService
@@ -44,6 +46,8 @@ class PipelineBacktestExecutor:
     def __init__(self, execution_service: BacktestExecutionService | None = None) -> None:
         self._owns_service = execution_service is None
         self._execution_service = execution_service or BacktestExecutionService()
+        self._bundle_cache: dict[tuple[str, date, date], HistoricalDataBundle] = {}
+        self._bundle_cache_lock = threading.Lock()
 
     def close(self) -> None:
         if self._owns_service:
@@ -54,6 +58,17 @@ class PipelineBacktestExecutor:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+    def _get_bundle(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
+        key = (request.symbol, request.start_date, request.end_date)
+        with self._bundle_cache_lock:
+            bundle = self._bundle_cache.get(key)
+        if bundle is not None:
+            return bundle
+        bundle = self._execution_service.market_data_service.prepare_backtest(request)
+        with self._bundle_cache_lock:
+            self._bundle_cache.setdefault(key, bundle)
+            return self._bundle_cache[key]
 
     def run_quick_backtest(
         self,
@@ -74,7 +89,8 @@ class PipelineBacktestExecutor:
                 target_dte=target_dte,
                 strategy_overrides=strategy_overrides,
             )
-            result = self._execution_service.execute_request(request)
+            bundle = self._get_bundle(request)
+            result = self._execution_service.execute_request(request, bundle=bundle)
             return {
                 "trade_count": result.summary.trade_count,
                 "win_rate": result.summary.win_rate,
@@ -106,7 +122,8 @@ class PipelineBacktestExecutor:
                 target_dte=target_dte,
                 strategy_overrides=strategy_overrides,
             )
-            result = self._execution_service.execute_request(request)
+            bundle = self._get_bundle(request)
+            result = self._execution_service.execute_request(request, bundle=bundle)
             return {
                 "trade_count": result.summary.trade_count,
                 "win_rate": result.summary.win_rate,
@@ -131,7 +148,8 @@ class PipelineBacktestExecutor:
                         "equity": p.equity,
                         "drawdown_pct": p.drawdown_pct,
                     }
-                    for p in result.equity_curve
+                    for i, p in enumerate(result.equity_curve)
+                    if i % 5 == 0 or i == len(result.equity_curve) - 1
                 ],
                 "warnings": [w for w in result.warnings],
             }
@@ -174,6 +192,8 @@ class PipelineForecaster:
     def __init__(self, forecaster: Any, market_data: PipelineMarketDataFetcher) -> None:
         self._forecaster = forecaster
         self._market_data = market_data
+        self._bar_cache: dict[str, list[DailyBar]] = {}
+        self._bar_cache_lock = threading.Lock()
 
     def get_forecast(
         self,
@@ -182,12 +202,18 @@ class PipelineForecaster:
         horizon_days: int,
     ) -> dict[str, Any] | None:
         try:
-            end_date = date.today()
-            bars = self._market_data.get_daily_bars(
-                symbol,
-                end_date - timedelta(days=400),
-                end_date,
-            )
+            with self._bar_cache_lock:
+                bars = self._bar_cache.get(symbol)
+            if bars is None:
+                end_date = date.today()
+                bars = self._market_data.get_daily_bars(
+                    symbol,
+                    end_date - timedelta(days=400),
+                    end_date,
+                )
+                with self._bar_cache_lock:
+                    self._bar_cache.setdefault(symbol, bars)
+                    bars = self._bar_cache[symbol]
             if len(bars) < 80:
                 return None
             result = self._forecaster.forecast(

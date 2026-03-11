@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import math
 from collections import defaultdict
 from datetime import date
@@ -90,8 +91,7 @@ def choose_put_otm_strike(strikes: list[float], underlying_close: float) -> floa
 def offset_strike(strikes: list[float], base_strike: float, steps: int) -> float | None:
     ordered = sorted(strikes)
     if base_strike not in ordered:
-        ordered.append(base_strike)
-        ordered.sort()
+        bisect.insort(ordered, base_strike)
     index = ordered.index(base_strike)
     target_index = index + steps
     if target_index < 0 or target_index >= len(ordered):

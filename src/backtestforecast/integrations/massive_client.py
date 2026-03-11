@@ -124,13 +124,12 @@ class MassiveClient:
             f"/v3/quotes/{quote(option_ticker, safe='')}",
             params={
                 "timestamp": trade_date.isoformat(),
-                "sort": "participant_timestamp.asc",
-                "limit": 50000,
+                "sort": "participant_timestamp.desc",
+                "limit": 10,
             },
         )
 
         results = payload.get("results", [])
-        latest: OptionQuoteRecord | None = None
         for row in results:
             bid_price = row.get("bid_price")
             ask_price = row.get("ask_price")
@@ -140,13 +139,13 @@ class MassiveClient:
             ask = float(ask_price)
             if bid <= 0 or ask <= 0:
                 continue
-            latest = OptionQuoteRecord(
+            return OptionQuoteRecord(
                 trade_date=trade_date,
                 bid_price=bid,
                 ask_price=ask,
                 participant_timestamp=self._pick_quote_timestamp(row),
             )
-        return latest
+        return None
 
     def list_earnings_event_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         attempts = [
@@ -383,10 +382,9 @@ class AsyncMassiveClient:
     ) -> OptionQuoteRecord | None:
         payload = await self._get_json(
             f"/v3/quotes/{quote(option_ticker, safe='')}",
-            params={"timestamp": trade_date.isoformat(), "sort": "participant_timestamp.asc", "limit": 50000},
+            params={"timestamp": trade_date.isoformat(), "sort": "participant_timestamp.desc", "limit": 10},
         )
         results = payload.get("results", [])
-        latest: OptionQuoteRecord | None = None
         for row in results:
             bid_price = row.get("bid_price")
             ask_price = row.get("ask_price")
@@ -396,13 +394,13 @@ class AsyncMassiveClient:
             ask = float(ask_price)
             if bid <= 0 or ask <= 0:
                 continue
-            latest = OptionQuoteRecord(
+            return OptionQuoteRecord(
                 trade_date=trade_date,
                 bid_price=bid,
                 ask_price=ask,
                 participant_timestamp=MassiveClient._pick_quote_timestamp(row),
             )
-        return latest
+        return None
 
     async def _get_paginated_json(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []

@@ -42,6 +42,7 @@ class BacktestConfig:
     risk_per_trade_pct: float
     commission_per_contract: float
     entry_rules: Sequence[EntryRule]
+    risk_free_rate: float = 0.045
     strategy_overrides: StrategyOverrides | None = None
     custom_legs: Sequence[CustomLegDefinition] | None = None
 

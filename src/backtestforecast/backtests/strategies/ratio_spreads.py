@@ -77,7 +77,7 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
             ],
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
-            max_loss_per_unit=(long_strike - short_strike) * 100.0 + max(entry_cost, 0.0),
+            max_loss_per_unit=max((long_strike - short_strike) * 100.0 + entry_cost, 0.0),
             max_profit_per_unit=None,
             detail_json={
                 "ratio": "1:2",
@@ -140,7 +140,7 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
             ],
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
-            max_loss_per_unit=(short_strike - long_strike) * 100.0 + max(entry_cost, 0.0),
+            max_loss_per_unit=max((short_strike - long_strike) * 100.0 + entry_cost, 0.0),
             max_profit_per_unit=None,
             detail_json={
                 "ratio": "1:2",

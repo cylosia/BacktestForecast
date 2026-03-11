@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, select, tuple_
 from sqlalchemy.orm import Session, selectinload
 
 from backtestforecast.models import ScannerJob, ScannerRecommendation
@@ -111,3 +111,40 @@ class ScannerJobRepository:
             .limit(limit)
         )
         return list(self.session.execute(stmt).all())
+
+    def batch_list_historical_recommendations(
+        self,
+        *,
+        keys: list[tuple[str, str, str]],
+        before: datetime,
+        limit_per_key: int = 200,
+    ) -> dict[tuple[str, str, str], list[tuple[ScannerRecommendation, datetime | None]]]:
+        if not keys:
+            return {}
+        col_triple = tuple_(
+            ScannerRecommendation.symbol,
+            ScannerRecommendation.strategy_type,
+            ScannerRecommendation.rule_set_hash,
+        )
+        stmt = (
+            select(ScannerRecommendation, ScannerJob.completed_at)
+            .join(ScannerJob, ScannerRecommendation.scanner_job_id == ScannerJob.id)
+            .where(
+                col_triple.in_(keys),
+                ScannerJob.status == "succeeded",
+                ScannerJob.completed_at.is_not(None),
+                ScannerJob.completed_at < before,
+            )
+            .order_by(desc(ScannerJob.completed_at))
+            .limit(len(keys) * limit_per_key)
+        )
+        rows = list(self.session.execute(stmt).all())
+        result: dict[tuple[str, str, str], list[tuple[ScannerRecommendation, datetime | None]]] = {
+            k: [] for k in keys
+        }
+        for rec, completed_at in rows:
+            key = (rec.symbol, rec.strategy_type, rec.rule_set_hash)
+            bucket = result.get(key)
+            if bucket is not None and len(bucket) < limit_per_key:
+                bucket.append((rec, completed_at))
+        return result

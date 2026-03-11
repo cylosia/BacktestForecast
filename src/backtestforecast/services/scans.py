@@ -154,6 +154,7 @@ class ScanService:
         forecast_cache: dict[tuple[str, str], HistoricalAnalogForecastResponse] = {}
 
         bundle_cache = self._prepare_bundles(payload, warnings)
+        historical_cache = self._batch_historical_performance(payload, job.created_at)
 
         for symbol in payload.symbols:
             for strategy in payload.strategy_types:
@@ -189,12 +190,15 @@ class ScanService:
                                 horizon_days=min(payload.max_holding_days, payload.target_dte),
                             )
                             forecast_cache[(symbol, strategy.value)] = forecast
-                        historical = self._historical_performance(
-                            symbol=symbol,
-                            strategy_type=strategy.value,
-                            candidate_rule_set_hash=candidate_rule_set_hash,
-                            before=job.created_at,
-                        )
+                        hist_key = (symbol, strategy.value, candidate_rule_set_hash)
+                        historical = historical_cache.get(hist_key)
+                        if historical is None:
+                            historical = self._historical_performance(
+                                symbol=symbol,
+                                strategy_type=strategy.value,
+                                candidate_rule_set_hash=candidate_rule_set_hash,
+                                before=job.created_at,
+                            )
                         ranking = build_ranking_breakdown(
                             execution_result=execution_result,
                             historical_performance=historical,
@@ -252,36 +256,22 @@ class ScanService:
             self.session.commit()
             return job
 
-        ranked_candidates = sorted(
-            [
-                (candidate["symbol"], candidate["strategy_type"], candidate["rule_set_name"], candidate["ranking"])
-                for candidate in candidates
-            ],
-            key=lambda item: recommendation_sort_key(
+        sorted_candidates = sorted(
+            candidates,
+            key=lambda c: recommendation_sort_key(
                 (
-                    item[0],
-                    item[1],
-                    item[2],
-                    self._ranking_response_model(item[3]),
+                    c["symbol"],
+                    c["strategy_type"],
+                    c["rule_set_name"],
+                    self._ranking_response_model(c["ranking"]),
                 )
             ),
         )
         rank_lookup = {
-            (symbol, strategy_type, rule_set_name): index + 1
-            for index, (symbol, strategy_type, rule_set_name, _ranking) in enumerate(ranked_candidates)
+            (c["symbol"], c["strategy_type"], c["rule_set_name"]): idx + 1
+            for idx, c in enumerate(sorted_candidates)
         }
-
-        selected = sorted(
-            candidates,
-            key=lambda candidate: recommendation_sort_key(
-                (
-                    candidate["symbol"],
-                    candidate["strategy_type"],
-                    candidate["rule_set_name"],
-                    self._ranking_response_model(candidate["ranking"]),
-                )
-            ),
-        )[: payload.max_recommendations]
+        selected = sorted_candidates[: payload.max_recommendations]
 
         for candidate in selected:
             rank = rank_lookup[(candidate["symbol"], candidate["strategy_type"], candidate["rule_set_name"])]
@@ -474,6 +464,42 @@ class ScanService:
                     "error_code": exc.code,
                 })
         return bundles
+
+    def _batch_historical_performance(
+        self,
+        payload: CreateScannerJobRequest,
+        before: datetime,
+    ) -> dict[tuple[str, str, str], Any]:
+        keys: list[tuple[str, str, str]] = []
+        for symbol in payload.symbols:
+            for strategy in payload.strategy_types:
+                for rs in payload.rule_sets:
+                    if not is_strategy_rule_set_compatible(strategy.value, rs.entry_rules):
+                        continue
+                    keys.append((symbol, strategy.value, rule_set_hash(rs.entry_rules)))
+
+        if not keys:
+            return {}
+
+        raw = self.repository.batch_list_historical_recommendations(keys=keys, before=before)
+        result: dict[tuple[str, str, str], Any] = {}
+        for key, rows in raw.items():
+            observations: list[HistoricalObservation] = []
+            for recommendation, completed_at in rows:
+                if completed_at is None:
+                    continue
+                summary = recommendation.summary_json or {}
+                observations.append(
+                    HistoricalObservation(
+                        completed_at=completed_at,
+                        win_rate=float(summary.get("win_rate", 0.0)),
+                        total_roi_pct=float(summary.get("total_roi_pct", 0.0)),
+                        total_net_pnl=float(summary.get("total_net_pnl", 0.0)),
+                        max_drawdown_pct=float(summary.get("max_drawdown_pct", 0.0)),
+                    )
+                )
+            result[key] = aggregate_historical_performance(observations, reference_time=before)
+        return result
 
     def _historical_performance(
         self,

@@ -224,6 +224,7 @@ class EntryRuleEvaluator:
                 option_gateway=self.option_gateway,
                 target_dte=self.config.target_dte,
                 dte_tolerance_days=self.config.dte_tolerance_days,
+                risk_free_rate=self.config.risk_free_rate,
             )
         return self.iv_series_cache
 
@@ -243,17 +244,27 @@ def build_estimated_iv_series(
     option_gateway: OptionDataGateway,
     target_dte: int,
     dte_tolerance_days: int,
+    risk_free_rate: float = 0.045,
+    sample_interval: int = 5,
 ) -> list[float | None]:
     results: list[float | None] = []
-    for bar in bars:
-        iv_value = estimate_atm_iv_for_date(
-            trade_date=bar.trade_date,
-            underlying_close=bar.close_price,
-            option_gateway=option_gateway,
-            target_dte=target_dte,
-            dte_tolerance_days=dte_tolerance_days,
-        )
-        results.append(iv_value)
+    last_iv: float | None = None
+    last_index = len(bars) - 1
+    for index, bar in enumerate(bars):
+        if index % sample_interval == 0 or index == last_index:
+            iv_value = estimate_atm_iv_for_date(
+                trade_date=bar.trade_date,
+                underlying_close=bar.close_price,
+                option_gateway=option_gateway,
+                target_dte=target_dte,
+                dte_tolerance_days=dte_tolerance_days,
+                risk_free_rate=risk_free_rate,
+            )
+            if iv_value is not None:
+                last_iv = iv_value
+            results.append(iv_value if iv_value is not None else last_iv)
+        else:
+            results.append(last_iv)
     return results
 
 
@@ -263,6 +274,7 @@ def estimate_atm_iv_for_date(
     option_gateway: OptionDataGateway,
     target_dte: int,
     dte_tolerance_days: int,
+    risk_free_rate: float = 0.045,
 ) -> float | None:
     calls = option_gateway.list_contracts(trade_date, "call", target_dte, dte_tolerance_days)
     puts = option_gateway.list_contracts(trade_date, "put", target_dte, dte_tolerance_days)
@@ -310,6 +322,7 @@ def estimate_atm_iv_for_date(
             strike_price=contract.strike_price,
             time_to_expiry_years=dte / 365.0,
             option_type=option_type,
+            risk_free_rate=risk_free_rate,
         )
         if iv is not None:
             estimates.append(iv)

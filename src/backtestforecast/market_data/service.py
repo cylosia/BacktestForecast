@@ -201,7 +201,13 @@ class MarketDataService:
         seen_dates: dict[date, DailyBar] = {}
         dropped = 0
         for bar in raw_bars:
-            if bar.close_price <= 0 or bar.open_price <= 0 or bar.high_price < bar.low_price:
+            if (
+                bar.close_price <= 0
+                or bar.open_price <= 0
+                or bar.high_price < bar.low_price
+                or bar.high_price < max(bar.open_price, bar.close_price)
+                or bar.low_price > min(bar.open_price, bar.close_price)
+            ):
                 dropped += 1
                 continue
             seen_dates[bar.trade_date] = bar
