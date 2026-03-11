@@ -1,0 +1,48 @@
+import { getCurrentUser } from "@/lib/api/server";
+import { ForecastLookup } from "@/components/forecasts/forecast-lookup";
+import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
+
+export default async function ForecastsPage() {
+  const user = await getCurrentUser();
+  const hasAccess = user.features.forecasting_access;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Forecasts</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+          Historical analog forecasts
+        </h1>
+        <p className="mt-2 max-w-2xl text-muted-foreground">
+          Look up a probabilistic expected-return range for any supported ticker. The forecast
+          is built from historical analog setups that match the current technical conditions
+          on daily bars.
+        </p>
+      </div>
+
+      {!hasAccess ? (
+        <UpgradePrompt message="Forecast access requires a Pro or Premium plan. Upgrade to look up expected-return ranges for any ticker." />
+      ) : (
+        <ForecastLookup />
+      )}
+
+      <div className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground space-y-2">
+        <p className="font-medium text-foreground">How it works</p>
+        <p>
+          The engine scans the past year of daily bars for setups with similar RSI, moving-average
+          alignment, and volatility characteristics. It then measures the forward return over your
+          chosen horizon for each matched analog and produces a low/median/high expected range.
+        </p>
+        <p>
+          The positive outcome rate shows what percentage of historical analogs resulted in a
+          positive return over the horizon period. The analog count indicates how many matches
+          were found — higher counts mean more statistical confidence.
+        </p>
+        <p className="text-xs">
+          This is research software. Forecasts are probabilistic ranges derived from historical
+          patterns, not predictions, certainties, or financial advice.
+        </p>
+      </div>
+    </div>
+  );
+}

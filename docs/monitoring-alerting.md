@@ -1,0 +1,29 @@
+# Monitoring and alerting recommendations
+
+## Minimum telemetry
+- Structured request logs with `request_id`, route, method, status code, duration.
+- Worker task logs with job id, user id, candidate count, and recommendation count.
+- Audit logs for billing changes and export downloads.
+
+## Metrics to emit
+- API request count / error rate / p95 latency by route.
+- Backtest creation success vs failure rate.
+- Scanner queue depth, scanner job age, scan completion latency.
+- Stripe webhook success vs duplicate vs failure counts.
+- Export generation success/failure counts.
+- Provider request latency, retry count, and provider error rate.
+- Redis availability and fallback-to-memory rate limiting count.
+
+## Recommended alerts
+- API 5xx rate > 2% for 10 minutes.
+- `/health/ready` degraded for 5+ minutes.
+- Scanner queue oldest job > 10 minutes.
+- Stripe webhook failures > 3 in 15 minutes.
+- Massive provider 429/5xx spike above baseline.
+- Export failure rate > 5% in 30 minutes.
+
+## Dashboards
+- **Exec summary**: signups, paid users, backtests/day, scans/day, exports/day.
+- **API health**: request volume, latency, 4xx/5xx, ready-state.
+- **Worker health**: queue depth, retries, job durations.
+- **Provider health**: success rate, retry volume, outage periods.

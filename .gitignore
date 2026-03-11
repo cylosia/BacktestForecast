@@ -1,0 +1,32 @@
+# macOS / editor
+.DS_Store
+.idea
+.vscode
+
+# Node / Next
+node_modules
+.pnpm-store
+.next
+out
+coverage
+*.tsbuildinfo
+
+# Python
+.venv
+__pycache__
+*.py[cod]
+*.egg-info/
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Env files
+.env
+.env.local
+.env.*.local
+apps/api/.env
+apps/web/.env.local
+
+# Local data
+postgres_data
+redis_data

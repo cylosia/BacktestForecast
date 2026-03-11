@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+import jwt
+from jwt import InvalidTokenError, PyJWKClient
+
+from backtestforecast.config import Settings, get_settings
+from backtestforecast.errors import AuthenticationError, ConfigurationError
+
+
+@dataclass(slots=True)
+class AuthenticatedPrincipal:
+    clerk_user_id: str
+    session_id: str | None
+    email: str | None
+    claims: dict[str, Any]
+
+
+class ClerkTokenVerifier:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or get_settings()
+        self._jwks_client: PyJWKClient | None = None
+
+    def verify_bearer_token(self, token: str) -> AuthenticatedPrincipal:
+        signing_key = self._resolve_signing_key(token)
+
+        try:
+            claims = jwt.decode(
+                token,
+                key=signing_key,
+                algorithms=["RS256"],
+                audience=self.settings.clerk_audience or None,
+                issuer=self.settings.clerk_issuer or None,
+                options={
+                    "verify_aud": bool(self.settings.clerk_audience),
+                    "require": ["sub", "exp", "nbf", "iat"],
+                },
+            )
+        except InvalidTokenError as exc:
+            raise AuthenticationError("Invalid Clerk session token.") from exc
+
+        azp = claims.get("azp")
+        if azp and self.settings.clerk_authorized_parties:
+            if azp not in self.settings.clerk_authorized_parties:
+                raise AuthenticationError("Token authorized party is not allowed.")
+
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject:
+            raise AuthenticationError("Token subject is missing.")
+
+        email: str | None = None
+        raw_email = claims.get("email") or claims.get("primary_email_address")
+        if isinstance(raw_email, str) and raw_email:
+            email = raw_email
+
+        session_id = claims.get("sid") if isinstance(claims.get("sid"), str) else None
+
+        return AuthenticatedPrincipal(
+            clerk_user_id=subject,
+            session_id=session_id,
+            email=email,
+            claims=claims,
+        )
+
+    def _resolve_signing_key(self, token: str) -> str:
+        if self.settings.clerk_jwt_key:
+            return self.settings.clerk_jwt_key
+
+        jwks_client = self._get_jwks_client()
+        try:
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+        except Exception as exc:  # pragma: no cover - external lib surface
+            raise AuthenticationError("Unable to resolve Clerk signing key.") from exc
+        return signing_key.key
+
+    def _get_jwks_client(self) -> PyJWKClient:
+        if self._jwks_client is not None:
+            return self._jwks_client
+
+        jwks_url = self.settings.clerk_jwks_url
+        if not jwks_url:
+            if self.settings.clerk_issuer:
+                issuer = self.settings.clerk_issuer.rstrip("/")
+                jwks_url = f"{issuer}/.well-known/jwks.json"
+            else:
+                raise ConfigurationError("Set CLERK_JWT_KEY or CLERK_JWKS_URL (or CLERK_ISSUER) to enable auth.")
+
+        self._jwks_client = PyJWKClient(jwks_url)
+        return self._jwks_client
+
+
+def fetch_clerk_jwks(url: str) -> dict[str, Any]:
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        return response.json()

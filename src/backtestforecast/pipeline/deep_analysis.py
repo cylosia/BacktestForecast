@@ -1,0 +1,483 @@
+"""Single-symbol deep analysis service.
+
+Performs an exhaustive analysis of one symbol:
+  1. Regime analysis (full indicator snapshot)
+  2. Strategy landscape (all strategies × dense param grid → quick backtests)
+  3. Top-10 deep dive (full backtests with trades + equity curve)
+  4. Forecast overlay on winning configurations
+"""
+
+from __future__ import annotations
+
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from typing import Any
+from uuid import UUID
+
+import structlog
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
+from backtestforecast.errors import DataUnavailableError, NotFoundError
+from backtestforecast.models import SymbolAnalysis, User
+from backtestforecast.pipeline.regime import classify_regime
+
+logger = structlog.get_logger("deep_analysis")
+
+
+# ---------------------------------------------------------------------------
+# Dense parameter grid for exhaustive single-symbol scanning
+# ---------------------------------------------------------------------------
+
+DEEP_PARAM_GRID: list[dict[str, Any]] = []
+
+_DTES = [21, 30, 45]
+_DELTA_TARGETS = [
+    None,  # default (nearest OTM)
+    {"mode": "delta_target", "value": 16},
+    {"mode": "delta_target", "value": 30},
+    {"mode": "delta_target", "value": 45},
+]
+_WIDTHS = [
+    None,  # default (1 strike)
+    {"mode": "strike_steps", "value": 2},
+    {"mode": "dollar_width", "value": 5},
+]
+
+for _dte in _DTES:
+    for _delta in _DELTA_TARGETS:
+        for _width in _WIDTHS:
+            overrides: dict[str, Any] | None = None
+            if _delta or _width:
+                overrides = {}
+                if _delta:
+                    overrides["short_call_strike"] = _delta
+                    overrides["short_put_strike"] = _delta
+                if _width:
+                    overrides["spread_width"] = _width
+            DEEP_PARAM_GRID.append(
+                {
+                    "target_dte": _dte,
+                    "strategy_overrides": overrides,
+                }
+            )
+
+
+# Strategies to skip in landscape (custom strategies need user-defined legs)
+_SKIP_STRATEGIES = {
+    "custom_2_leg",
+    "custom_3_leg",
+    "custom_4_leg",
+    "custom_5_leg",
+    "custom_6_leg",
+    "custom_8_leg",
+    "wheel_strategy",  # multi-cycle, own execution path
+}
+
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LandscapeCell:
+    """One cell in the strategy × config grid."""
+
+    strategy_type: str
+    strategy_label: str
+    target_dte: int
+    config_snapshot: dict[str, Any]
+    trade_count: int = 0
+    win_rate: float = 0.0
+    total_roi_pct: float = 0.0
+    max_drawdown_pct: float = 0.0
+    score: float = 0.0
+
+
+@dataclass
+class TopResult:
+    """A fully backtested top candidate."""
+
+    rank: int
+    strategy_type: str
+    strategy_label: str
+    target_dte: int
+    config_snapshot: dict[str, Any]
+    summary: dict[str, Any]
+    trades: list[dict[str, Any]]
+    equity_curve: list[dict[str, Any]]
+    forecast: dict[str, Any] = field(default_factory=dict)
+    score: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+
+
+class SymbolDeepAnalysisService:
+    """Run an exhaustive single-symbol analysis."""
+
+    def __init__(
+        self,
+        session: Session,
+        *,
+        market_data_fetcher: Any,
+        backtest_executor: Any,
+        forecaster: Any | None = None,
+    ) -> None:
+        self.session = session
+        self.market_data = market_data_fetcher
+        self.executor = backtest_executor
+        self.forecaster = forecaster
+
+    def create_analysis(
+        self,
+        user: User,
+        symbol: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> SymbolAnalysis:
+        """Create a queued analysis record. Caller dispatches to Celery."""
+        if idempotency_key:
+            existing = self.session.scalar(
+                select(SymbolAnalysis).where(
+                    SymbolAnalysis.user_id == user.id,
+                    SymbolAnalysis.idempotency_key == idempotency_key,
+                )
+            )
+            if existing is not None:
+                return existing
+
+        analysis = SymbolAnalysis(
+            user_id=user.id,
+            symbol=symbol.strip().upper(),
+            status="queued",
+            stage="pending",
+            idempotency_key=idempotency_key,
+        )
+        self.session.add(analysis)
+        self.session.commit()
+        self.session.refresh(analysis)
+        return analysis
+
+    def execute_analysis(self, analysis_id: UUID) -> SymbolAnalysis:
+        """Execute the deep analysis (called by Celery worker)."""
+        analysis = self.session.scalar(
+            select(SymbolAnalysis).where(SymbolAnalysis.id == analysis_id).with_for_update()
+        )
+        if analysis is None:
+            raise NotFoundError("Symbol analysis not found.")
+        if analysis.status not in ("queued", "running"):
+            return analysis
+
+        started_at = time.monotonic()
+        analysis.status = "running"
+        analysis.stage = "regime"
+        self.session.commit()
+
+        try:
+            symbol = analysis.symbol
+            trade_date = datetime.now(UTC).date()
+
+            # --- Stage 1: Regime analysis ---
+            bars = self.market_data.get_daily_bars(
+                symbol,
+                trade_date - timedelta(days=400),
+                trade_date,
+            )
+            regime = classify_regime(symbol, bars)
+            if regime is None:
+                raise DataUnavailableError(f"Insufficient data to classify regime for {symbol}.")
+
+            analysis.close_price = Decimal(str(round(regime.close_price, 4)))
+            analysis.regime_json = {
+                "regimes": sorted(r.value for r in regime.regimes),
+                "rsi_14": regime.rsi_14,
+                "ema_8": regime.ema_8,
+                "ema_21": regime.ema_21,
+                "sma_50": regime.sma_50,
+                "sma_200": regime.sma_200,
+                "realized_vol_20": regime.realized_vol_20,
+                "iv_rank_proxy": regime.iv_rank_proxy,
+                "volume_ratio": regime.volume_ratio,
+                "close_price": regime.close_price,
+            }
+            analysis.stage = "landscape"
+            self.session.commit()
+            logger.info("deep_analysis.regime_done", analysis_id=str(analysis_id), symbol=symbol)
+
+            # --- Stage 2: Strategy landscape ---
+            landscape = self._build_landscape(symbol, trade_date)
+            analysis.landscape_json = [
+                {
+                    "strategy_type": cell.strategy_type,
+                    "strategy_label": cell.strategy_label,
+                    "target_dte": cell.target_dte,
+                    "config": cell.config_snapshot,
+                    "trade_count": cell.trade_count,
+                    "win_rate": cell.win_rate,
+                    "total_roi_pct": cell.total_roi_pct,
+                    "max_drawdown_pct": cell.max_drawdown_pct,
+                    "score": round(cell.score, 4),
+                }
+                for cell in landscape
+            ]
+            analysis.strategies_tested = len({c.strategy_type for c in landscape})
+            analysis.configs_tested = len(landscape)
+            analysis.stage = "deep_dive"
+            self.session.commit()
+            logger.info(
+                "deep_analysis.landscape_done",
+                analysis_id=str(analysis_id),
+                cells=len(landscape),
+            )
+
+            # --- Stage 3: Top-10 deep dive ---
+            landscape.sort(key=lambda c: c.score, reverse=True)
+            # Deduplicate: best config per strategy, then top 10
+            seen_strategies: set[str] = set()
+            top_candidates: list[LandscapeCell] = []
+            for cell in landscape:
+                if cell.strategy_type not in seen_strategies and cell.score > 0:
+                    seen_strategies.add(cell.strategy_type)
+                    top_candidates.append(cell)
+                if len(top_candidates) >= 10:
+                    break
+
+            top_results = self._deep_dive(symbol, trade_date, top_candidates)
+            analysis.top_results_json = [
+                {
+                    "rank": r.rank,
+                    "strategy_type": r.strategy_type,
+                    "strategy_label": r.strategy_label,
+                    "target_dte": r.target_dte,
+                    "config": r.config_snapshot,
+                    "summary": r.summary,
+                    "trades": r.trades,
+                    "equity_curve": r.equity_curve,
+                    "forecast": r.forecast,
+                    "score": round(r.score, 4),
+                }
+                for r in top_results
+            ]
+            analysis.top_results_count = len(top_results)
+            analysis.stage = "forecast"
+            self.session.commit()
+
+            # --- Stage 4: Forecast on best result ---
+            if top_results and self.forecaster:
+                best = top_results[0]
+                try:
+                    forecast = self.forecaster.get_forecast(
+                        symbol=symbol,
+                        strategy_type=best.strategy_type,
+                        horizon_days=best.target_dte,
+                    )
+                    if forecast:
+                        analysis.forecast_json = forecast
+                except Exception:
+                    logger.debug(
+                        "deep_analysis.forecast_overlay_failed",
+                        symbol=symbol,
+                        exc_info=True,
+                    )
+
+            analysis.status = "succeeded"
+            analysis.completed_at = datetime.now(UTC)
+            analysis.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
+            self.session.commit()
+
+            logger.info(
+                "deep_analysis.complete",
+                analysis_id=str(analysis_id),
+                symbol=symbol,
+                top_results=len(top_results),
+                duration=float(analysis.duration_seconds),
+            )
+
+        except Exception as exc:
+            analysis.status = "failed"
+            analysis.error_message = str(exc)[:2000]
+            analysis.completed_at = datetime.now(UTC)
+            analysis.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
+            self.session.commit()
+            logger.exception("deep_analysis.failed", analysis_id=str(analysis_id))
+            raise
+
+        self.session.refresh(analysis)
+        return analysis
+
+    def get_analysis(self, user: User, analysis_id: UUID) -> SymbolAnalysis:
+        analysis = self.session.get(SymbolAnalysis, analysis_id)
+        if analysis is None or analysis.user_id != user.id:
+            raise NotFoundError("Symbol analysis not found.")
+        return analysis
+
+    def list_for_user(self, user: User, limit: int = 20) -> list[SymbolAnalysis]:
+        stmt = (
+            select(SymbolAnalysis)
+            .where(SymbolAnalysis.user_id == user.id)
+            .order_by(SymbolAnalysis.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
+    # -------------------------------------------------------------------
+    # Internal stages
+    # -------------------------------------------------------------------
+
+    def _build_landscape(self, symbol: str, trade_date: date) -> list[LandscapeCell]:
+        """Test all strategies × dense param grid with 90-day quick backtests."""
+        lookback_start = trade_date - timedelta(days=90)
+        strategy_types = [st for st in STRATEGY_REGISTRY.keys() if st not in _SKIP_STRATEGIES]
+
+        work_items: list[tuple[str, str, dict[str, Any]]] = []
+        for strategy_type in strategy_types:
+            label = _strategy_label(strategy_type)
+            for param_config in DEEP_PARAM_GRID:
+                work_items.append((strategy_type, label, param_config))
+
+        cells: list[LandscapeCell] = []
+
+        def _run_cell(item: tuple[str, str, dict[str, Any]]) -> LandscapeCell | None:
+            from backtestforecast.pipeline.adapters import PipelineBacktestExecutor
+            thread_executor = PipelineBacktestExecutor()
+            strategy_type, label, param_config = item
+            try:
+                target_dte = param_config["target_dte"]
+                overrides = param_config.get("strategy_overrides")
+                summary = thread_executor.run_quick_backtest(
+                    symbol=symbol,
+                    strategy_type=strategy_type,
+                    start_date=lookback_start,
+                    end_date=trade_date,
+                    target_dte=target_dte,
+                    strategy_overrides=overrides,
+                )
+                if summary is None:
+                    return None
+                trade_count = summary.get("trade_count", 0)
+                win_rate = summary.get("win_rate", 0.0)
+                roi = summary.get("total_roi_pct", 0.0)
+                drawdown = min(summary.get("max_drawdown_pct", 50.0), 99.0)
+                score = 0.0
+                if trade_count > 0:
+                    score = roi * (win_rate / 100.0) * (1.0 - drawdown / 100.0)
+                return LandscapeCell(
+                    strategy_type=strategy_type,
+                    strategy_label=label,
+                    target_dte=target_dte,
+                    config_snapshot={"target_dte": target_dte, "strategy_overrides": overrides},
+                    trade_count=trade_count,
+                    win_rate=win_rate,
+                    total_roi_pct=roi,
+                    max_drawdown_pct=drawdown,
+                    score=score,
+                )
+            except Exception:
+                logger.debug(
+                    "deep_analysis.landscape_cell_failed",
+                    strategy_type=strategy_type,
+                    exc_info=True,
+                )
+                return None
+
+        max_workers = min(4, len(work_items))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_run_cell, item): item for item in work_items}
+            for future in as_completed(futures):
+                cell = future.result()
+                if cell is not None:
+                    cells.append(cell)
+
+        return cells
+
+    def _deep_dive(
+        self,
+        symbol: str,
+        trade_date: date,
+        candidates: list[LandscapeCell],
+    ) -> list[TopResult]:
+        """Full 1-year backtests on the top candidates."""
+        results: list[TopResult] = []
+        lookback_start = trade_date - timedelta(days=365)
+
+        for rank_idx, cell in enumerate(candidates, start=1):
+            try:
+                full = self.executor.run_full_backtest(
+                    symbol=symbol,
+                    strategy_type=cell.strategy_type,
+                    start_date=lookback_start,
+                    end_date=trade_date,
+                    target_dte=cell.target_dte,
+                    strategy_overrides=cell.config_snapshot.get("strategy_overrides"),
+                )
+                if full is None or full.get("trade_count", 0) == 0:
+                    continue
+
+                roi = full.get("total_roi_pct", 0.0)
+                win_rate = full.get("win_rate", 0.0) / 100.0
+                drawdown = min(full.get("max_drawdown_pct", 50.0), 99.0)
+                trade_count = full.get("trade_count", 1)
+                sample_factor = min(trade_count / 10.0, 1.0)
+                score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
+
+                # Forecast overlay per candidate
+                forecast: dict[str, Any] = {}
+                if self.forecaster:
+                    try:
+                        f = self.forecaster.get_forecast(
+                            symbol=symbol,
+                            strategy_type=cell.strategy_type,
+                            horizon_days=cell.target_dte,
+                        )
+                        if f:
+                            forecast = f
+                            median_return = f.get("expected_return_median_pct", 0)
+                            if (roi > 0) == (float(median_return) > 0):
+                                score *= 1.2
+                    except Exception:
+                        logger.debug(
+                            "deep_analysis.candidate_forecast_failed",
+                            strategy_type=cell.strategy_type,
+                            exc_info=True,
+                        )
+
+                results.append(
+                    TopResult(
+                        rank=rank_idx,
+                        strategy_type=cell.strategy_type,
+                        strategy_label=cell.strategy_label,
+                        target_dte=cell.target_dte,
+                        config_snapshot=cell.config_snapshot,
+                        summary=full,
+                        trades=full.get("trades", [])[:25],
+                        equity_curve=full.get("equity_curve", []),
+                        forecast=forecast,
+                        score=score,
+                    )
+                )
+
+            except Exception:
+                logger.debug(
+                    "deep_analysis.deep_dive_candidate_failed",
+                    strategy_type=cell.strategy_type,
+                    exc_info=True,
+                )
+                continue
+
+        results.sort(key=lambda r: r.score, reverse=True)
+        for i, r in enumerate(results, start=1):
+            r.rank = i
+        return results
+
+
+def _strategy_label(strategy_type: str) -> str:
+    """Human-readable label for a strategy type."""
+    return strategy_type.replace("_", " ").title()

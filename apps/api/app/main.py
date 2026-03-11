@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware import Middleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from apps.api.app.routers import (
+    analysis,
+    backtests,
+    billing,
+    catalog,
+    daily_picks,
+    exports,
+    forecasts,
+    health,
+    me,
+    meta,
+    scans,
+    templates,
+)
+from backtestforecast.config import get_settings
+from backtestforecast.errors import AppError
+from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
+from backtestforecast.observability.logging import RequestContextMiddleware
+from backtestforecast.security.http import ApiSecurityHeadersMiddleware, RequestBodyLimitMiddleware
+
+settings = get_settings()
+configure_logging(settings)
+logger = get_logger("api")
+
+_is_dev = settings.app_env in ("development", "test")
+
+app = FastAPI(
+    title=settings.app_name,
+    version="0.1.0",
+    docs_url="/docs" if _is_dev else None,
+    redoc_url="/redoc" if _is_dev else None,
+    middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)],
+)
+
+app.add_middleware(RequestContextMiddleware)
+app.add_middleware(ApiSecurityHeadersMiddleware)
+app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.web_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(health.router)
+app.include_router(meta.router, prefix="/v1")
+app.include_router(me.router, prefix="/v1")
+app.include_router(catalog.router, prefix="/v1")
+app.include_router(backtests.router, prefix="/v1")
+app.include_router(templates.router, prefix="/v1")
+app.include_router(scans.router, prefix="/v1")
+app.include_router(forecasts.router, prefix="/v1")
+app.include_router(exports.router, prefix="/v1")
+app.include_router(daily_picks.router, prefix="/v1")
+app.include_router(analysis.router, prefix="/v1")
+app.include_router(billing.router, prefix="/v1")
+
+
+def _error_payload(request: Request, *, code: str, message: str) -> dict[str, object]:
+    return {
+        "error": {
+            "code": code,
+            "message": message,
+            "request_id": getattr(request.state, "request_id", None),
+        }
+    }
+
+
+@app.exception_handler(AppError)
+def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    logger.warning("api.error", code=exc.code, status_code=exc.status_code, message=exc.message)
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content=_error_payload(request, code=exc.code, message=exc.message),
+    )
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        response.headers[REQUEST_ID_HEADER] = request_id
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning("api.request_validation_error", errors=exc.errors())
+    response = JSONResponse(
+        status_code=422,
+        content=_error_payload(
+            request,
+            code="request_validation_error",
+            message="The request payload did not match the expected schema.",
+        ),
+    )
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        response.headers[REQUEST_ID_HEADER] = request_id
+    return response
+
+
+@app.exception_handler(StarletteHTTPException)
+def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    detail = exc.detail if isinstance(exc.detail, str) else "The request could not be completed."
+    logger.warning("api.http_exception", status_code=exc.status_code, detail=detail)
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content=_error_payload(request, code="http_error", message=detail),
+    )
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        response.headers[REQUEST_ID_HEADER] = request_id
+    return response
+
+
+@app.exception_handler(Exception)
+def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("api.unhandled_exception", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content=_error_payload(
+            request,
+            code="internal_server_error",
+            message="An unexpected server error occurred.",
+        ),
+        headers={REQUEST_ID_HEADER: getattr(request.state, "request_id", "")},
+    )
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "service": "backtestforecast-api",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health/ready",
+    }

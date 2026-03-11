@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class AppError(Exception):
+    code: str
+    message: str
+    status_code: int = 400
+
+    def __post_init__(self) -> None:
+        Exception.__init__(self, self.message)
+
+
+class AuthenticationError(AppError):
+    def __init__(self, message: str = "Authentication required.") -> None:
+        super().__init__(code="authentication_error", message=message, status_code=401)
+
+
+class AuthorizationError(AppError):
+    def __init__(self, message: str = "You do not have access to this resource.") -> None:
+        super().__init__(code="authorization_error", message=message, status_code=403)
+
+
+class QuotaExceededError(AppError):
+    """Raised when a user hits a plan-based usage limit (e.g. monthly backtests)."""
+
+    def __init__(self, message: str, *, current_tier: str = "free") -> None:
+        super().__init__(code="quota_exceeded", message=message, status_code=403)
+        self.current_tier = current_tier
+
+
+class FeatureLockedError(AppError):
+    """Raised when a user tries to access a feature not included in their plan."""
+
+    def __init__(self, message: str, *, required_tier: str = "pro") -> None:
+        super().__init__(code="feature_locked", message=message, status_code=403)
+        self.required_tier = required_tier
+
+
+class ConfigurationError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(code="configuration_error", message=message, status_code=500)
+
+
+class ValidationError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(code="validation_error", message=message, status_code=422)
+
+
+class DataUnavailableError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(code="data_unavailable", message=message, status_code=422)
+
+
+class ExternalServiceError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(code="external_service_error", message=message, status_code=502)
+
+
+class NotFoundError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(code="not_found", message=message, status_code=404)
+
+
+class RateLimitError(AppError):
+    def __init__(self, message: str = "Rate limit exceeded. Please retry later.") -> None:
+        super().__init__(code="rate_limited", message=message, status_code=429)
+
+
+class ConflictError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(code="conflict", message=message, status_code=409)

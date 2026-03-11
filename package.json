@@ -1,0 +1,15 @@
+{
+  "name": "backtestforecast-monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev:web": "pnpm --filter @backtestforecast/web dev",
+    "build:web": "pnpm --filter @backtestforecast/web build",
+    "lint:web": "pnpm --filter @backtestforecast/web lint",
+    "typecheck:web": "pnpm --filter @backtestforecast/web typecheck",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2"
+  }
+}
