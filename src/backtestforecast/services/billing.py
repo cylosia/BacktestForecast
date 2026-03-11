@@ -287,7 +287,7 @@ class BillingService:
             select(User).where(User.id == user.id).with_for_update()
         )
         if locked_user is None:
-            locked_user = user
+            raise NotFoundError("User account no longer exists.")
         if locked_user.stripe_customer_id:
             return locked_user.stripe_customer_id
         client = self._get_stripe_client()

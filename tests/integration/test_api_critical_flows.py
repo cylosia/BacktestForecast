@@ -43,6 +43,9 @@ class FakeExecutionService:
     def __init__(self) -> None:
         self.market_data_service = FakeMarketDataService()
 
+    def close(self) -> None:
+        pass
+
     def execute_request(self, request, bundle=None) -> BacktestExecutionResult:
         roi_lookup = {"AAPL": Decimal("12.5"), "MSFT": Decimal("6.5"), "NVDA": Decimal("15.0")}
         roi = roi_lookup.get(request.symbol, Decimal("5.0"))

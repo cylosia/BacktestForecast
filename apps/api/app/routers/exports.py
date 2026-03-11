@@ -94,6 +94,7 @@ def download_export(
         .replace('"', "")
         .replace("\\", "")
         .replace("/", "")
+        .replace("..", "")
         .replace("\x00", "")
         .replace("\r", "")
         .replace("\n", "")

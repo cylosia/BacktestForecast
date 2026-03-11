@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,11 +40,21 @@ logger = get_logger("api")
 
 _is_dev = settings.app_env in ("development", "test")
 
+
+@asynccontextmanager
+async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
+    yield
+    from apps.api.app.routers.events import shutdown_async_redis
+
+    await shutdown_async_redis()
+
+
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     docs_url="/docs" if _is_dev else None,
     redoc_url="/redoc" if _is_dev else None,
+    lifespan=_lifespan,
     middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)],
 )
 

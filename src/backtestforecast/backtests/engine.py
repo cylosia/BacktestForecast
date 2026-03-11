@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from backtestforecast.backtests.rules import EntryRuleEvaluator
@@ -318,7 +318,10 @@ class OptionsBacktestEngine:
         backtest_end_date: date,
         last_bar_date: date,
     ) -> tuple[bool, str]:
-        exit_date = position.scheduled_exit_date or max(leg.expiration_date for leg in position.option_legs)
+        if position.option_legs:
+            exit_date = position.scheduled_exit_date or max(leg.expiration_date for leg in position.option_legs)
+        else:
+            exit_date = position.scheduled_exit_date or (position.entry_date + timedelta(days=max_holding_days))
         if bar.trade_date >= exit_date:
             return True, "expiration"
         if (bar.trade_date - position.entry_date).days >= max_holding_days:

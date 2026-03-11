@@ -23,12 +23,17 @@ SSE_TIMEOUT_SECONDS = 300
 SSE_HEARTBEAT_SECONDS = 15
 
 _async_redis_pool = None
+_async_redis_lock = asyncio.Lock()
 
 
 async def _get_async_redis():
     """Return a lazily-initialised shared async Redis connection pool."""
     global _async_redis_pool
-    if _async_redis_pool is None:
+    if _async_redis_pool is not None:
+        return _async_redis_pool
+    async with _async_redis_lock:
+        if _async_redis_pool is not None:
+            return _async_redis_pool
         import redis.asyncio as aioredis
 
         settings = get_settings()
@@ -38,6 +43,14 @@ async def _get_async_redis():
             max_connections=50,
         )
     return _async_redis_pool
+
+
+async def shutdown_async_redis() -> None:
+    """Close the shared async Redis pool. Called from app lifespan shutdown."""
+    global _async_redis_pool
+    if _async_redis_pool is not None:
+        await _async_redis_pool.aclose()
+        _async_redis_pool = None
 
 
 def _verify_ownership(db: Session, model: type, resource_id: UUID, user_id: UUID) -> None:

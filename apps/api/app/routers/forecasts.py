@@ -37,9 +37,10 @@ def get_forecast(
     )
     if not _TICKER_RE.match(ticker):
         raise ValidationError("Ticker must be 1-10 alphabetic characters.")
-    return ScanService(db).build_forecast(
-        user=user,
-        symbol=ticker,
-        strategy_type=strategy_type.value if strategy_type is not None else None,
-        horizon_days=horizon_days,
-    )
+    with ScanService(db) as service:
+        return service.build_forecast(
+            user=user,
+            symbol=ticker,
+            strategy_type=strategy_type.value if strategy_type is not None else None,
+            horizon_days=horizon_days,
+        )
