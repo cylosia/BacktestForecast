@@ -48,32 +48,34 @@ class BillingService:
     ) -> CheckoutSessionResponse:
         if payload.tier == PlanTier.FREE.value:
             raise ValidationError("Free does not require a Stripe checkout session.")
-        stripe = self._stripe_module()
+        client = self._get_stripe_client()
         customer_id = self._get_or_create_customer(user)
         price_id = self._price_id_for(payload.tier, payload.billing_interval.value)
 
-        checkout_session = stripe.checkout.Session.create(
-            mode="subscription",
-            customer=customer_id,
-            line_items=[{"price": price_id, "quantity": 1}],
-            success_url=f"{self.settings.app_public_url}/app/settings/billing?checkout=success",
-            cancel_url=f"{self.settings.app_public_url}/pricing?checkout=cancelled",
-            allow_promotion_codes=True,
-            client_reference_id=str(user.id),
-            metadata={
-                "user_id": str(user.id),
-                "clerk_user_id": user.clerk_user_id,
-                "requested_tier": payload.tier,
-                "billing_interval": payload.billing_interval.value,
-            },
-            subscription_data={
+        checkout_session = client.checkout.sessions.create(
+            params={
+                "mode": "subscription",
+                "customer": customer_id,
+                "line_items": [{"price": price_id, "quantity": 1}],
+                "success_url": f"{self.settings.app_public_url}/app/settings/billing?checkout=success",
+                "cancel_url": f"{self.settings.app_public_url}/pricing?checkout=cancelled",
+                "allow_promotion_codes": True,
+                "client_reference_id": str(user.id),
                 "metadata": {
                     "user_id": str(user.id),
                     "clerk_user_id": user.clerk_user_id,
                     "requested_tier": payload.tier,
                     "billing_interval": payload.billing_interval.value,
-                }
-            },
+                },
+                "subscription_data": {
+                    "metadata": {
+                        "user_id": str(user.id),
+                        "clerk_user_id": user.clerk_user_id,
+                        "requested_tier": payload.tier,
+                        "billing_interval": payload.billing_interval.value,
+                    }
+                },
+            }
         )
         self.audit.record(
             event_type="billing.checkout_session.created",
@@ -113,13 +115,12 @@ class BillingService:
         request_id: str | None = None,
         ip_address: str | None = None,
     ) -> PortalSessionResponse:
-        stripe = self._stripe_module()
+        client = self._get_stripe_client()
         if not user.stripe_customer_id:
             raise NotFoundError("No Stripe customer is attached to this account yet.")
         return_url = self._resolve_return_url(payload.return_path)
-        portal_session = stripe.billing_portal.Session.create(
-            customer=user.stripe_customer_id,
-            return_url=return_url,
+        portal_session = client.billing_portal.sessions.create(
+            params={"customer": user.stripe_customer_id, "return_url": return_url}
         )
         self.audit.record(
             event_type="billing.portal_session.created",
@@ -142,11 +143,11 @@ class BillingService:
         request_id: str | None = None,
         ip_address: str | None = None,
     ) -> dict[str, str]:
-        stripe = self._stripe_module()
+        client = self._get_stripe_client()
         if not signature_header:
             raise AuthenticationError("Missing Stripe-Signature header.")
         try:
-            event = stripe.Webhook.construct_event(
+            event = client.construct_event(
                 payload_bytes,
                 signature_header,
                 self.settings.stripe_webhook_secret,
@@ -212,8 +213,8 @@ class BillingService:
         subscription_id = self._coerce_stripe_id(checkout_session.get("subscription"))
         if subscription_id:
             user.stripe_subscription_id = subscription_id
-            stripe = self._stripe_module()
-            subscription = stripe.Subscription.retrieve(subscription_id)
+            client = self._get_stripe_client()
+            subscription = client.subscriptions.retrieve(subscription_id)
             self._apply_subscription_to_user(user, subscription)
         return user
 
@@ -282,13 +283,15 @@ class BillingService:
     def _get_or_create_customer(self, user: User) -> str:
         if user.stripe_customer_id:
             return user.stripe_customer_id
-        stripe = self._stripe_module()
-        customer = stripe.Customer.create(
-            email=user.email,
-            metadata={
-                "user_id": str(user.id),
-                "clerk_user_id": user.clerk_user_id,
-            },
+        client = self._get_stripe_client()
+        customer = client.customers.create(
+            params={
+                "email": user.email,
+                "metadata": {
+                    "user_id": str(user.id),
+                    "clerk_user_id": user.clerk_user_id,
+                },
+            }
         )
         user.stripe_customer_id = customer.id
         self.session.add(user)
@@ -366,12 +369,11 @@ class BillingService:
         except (TypeError, ValueError, OSError):
             return None
 
-    def _stripe_module(self):
+    def _get_stripe_client(self):
         if not self.settings.stripe_secret_key or not self.settings.stripe_webhook_secret:
             raise ConfigurationError("Stripe billing is not configured.")
         try:
             import stripe  # type: ignore
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise ConfigurationError("The Stripe SDK is not installed.") from exc
-        stripe.api_key = self.settings.stripe_secret_key
-        return stripe
+        return stripe.StripeClient(self.settings.stripe_secret_key)

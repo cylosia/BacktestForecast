@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware import Middleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -14,6 +15,7 @@ from apps.api.app.routers import (
     billing,
     catalog,
     daily_picks,
+    events,
     exports,
     forecasts,
     health,
@@ -26,6 +28,7 @@ from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
 from backtestforecast.observability.logging import RequestContextMiddleware
+from backtestforecast.observability.metrics import PrometheusMiddleware, metrics_response
 from backtestforecast.security.http import ApiSecurityHeadersMiddleware, RequestBodyLimitMiddleware
 
 settings = get_settings()
@@ -43,6 +46,7 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(PrometheusMiddleware)
 app.add_middleware(ApiSecurityHeadersMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
 app.add_middleware(
@@ -65,6 +69,7 @@ app.include_router(exports.router, prefix="/v1")
 app.include_router(daily_picks.router, prefix="/v1")
 app.include_router(analysis.router, prefix="/v1")
 app.include_router(billing.router, prefix="/v1")
+app.include_router(events.router, prefix="/v1")
 
 
 def _error_payload(request: Request, *, code: str, message: str) -> dict[str, object]:
@@ -133,6 +138,13 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
         ),
         headers={REQUEST_ID_HEADER: getattr(request.state, "request_id", "")},
     )
+
+
+if settings.app_env != "test":
+
+    @app.get("/metrics", include_in_schema=False)
+    def prometheus_metrics() -> Response:
+        return metrics_response()
 
 
 @app.get("/")

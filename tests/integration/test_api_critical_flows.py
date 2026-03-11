@@ -579,15 +579,13 @@ def test_stripe_webhook_upgrade_and_dedupe(client, auth_headers, db_session, mon
         base = FakeStripeModule.Webhook.construct_event(b"{}", "sig", "sec")
         obj = base["data"]["object"]
         return SimpleNamespace(
-            Webhook=SimpleNamespace(
-                construct_event=lambda p, s, sec: {
-                    **base,
-                    "data": {"object": {**obj, "metadata": {"user_id": user_id, "requested_tier": "pro"}}},
-                }
-            )
+            construct_event=lambda p, s, sec: {
+                **base,
+                "data": {"object": {**obj, "metadata": {"user_id": user_id, "requested_tier": "pro"}}},
+            },
         )
 
-    monkeypatch.setattr(billing_services.BillingService, "_stripe_module", fake_stripe)
+    monkeypatch.setattr(billing_services.BillingService, "_get_stripe_client", fake_stripe)
 
     resp = client.post("/v1/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig", "Host": "localhost"})
     assert resp.json()["status"] == "ok"
@@ -598,6 +596,197 @@ def test_stripe_webhook_upgrade_and_dedupe(client, auth_headers, db_session, mon
     db_session.expire_all()
     user = db_session.query(User).filter(User.clerk_user_id == "clerk_test_user").one()
     assert user.plan_tier == "pro"
+
+
+def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
+    import backtestforecast.services.billing as billing_services
+
+    class SignatureVerificationError(Exception):
+        pass
+
+    def fake_stripe_with_sig_check(self):
+        def reject_signature(payload, sig_header, secret):
+            raise SignatureVerificationError(
+                "No signatures found matching the expected signature for payload"
+            )
+
+        return SimpleNamespace(construct_event=reject_signature)
+
+    monkeypatch.setattr(
+        billing_services.BillingService, "_get_stripe_client", fake_stripe_with_sig_check
+    )
+
+    resp = client.post(
+        "/v1/billing/webhook",
+        content=b'{"id": "evt_tampered"}',
+        headers={"Stripe-Signature": "t=999,v1=bad_signature", "Host": "localhost"},
+    )
+    assert resp.status_code == 401
+    body = resp.json()
+    assert body["error"]["code"] == "authentication_error"
+    assert "signature" in body["error"]["message"].lower()
+
+
+def test_stripe_webhook_rejects_missing_signature(client):
+    resp = client.post(
+        "/v1/billing/webhook",
+        content=b'{"id": "evt_no_sig"}',
+        headers={"Host": "localhost"},
+    )
+    assert resp.status_code == 422
+
+
+def test_stripe_webhook_ignored_event_type(client, auth_headers, db_session, monkeypatch):
+    import backtestforecast.services.billing as billing_services
+
+    client.get("/v1/me", headers=auth_headers)
+
+    def fake_stripe(self):
+        return SimpleNamespace(
+            construct_event=lambda p, s, sec: {
+                "id": "evt_ignored_001",
+                "type": "payment_intent.succeeded",
+                "livemode": False,
+                "data": {"object": {"id": "pi_test_123"}},
+            },
+        )
+
+    monkeypatch.setattr(billing_services.BillingService, "_get_stripe_client", fake_stripe)
+
+    resp = client.post(
+        "/v1/billing/webhook",
+        content=b"{}",
+        headers={"Stripe-Signature": "sig", "Host": "localhost"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["event_type"] == "payment_intent.succeeded"
+
+    db_session.expire_all()
+    user = db_session.query(User).filter(User.clerk_user_id == "clerk_test_user").one()
+    assert user.plan_tier == "free"
+
+
+def test_stripe_webhook_missing_user_metadata(client, monkeypatch):
+    import backtestforecast.services.billing as billing_services
+
+    def fake_stripe(self):
+        return SimpleNamespace(
+            construct_event=lambda p, s, sec: {
+                "id": "evt_no_user_meta",
+                "type": "checkout.session.completed",
+                "livemode": False,
+                "data": {
+                    "object": {
+                        "id": "cs_test_orphan",
+                        "customer": "cus_nonexistent",
+                        "subscription": "sub_orphan",
+                        "metadata": {},
+                    }
+                },
+            },
+        )
+
+    monkeypatch.setattr(billing_services.BillingService, "_get_stripe_client", fake_stripe)
+
+    resp = client.post(
+        "/v1/billing/webhook",
+        content=b"{}",
+        headers={"Stripe-Signature": "sig", "Host": "localhost"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+def test_stripe_webhook_subscription_deleted_downgrades_to_free(
+    client, auth_headers, db_session, monkeypatch
+):
+    import backtestforecast.services.billing as billing_services
+
+    user_id = client.get("/v1/me", headers=auth_headers).json()["id"]
+
+    user = db_session.query(User).filter(User.clerk_user_id == "clerk_test_user").one()
+    user.plan_tier = "pro"
+    user.subscription_status = "active"
+    user.stripe_subscription_id = "sub_to_cancel"
+    user.stripe_customer_id = "cus_cancel_test"
+    db_session.commit()
+
+    def fake_stripe(self):
+        return SimpleNamespace(
+            construct_event=lambda p, s, sec: {
+                "id": "evt_sub_deleted",
+                "type": "customer.subscription.deleted",
+                "livemode": False,
+                "data": {
+                    "object": {
+                        "id": "sub_to_cancel",
+                        "customer": "cus_cancel_test",
+                        "status": "canceled",
+                        "cancel_at_period_end": False,
+                        "current_period_end": int(
+                            datetime(2026, 4, 1, tzinfo=UTC).timestamp()
+                        ),
+                        "metadata": {
+                            "user_id": user_id,
+                            "requested_tier": "pro",
+                        },
+                        "items": {
+                            "data": [
+                                {
+                                    "price": {
+                                        "id": "price_pro_monthly",
+                                        "recurring": {"interval": "month"},
+                                    }
+                                }
+                            ]
+                        },
+                    }
+                },
+            },
+        )
+
+    monkeypatch.setattr(billing_services.BillingService, "_get_stripe_client", fake_stripe)
+
+    resp = client.post(
+        "/v1/billing/webhook",
+        content=b"{}",
+        headers={"Stripe-Signature": "sig", "Host": "localhost"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert resp.json()["event_type"] == "customer.subscription.deleted"
+
+    db_session.expire_all()
+    user = db_session.query(User).filter(User.clerk_user_id == "clerk_test_user").one()
+    assert user.plan_tier == "free"
+    assert user.subscription_status == "canceled"
+
+
+def test_stripe_webhook_empty_body_rejected(client, monkeypatch):
+    import backtestforecast.services.billing as billing_services
+
+    class SignatureVerificationError(Exception):
+        pass
+
+    def fake_stripe_sig_fail(self):
+        def reject(payload, sig_header, secret):
+            raise SignatureVerificationError("Unable to extract timestamp and signatures")
+
+        return SimpleNamespace(construct_event=reject)
+
+    monkeypatch.setattr(
+        billing_services.BillingService, "_get_stripe_client", fake_stripe_sig_fail
+    )
+
+    resp = client.post(
+        "/v1/billing/webhook",
+        content=b"",
+        headers={"Stripe-Signature": "t=0,v1=empty", "Host": "localhost"},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "authentication_error"
 
 
 # ===========================================================================

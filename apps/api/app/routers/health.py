@@ -34,13 +34,20 @@ def ready() -> JSONResponse:
             },
         )
 
+    if redis_up:
+        rl_mode = "redis"
+    elif settings.rate_limit_fail_closed:
+        rl_mode = "fail_closed"
+    else:
+        rl_mode = "in_memory_fallback"
+
     payload = {
         "status": "ok" if redis_up else "degraded",
         "version": HEALTH_VERSION,
         "environment": settings.app_env,
         "database": "up",
         "redis": "up" if redis_up else "degraded",
-        "rate_limit_mode": "redis" if redis_up else "in_memory_fallback",
+        "rate_limit_mode": rl_mode,
     }
     status_code = 200
     return JSONResponse(status_code=status_code, content=payload)

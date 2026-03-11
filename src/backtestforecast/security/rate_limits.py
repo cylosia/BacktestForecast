@@ -8,14 +8,21 @@ from redis import Redis
 from redis.exceptions import RedisError
 
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.errors import RateLimitError
+from backtestforecast.errors import AppError, RateLimitError
+from backtestforecast.observability.metrics import RATE_LIMIT_HITS_TOTAL
 
 logger = structlog.get_logger("security.rate_limits")
+
+
+class ServiceUnavailableError(AppError):
+    def __init__(self, message: str = "Service temporarily unavailable. Please retry later.") -> None:
+        super().__init__(code="service_unavailable", message=message, status_code=503)
 
 
 class RateLimiter:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        self._fail_closed = self.settings.rate_limit_fail_closed
         self._memory_lock = Lock()
         self._memory_counters: dict[str, tuple[int, int]] = {}
         try:
@@ -31,9 +38,19 @@ class RateLimiter:
             if self._redis is not None:
                 self._check_redis(namespaced, limit, window_seconds)
                 return
+        except RateLimitError:
+            RATE_LIMIT_HITS_TOTAL.labels(bucket=bucket).inc()
+            raise
         except RedisError:
             logger.warning("rate_limiter.redis_fallback", key=bucket, exc_info=True)
-        self._check_memory(namespaced, limit, window_seconds)
+            if self._fail_closed:
+                logger.error("rate_limiter.fail_closed", bucket=bucket)
+                raise ServiceUnavailableError()
+        try:
+            self._check_memory(namespaced, limit, window_seconds)
+        except RateLimitError:
+            RATE_LIMIT_HITS_TOTAL.labels(bucket=bucket).inc()
+            raise
 
     def ping(self) -> bool:
         try:
