@@ -165,6 +165,9 @@ class Settings(BaseSettings):
     export_create_rate_limit: int = 20
     billing_create_rate_limit: int = 10
     template_mutate_rate_limit: int = 20
+    analysis_create_rate_limit: int = 10
+    analysis_rate_limit_window_seconds: int = 3600
+    forecast_rate_limit: int = 6
     rate_limit_window_seconds: int = 60
 
     max_backtest_window_days: int = 1_825

@@ -154,6 +154,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
     )
     from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 
+    publish_job_status("analysis", UUID(analysis_id), "running")
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
     try:
@@ -172,6 +173,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 result = service.execute_analysis(UUID(analysis_id))
             except AppError as exc:
                 session.rollback()
+                publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": exc.code})
                 return {
                     "status": "failed",
                     "analysis_id": analysis_id,
@@ -181,6 +183,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 session.rollback()
                 raise self.retry(exc=exc, countdown=60)
 
+            publish_job_status("analysis", UUID(analysis_id), result.status)
             return {
                 "status": result.status,
                 "analysis_id": analysis_id,

@@ -468,7 +468,7 @@ def test_export_blocked_free_tier(client, auth_headers, immediate_backtest_execu
 # ===========================================================================
 
 
-def test_catalog_returns_all_14_strategies(client, auth_headers):
+def test_catalog_returns_all_35_strategies(client, auth_headers):
     resp = client.get("/v1/strategy-catalog", headers=auth_headers)
     assert resp.status_code == 200
     catalog = resp.json()

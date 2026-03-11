@@ -32,7 +32,7 @@ def get_forecast(
     rate_limiter.check(
         bucket="forecasts:get",
         actor_key=str(user.id),
-        limit=settings.scan_create_rate_limit,
+        limit=settings.forecast_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     if not _TICKER_RE.match(ticker):

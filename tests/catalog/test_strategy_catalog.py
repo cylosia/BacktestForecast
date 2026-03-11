@@ -14,7 +14,7 @@ def test_catalog_contains_all_strategy_types() -> None:
         assert strategy_type.value in STRATEGY_CATALOG, f"Missing catalog entry for {strategy_type.value}"
 
 
-def test_catalog_has_14_entries() -> None:
+def test_catalog_has_35_entries() -> None:
     assert len(STRATEGY_CATALOG) == 35
 
 

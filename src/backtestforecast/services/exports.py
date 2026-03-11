@@ -81,7 +81,7 @@ class ExportService:
             return export_job
 
         export_job.status = "running"
-        self.session.commit()
+        self.session.flush()
 
         try:
             fmt = ExportFormat(export_job.export_format)

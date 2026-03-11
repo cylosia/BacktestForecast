@@ -42,8 +42,8 @@ def create_analysis(
     rate_limiter.check(
         bucket="analysis:create",
         actor_key=str(user.id),
-        limit=10,
-        window_seconds=3600,
+        limit=settings.analysis_create_rate_limit,
+        window_seconds=settings.analysis_rate_limit_window_seconds,
     )
 
     symbol = payload.symbol.strip().upper()
