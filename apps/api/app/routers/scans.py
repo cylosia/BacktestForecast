@@ -52,7 +52,9 @@ def create_scan(
     job = service.create_job(user, payload)
     if job.status == "queued":
         try:
-            celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
+            result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
+            job.celery_task_id = result.id
+            db.commit()
         except Exception:
             logger.exception("scan.enqueue_failed", job_id=str(job.id))
     return service.get_job(user, job.id)

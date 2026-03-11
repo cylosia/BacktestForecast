@@ -147,7 +147,7 @@ class CustomNLegStrategy(StrategyDefinition):
         capital = max(net_cost, 0.0)
         earliest_exp = min(
             (leg.expiration_date for leg in option_legs),
-            default=bar.trade_date,
+            default=config.end_date,
         )
 
         return OpenMultiLegPosition(

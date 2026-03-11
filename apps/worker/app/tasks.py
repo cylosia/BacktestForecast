@@ -45,9 +45,9 @@ def nightly_scan_pipeline(
 
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
+    executor = PipelineBacktestExecutor()
     try:
         market_data = PipelineMarketDataFetcher(client)
-        executor = PipelineBacktestExecutor()
         forecaster_engine = HistoricalAnalogForecaster()
         forecaster = PipelineForecaster(forecaster_engine, market_data)
 
@@ -82,6 +82,7 @@ def nightly_scan_pipeline(
                 "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
             }
     finally:
+        executor.close()
         client.close()
 
 
@@ -104,6 +105,8 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             session.rollback()
             delay = 30 * (self.request.retries + 1)
             raise self.retry(exc=exc, countdown=delay)
+        finally:
+            service.close()
 
         publish_job_status("backtest", UUID(run_id), run.status)
         return {
@@ -157,9 +160,9 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
     publish_job_status("analysis", UUID(analysis_id), "running")
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
+    executor = PipelineBacktestExecutor()
     try:
         market_data = PipelineMarketDataFetcher(client)
-        executor = PipelineBacktestExecutor()
         forecaster = PipelineForecaster(HistoricalAnalogForecaster(), market_data)
 
         with SessionLocal() as session:
@@ -190,6 +193,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 "top_results": result.top_results_count,
             }
     finally:
+        executor.close()
         client.close()
 
 
@@ -223,20 +227,24 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
 
 @celery_app.task(name="scans.refresh_prioritized")
 def refresh_prioritized_scans() -> dict[str, int]:
-    created_job_ids: list[str] = []
+    dispatched = 0
     with SessionLocal() as session:
         service = ScanService(session)
         jobs = service.create_scheduled_refresh_jobs(limit=25)
-        created_job_ids = [str(job.id) for job in jobs]
 
-    for job_id in created_job_ids:
-        try:
-            celery_app.send_task("scans.run_job", kwargs={"job_id": job_id})
-        except Exception:
-            logger.exception("refresh.dispatch_failed", job_id=job_id)
+        for job in jobs:
+            try:
+                result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
+                job.celery_task_id = result.id
+                dispatched += 1
+            except Exception:
+                logger.exception("refresh.dispatch_failed", job_id=str(job.id))
+
+        if dispatched:
+            session.commit()
 
     return {
-        "scheduled_jobs": len(created_job_ids),
+        "scheduled_jobs": dispatched,
     }
 
 
@@ -245,7 +253,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
     from datetime import UTC, datetime, timedelta
 
-    from sqlalchemy import select
+    from sqlalchemy import select, update
 
     from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SymbolAnalysis
 
@@ -265,15 +273,21 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         stale_run_ids = list(session.scalars(stale_runs_stmt))
         for run_id in stale_run_ids:
             try:
-                celery_app.send_task("backtests.run", kwargs={"run_id": str(run_id)})
+                result = celery_app.send_task("backtests.run", kwargs={"run_id": str(run_id)})
+                session.execute(
+                    update(BacktestRun).where(BacktestRun.id == run_id).values(celery_task_id=result.id)
+                )
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="BacktestRun", id=str(run_id))
+        if stale_run_ids:
+            session.commit()
         counts["backtest_runs"] = len(stale_run_ids)
 
         stale_exports_stmt = (
             select(ExportJob.id)
             .where(
                 ExportJob.status == "queued",
+                ExportJob.celery_task_id.is_(None),
                 ExportJob.created_at < cutoff,
             )
             .limit(50)
@@ -281,15 +295,21 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         stale_export_ids = list(session.scalars(stale_exports_stmt))
         for eid in stale_export_ids:
             try:
-                celery_app.send_task("exports.generate", kwargs={"export_job_id": str(eid)})
+                result = celery_app.send_task("exports.generate", kwargs={"export_job_id": str(eid)})
+                session.execute(
+                    update(ExportJob).where(ExportJob.id == eid).values(celery_task_id=result.id)
+                )
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="ExportJob", id=str(eid))
+        if stale_export_ids:
+            session.commit()
         counts["export_jobs"] = len(stale_export_ids)
 
         stale_scans_stmt = (
             select(ScannerJob.id)
             .where(
                 ScannerJob.status == "queued",
+                ScannerJob.celery_task_id.is_(None),
                 ScannerJob.created_at < cutoff,
             )
             .limit(50)
@@ -297,9 +317,14 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         stale_scan_ids = list(session.scalars(stale_scans_stmt))
         for sid in stale_scan_ids:
             try:
-                celery_app.send_task("scans.run_job", kwargs={"job_id": str(sid)})
+                result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(sid)})
+                session.execute(
+                    update(ScannerJob).where(ScannerJob.id == sid).values(celery_task_id=result.id)
+                )
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="ScannerJob", id=str(sid))
+        if stale_scan_ids:
+            session.commit()
         counts["scanner_jobs"] = len(stale_scan_ids)
 
         stale_analyses_stmt = (
@@ -314,9 +339,14 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         stale_analysis_ids = list(session.scalars(stale_analyses_stmt))
         for aid in stale_analysis_ids:
             try:
-                celery_app.send_task("analysis.deep_symbol", kwargs={"analysis_id": str(aid)})
+                result = celery_app.send_task("analysis.deep_symbol", kwargs={"analysis_id": str(aid)})
+                session.execute(
+                    update(SymbolAnalysis).where(SymbolAnalysis.id == aid).values(celery_task_id=result.id)
+                )
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="SymbolAnalysis", id=str(aid))
+        if stale_analysis_ids:
+            session.commit()
         counts["symbol_analyses"] = len(stale_analysis_ids)
 
     total = sum(counts.values())

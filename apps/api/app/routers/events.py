@@ -14,7 +14,7 @@ from apps.api.app.dependencies import get_current_user
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.errors import NotFoundError
-from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, User
+from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SymbolAnalysis, User
 
 router = APIRouter(prefix="/events", tags=["events"])
 logger = structlog.get_logger("api.events")
@@ -113,6 +113,22 @@ async def export_events(
 ) -> EventSourceResponse:
     _verify_ownership(db, ExportJob, export_job_id, user.id)
     channel = f"job:export:{export_job_id}:status"
+    logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
+    return EventSourceResponse(
+        _event_stream(channel, request),
+        ping=SSE_HEARTBEAT_SECONDS,
+    )
+
+
+@router.get("/analyses/{analysis_id}")
+async def analysis_events(
+    analysis_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EventSourceResponse:
+    _verify_ownership(db, SymbolAnalysis, analysis_id, user.id)
+    channel = f"job:analysis:{analysis_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
         _event_stream(channel, request),

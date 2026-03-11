@@ -202,6 +202,7 @@ class ScannerJob(Base):
         Index("ix_scanner_jobs_user_created_at", "user_id", "created_at"),
         Index("ix_scanner_jobs_user_status", "user_id", "status"),
         Index("ix_scanner_jobs_request_hash", "request_hash"),
+        Index("ix_scanner_jobs_celery_task_id", "celery_task_id"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="valid_job_status",
@@ -230,6 +231,7 @@ class ScannerJob(Base):
     warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
     ranking_version: Mapped[str] = mapped_column(String(32), nullable=False, default="scanner-ranking-v1")
     engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2")
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -285,6 +287,7 @@ class ExportJob(Base):
         UniqueConstraint("user_id", "idempotency_key", name="uq_export_jobs_user_idempotency_key"),
         Index("ix_export_jobs_user_created_at", "user_id", "created_at"),
         Index("ix_export_jobs_user_status", "user_id", "status"),
+        Index("ix_export_jobs_celery_task_id", "celery_task_id"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="valid_export_status",
@@ -303,6 +306,7 @@ class ExportJob(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     sha256_hex: Mapped[str | None] = mapped_column(String(64), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -11,7 +11,7 @@ from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.worker.app.celery_app import celery_app
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.models import User
+from backtestforecast.models import ExportJob, User
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
 from backtestforecast.security import rate_limiter
 from backtestforecast.services.exports import ExportService
@@ -44,11 +44,15 @@ def create_export(
 
     if job_response.status == "queued":
         try:
-            celery_app.send_task(
+            result = celery_app.send_task(
                 "exports.generate",
                 kwargs={"export_job_id": str(job_response.id)},
                 queue="exports",
             )
+            export_job = db.get(ExportJob, job_response.id)
+            if export_job is not None:
+                export_job.celery_task_id = result.id
+                db.commit()
             logger.info("export.enqueued", export_job_id=str(job_response.id))
         except Exception:
             logger.exception("export.enqueue_failed", export_job_id=str(job_response.id))

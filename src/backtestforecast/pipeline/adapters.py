@@ -44,6 +44,9 @@ class PipelineBacktestExecutor:
     def __init__(self) -> None:
         self._execution_service = BacktestExecutionService()
 
+    def close(self) -> None:
+        self._execution_service.close()
+
     def run_quick_backtest(
         self,
         symbol: str,

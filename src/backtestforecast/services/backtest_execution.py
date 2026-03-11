@@ -13,8 +13,13 @@ class BacktestExecutionService:
         market_data_service: MarketDataService | None = None,
         engine: OptionsBacktestEngine | None = None,
     ) -> None:
+        self._owns_client = market_data_service is None
         self.market_data_service = market_data_service or MarketDataService(MassiveClient())
         self.engine = engine or OptionsBacktestEngine()
+
+    def close(self) -> None:
+        if self._owns_client:
+            self.market_data_service.client.close()
 
     def execute_request(
         self,

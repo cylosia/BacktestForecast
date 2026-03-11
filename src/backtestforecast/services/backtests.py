@@ -58,6 +58,10 @@ class BacktestService:
             self._execution_service = BacktestExecutionService()
         return self._execution_service
 
+    def close(self) -> None:
+        if self._execution_service is not None:
+            self._execution_service.close()
+
     def enqueue(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
         """Create a queued backtest run. The caller is responsible for dispatching to Celery."""
         self._enforce_backtest_quota(user)
