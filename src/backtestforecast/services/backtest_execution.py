@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Self
+
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.types import BacktestConfig, BacktestExecutionResult
 from backtestforecast.integrations.massive_client import MassiveClient
@@ -20,6 +22,12 @@ class BacktestExecutionService:
     def close(self) -> None:
         if self._owns_client:
             self.market_data_service.client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def execute_request(
         self,

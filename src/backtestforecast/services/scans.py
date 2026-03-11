@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Self
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -62,6 +62,16 @@ class ScanService:
         if self._execution_service is None:
             self._execution_service = BacktestExecutionService()
         return self._execution_service
+
+    def close(self) -> None:
+        if self._execution_service is not None:
+            self._execution_service.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     @property
     def forecaster(self) -> HistoricalAnalogForecaster:

@@ -804,3 +804,176 @@ def test_me_features_and_usage(client, auth_headers, immediate_backtest_executio
     assert me["usage"]["backtests_remaining_this_month"] == 4
     assert me["features"]["scanner_modes"] == []
     assert me["features"]["forecasting_access"] is False
+
+
+# ===========================================================================
+# 11. /v1/analysis
+# ===========================================================================
+
+
+def test_create_analysis_returns_202(client, auth_headers, db_session, monkeypatch):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    import apps.api.app.routers.analysis as analysis_router
+
+    class NoOpCelery:
+        def send_task(self, name, kwargs, **extra):
+            import types
+            return types.SimpleNamespace(id="fake-task-id")
+
+    monkeypatch.setattr(analysis_router, "celery_app", NoOpCelery(), raising=False)
+
+    resp = client.post("/v1/analysis", json={"symbol": "AAPL"}, headers=auth_headers)
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["symbol"] == "AAPL"
+    assert body["status"] == "queued"
+    assert body["id"] is not None
+
+
+def test_create_analysis_requires_pro(client, auth_headers):
+    resp = client.post("/v1/analysis", json={"symbol": "AAPL"}, headers=auth_headers)
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "feature_locked"
+
+
+def test_create_analysis_invalid_symbol(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    resp = client.post("/v1/analysis", json={"symbol": "123"}, headers=auth_headers)
+    assert resp.status_code == 422
+
+
+def test_get_analysis_not_found(client, auth_headers):
+    import uuid
+    resp = client.get(f"/v1/analysis/{uuid.uuid4()}", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_get_analysis_status(client, auth_headers, db_session, monkeypatch):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    import apps.api.app.routers.analysis as analysis_router
+
+    class NoOpCelery:
+        def send_task(self, name, kwargs, **extra):
+            import types
+            return types.SimpleNamespace(id="fake-task-id")
+
+    monkeypatch.setattr(analysis_router, "celery_app", NoOpCelery(), raising=False)
+
+    create_resp = client.post("/v1/analysis", json={"symbol": "TSLA"}, headers=auth_headers)
+    analysis_id = create_resp.json()["id"]
+    status_resp = client.get(f"/v1/analysis/{analysis_id}/status", headers=auth_headers)
+    assert status_resp.status_code == 200
+    assert status_resp.json()["symbol"] == "TSLA"
+
+
+def test_list_analyses(client, auth_headers, db_session, monkeypatch):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    import apps.api.app.routers.analysis as analysis_router
+
+    class NoOpCelery:
+        def send_task(self, name, kwargs, **extra):
+            import types
+            return types.SimpleNamespace(id="fake-task-id")
+
+    monkeypatch.setattr(analysis_router, "celery_app", NoOpCelery(), raising=False)
+
+    client.post("/v1/analysis", json={"symbol": "AAPL"}, headers=auth_headers)
+    resp = client.get("/v1/analysis", headers=auth_headers)
+    assert resp.status_code == 200
+    assert len(resp.json()["items"]) >= 1
+
+
+# ===========================================================================
+# 12. /v1/forecasts
+# ===========================================================================
+
+
+def test_get_forecast_returns_envelope(client, auth_headers, db_session, stub_execution):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    resp = client.get("/v1/forecasts/AAPL", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "forecast" in body
+    assert "expected_move_abs_pct" in body
+    assert body["forecast"]["symbol"] == "AAPL"
+
+
+def test_get_forecast_invalid_ticker(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    resp = client.get("/v1/forecasts/123!", headers=auth_headers)
+    assert resp.status_code == 422
+
+
+def test_get_forecast_with_strategy_type(client, auth_headers, db_session, stub_execution):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    resp = client.get("/v1/forecasts/MSFT?strategy_type=long_call", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["forecast"]["symbol"] == "MSFT"
+
+
+# ===========================================================================
+# 13. /v1/events (SSE ownership verification)
+# ===========================================================================
+
+
+def test_backtest_events_not_found(client, auth_headers):
+    import uuid
+    resp = client.get(f"/v1/events/backtests/{uuid.uuid4()}", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_scan_events_not_found(client, auth_headers):
+    import uuid
+    resp = client.get(f"/v1/events/scans/{uuid.uuid4()}", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_export_events_not_found(client, auth_headers):
+    import uuid
+    resp = client.get(f"/v1/events/exports/{uuid.uuid4()}", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_analysis_events_not_found(client, auth_headers):
+    import uuid
+    resp = client.get(f"/v1/events/analyses/{uuid.uuid4()}", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+# ===========================================================================
+# 14. /v1/daily-picks
+# ===========================================================================
+
+
+def test_daily_picks_no_data(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    resp = client.get("/v1/daily-picks", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "no_data"
+    assert body["items"] == []
+
+
+def test_daily_picks_requires_pro(client, auth_headers):
+    resp = client.get("/v1/daily-picks", headers=auth_headers)
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "feature_locked"
+
+
+def test_daily_picks_history_empty(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    resp = client.get("/v1/daily-picks/history", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["items"] == []

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Self
 from uuid import UUID
 
 from sqlalchemy import select
@@ -61,6 +62,12 @@ class BacktestService:
     def close(self) -> None:
         if self._execution_service is not None:
             self._execution_service.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def enqueue(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
         """Create a queued backtest run. The caller is responsible for dispatching to Celery."""

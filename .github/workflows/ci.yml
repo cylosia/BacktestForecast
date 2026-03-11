@@ -39,6 +39,9 @@ jobs:
       - name: Run Python tests
         run: pytest -q
 
+      - name: Check service close() methods
+        run: python scripts/check_service_close.py
+
       - name: Python compile smoke check
         run: python -m compileall src apps tests scripts
 

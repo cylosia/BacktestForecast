@@ -216,6 +216,8 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             session.rollback()
             delay = 60 * (self.request.retries + 1)
             raise self.retry(exc=exc, countdown=delay)
+        finally:
+            service.close()
 
         publish_job_status("scan", UUID(job_id), job.status)
         return {

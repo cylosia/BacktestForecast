@@ -387,6 +387,8 @@ class SymbolDeepAnalysisService:
                     exc_info=True,
                 )
                 return None
+            finally:
+                thread_executor.close()
 
         max_workers = min(4, len(work_items))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
