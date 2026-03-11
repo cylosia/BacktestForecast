@@ -54,6 +54,7 @@ def _normalize_path(path: str) -> str:
         "/{id}",
         path,
     )
+    path = re.sub(r"/\d+(?=/|$)", "/{id}", path)
     return path
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,7 @@ class ClerkTokenVerifier:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self._jwks_client: PyJWKClient | None = None
+        self._jwks_lock = threading.Lock()
 
     def verify_bearer_token(self, token: str) -> AuthenticatedPrincipal:
         signing_key = self._resolve_signing_key(token)
@@ -80,16 +82,20 @@ class ClerkTokenVerifier:
         if self._jwks_client is not None:
             return self._jwks_client
 
-        jwks_url = self.settings.clerk_jwks_url
-        if not jwks_url:
-            if self.settings.clerk_issuer:
-                issuer = self.settings.clerk_issuer.rstrip("/")
-                jwks_url = f"{issuer}/.well-known/jwks.json"
-            else:
-                raise ConfigurationError("Set CLERK_JWT_KEY or CLERK_JWKS_URL (or CLERK_ISSUER) to enable auth.")
+        with self._jwks_lock:
+            if self._jwks_client is not None:
+                return self._jwks_client
 
-        self._jwks_client = PyJWKClient(jwks_url)
-        return self._jwks_client
+            jwks_url = self.settings.clerk_jwks_url
+            if not jwks_url:
+                if self.settings.clerk_issuer:
+                    issuer = self.settings.clerk_issuer.rstrip("/")
+                    jwks_url = f"{issuer}/.well-known/jwks.json"
+                else:
+                    raise ConfigurationError("Set CLERK_JWT_KEY or CLERK_JWKS_URL (or CLERK_ISSUER) to enable auth.")
+
+            self._jwks_client = PyJWKClient(jwks_url)
+            return self._jwks_client
 
 
 def fetch_clerk_jwks(url: str) -> dict[str, Any]:

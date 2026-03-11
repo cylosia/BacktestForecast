@@ -145,7 +145,7 @@ class WheelStrategyBacktestEngine:
                         held_shares = HeldShares(
                             quantity=active_option.quantity,
                             entry_date=bar.trade_date,
-                            entry_price=bar.close_price,
+                            entry_price=active_option.strike_price,
                         )
                         trades.append(
                             TradeResult(

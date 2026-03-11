@@ -79,7 +79,15 @@ def download_export(
         request_id=metadata.request_id,
         ip_address=metadata.ip_address,
     )
-    safe_name = export_job.file_name.replace('"', "").replace("\\", "").replace("\r", "").replace("\n", "")
+    safe_name = (
+        export_job.file_name
+        .replace('"', "")
+        .replace("\\", "")
+        .replace("/", "")
+        .replace("\x00", "")
+        .replace("\r", "")
+        .replace("\n", "")
+    )
     return Response(
         content=export_job.content_bytes,
         media_type=export_job.mime_type,

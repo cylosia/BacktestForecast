@@ -57,7 +57,7 @@ class HistoricalAnalogForecaster:
 
         candidates: list[ForecastCandidate] = []
         min_index = 30
-        max_index = len(sorted_bars) - horizon_days - 1
+        max_index = len(sorted_bars) - horizon_days
         for index in range(min_index, max_index):
             candidate_features = self._features_for_index(
                 index=index,

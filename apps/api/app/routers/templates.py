@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user
@@ -25,9 +25,10 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 def list_templates(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    limit: int = Query(default=100, ge=1, le=200),
 ) -> TemplateListResponse:
     service = BacktestTemplateService(db)
-    return service.list_templates(user)
+    return service.list_templates(user, limit=limit)
 
 
 @router.post("", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)

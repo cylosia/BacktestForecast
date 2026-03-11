@@ -49,8 +49,8 @@ class BacktestTemplateService:
         self.session.refresh(template)
         return self._to_response(template)
 
-    def list_templates(self, user: User) -> TemplateListResponse:
-        templates = self.repository.list_for_user(user.id)
+    def list_templates(self, user: User, *, limit: int = 100) -> TemplateListResponse:
+        templates = self.repository.list_for_user(user.id, limit=limit)
         limit = _resolve_template_limit(user.plan_tier, user.subscription_status)
         return TemplateListResponse(
             items=[self._to_response(t) for t in templates],

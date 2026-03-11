@@ -7,6 +7,7 @@ import structlog
 from apps.worker.app.celery_app import celery_app
 from backtestforecast.db.session import SessionLocal
 from backtestforecast.errors import AppError
+from backtestforecast.events import publish_job_status
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
@@ -44,51 +45,56 @@ def nightly_scan_pipeline(
 
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
-    market_data = PipelineMarketDataFetcher(client)
-    executor = PipelineBacktestExecutor()
-    forecaster_engine = HistoricalAnalogForecaster()
-    forecaster = PipelineForecaster(forecaster_engine, market_data)
+    try:
+        market_data = PipelineMarketDataFetcher(client)
+        executor = PipelineBacktestExecutor()
+        forecaster_engine = HistoricalAnalogForecaster()
+        forecaster = PipelineForecaster(forecaster_engine, market_data)
 
-    # Default universe: configurable symbol list
-    if symbols is None:
-        symbols = settings.pipeline_default_symbols
+        # Default universe: configurable symbol list
+        if symbols is None:
+            symbols = settings.pipeline_default_symbols
 
-    trade_date = date.today()
+        trade_date = date.today()
 
-    with SessionLocal() as session:
-        service = NightlyPipelineService(
-            session,
-            market_data_fetcher=market_data,
-            backtest_executor=executor,
-            forecaster=forecaster,
-        )
-        try:
-            run = service.run_pipeline(
-                trade_date=trade_date,
-                symbols=symbols,
-                max_recommendations=max_recommendations,
+        with SessionLocal() as session:
+            service = NightlyPipelineService(
+                session,
+                market_data_fetcher=market_data,
+                backtest_executor=executor,
+                forecaster=forecaster,
             )
-        except Exception as exc:
-            session.rollback()
-            logger.exception("pipeline.task_failed", trade_date=str(trade_date))
-            raise self.retry(exc=exc, countdown=300)
+            try:
+                run = service.run_pipeline(
+                    trade_date=trade_date,
+                    symbols=symbols,
+                    max_recommendations=max_recommendations,
+                )
+            except Exception as exc:
+                session.rollback()
+                logger.exception("pipeline.task_failed", trade_date=str(trade_date))
+                raise self.retry(exc=exc, countdown=300)
 
-        return {
-            "status": run.status,
-            "run_id": str(run.id),
-            "recommendations": run.recommendations_produced,
-            "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
-        }
+            return {
+                "status": run.status,
+                "run_id": str(run.id),
+                "recommendations": run.recommendations_produced,
+                "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
+            }
+    finally:
+        client.close()
 
 
 @celery_app.task(name="backtests.run", bind=True, max_retries=2)
 def run_backtest(self, run_id: str) -> dict[str, str]:
+    publish_job_status("backtest", UUID(run_id), "running")
     with SessionLocal() as session:
         service = BacktestService(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
         except AppError as exc:
             session.rollback()
+            publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": exc.code})
             return {
                 "status": "failed",
                 "run_id": run_id,
@@ -99,6 +105,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             delay = 30 * (self.request.retries + 1)
             raise self.retry(exc=exc, countdown=delay)
 
+        publish_job_status("backtest", UUID(run_id), run.status)
         return {
             "status": run.status,
             "run_id": run_id,
@@ -108,12 +115,14 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
 
 @celery_app.task(name="exports.generate", bind=True, max_retries=2)
 def generate_export(self, export_job_id: str) -> dict[str, str | int]:
+    publish_job_status("export", UUID(export_job_id), "running")
     with SessionLocal() as session:
         service = ExportService(session)
         try:
             job = service.execute_export_by_id(UUID(export_job_id))
         except AppError as exc:
             session.rollback()
+            publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": exc.code})
             return {
                 "status": "failed",
                 "export_job_id": export_job_id,
@@ -124,6 +133,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             delay = 15 * (self.request.retries + 1)
             raise self.retry(exc=exc, countdown=delay)
 
+        publish_job_status("export", UUID(export_job_id), job.status)
         return {
             "status": job.status,
             "export_job_id": export_job_id,
@@ -146,45 +156,50 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
 
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
-    market_data = PipelineMarketDataFetcher(client)
-    executor = PipelineBacktestExecutor()
-    forecaster = PipelineForecaster(HistoricalAnalogForecaster(), market_data)
+    try:
+        market_data = PipelineMarketDataFetcher(client)
+        executor = PipelineBacktestExecutor()
+        forecaster = PipelineForecaster(HistoricalAnalogForecaster(), market_data)
 
-    with SessionLocal() as session:
-        service = SymbolDeepAnalysisService(
-            session,
-            market_data_fetcher=market_data,
-            backtest_executor=executor,
-            forecaster=forecaster,
-        )
-        try:
-            result = service.execute_analysis(UUID(analysis_id))
-        except AppError as exc:
-            session.rollback()
+        with SessionLocal() as session:
+            service = SymbolDeepAnalysisService(
+                session,
+                market_data_fetcher=market_data,
+                backtest_executor=executor,
+                forecaster=forecaster,
+            )
+            try:
+                result = service.execute_analysis(UUID(analysis_id))
+            except AppError as exc:
+                session.rollback()
+                return {
+                    "status": "failed",
+                    "analysis_id": analysis_id,
+                    "error_code": exc.code,
+                }
+            except Exception as exc:
+                session.rollback()
+                raise self.retry(exc=exc, countdown=60)
+
             return {
-                "status": "failed",
+                "status": result.status,
                 "analysis_id": analysis_id,
-                "error_code": exc.code,
+                "top_results": result.top_results_count,
             }
-        except Exception as exc:
-            session.rollback()
-            raise self.retry(exc=exc, countdown=60)
-
-        return {
-            "status": result.status,
-            "analysis_id": analysis_id,
-            "top_results": result.top_results_count,
-        }
+    finally:
+        client.close()
 
 
 @celery_app.task(name="scans.run_job", bind=True, max_retries=3)
 def run_scan_job(self, job_id: str) -> dict[str, str | int]:
+    publish_job_status("scan", UUID(job_id), "running")
     with SessionLocal() as session:
         service = ScanService(session)
         try:
             job = service.run_job(UUID(job_id))
         except AppError as exc:
             session.rollback()
+            publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": exc.code})
             return {
                 "status": "failed",
                 "job_id": job_id,
@@ -195,6 +210,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             delay = 60 * (self.request.retries + 1)
             raise self.retry(exc=exc, countdown=delay)
 
+        publish_job_status("scan", UUID(job_id), job.status)
         return {
             "status": job.status,
             "job_id": job_id,

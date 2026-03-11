@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PAID_STATUSES, BillingInterval, PlanTier
@@ -37,6 +38,7 @@ class BillingService:
         self.users = UserRepository(session)
         self.audit = AuditService(session)
         self.audit_events = AuditEventRepository(session)
+        self._stripe_client: Any = None
 
     def create_checkout_session(
         self,
@@ -281,20 +283,25 @@ class BillingService:
         )
 
     def _get_or_create_customer(self, user: User) -> str:
-        if user.stripe_customer_id:
-            return user.stripe_customer_id
+        locked_user = self.session.scalar(
+            select(User).where(User.id == user.id).with_for_update()
+        )
+        if locked_user is None:
+            locked_user = user
+        if locked_user.stripe_customer_id:
+            return locked_user.stripe_customer_id
         client = self._get_stripe_client()
         customer = client.customers.create(
             params={
-                "email": user.email,
+                "email": locked_user.email,
                 "metadata": {
-                    "user_id": str(user.id),
-                    "clerk_user_id": user.clerk_user_id,
+                    "user_id": str(locked_user.id),
+                    "clerk_user_id": locked_user.clerk_user_id,
                 },
             }
         )
-        user.stripe_customer_id = customer.id
-        self.session.add(user)
+        locked_user.stripe_customer_id = customer.id
+        self.session.add(locked_user)
         self.session.flush()
         return customer.id
 
@@ -370,10 +377,13 @@ class BillingService:
             return None
 
     def _get_stripe_client(self):
+        if self._stripe_client is not None:
+            return self._stripe_client
         if not self.settings.stripe_secret_key or not self.settings.stripe_webhook_secret:
             raise ConfigurationError("Stripe billing is not configured.")
         try:
             import stripe  # type: ignore
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise ConfigurationError("The Stripe SDK is not installed.") from exc
-        return stripe.StripeClient(self.settings.stripe_secret_key)
+        self._stripe_client = stripe.StripeClient(self.settings.stripe_secret_key)
+        return self._stripe_client

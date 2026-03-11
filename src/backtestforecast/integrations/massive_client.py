@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Self
 from urllib.parse import quote
 
 import httpx
@@ -29,6 +30,12 @@ class MassiveClient:
 
     def close(self) -> None:
         self._http.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def get_stock_daily_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
         payload = self._get_json(
@@ -288,6 +295,12 @@ class AsyncMassiveClient:
     async def close(self) -> None:
         await self._http.aclose()
 
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def get_stock_daily_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
         payload = await self._get_json(
             f"/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/day/{start_date.isoformat()}/{end_date.isoformat()}",
@@ -405,8 +418,6 @@ class AsyncMassiveClient:
         return rows
 
     async def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        import asyncio
-
         url = path if path.startswith("http") else f"{self.base_url}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"}
         retryable_message: str | None = None
@@ -451,8 +462,6 @@ class AsyncMassiveClient:
     _MAX_RETRY_AFTER_SECONDS = 120.0
 
     async def _async_sleep_before_retry(self, attempt: int, retry_after_header: str | None) -> None:
-        import asyncio
-
         if retry_after_header:
             try:
                 retry_after_seconds = min(max(float(retry_after_header), 0.0), self._MAX_RETRY_AFTER_SECONDS)
