@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { TemplateConfig } from "@backtestforecast/api-client";
 import { getTemplates } from "@/lib/api/server";
 import { formatCurrency, formatNumber, formatDateTime, strategyLabel } from "@/lib/backtests/format";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ export default async function TemplatesPage() {
           </Button>
         </div>
 
-        {data.template_limit !== null ? (
+        {data.template_limit != null ? (
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -78,7 +79,9 @@ export default async function TemplatesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.items.map((template) => (
+                  {data.items.map((template) => {
+                    const cfg = template.config as unknown as TemplateConfig;
+                    return (
                     <TableRow key={template.id}>
                       <TableCell>
                         <div className="space-y-1">
@@ -86,25 +89,25 @@ export default async function TemplatesPage() {
                           {template.description ? (
                             <p className="text-xs text-muted-foreground">{template.description}</p>
                           ) : null}
-                          {template.config.default_symbol ? (
-                            <Badge variant="secondary">{template.config.default_symbol}</Badge>
+                          {cfg.default_symbol ? (
+                            <Badge variant="secondary">{cfg.default_symbol}</Badge>
                           ) : null}
                         </div>
                       </TableCell>
                       <TableCell>{strategyLabel(template.strategy_type)}</TableCell>
                       <TableCell>
                         <div className="space-y-1">
-                          <p>{template.config.target_dte} DTE</p>
+                          <p>{cfg.target_dte} DTE</p>
                           <p className="text-xs text-muted-foreground">
-                            Max hold {template.config.max_holding_days}d
+                            Max hold {cfg.max_holding_days}d
                           </p>
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1">
-                          <p>{formatCurrency(template.config.account_size ?? 0)}</p>
+                          <p>{formatCurrency(cfg.account_size ?? 0)}</p>
                           <p className="text-xs text-muted-foreground">
-                            {formatNumber(template.config.risk_per_trade_pct ?? 0)}% risk
+                            {formatNumber(cfg.risk_per_trade_pct ?? 0)}% risk
                           </p>
                         </div>
                       </TableCell>
@@ -115,7 +118,8 @@ export default async function TemplatesPage() {
                         <TemplateActions templateId={template.id} templateName={template.name} />
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}

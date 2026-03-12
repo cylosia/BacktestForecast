@@ -7,7 +7,7 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { createBacktestRun } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import type { BacktestQuota } from "@/lib/backtests/quota";
-import type { StrategyCatalogGroup, TemplateResponse } from "@/lib/backtests/types";
+import type { StrategyCatalogGroup, TemplateResponse } from "@backtestforecast/api-client";
 import {
   getDefaultBacktestFormValues,
   type BacktestFormErrors,

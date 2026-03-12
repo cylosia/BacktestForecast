@@ -11,7 +11,7 @@ import type {
   ScannerRecommendationListResponse,
   StrategyCatalogResponse,
   TemplateListResponse,
-} from "@/lib/backtests/types";
+} from "@backtestforecast/api-client";
 
 async function getServerToken(): Promise<string> {
   const { isAuthenticated, getToken, redirectToSignIn } = await auth();

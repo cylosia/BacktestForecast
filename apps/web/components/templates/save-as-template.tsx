@@ -7,7 +7,7 @@ import { Bookmark, Loader2 } from "lucide-react";
 import { createTemplate } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import type { BacktestFormValues } from "@/lib/backtests/validation";
-import type { CreateTemplateRequest, EntryRule, StrategyType } from "@/lib/backtests/types";
+import type { CreateTemplateRequest, EntryRule, StrategyType } from "@backtestforecast/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

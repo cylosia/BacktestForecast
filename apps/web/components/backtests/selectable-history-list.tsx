@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GitCompareArrows } from "lucide-react";
-import type { BacktestRunHistoryItemResponse } from "@/lib/backtests/types";
+import type { BacktestRunHistoryItemResponse } from "@backtestforecast/api-client";
 import {
   formatCurrency,
   formatDate,

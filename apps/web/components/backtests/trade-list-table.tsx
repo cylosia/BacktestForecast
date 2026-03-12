@@ -1,4 +1,4 @@
-import type { BacktestTradeResponse } from "@/lib/backtests/types";
+import type { BacktestTradeResponse } from "@backtestforecast/api-client";
 import {
   formatCurrency,
   formatDate,

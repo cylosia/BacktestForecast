@@ -16,7 +16,7 @@ import type {
   RegimeDetail,
   SymbolAnalysisFullResponse,
   SymbolAnalysisSummary,
-} from "@/lib/backtests/types";
+} from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

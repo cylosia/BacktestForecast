@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { BacktestRunHistoryItemResponse } from "@/lib/backtests/types";
+import type { BacktestRunHistoryItemResponse } from "@backtestforecast/api-client";
 import {
   formatCurrency,
   formatDate,

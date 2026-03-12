@@ -1,5 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import type { StrategyCatalogGroup, StrategyType } from "@/lib/backtests/types";
+import type { StrategyCatalogGroup, StrategyType } from "@backtestforecast/api-client";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 

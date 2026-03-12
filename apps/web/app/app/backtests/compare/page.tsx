@@ -9,7 +9,7 @@ import {
   strategyLabel,
   toNumber,
 } from "@/lib/backtests/format";
-import type { BacktestRunDetailResponse, BacktestSummaryResponse } from "@/lib/backtests/types";
+import type { BacktestRunDetailResponse, BacktestSummaryResponse } from "@backtestforecast/api-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

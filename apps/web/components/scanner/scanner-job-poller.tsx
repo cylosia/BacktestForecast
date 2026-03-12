@@ -6,7 +6,7 @@ import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
 import { fetchScannerJob } from "@/lib/api/client";
 import { isTerminalStatus, statusLabel } from "@/lib/backtests/format";
-import type { ScannerJobResponse, ScannerJobStatus } from "@/lib/backtests/types";
+import type { ScannerJobResponse, ScannerJobStatus } from "@backtestforecast/api-client";
 import { usePolling } from "@/hooks/use-polling";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 

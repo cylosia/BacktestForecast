@@ -10,7 +10,7 @@ export default async function NewScanPage() {
   } catch {
     return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
   }
-  const scannerModes = user.features.scanner_modes;
+  const scannerModes = (user.features.scanner_modes ?? []) as ("basic" | "advanced")[];
 
   if (scannerModes.length === 0) {
     return (

@@ -1,6 +1,6 @@
 import { getCurrentUser, getDailyPicks } from "@/lib/api/server";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
-import type { DailyPickItem, DailyPicksResponse } from "@/lib/backtests/types";
+import type { DailyPickItem, DailyPicksResponse } from "@backtestforecast/api-client";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
@@ -36,7 +36,7 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
             </div>
             <p className="text-sm text-muted-foreground">{strategyLabel(pick.strategy_type)}</p>
             <div className="mt-2 flex flex-wrap gap-1">
-              {pick.regime_labels.map((r) => (
+              {(pick.regime_labels ?? []).map((r) => (
                 <Badge key={r} variant="secondary" className={regimeColor(r)}>
                   {r.replace(/_/g, " ")}
                 </Badge>
@@ -134,7 +134,8 @@ export default async function DailyPicksPage() {
     );
   }
 
-  const maxScore = data.items.length > 0 ? Math.max(...data.items.map((i) => i.score)) : 1;
+  const items = data.items ?? [];
+  const maxScore = items.length > 0 ? Math.max(...items.map((i) => i.score)) : 1;
 
   return (
     <div className="space-y-6">
@@ -168,7 +169,7 @@ export default async function DailyPicksPage() {
         </div>
       ) : null}
 
-      {data.items.length === 0 ? (
+      {items.length === 0 ? (
         <Card>
           <CardContent className="p-6 text-center text-muted-foreground">
             {data.status === "no_data"
@@ -178,7 +179,7 @@ export default async function DailyPicksPage() {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {data.items.map((pick) => (
+          {items.map((pick) => (
             <PickCard key={`${pick.symbol}-${pick.strategy_type}-${pick.rank}`} pick={pick} maxScore={maxScore} />
           ))}
         </div>

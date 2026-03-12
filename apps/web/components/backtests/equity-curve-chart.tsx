@@ -1,4 +1,4 @@
-import type { EquityCurvePointResponse } from "@/lib/backtests/types";
+import type { EquityCurvePointResponse } from "@backtestforecast/api-client";
 import { formatCurrency, formatDate, formatPercent, toNumber } from "@/lib/backtests/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 

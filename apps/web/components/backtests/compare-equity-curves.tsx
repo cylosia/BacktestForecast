@@ -1,4 +1,4 @@
-import type { BacktestRunDetailResponse } from "@/lib/backtests/types";
+import type { BacktestRunDetailResponse } from "@backtestforecast/api-client";
 import { formatCurrency, strategyLabel, toNumber } from "@/lib/backtests/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 

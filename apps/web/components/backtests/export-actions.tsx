@@ -5,7 +5,7 @@ import { useAuth } from "@clerk/nextjs";
 import { Download, FileText, Loader2, Sheet } from "lucide-react";
 import { createExport, downloadExport, fetchExportStatus } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
-import type { ExportFormat } from "@/lib/backtests/types";
+import type { ExportFormat } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Button } from "@/components/ui/button";
 

@@ -19,7 +19,7 @@ import type {
   TemplateListResponse,
   TemplateResponse,
   UpdateTemplateRequest,
-} from "@/lib/backtests/types";
+} from "@backtestforecast/api-client";
 
 export async function createBacktestRun(
   token: string,
@@ -60,7 +60,7 @@ export async function createCheckoutSession(
 
 export async function createPortalSession(
   token: string,
-  payload: CreatePortalSessionRequest = {},
+  payload: CreatePortalSessionRequest = { return_path: null },
 ): Promise<PortalSessionResponse> {
   return apiRequest<PortalSessionResponse>("/v1/billing/portal-session", token, {
     method: "POST",

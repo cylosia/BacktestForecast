@@ -72,6 +72,11 @@ jobs:
       - name: Install web dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check generated API client types drift
+        run: |
+          pnpm --filter @backtestforecast/api-client generate
+          git diff --exit-code packages/api-client/src/schema.d.ts
+
       - name: Lint web app
         run: pnpm lint:web
 

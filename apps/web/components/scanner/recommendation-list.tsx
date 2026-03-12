@@ -1,4 +1,4 @@
-import type { ScannerRecommendationResponse } from "@/lib/backtests/types";
+import type { ScannerRecommendationResponse } from "@backtestforecast/api-client";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
@@ -118,18 +118,18 @@ export function RecommendationList({
                     <p className="font-medium">{formatNumber(toNumber(rec.ranking_breakdown.forecast_alignment_score))}</p>
                   </div>
                 </div>
-                {rec.ranking_breakdown.reasoning.length > 0 ? (
+                {(rec.ranking_breakdown.reasoning ?? []).length > 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    {rec.ranking_breakdown.reasoning.join(" · ")}
+                    {(rec.ranking_breakdown.reasoning ?? []).join(" · ")}
                   </p>
                 ) : null}
               </div>
             </div>
 
-            {rec.warnings.length > 0 ? (
+            {(rec.warnings ?? []).length > 0 ? (
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
                 <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                  {rec.warnings.length} warning(s)
+                  {(rec.warnings ?? []).length} warning(s)
                 </p>
               </div>
             ) : null}

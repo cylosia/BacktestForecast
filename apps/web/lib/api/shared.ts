@@ -1,5 +1,12 @@
 import { env } from "@/lib/env";
-import type { ApiErrorPayload } from "@/lib/backtests/types";
+
+export interface ApiErrorPayload {
+  error?: {
+    code?: string;
+    message?: string;
+    request_id?: string;
+  };
+}
 
 const API_BASE = env.apiBaseUrl.replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 30_000;

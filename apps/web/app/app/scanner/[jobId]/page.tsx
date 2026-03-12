@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getScannerJob, getScannerRecommendations } from "@/lib/api/server";
 import { formatDateTime, isTerminalStatus, statusLabel } from "@/lib/backtests/format";
-import type { ScannerRecommendationResponse } from "@/lib/backtests/types";
+import type { ScannerRecommendationResponse } from "@backtestforecast/api-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -139,14 +139,14 @@ export default async function ScannerDetailPage({
           </Card>
         ) : null}
 
-        {job.warnings.length > 0 ? (
+        {(job.warnings ?? []).length > 0 ? (
           <Card>
             <CardHeader>
               <CardTitle>Warnings</CardTitle>
-              <CardDescription>{job.warnings.length} warning(s) from execution.</CardDescription>
+              <CardDescription>{(job.warnings ?? []).length} warning(s) from execution.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
-              {job.warnings.map((warning, index) => (
+              {(job.warnings ?? []).map((warning, index) => (
                 <div key={`warn-${index}`} className="rounded-lg border border-border/70 p-3 text-sm">
                   <pre className="whitespace-pre-wrap break-words text-muted-foreground">
                     {JSON.stringify(warning, null, 2)}

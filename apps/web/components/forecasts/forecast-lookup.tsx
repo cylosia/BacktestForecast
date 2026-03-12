@@ -6,7 +6,7 @@ import { Loader2, TrendingUp } from "lucide-react";
 import { fetchForecast } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { formatDate, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
-import type { ForecastEnvelopeResponse, StrategyType } from "@/lib/backtests/types";
+import type { ForecastEnvelopeResponse, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

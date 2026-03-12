@@ -1,13 +1,13 @@
 "use client";
 
 import { FileText } from "lucide-react";
-import type { TemplateResponse } from "@/lib/backtests/types";
+import type { TemplateConfig, TemplateResponse } from "@backtestforecast/api-client";
 import { strategyLabel } from "@/lib/backtests/format";
 import type { BacktestFormValues } from "@/lib/backtests/validation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> {
-  const config = template.config;
+  const config = template.config as unknown as TemplateConfig;
   const patch: Partial<BacktestFormValues> = {
     strategyType: config.strategy_type as BacktestFormValues["strategyType"],
     targetDte: String(config.target_dte),

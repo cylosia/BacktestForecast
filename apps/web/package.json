@@ -12,6 +12,7 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
+    "@backtestforecast/api-client": "workspace:*",
     "@clerk/nextjs": "^6.11.3",
     "@radix-ui/react-slot": "^1.2.4",
     "@tanstack/react-query": "^5.62.8",

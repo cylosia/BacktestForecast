@@ -99,7 +99,7 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tracking-tight">
-              {user.features.scanner_modes.length > 0 ? user.features.scanner_modes.join(" + ") : "None"}
+              {(user.features.scanner_modes ?? []).length > 0 ? (user.features.scanner_modes ?? []).join(" + ") : "None"}
             </p>
             <p className="mt-1 text-sm text-muted-foreground">Basic scanner is available on Pro. Advanced requires Premium.</p>
           </CardContent>
@@ -121,7 +121,7 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tracking-tight">
-              {user.features.export_formats.length > 0 ? user.features.export_formats.join(", ") : "None"}
+              {(user.features.export_formats ?? []).length > 0 ? (user.features.export_formats ?? []).join(", ") : "None"}
             </p>
             <p className="mt-1 text-sm text-muted-foreground">CSV starts on Pro. PDF export requires Premium.</p>
           </CardContent>

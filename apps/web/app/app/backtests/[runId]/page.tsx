@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import type { ExportFormat } from "@backtestforecast/api-client";
 import { getBacktestRun, getCurrentUser } from "@/lib/api/server";
 import {
   formatCurrency,
@@ -72,7 +73,7 @@ export default async function BacktestDetailPage({
               <Link href="/app/backtests/new">Run another backtest</Link>
             </Button>
             {isComplete ? (
-              <ExportActions formats={user.features.export_formats} runId={run.id} />
+              <ExportActions formats={(user.features.export_formats ?? []) as ExportFormat[]} runId={run.id} />
             ) : null}
           </div>
         </div>

@@ -6,7 +6,7 @@ import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
 import { createScannerJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
-import type { CreateScannerJobRequest, ScannerMode } from "@/lib/backtests/types";
+import type { CreateScannerJobRequest, ScannerMode, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -250,7 +250,7 @@ export function ScannerForm({
       name: name.trim() || null,
       mode,
       symbols,
-      strategy_types: Array.from(selectedStrategies),
+      strategy_types: Array.from(selectedStrategies) as StrategyType[],
       rule_sets: [{ name: ruleSetName.trim() || "Default", entry_rules: entryRules }],
       start_date: startDate,
       end_date: endDate,
@@ -261,6 +261,8 @@ export function ScannerForm({
       risk_per_trade_pct: Number(riskPct),
       commission_per_contract: Number(commission),
       max_recommendations: Number(maxRecs),
+      refresh_daily: false,
+      refresh_priority: 50,
       idempotency_key: crypto.randomUUID(),
     };
 

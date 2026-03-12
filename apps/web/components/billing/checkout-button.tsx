@@ -5,7 +5,7 @@ import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
 import { createCheckoutSession } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
-import type { BillingInterval, PlanTier } from "@/lib/backtests/types";
+import type { BillingInterval, PlanTier } from "@backtestforecast/api-client";
 import { Button } from "@/components/ui/button";
 
 export function CheckoutButton({

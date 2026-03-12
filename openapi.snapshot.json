@@ -1,7 +1,274 @@
 {
   "components": {
     "schemas": {
+      "AnalysisDetailResponse": {
+        "properties": {
+          "close_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Price"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "configs_tested": {
+            "title": "Configs Tested",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "forecast": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "landscape": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Landscape"
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "strategies_tested": {
+            "title": "Strategies Tested",
+            "type": "integer"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "top_results": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Results"
+          },
+          "top_results_count": {
+            "title": "Top Results Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "symbol",
+          "status",
+          "stage",
+          "strategies_tested",
+          "configs_tested",
+          "top_results_count"
+        ],
+        "title": "AnalysisDetailResponse",
+        "type": "object"
+      },
+      "AnalysisListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisSummaryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AnalysisListResponse",
+        "type": "object"
+      },
+      "AnalysisSummaryResponse": {
+        "properties": {
+          "close_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Price"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "configs_tested": {
+            "title": "Configs Tested",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "strategies_tested": {
+            "title": "Strategies Tested",
+            "type": "integer"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "top_results_count": {
+            "title": "Top Results Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "symbol",
+          "status",
+          "stage",
+          "strategies_tested",
+          "configs_tested",
+          "top_results_count"
+        ],
+        "title": "AnalysisSummaryResponse",
+        "type": "object"
+      },
       "AvoidEarningsRule": {
+        "additionalProperties": false,
         "properties": {
           "days_after": {
             "default": 0,
@@ -283,6 +550,70 @@
         "title": "BacktestRunListResponse",
         "type": "object"
       },
+      "BacktestRunStatusResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "BacktestRunStatusResponse",
+        "type": "object"
+      },
       "BacktestSummaryResponse": {
         "properties": {
           "average_dte_at_open": {
@@ -505,6 +836,7 @@
         "type": "string"
       },
       "BollingerBandsRule": {
+        "additionalProperties": false,
         "properties": {
           "band": {
             "$ref": "#/components/schemas/BollingerBand"
@@ -671,6 +1003,7 @@
             "anyOf": [
               {
                 "exclusiveMinimum": 0.0,
+                "maximum": 100000000.0,
                 "type": "number"
               },
               {
@@ -683,6 +1016,7 @@
           "commission_per_contract": {
             "anyOf": [
               {
+                "maximum": 100.0,
                 "minimum": 0.0,
                 "type": "number"
               },
@@ -926,6 +1260,7 @@
             "anyOf": [
               {
                 "exclusiveMinimum": 0.0,
+                "maximum": 100000000.0,
                 "type": "number"
               },
               {
@@ -938,6 +1273,7 @@
           "commission_per_contract": {
             "anyOf": [
               {
+                "maximum": 100.0,
                 "minimum": 0.0,
                 "type": "number"
               },
@@ -1246,11 +1582,11 @@
             "type": "integer"
           },
           "quantity_ratio": {
-            "default": 1,
+            "default": 1.0,
             "maximum": 10.0,
-            "minimum": 1.0,
+            "minimum": 0.1,
             "title": "Quantity Ratio",
-            "type": "integer"
+            "type": "number"
           },
           "side": {
             "enum": [
@@ -1273,6 +1609,118 @@
           "side"
         ],
         "title": "CustomLegDefinition",
+        "type": "object"
+      },
+      "DailyPickItemResponse": {
+        "properties": {
+          "close_price": {
+            "title": "Close Price",
+            "type": "number"
+          },
+          "config_snapshot": {
+            "additionalProperties": true,
+            "title": "Config Snapshot",
+            "type": "object"
+          },
+          "forecast": {
+            "additionalProperties": true,
+            "title": "Forecast",
+            "type": "object"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "regime_labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regime Labels",
+            "type": "array"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "strategy_type": {
+            "title": "Strategy Type",
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": true,
+            "title": "Summary",
+            "type": "object"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "target_dte": {
+            "title": "Target Dte",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rank",
+          "score",
+          "symbol",
+          "strategy_type",
+          "close_price",
+          "target_dte"
+        ],
+        "title": "DailyPickItemResponse",
+        "type": "object"
+      },
+      "DailyPicksResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DailyPickItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pipeline_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Run Id"
+          },
+          "pipeline_stats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineStatsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trade_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade Date"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DailyPicksResponse",
         "type": "object"
       },
       "EquityCurvePointResponse": {
@@ -1385,6 +1833,7 @@
             "type": "string"
           },
           "size_bytes": {
+            "default": 0,
             "title": "Size Bytes",
             "type": "integer"
           },
@@ -1400,7 +1849,6 @@
           "status",
           "file_name",
           "mime_type",
-          "size_bytes",
           "created_at"
         ],
         "title": "ExportJobResponse",
@@ -1641,6 +2089,7 @@
         "type": "object"
       },
       "IvPercentileRule": {
+        "additionalProperties": false,
         "properties": {
           "lookback_days": {
             "default": 252,
@@ -1681,6 +2130,7 @@
         "type": "object"
       },
       "IvRankRule": {
+        "additionalProperties": false,
         "properties": {
           "lookback_days": {
             "default": 252,
@@ -1721,6 +2171,7 @@
         "type": "object"
       },
       "MacdRule": {
+        "additionalProperties": false,
         "properties": {
           "direction": {
             "$ref": "#/components/schemas/CrossoverDirection"
@@ -1760,6 +2211,7 @@
         "type": "object"
       },
       "MovingAverageCrossoverRule": {
+        "additionalProperties": false,
         "properties": {
           "direction": {
             "$ref": "#/components/schemas/CrossoverDirection"
@@ -1792,6 +2244,148 @@
           "direction"
         ],
         "title": "MovingAverageCrossoverRule",
+        "type": "object"
+      },
+      "PipelineHistoryItemResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "recommendations_produced": {
+            "title": "Recommendations Produced",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "symbols_screened": {
+            "title": "Symbols Screened",
+            "type": "integer"
+          },
+          "trade_date": {
+            "title": "Trade Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trade_date",
+          "status",
+          "symbols_screened",
+          "recommendations_produced"
+        ],
+        "title": "PipelineHistoryItemResponse",
+        "type": "object"
+      },
+      "PipelineHistoryResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineHistoryItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PipelineHistoryResponse",
+        "type": "object"
+      },
+      "PipelineStatsResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "full_backtests_run": {
+            "title": "Full Backtests Run",
+            "type": "integer"
+          },
+          "pairs_generated": {
+            "title": "Pairs Generated",
+            "type": "integer"
+          },
+          "quick_backtests_run": {
+            "title": "Quick Backtests Run",
+            "type": "integer"
+          },
+          "recommendations_produced": {
+            "title": "Recommendations Produced",
+            "type": "integer"
+          },
+          "symbols_after_screen": {
+            "title": "Symbols After Screen",
+            "type": "integer"
+          },
+          "symbols_screened": {
+            "title": "Symbols Screened",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "symbols_screened",
+          "symbols_after_screen",
+          "pairs_generated",
+          "quick_backtests_run",
+          "full_backtests_run",
+          "recommendations_produced"
+        ],
+        "title": "PipelineStatsResponse",
         "type": "object"
       },
       "PortalSessionResponse": {
@@ -1847,6 +2441,7 @@
         "type": "object"
       },
       "RsiRule": {
+        "additionalProperties": false,
         "properties": {
           "operator": {
             "$ref": "#/components/schemas/ComparisonOperator"
@@ -1861,6 +2456,8 @@
           "threshold": {
             "anyOf": [
               {
+                "maximum": 100.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -1955,7 +2552,8 @@
           "queued",
           "running",
           "succeeded",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "RunStatus",
         "type": "string"
@@ -2112,7 +2710,8 @@
           "queued",
           "running",
           "succeeded",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "ScannerJobStatus",
         "type": "string"
@@ -2519,6 +3118,7 @@
         "type": "string"
       },
       "SupportResistanceRule": {
+        "additionalProperties": false,
         "properties": {
           "lookback_period": {
             "default": 20,
@@ -2799,13 +3399,21 @@
           "description": {
             "anyOf": [
               {
-                "maxLength": 500,
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/components/schemas/_Unset"
+                  }
+                ],
+                "maxLength": 500
               },
               {
                 "type": "null"
               }
             ],
+            "default": "UNSET",
             "title": "Description"
           },
           "name": {
@@ -2888,6 +3496,7 @@
         "type": "object"
       },
       "VolumeSpikeRule": {
+        "additionalProperties": false,
         "properties": {
           "lookback_period": {
             "default": 20,
@@ -2926,6 +3535,13 @@
         ],
         "title": "VolumeSpikeRule",
         "type": "object"
+      },
+      "_Unset": {
+        "enum": [
+          "UNSET"
+        ],
+        "title": "_Unset",
+        "type": "string"
       }
     }
   },
@@ -3040,9 +3656,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Analyses V1 Analysis Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AnalysisListResponse"
                 }
               }
             },
@@ -3100,9 +3714,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Analysis V1 Analysis Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AnalysisSummaryResponse"
                 }
               }
             },
@@ -3162,9 +3774,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Analysis V1 Analysis  Analysis Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AnalysisDetailResponse"
                 }
               }
             },
@@ -3224,9 +3834,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Analysis Status V1 Analysis  Analysis Id  Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AnalysisSummaryResponse"
                 }
               }
             },
@@ -3485,6 +4093,65 @@
         ]
       }
     },
+    "/v1/backtests/{run_id}/status": {
+      "get": {
+        "operationId": "get_backtest_status_v1_backtests__run_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRunStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Backtest Status",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
     "/v1/billing/checkout-session": {
       "post": {
         "operationId": "create_checkout_session_v1_billing_checkout_session_post",
@@ -3705,9 +4372,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Latest Daily Picks V1 Daily Picks Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DailyPicksResponse"
                 }
               }
             },
@@ -3769,9 +4434,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Pipeline History V1 Daily Picks History Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PipelineHistoryResponse"
                 }
               }
             },

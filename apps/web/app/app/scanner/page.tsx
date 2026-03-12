@@ -28,7 +28,7 @@ export default async function ScannerPage() {
   } catch {
     return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
   }
-  const scannerModes = user.features.scanner_modes;
+  const scannerModes = user.features.scanner_modes ?? [];
   const hasAccess = scannerModes.length > 0;
 
   let jobs: Awaited<ReturnType<typeof getScannerJobs>> | null = null;

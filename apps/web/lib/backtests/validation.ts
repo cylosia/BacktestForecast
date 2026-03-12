@@ -4,7 +4,7 @@ import type {
   CrossoverDirection,
   MovingAverageRuleType,
   StrategyType,
-} from "@/lib/backtests/types";
+} from "@backtestforecast/api-client";
 
 export interface BacktestFormValues {
   symbol: string;

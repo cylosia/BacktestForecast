@@ -1,9 +1,10 @@
 import type {
   BacktestRunHistoryItemResponse,
-  NumericValue,
   RunStatus,
   StrategyType,
-} from "@/lib/backtests/types";
+} from "@backtestforecast/api-client";
+
+export type NumericValue = number | string;
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",

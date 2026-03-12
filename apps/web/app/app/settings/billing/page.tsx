@@ -89,7 +89,7 @@ export default async function BillingSettingsPage() {
               <PortalButton>Open billing portal</PortalButton>
             )}
             <div className="rounded-xl border border-border/70 p-4 text-sm text-muted-foreground">
-              Export access: {user.features.export_formats.length > 0 ? user.features.export_formats.join(", ") : "none"}
+              Export access: {(user.features.export_formats ?? []).length > 0 ? (user.features.export_formats ?? []).join(", ") : "none"}
               <br />
               Forecast access: {user.features.forecasting_access ? "enabled" : "locked"}
             </div>
@@ -137,8 +137,8 @@ export default async function BillingSettingsPage() {
           <div className="rounded-xl border border-border/70 p-4">
             <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Scanner modes</p>
             <p className="mt-2 text-2xl font-semibold tracking-tight">
-              {user.features.scanner_modes.length > 0
-                ? user.features.scanner_modes.join(" + ")
+              {(user.features.scanner_modes ?? []).length > 0
+                ? (user.features.scanner_modes ?? []).join(" + ")
                 : "None"}
             </p>
           </div>
