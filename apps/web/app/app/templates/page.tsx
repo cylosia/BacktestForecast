@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getTemplates } from "@/lib/api/server";
-import { formatDateTime, strategyLabel } from "@/lib/backtests/format";
+import { formatCurrency, formatNumber, formatDateTime, strategyLabel } from "@/lib/backtests/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -102,9 +102,9 @@ export default async function TemplatesPage() {
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1">
-                          <p>${template.config.account_size.toLocaleString()}</p>
+                          <p>{formatCurrency(template.config.account_size ?? 0)}</p>
                           <p className="text-xs text-muted-foreground">
-                            {template.config.risk_per_trade_pct}% risk
+                            {formatNumber(template.config.risk_per_trade_pct ?? 0)}% risk
                           </p>
                         </div>
                       </TableCell>

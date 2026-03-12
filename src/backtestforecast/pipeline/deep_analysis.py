@@ -239,7 +239,7 @@ class SymbolDeepAnalysisService:
             )
 
             # --- Stage 3: Top-10 deep dive ---
-            landscape.sort(key=lambda c: c.score, reverse=True)
+            landscape.sort(key=lambda c: (-c.score, c.strategy_type, c.target_dte))
             # Deduplicate: best config per strategy, then top 10
             seen_strategies: set[str] = set()
             top_candidates: list[LandscapeCell] = []
@@ -289,6 +289,11 @@ class SymbolDeepAnalysisService:
                     )
 
             analysis.status = "succeeded"
+            if not top_results:
+                analysis.error_message = (
+                    "Analysis completed but no profitable strategy configurations were found "
+                    "for this symbol and date range."
+                )
             analysis.completed_at = datetime.now(UTC)
             analysis.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
             self.session.commit()
@@ -386,7 +391,7 @@ class SymbolDeepAnalysisService:
                 )
                 return None
 
-        max_workers = min(4, len(work_items))
+        max_workers = max(1, min(4, len(work_items)))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_cell, item): item for item in work_items}
             for future in as_completed(futures):
@@ -423,7 +428,7 @@ class SymbolDeepAnalysisService:
                 )
                 return cell, None
 
-        max_workers = min(4, len(candidates))
+        max_workers = max(1, min(4, len(candidates)))
         backtest_results: list[tuple[LandscapeCell, dict[str, Any] | None]] = []
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_candidate, c): c for c in candidates}
@@ -480,7 +485,7 @@ class SymbolDeepAnalysisService:
                 )
             )
 
-        results.sort(key=lambda r: r.score, reverse=True)
+        results.sort(key=lambda r: (-r.score, r.strategy_type, r.target_dte))
         for i, r in enumerate(results, start=1):
             r.rank = i
         return results

@@ -26,6 +26,7 @@ class ScannerJobStatus(str, Enum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RuleSetDefinition(BaseModel):

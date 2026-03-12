@@ -7,12 +7,12 @@ const summaryCards: Array<{
   label: string;
   formatter: (value: BacktestSummaryResponse[keyof BacktestSummaryResponse]) => string;
 }> = [
-  { key: "trade_count", label: "Trades", formatter: (value) => formatNumber(value as number) },
-  { key: "win_rate", label: "Win rate", formatter: (value) => formatPercent(value) },
-  { key: "total_roi_pct", label: "Total ROI", formatter: (value) => formatPercent(value) },
-  { key: "total_net_pnl", label: "Net P&L", formatter: (value) => formatCurrency(value) },
-  { key: "max_drawdown_pct", label: "Max drawdown", formatter: (value) => formatPercent(value) },
-  { key: "total_commissions", label: "Commissions", formatter: (value) => formatCurrency(value) },
+  { key: "trade_count", label: "Trades", formatter: (value) => (value != null ? formatNumber(value) : "—") },
+  { key: "win_rate", label: "Win rate", formatter: (value) => (value != null ? formatPercent(value) : "—") },
+  { key: "total_roi_pct", label: "Total ROI", formatter: (value) => (value != null ? formatPercent(value) : "—") },
+  { key: "total_net_pnl", label: "Net P&L", formatter: (value) => (value != null ? formatCurrency(value) : "—") },
+  { key: "max_drawdown_pct", label: "Max drawdown", formatter: (value) => (value != null ? formatPercent(value) : "—") },
+  { key: "total_commissions", label: "Commissions", formatter: (value) => (value != null ? formatCurrency(value) : "—") },
 ];
 
 export function ResultSummaryCards({ summary }: { summary: BacktestSummaryResponse }) {

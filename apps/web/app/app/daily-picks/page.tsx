@@ -75,7 +75,7 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Trades</span>
-            <p className="font-medium">{summary.trade_count ?? "—"}</p>
+            <p className="font-medium">{summary.trade_count != null ? formatNumber(summary.trade_count) : "—"}</p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Max DD</span>
@@ -90,8 +90,8 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
               {formatPercent(forecast.expected_return_median_pct)} median
             </span>
             <span className="text-muted-foreground">
-              {" "}({formatPercent(forecast.positive_outcome_rate_pct)} positive rate,{" "}
-              {forecast.analog_count} analogs)
+              {" "}({forecast.positive_outcome_rate_pct != null ? formatPercent(forecast.positive_outcome_rate_pct) : "—"} positive rate,{" "}
+              {forecast.analog_count ?? "—"} analogs)
             </span>
           </div>
         ) : null}

@@ -302,6 +302,45 @@ class WheelStrategyBacktestEngine:
                 )
             )
 
+        if active_option is not None:
+            final_bar = sorted_bars[-1]
+            exit_mid = active_option.last_mid
+            exit_commission = config.commission_per_contract * active_option.quantity
+            option_gross = (active_option.entry_mid - exit_mid) * 100.0 * active_option.quantity
+            option_net = option_gross - (
+                (config.commission_per_contract * active_option.quantity) + exit_commission
+            )
+            cash += (-exit_mid * 100.0 * active_option.quantity) - exit_commission
+            trades.append(
+                TradeResult(
+                    option_ticker=active_option.ticker,
+                    strategy_type=config.strategy_type,
+                    underlying_symbol=config.symbol,
+                    entry_date=active_option.entry_date,
+                    exit_date=final_bar.trade_date,
+                    expiration_date=active_option.expiration_date,
+                    quantity=active_option.quantity,
+                    dte_at_open=(active_option.expiration_date - active_option.entry_date).days,
+                    holding_period_days=max((final_bar.trade_date - active_option.entry_date).days, 0),
+                    entry_underlying_close=sorted_bars[active_option.entry_index].close_price,
+                    exit_underlying_close=final_bar.close_price,
+                    entry_mid=active_option.entry_mid,
+                    exit_mid=exit_mid,
+                    gross_pnl=option_gross,
+                    net_pnl=option_net,
+                    total_commissions=(config.commission_per_contract * active_option.quantity) + exit_commission,
+                    entry_reason="entry_rules_met",
+                    exit_reason="backtest_end_option_liquidation",
+                    detail_json={
+                        "phase": active_option.phase,
+                        "assumptions": [
+                            "Open short option is liquidated at last available mid-price on the final bar."
+                        ],
+                    },
+                )
+            )
+            active_option = None
+
         if held_shares is not None:
             final_bar = sorted_bars[-1]
             cash += final_bar.close_price * 100.0 * held_shares.quantity
@@ -334,7 +373,23 @@ class WheelStrategyBacktestEngine:
                 )
             )
 
-        ending_equity = cash if not equity_curve else (cash if active_option is None else equity_curve[-1].equity)
+        ending_equity = cash
+
+        if equity_curve and ending_equity != equity_curve[-1].equity:
+            last_td = equity_curve[-1].trade_date
+            peak_equity = max(pt.equity for pt in equity_curve)
+            peak_equity = max(peak_equity, ending_equity)
+            dd = 0.0 if peak_equity == 0 else ((peak_equity - ending_equity) / peak_equity) * 100.0
+            equity_curve.append(
+                EquityPointResult(
+                    trade_date=last_td,
+                    equity=ending_equity,
+                    cash=cash,
+                    position_value=0.0,
+                    drawdown_pct=dd,
+                )
+            )
+
         summary = build_summary(
             starting_equity=config.account_size,
             ending_equity=ending_equity,
@@ -475,7 +530,7 @@ class WheelStrategyBacktestEngine:
             return True, "expiration"
         if (bar.trade_date - position.entry_date).days >= max_holding_days:
             return True, "max_holding_days"
-        if bar.trade_date > backtest_end_date and bar.trade_date == last_bar_date:
+        if bar.trade_date >= backtest_end_date and bar.trade_date == last_bar_date:
             return True, "backtest_end"
         return False, ""
 

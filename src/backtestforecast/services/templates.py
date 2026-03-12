@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -23,8 +24,12 @@ TEMPLATE_LIMITS: dict[PlanTier, int | None] = {
 }
 
 
-def _resolve_template_limit(plan_tier: str | None, subscription_status: str | None) -> int | None:
-    tier = normalize_plan_tier(plan_tier, subscription_status)
+def _resolve_template_limit(
+    plan_tier: str | None,
+    subscription_status: str | None,
+    subscription_current_period_end: datetime | None = None,
+) -> int | None:
+    tier = normalize_plan_tier(plan_tier, subscription_status, subscription_current_period_end)
     return TEMPLATE_LIMITS.get(tier, 3)
 
 
@@ -51,11 +56,12 @@ class BacktestTemplateService:
 
     def list_templates(self, user: User, *, limit: int = 100) -> TemplateListResponse:
         templates = self.repository.list_for_user(user.id, limit=limit)
-        limit = _resolve_template_limit(user.plan_tier, user.subscription_status)
+        total = self.repository.count_for_user(user.id)
+        template_limit = _resolve_template_limit(user.plan_tier, user.subscription_status)
         return TemplateListResponse(
             items=[self._to_response(t) for t in templates],
-            total=len(templates),
-            template_limit=limit,
+            total=total,
+            template_limit=template_limit,
         )
 
     def get_template(self, user: User, template_id: UUID) -> TemplateResponse:
@@ -94,12 +100,16 @@ class BacktestTemplateService:
             select(User).where(User.id == user.id).with_for_update()
         ).scalar_one()
 
-        limit = _resolve_template_limit(user.plan_tier, user.subscription_status)
+        limit = _resolve_template_limit(
+            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+        )
         if limit is None:
             return
         count = self.repository.count_for_user(user.id)
         if count >= limit:
-            tier = normalize_plan_tier(user.plan_tier, user.subscription_status)
+            tier = normalize_plan_tier(
+                user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+            )
             raise QuotaExceededError(
                 f"Template limit reached. Your {tier.value} plan allows up to {limit} templates.",
                 current_tier=tier.value,

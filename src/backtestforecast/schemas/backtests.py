@@ -82,12 +82,13 @@ class RunStatus(str, Enum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RsiRule(BaseModel):
     type: Literal["rsi"]
     operator: ComparisonOperator
-    threshold: Decimal
+    threshold: Decimal = Field(ge=0, le=100)
     period: int = Field(default=14, ge=2, le=100)
 
 

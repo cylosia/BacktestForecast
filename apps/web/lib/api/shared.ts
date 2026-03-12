@@ -1,6 +1,9 @@
 import { env } from "@/lib/env";
 import type { ApiErrorPayload } from "@/lib/backtests/types";
 
+const API_BASE = env.apiBaseUrl.replace(/\/+$/, "");
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -43,37 +46,61 @@ async function parseApiError(response: Response): Promise<never> {
 }
 
 export async function apiRequest<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${env.apiBaseUrl}${path}`, {
-    ...init,
-    headers: buildHeaders(token, init),
-    cache: init?.cache ?? "no-store",
-  });
-
-  if (!response.ok) {
-    await parseApiError(response);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
   try {
-    return (await response.json()) as T;
-  } catch {
-    throw new ApiError("Received an invalid response from the server.", response.status);
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: buildHeaders(token, init),
+      cache: init?.cache ?? "no-store",
+      signal: init?.signal ?? controller.signal,
+    });
+
+    if (!response.ok) {
+      await parseApiError(response);
+    }
+
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
+    try {
+      return (await response.json()) as T;
+    } catch {
+      throw new ApiError("Received an invalid response from the server.", response.status);
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError("The request timed out.", 0, "timeout");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
 export async function apiDownload(path: string, token: string, init?: RequestInit): Promise<Response> {
-  const response = await fetch(`${env.apiBaseUrl}${path}`, {
-    ...init,
-    headers: buildHeaders(token, init),
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: buildHeaders(token, init),
+      cache: "no-store",
+      signal: init?.signal ?? controller.signal,
+    });
 
-  if (!response.ok) {
-    await parseApiError(response);
+    if (!response.ok) {
+      await parseApiError(response);
+    }
+
+    return response;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError("The request timed out.", 0, "timeout");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return response;
 }

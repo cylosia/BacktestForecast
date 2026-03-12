@@ -5,9 +5,9 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from backtestforecast.schemas.backtests import EntryRule, StrategyType
+from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
 
 
 class TemplateConfig(BaseModel):
@@ -24,6 +24,12 @@ class TemplateConfig(BaseModel):
 
     # Optional pre-fill hints — not required, but useful if the user always tests the same symbol/window
     default_symbol: str | None = Field(default=None, max_length=16)
+
+    @model_validator(mode="after")
+    def validate_template_rules(self) -> "TemplateConfig":
+        if self.entry_rules:
+            validate_entry_rule_collection(self.entry_rules)
+        return self
 
 
 class CreateTemplateRequest(BaseModel):

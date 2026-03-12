@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2, Microscope, TrendingDown, TrendingUp } from "lucide-react";
 import {
@@ -189,8 +189,8 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
               {formatPercent(forecast.expected_return_median_pct)} median
             </span>
             <span className="text-muted-foreground">
-              {" "}({formatPercent(forecast.positive_outcome_rate_pct ?? 0)} positive,{" "}
-              {forecast.analog_count ?? 0} analogs)
+              {" "}({forecast.positive_outcome_rate_pct != null ? formatPercent(forecast.positive_outcome_rate_pct) : "—"} positive,{" "}
+              {forecast.analog_count ?? "—"} analogs)
             </span>
           </div>
         ) : null}
@@ -213,16 +213,26 @@ export function SymbolAnalysisLauncher() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [result, setResult] = useState<SymbolAnalysisFullResponse | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const pollForCompletion = useCallback(
     async (token: string, analysisId: string) => {
       for (let i = 0; i < MAX_POLLS; i++) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        if (!mountedRef.current) return;
         const status = await fetchAnalysisStatus(token, analysisId);
+        if (!mountedRef.current) return;
         setStage(status.stage);
 
         if (status.status === "succeeded") {
           const full = await fetchAnalysisFull(token, analysisId);
+          if (!mountedRef.current) return;
           setResult(full);
           setPhase("done");
           return;

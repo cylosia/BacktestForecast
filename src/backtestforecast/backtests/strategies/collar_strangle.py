@@ -59,7 +59,7 @@ class CollarStrategy(StrategyDefinition):
             return None
 
         net_option_cost = (pq.mid_price - cq.mid_price) * 100.0
-        capital = collar_margin(bar.close_price)
+        capital = collar_margin(bar.close_price) + max(net_option_cost, 0.0)
         max_loss = (bar.close_price - put_strike) * 100.0 + net_option_cost
 
         return OpenMultiLegPosition(

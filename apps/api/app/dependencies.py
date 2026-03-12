@@ -6,6 +6,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import Depends, Header, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.auth.verification import ClerkTokenVerifier
@@ -85,7 +86,13 @@ def get_current_user(
     principal = token_verifier.verify_bearer_token(token)
     repository = UserRepository(db)
     user = repository.get_or_create(principal.clerk_user_id, principal.email)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        user = repository.get_by_clerk_user_id(principal.clerk_user_id)
+        if user is None:
+            raise
     db.refresh(user)
     structlog.contextvars.bind_contextvars(user_id=str(user.id), clerk_user_id=user.clerk_user_id)
     return user

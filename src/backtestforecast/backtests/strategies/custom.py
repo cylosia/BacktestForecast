@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from backtestforecast.backtests.margin import naked_option_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_atm_strike,
@@ -152,6 +153,16 @@ class CustomNLegStrategy(StrategyDefinition):
             default=config.end_date,
         )
 
+        if capital <= 0:
+            short_leg_margin = sum(
+                naked_option_margin(
+                    leg.contract_type, bar.close_price, leg.strike_price, leg.entry_mid,
+                ) * leg.quantity_per_unit
+                for leg in option_legs
+                if leg.side == -1
+            )
+            capital = max(short_leg_margin, abs(net_cost), 1.0)
+
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker(tickers),
             strategy_type=self.strategy_type,
@@ -163,10 +174,7 @@ class CustomNLegStrategy(StrategyDefinition):
             option_legs=option_legs,
             stock_legs=stock_legs,
             scheduled_exit_date=earliest_exp,
-            capital_required_per_unit=(
-                capital if capital > 0
-                else max(abs(net_cost) * 0.2 + total_credit * 0.15, total_debit * 0.1, 1.0)
-            ),
+            capital_required_per_unit=capital,
             max_loss_per_unit=None,
             max_profit_per_unit=None,
             detail_json={

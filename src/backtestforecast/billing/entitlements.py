@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
 
 from backtestforecast.errors import FeatureLockedError, ValidationError
@@ -165,10 +166,19 @@ POLICIES = {
 }
 
 
-def normalize_plan_tier(plan_tier: str | None, subscription_status: str | None = None) -> PlanTier:
+def normalize_plan_tier(
+    plan_tier: str | None,
+    subscription_status: str | None = None,
+    subscription_current_period_end: datetime | None = None,
+) -> PlanTier:
     if subscription_status in INACTIVE_STATUSES:
         return PlanTier.FREE
     if subscription_status not in PAID_STATUSES:
+        return PlanTier.FREE
+    if (
+        subscription_current_period_end is not None
+        and subscription_current_period_end < datetime.now(UTC)
+    ):
         return PlanTier.FREE
     if plan_tier == PlanTier.PREMIUM.value:
         return PlanTier.PREMIUM
@@ -177,16 +187,23 @@ def normalize_plan_tier(plan_tier: str | None, subscription_status: str | None =
     return PlanTier.FREE
 
 
-def resolve_feature_policy(plan_tier: str | None, subscription_status: str | None = None) -> FeaturePolicy:
-    return FEATURE_POLICIES[normalize_plan_tier(plan_tier, subscription_status)]
+def resolve_feature_policy(
+    plan_tier: str | None,
+    subscription_status: str | None = None,
+    subscription_current_period_end: datetime | None = None,
+) -> FeaturePolicy:
+    return FEATURE_POLICIES[
+        normalize_plan_tier(plan_tier, subscription_status, subscription_current_period_end)
+    ]
 
 
 def ensure_export_access(
     plan_tier: str | None,
     subscription_status: str | None,
     export_format: ExportFormat,
+    subscription_current_period_end: datetime | None = None,
 ) -> None:
-    feature_policy = resolve_feature_policy(plan_tier, subscription_status)
+    feature_policy = resolve_feature_policy(plan_tier, subscription_status, subscription_current_period_end)
     if export_format not in feature_policy.export_formats:
         if export_format == ExportFormat.PDF and feature_policy.tier != PlanTier.PREMIUM:
             raise FeatureLockedError("PDF export requires Premium.", required_tier="premium")
@@ -196,8 +213,12 @@ def ensure_export_access(
         )
 
 
-def ensure_forecasting_access(plan_tier: str | None, subscription_status: str | None) -> None:
-    feature_policy = resolve_feature_policy(plan_tier, subscription_status)
+def ensure_forecasting_access(
+    plan_tier: str | None,
+    subscription_status: str | None,
+    subscription_current_period_end: datetime | None = None,
+) -> None:
+    feature_policy = resolve_feature_policy(plan_tier, subscription_status, subscription_current_period_end)
     if not feature_policy.forecasting_access:
         raise FeatureLockedError(
             "Forecasting access requires Pro or Premium.",
@@ -209,8 +230,9 @@ def resolve_scanner_policy(
     plan_tier: str | None,
     requested_mode: str,
     subscription_status: str | None = None,
+    subscription_current_period_end: datetime | None = None,
 ) -> ScannerAccessPolicy:
-    tier = normalize_plan_tier(plan_tier, subscription_status)
+    tier = normalize_plan_tier(plan_tier, subscription_status, subscription_current_period_end)
     try:
         mode = ScannerMode(requested_mode)
     except ValueError:

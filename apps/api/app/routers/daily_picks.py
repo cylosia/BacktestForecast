@@ -27,7 +27,7 @@ def get_latest_daily_picks(
 
     Pro+ feature gated via ensure_forecasting_access.
     """
-    ensure_forecasting_access(user.plan_tier, user.subscription_status)
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     response.headers["Cache-Control"] = "private, max-age=300"
 
     if trade_date is not None:
@@ -109,7 +109,7 @@ def get_pipeline_history(
     limit: int = Query(default=10, ge=1, le=30),
 ) -> dict[str, Any]:
     """Return recent pipeline run history (Pro+ gated)."""
-    ensure_forecasting_access(user.plan_tier, user.subscription_status)
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
 
     stmt = select(NightlyPipelineRun).order_by(desc(NightlyPipelineRun.created_at)).limit(limit)
     runs = list(db.scalars(stmt))

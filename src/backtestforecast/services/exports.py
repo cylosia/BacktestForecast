@@ -21,6 +21,10 @@ from backtestforecast.services.backtests import BacktestService
 
 logger = structlog.get_logger("services.exports")
 
+_MAX_CSV_TRADES = 10_000
+_MAX_PDF_TRADES = 100
+_MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
+
 
 class ExportService:
     def __init__(self, session: Session) -> None:
@@ -42,7 +46,10 @@ class ExportService:
         ip_address: str | None = None,
     ) -> ExportJobResponse:
         """Create a queued export job. Caller dispatches to Celery."""
-        ensure_export_access(user.plan_tier, user.subscription_status, payload.export_format)
+        ensure_export_access(
+            user.plan_tier, user.subscription_status, payload.export_format,
+            user.subscription_current_period_end,
+        )
         if payload.idempotency_key:
             existing = self.exports.get_by_idempotency_key(user.id, payload.idempotency_key)
             if existing is not None:
@@ -99,6 +106,10 @@ class ExportService:
                 content = self._build_csv(detail)
             else:
                 content = self._build_pdf(detail)
+            if len(content) > _MAX_EXPORT_BYTES:
+                raise ValueError(
+                    f"Generated export exceeds the {_MAX_EXPORT_BYTES // (1024 * 1024)} MB size limit."
+                )
             export_job.content_bytes = content
             export_job.size_bytes = len(content)
             export_job.sha256_hex = hashlib.sha256(content).hexdigest()
@@ -229,7 +240,8 @@ class ExportService:
                 ]
             )
         )
-        for trade in detail.trades:
+        exported_trades = detail.trades[:_MAX_CSV_TRADES]
+        for trade in exported_trades:
             writer.writerow(
                 safe_row(
                     [
@@ -247,6 +259,10 @@ class ExportService:
                         trade.exit_reason,
                     ]
                 )
+            )
+        if len(detail.trades) > _MAX_CSV_TRADES:
+            writer.writerow(
+                safe_row(["trade", f"... {len(detail.trades) - _MAX_CSV_TRADES} additional trades omitted ..."])
             )
 
         writer.writerow([])
@@ -304,14 +320,27 @@ class ExportService:
         line(f"Max drawdown: {detail.summary.max_drawdown_pct}%")
         line("")
         line("Trades", bold=True, step=20.0)
-        for trade in detail.trades[:25]:
+        for trade in detail.trades[:_MAX_PDF_TRADES]:
             line(
                 f"{trade.entry_date.isoformat()} -> {trade.exit_date.isoformat()} | "
                 f"{trade.option_ticker} | qty {trade.quantity} | net {trade.net_pnl}",
                 step=14.0,
             )
-        if len(detail.trades) > 25:
-            line(f"... {len(detail.trades) - 25} additional trades omitted from PDF view ...")
+        if len(detail.trades) > _MAX_PDF_TRADES:
+            line(f"... {len(detail.trades) - _MAX_PDF_TRADES} additional trades omitted from PDF view ...")
+
+        if detail.equity_curve:
+            line("")
+            line("Equity Curve Summary", bold=True, step=20.0)
+            equities = [p.equity for p in detail.equity_curve]
+            peak = max(equities)
+            trough = min(equities)
+            line(f"Starting equity: {detail.equity_curve[0].equity}")
+            line(f"Ending equity: {detail.equity_curve[-1].equity}")
+            line(f"Peak equity: {peak}")
+            line(f"Trough equity: {trough}")
+            line(f"Max drawdown: {detail.summary.max_drawdown_pct}%")
+            line(f"Data points: {len(detail.equity_curve)}")
 
         pdf.showPage()
         pdf.save()

@@ -38,7 +38,7 @@ def create_analysis(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Create and enqueue a single-symbol deep analysis (Pro+ gated)."""
-    ensure_forecasting_access(user.plan_tier, user.subscription_status)
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     rate_limiter.check(
         bucket="analysis:create",
         actor_key=str(user.id),

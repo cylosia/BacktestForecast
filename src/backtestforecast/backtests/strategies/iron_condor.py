@@ -104,10 +104,15 @@ class IronCondorStrategy(StrategyDefinition):
         sp = quotes[short_put.ticker].mid_price  # type: ignore[union-attr]
         lp = quotes[long_put.ticker].mid_price  # type: ignore[union-attr]
         entry_value_per_unit = (lc + lp - sc - sp) * 100.0
-        credit = abs(min(entry_value_per_unit, 0.0))
         put_width = abs(short_put.strike_price - long_put.strike_price) * 100.0
         call_width = abs(long_call.strike_price - short_call.strike_price) * 100.0
-        max_loss_per_unit = max(max(put_width - credit, 0.0), max(call_width - credit, 0.0))
+        wider_spread = max(put_width, call_width)
+        if entry_value_per_unit <= 0:
+            credit = abs(entry_value_per_unit)
+            max_loss_per_unit = max(wider_spread - credit, 0.0)
+        else:
+            max_loss_per_unit = wider_spread + entry_value_per_unit
+        credit = abs(min(entry_value_per_unit, 0.0))
         margin = iron_condor_margin(
             long_call.strike_price - short_call.strike_price,
             short_put.strike_price - long_put.strike_price,

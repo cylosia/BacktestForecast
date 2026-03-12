@@ -155,9 +155,9 @@ export function SelectableHistoryList({
                 <TableCell className="text-muted-foreground">
                   {formatDateTime(item.created_at)}
                 </TableCell>
-                <TableCell>{item.summary.trade_count}</TableCell>
-                <TableCell>{formatPercent(item.summary.total_roi_pct)}</TableCell>
-                <TableCell>{formatCurrency(item.summary.total_net_pnl)}</TableCell>
+                <TableCell>{item.summary.trade_count ?? "—"}</TableCell>
+                <TableCell>{item.summary.total_roi_pct != null ? formatPercent(item.summary.total_roi_pct) : "—"}</TableCell>
+                <TableCell>{item.summary.total_net_pnl != null ? formatCurrency(item.summary.total_net_pnl) : "—"}</TableCell>
                 <TableCell>
                   <Badge variant={statusBadgeVariant(item.status)}>
                     {statusLabel(item.status)}

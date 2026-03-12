@@ -41,22 +41,28 @@ export function formatNumber(value: NumericValue): string {
   return numberFormatter.format(toNumber(value));
 }
 
-export function formatDate(value: string): string {
+export function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(new Date(value));
+  }).format(d);
 }
 
-export function formatDateTime(value: string): string {
+export function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(d);
 }
 
 export function strategyLabel(strategy: string | StrategyType): string {
@@ -150,13 +156,15 @@ export function statusLabel(status: RunStatus | string): string {
       return "Completed";
     case "failed":
       return "Failed";
+    case "cancelled":
+      return "Cancelled";
     default:
       return status;
   }
 }
 
 export function isTerminalStatus(status: RunStatus | string): boolean {
-  return status === "succeeded" || status === "failed";
+  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 export function getCurrentMonthRunCount(items: BacktestRunHistoryItemResponse[]): number {

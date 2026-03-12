@@ -5,7 +5,7 @@ import json
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Iterable, Sequence
 
 from backtestforecast.backtests.types import BacktestExecutionResult
@@ -70,6 +70,7 @@ def aggregate_historical_performance(
     reference_time: datetime,
     recency_half_life_days: int = 180,
 ) -> HistoricalPerformanceResponse:
+    recency_half_life_days = max(recency_half_life_days, 1)
     weighted_total = 0.0
     weighted_win_rate = 0.0
     weighted_roi = 0.0
@@ -192,5 +193,8 @@ def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
 
 
+_QUANT = Decimal("0.0001")
+
+
 def _to_decimal(value: float) -> Decimal:
-    return Decimal(str(round(value, 4)))
+    return Decimal(str(value)).quantize(_QUANT, rounding=ROUND_HALF_UP)

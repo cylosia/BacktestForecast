@@ -84,7 +84,10 @@ class ScanService:
         return self._forecaster
 
     def create_job(self, user: User, payload: CreateScannerJobRequest) -> ScannerJob:
-        policy = resolve_scanner_policy(user.plan_tier, payload.mode.value, user.subscription_status)
+        policy = resolve_scanner_policy(
+            user.plan_tier, payload.mode.value, user.subscription_status,
+            user.subscription_current_period_end,
+        )
         validate_strategy_access(policy, [strategy.value for strategy in payload.strategy_types])
         self._validate_limits(policy, payload)
 
@@ -381,7 +384,7 @@ class ScanService:
         strategy_type: str | None,
         horizon_days: int,
     ) -> ForecastEnvelopeResponse:
-        ensure_forecasting_access(user.plan_tier, user.subscription_status)
+        ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
         request = CreateBacktestRunRequest(
             symbol=symbol,
             strategy_type=(strategy_type or "long_call"),

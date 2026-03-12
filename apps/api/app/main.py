@@ -110,7 +110,10 @@ def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 
 @app.exception_handler(RequestValidationError)
 def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    logger.warning("api.request_validation_error", errors=exc.errors())
+    sanitized = [
+        {k: v for k, v in err.items() if k != "input"} for err in exc.errors()
+    ]
+    logger.warning("api.request_validation_error", errors=sanitized)
     response = JSONResponse(
         status_code=422,
         content=_error_payload(

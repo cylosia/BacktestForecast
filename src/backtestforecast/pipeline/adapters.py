@@ -31,8 +31,10 @@ class PipelineMarketDataFetcher:
         self.client = client
 
     def get_daily_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
-        bars = self.client.get_stock_daily_bars(symbol, start_date, end_date)
-        return sorted(bars, key=lambda b: b.trade_date)
+        from backtestforecast.market_data.service import MarketDataService
+
+        raw_bars = self.client.get_stock_daily_bars(symbol, start_date, end_date)
+        return MarketDataService._validate_bars(raw_bars, symbol)
 
 
 class PipelineBacktestExecutor:
@@ -173,7 +175,7 @@ class PipelineBacktestExecutor:
             "end_date": end_date,
             "target_dte": target_dte,
             "dte_tolerance_days": 5,
-            "max_holding_days": min(target_dte, 30),
+            "max_holding_days": target_dte,
             "account_size": Decimal("10000"),
             "risk_per_trade_pct": Decimal("5"),
             "commission_per_contract": Decimal("0.65"),

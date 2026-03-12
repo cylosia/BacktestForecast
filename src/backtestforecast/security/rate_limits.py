@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from threading import Lock
 
@@ -51,6 +52,14 @@ class RateLimiter:
         except RateLimitError:
             RATE_LIMIT_HITS_TOTAL.labels(bucket=bucket).inc()
             raise
+
+    async def async_check(
+        self, *, bucket: str, actor_key: str, limit: int, window_seconds: int,
+    ) -> None:
+        """Async wrapper for use in async handlers or middleware."""
+        await asyncio.to_thread(
+            self.check, bucket=bucket, actor_key=actor_key, limit=limit, window_seconds=window_seconds,
+        )
 
     def ping(self) -> bool:
         try:

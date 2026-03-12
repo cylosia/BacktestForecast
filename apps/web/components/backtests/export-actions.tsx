@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Download, FileText, Loader2, Sheet } from "lucide-react";
 import { createExport, downloadExport, fetchExportStatus } from "@/lib/api/client";
@@ -32,12 +32,21 @@ export function ExportActions({
   const [busyFormat, setBusyFormat] = useState<ExportFormat | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const pollAndDownload = useCallback(
     async (token: string, exportJobId: string, fileName: string) => {
       for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        if (!mountedRef.current) return;
         const result = await fetchExportStatus(token, exportJobId);
+        if (!mountedRef.current) return;
 
         if (result.status === "succeeded") {
           const response = await downloadExport(token, exportJobId);

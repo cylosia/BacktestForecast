@@ -178,7 +178,7 @@ class NightlyPipelineService:
             quick_results = self._stage3_quick_backtest(pairs, trade_date)
             run.quick_backtests_run = len(quick_results)
 
-            quick_results.sort(key=lambda r: r.score, reverse=True)
+            quick_results.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))
             top_candidates = quick_results[:max_full_candidates]
             logger.info(
                 "pipeline.stage3_complete",
@@ -499,7 +499,7 @@ class NightlyPipelineService:
                             candidate.score *= 1.0 + (float(positive_rate) - 60) / 200.0
 
         # Final sort
-        candidates.sort(key=lambda r: r.score, reverse=True)
+        candidates.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))
 
         # Deduplicate: max 1 recommendation per symbol
         seen_symbols: set[str] = set()

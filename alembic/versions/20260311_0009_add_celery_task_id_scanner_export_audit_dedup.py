@@ -39,6 +39,15 @@ def upgrade() -> None:
         ["celery_task_id"],
     )
 
+    op.execute(
+        sa.text(
+            "DELETE FROM audit_events WHERE id NOT IN ("
+            "  SELECT MIN(id) FROM audit_events"
+            "  GROUP BY event_type, subject_type, subject_id"
+            ")"
+        )
+    )
+
     op.create_unique_constraint(
         "uq_audit_events_dedup",
         "audit_events",

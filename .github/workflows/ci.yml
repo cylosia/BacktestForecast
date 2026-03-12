@@ -36,6 +36,9 @@ jobs:
       - name: Lint Python (ruff)
         run: python -m ruff check .
 
+      - name: Typecheck Python (mypy)
+        run: python -m mypy src apps --ignore-missing-imports
+
       - name: Run Python tests
         run: pytest -q
 

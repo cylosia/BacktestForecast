@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -42,6 +44,7 @@ class MassiveOptionGateway:
         self.symbol = symbol
         self._contract_cache: OrderedDict[tuple[date, str, int, int], list[OptionContractRecord]] = OrderedDict()
         self._quote_cache: OrderedDict[tuple[str, date], OptionQuoteRecord | None] = OrderedDict()
+        self._lock = threading.Lock()
 
     def list_contracts(
         self,
@@ -51,10 +54,11 @@ class MassiveOptionGateway:
         dte_tolerance_days: int,
     ) -> list[OptionContractRecord]:
         cache_key = (entry_date, contract_type, target_dte, dte_tolerance_days)
-        contracts = self._contract_cache.get(cache_key)
-        if contracts is not None:
-            self._contract_cache.move_to_end(cache_key)
-            return contracts
+        with self._lock:
+            contracts = self._contract_cache.get(cache_key)
+            if contracts is not None:
+                self._contract_cache.move_to_end(cache_key)
+                return contracts
         expiration_gte = entry_date + timedelta(days=max(1, target_dte - dte_tolerance_days))
         expiration_lte = entry_date + timedelta(days=target_dte + dte_tolerance_days)
         contracts = self.client.list_option_contracts(
@@ -65,10 +69,11 @@ class MassiveOptionGateway:
             expiration_lte=expiration_lte,
         )
         contracts = [contract for contract in contracts if contract.shares_per_contract == 100]
-        if len(self._contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX:
-            for _ in range(len(self._contract_cache) // 4):
-                self._contract_cache.popitem(last=False)
-        self._contract_cache[cache_key] = contracts
+        with self._lock:
+            if len(self._contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX:
+                for _ in range(len(self._contract_cache) // 4):
+                    self._contract_cache.popitem(last=False)
+            self._contract_cache[cache_key] = contracts
         return contracts
 
     def select_contract(
@@ -113,14 +118,17 @@ class MassiveOptionGateway:
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         cache_key = (option_ticker, trade_date)
-        if cache_key in self._quote_cache:
-            self._quote_cache.move_to_end(cache_key)
-            return self._quote_cache[cache_key]
-        if len(self._quote_cache) >= _GATEWAY_QUOTE_CACHE_MAX:
-            for _ in range(len(self._quote_cache) // 4):
-                self._quote_cache.popitem(last=False)
-        self._quote_cache[cache_key] = self.client.get_option_quote_for_date(option_ticker, trade_date)
-        return self._quote_cache[cache_key]
+        with self._lock:
+            if cache_key in self._quote_cache:
+                self._quote_cache.move_to_end(cache_key)
+                return self._quote_cache[cache_key]
+        quote = self.client.get_option_quote_for_date(option_ticker, trade_date)
+        with self._lock:
+            if len(self._quote_cache) >= _GATEWAY_QUOTE_CACHE_MAX:
+                for _ in range(len(self._quote_cache) // 4):
+                    self._quote_cache.popitem(last=False)
+            self._quote_cache[cache_key] = quote
+        return quote
 
     @staticmethod
     def _expiration_sort_key(expiration: date, entry_date: date, target_dte: int) -> tuple[int, int, int]:
@@ -205,9 +213,19 @@ class MarketDataService:
         seen_dates: dict[date, DailyBar] = {}
         dropped = 0
         for bar in raw_bars:
+            if not (
+                math.isfinite(bar.open_price)
+                and math.isfinite(bar.high_price)
+                and math.isfinite(bar.low_price)
+                and math.isfinite(bar.close_price)
+                and math.isfinite(bar.volume)
+            ):
+                dropped += 1
+                continue
             if (
                 bar.close_price <= 0
                 or bar.open_price <= 0
+                or bar.volume < 0
                 or bar.high_price < bar.low_price
                 or bar.high_price < max(bar.open_price, bar.close_price)
                 or bar.low_price > min(bar.open_price, bar.close_price)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 
 from backtestforecast.indicators.calculations import ema, rolling_stddev, rsi, sma
@@ -247,6 +247,10 @@ class HistoricalAnalogForecaster:
             return 0
         return max(1, int(calendar_days * 5 / 7))
 
+    _QUANT = Decimal("0.0001")
+
     @staticmethod
     def _to_decimal(value: float) -> Decimal:
-        return Decimal(str(round(value, 4)))
+        return Decimal(str(value)).quantize(
+            HistoricalAnalogForecaster._QUANT, rounding=ROUND_HALF_UP,
+        )

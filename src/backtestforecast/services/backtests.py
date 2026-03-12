@@ -121,7 +121,7 @@ class BacktestService:
 
     def set_celery_task_id(self, run_id: UUID, task_id: str) -> None:
         """Attach the Celery task ID after dispatch."""
-        run = self.run_repository.get_by_id(run_id)
+        run = self.run_repository.get_by_id(run_id, for_update=True)
         if run is not None and run.status == "queued":
             run.celery_task_id = task_id
             self.session.commit()
@@ -237,7 +237,9 @@ class BacktestService:
         return stored
 
     def list_runs(self, user: User, limit: int = 50) -> BacktestRunListResponse:
-        feature_policy = resolve_feature_policy(user.plan_tier, user.subscription_status)
+        feature_policy = resolve_feature_policy(
+            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+        )
         created_since = None
         if feature_policy.history_days is not None:
             created_since = datetime.now(UTC) - timedelta(days=feature_policy.history_days)
@@ -269,7 +271,9 @@ class BacktestService:
         return self._to_detail_response(run)
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
-        feature_policy = resolve_feature_policy(user.plan_tier, user.subscription_status)
+        feature_policy = resolve_feature_policy(
+            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+        )
         limit = feature_policy.side_by_side_comparison_limit
 
         if len(request.run_ids) > limit:
@@ -295,7 +299,9 @@ class BacktestService:
         )
 
     def to_current_user_response(self, user: User) -> CurrentUserResponse:
-        feature_policy = resolve_feature_policy(user.plan_tier, user.subscription_status)
+        feature_policy = resolve_feature_policy(
+            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+        )
         used_this_month = self._current_month_backtest_count(user)
         remaining = None
         if feature_policy.monthly_backtest_quota is not None:
@@ -339,7 +345,9 @@ class BacktestService:
             select(User).where(User.id == user.id).with_for_update()
         ).scalar_one()
 
-        feature_policy = resolve_feature_policy(user.plan_tier, user.subscription_status)
+        feature_policy = resolve_feature_policy(
+            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+        )
         if feature_policy.monthly_backtest_quota is None:
             return
         used_this_month = self._current_month_backtest_count(user)

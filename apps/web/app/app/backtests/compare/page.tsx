@@ -22,24 +22,34 @@ const GRID_COLS: Record<number, string> = {
   3: "md:grid-cols-3",
 };
 
+function safeCurrency(v: unknown): string {
+  return v != null ? formatCurrency(v as number) : "—";
+}
+function safePercent(v: unknown): string {
+  return v != null ? formatPercent(v as number) : "—";
+}
+function safeNum(v: unknown): string {
+  return v != null ? formatNumber(v as number) : "—";
+}
+
 const METRIC_ROWS: Array<{
   label: string;
   key: keyof BacktestSummaryResponse;
   format: (value: unknown) => string;
   higherIsBetter?: boolean;
 }> = [
-  { label: "Trades", key: "trade_count", format: (v) => formatNumber(v as number) },
-  { label: "Win rate", key: "win_rate", format: (v) => formatPercent(v as number), higherIsBetter: true },
-  { label: "Total ROI", key: "total_roi_pct", format: (v) => formatPercent(v as number), higherIsBetter: true },
-  { label: "Net P&L", key: "total_net_pnl", format: (v) => formatCurrency(v as number), higherIsBetter: true },
-  { label: "Max drawdown", key: "max_drawdown_pct", format: (v) => formatPercent(v as number), higherIsBetter: false },
-  { label: "Avg win", key: "average_win_amount", format: (v) => formatCurrency(v as number), higherIsBetter: true },
-  { label: "Avg loss", key: "average_loss_amount", format: (v) => formatCurrency(v as number) },
-  { label: "Avg hold (days)", key: "average_holding_period_days", format: (v) => formatNumber(v as number) },
-  { label: "Avg DTE at open", key: "average_dte_at_open", format: (v) => formatNumber(v as number) },
-  { label: "Total commissions", key: "total_commissions", format: (v) => formatCurrency(v as number) },
-  { label: "Starting equity", key: "starting_equity", format: (v) => formatCurrency(v as number) },
-  { label: "Ending equity", key: "ending_equity", format: (v) => formatCurrency(v as number), higherIsBetter: true },
+  { label: "Trades", key: "trade_count", format: safeNum },
+  { label: "Win rate", key: "win_rate", format: safePercent, higherIsBetter: true },
+  { label: "Total ROI", key: "total_roi_pct", format: safePercent, higherIsBetter: true },
+  { label: "Net P&L", key: "total_net_pnl", format: safeCurrency, higherIsBetter: true },
+  { label: "Max drawdown", key: "max_drawdown_pct", format: safePercent, higherIsBetter: false },
+  { label: "Avg win", key: "average_win_amount", format: safeCurrency, higherIsBetter: true },
+  { label: "Avg loss", key: "average_loss_amount", format: safeCurrency },
+  { label: "Avg hold (days)", key: "average_holding_period_days", format: safeNum },
+  { label: "Avg DTE at open", key: "average_dte_at_open", format: safeNum },
+  { label: "Total commissions", key: "total_commissions", format: safeCurrency },
+  { label: "Starting equity", key: "starting_equity", format: safeCurrency },
+  { label: "Ending equity", key: "ending_equity", format: safeCurrency, higherIsBetter: true },
 ];
 
 function bestIndex(runs: BacktestRunDetailResponse[], key: keyof BacktestSummaryResponse, higherIsBetter: boolean): number {

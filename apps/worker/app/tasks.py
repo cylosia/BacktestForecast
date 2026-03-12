@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 
 from apps.worker.app.celery_app import celery_app
 from backtestforecast.db.session import SessionLocal
@@ -31,7 +32,7 @@ def nightly_scan_pipeline(
     max_recommendations: int = 20,
 ) -> dict[str, str | int]:
     """Execute the full nightly scan pipeline."""
-    from datetime import date
+    from datetime import datetime
 
     from backtestforecast.config import get_settings
     from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
@@ -59,7 +60,9 @@ def nightly_scan_pipeline(
         if symbols is None:
             symbols = settings.pipeline_default_symbols
 
-        trade_date = date.today()
+        from zoneinfo import ZoneInfo
+
+        trade_date = datetime.now(ZoneInfo("America/New_York")).date()
 
         with SessionLocal() as session:
             service = NightlyPipelineService(
@@ -105,6 +108,24 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 "run_id": run_id,
                 "error_code": exc.code,
             }
+        except SoftTimeLimitExceeded:
+            session.rollback()
+            from datetime import UTC, datetime
+
+            from backtestforecast.models import BacktestRun
+
+            run_obj = session.get(BacktestRun, UUID(run_id))
+            if run_obj is not None and run_obj.status in ("queued", "running"):
+                run_obj.status = "failed"
+                run_obj.error_code = "time_limit_exceeded"
+                run_obj.error_message = "Backtest exceeded the time limit."
+                run_obj.completed_at = datetime.now(UTC)
+                session.commit()
+            publish_job_status(
+                "backtest", UUID(run_id), "failed",
+                metadata={"error_code": "time_limit_exceeded"},
+            )
+            return {"status": "failed", "run_id": run_id, "error_code": "time_limit_exceeded"}
         except Exception as exc:  # pragma: no cover
             session.rollback()
             try:
@@ -153,6 +174,24 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                 "export_job_id": export_job_id,
                 "error_code": exc.code,
             }
+        except SoftTimeLimitExceeded:
+            session.rollback()
+            from datetime import UTC, datetime
+
+            from backtestforecast.models import ExportJob
+
+            export_obj = session.get(ExportJob, UUID(export_job_id))
+            if export_obj is not None and export_obj.status in ("queued", "running"):
+                export_obj.status = "failed"
+                export_obj.error_code = "time_limit_exceeded"
+                export_obj.error_message = "Export exceeded the time limit."
+                export_obj.completed_at = datetime.now(UTC)
+                session.commit()
+            publish_job_status(
+                "export", UUID(export_job_id), "failed",
+                metadata={"error_code": "time_limit_exceeded"},
+            )
+            return {"status": "failed", "export_job_id": export_job_id, "error_code": "time_limit_exceeded"}
         except Exception as exc:  # pragma: no cover
             session.rollback()
             try:
@@ -228,6 +267,24 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     "analysis_id": analysis_id,
                     "error_code": exc.code,
                 }
+            except SoftTimeLimitExceeded:
+                session.rollback()
+                from backtestforecast.models import SymbolAnalysis as _SA
+
+                analysis = session.get(_SA, UUID(analysis_id))
+                if analysis is not None and analysis.status in ("queued", "running"):
+                    analysis.status = "failed"
+                    analysis.error_message = "Analysis exceeded the time limit."
+                    session.commit()
+                publish_job_status(
+                    "analysis", UUID(analysis_id), "failed",
+                    metadata={"error_code": "time_limit_exceeded"},
+                )
+                return {
+                    "status": "failed",
+                    "analysis_id": analysis_id,
+                    "error_code": "time_limit_exceeded",
+                }
             except Exception as exc:
                 session.rollback()
                 try:
@@ -236,7 +293,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     from backtestforecast.models import SymbolAnalysis
 
                     analysis = session.get(SymbolAnalysis, UUID(analysis_id))
-                    if analysis is not None:
+                    if analysis is not None and analysis.status in ("queued", "running"):
                         analysis.status = "failed"
                         analysis.error_message = "Analysis failed after exhausting retries."
                         session.commit()
@@ -276,6 +333,24 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                 "job_id": job_id,
                 "error_code": exc.code,
             }
+        except SoftTimeLimitExceeded:
+            session.rollback()
+            from datetime import UTC, datetime
+
+            from backtestforecast.models import ScannerJob as ScannerJobModel
+
+            scan_obj = session.get(ScannerJobModel, UUID(job_id))
+            if scan_obj is not None and scan_obj.status in ("queued", "running"):
+                scan_obj.status = "failed"
+                scan_obj.error_code = "time_limit_exceeded"
+                scan_obj.error_message = "Scan exceeded the time limit."
+                scan_obj.completed_at = datetime.now(UTC)
+                session.commit()
+            publish_job_status(
+                "scan", UUID(job_id), "failed",
+                metadata={"error_code": "time_limit_exceeded"},
+            )
+            return {"status": "failed", "job_id": job_id, "error_code": "time_limit_exceeded"}
         except Exception as exc:  # pragma: no cover
             session.rollback()
             try:
@@ -343,6 +418,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
     from sqlalchemy import select, update
 
     from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SymbolAnalysis
+    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL
 
     cutoff = datetime.now(UTC) - timedelta(minutes=stale_minutes)
     counts: dict[str, int] = {}
@@ -367,6 +443,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                     update(BacktestRun).where(BacktestRun.id == run_id).values(celery_task_id=result.id)
                 )
                 dirty = True
+                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="BacktestRun").inc()
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="BacktestRun", id=str(run_id))
         counts["backtest_runs"] = len(stale_run_ids)
@@ -388,6 +465,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                     update(ExportJob).where(ExportJob.id == eid).values(celery_task_id=result.id)
                 )
                 dirty = True
+                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="ExportJob").inc()
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="ExportJob", id=str(eid))
         counts["export_jobs"] = len(stale_export_ids)
@@ -409,6 +487,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                     update(ScannerJob).where(ScannerJob.id == sid).values(celery_task_id=result.id)
                 )
                 dirty = True
+                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="ScannerJob").inc()
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="ScannerJob", id=str(sid))
         counts["scanner_jobs"] = len(stale_scan_ids)
@@ -430,6 +509,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                     update(SymbolAnalysis).where(SymbolAnalysis.id == aid).values(celery_task_id=result.id)
                 )
                 dirty = True
+                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="SymbolAnalysis").inc()
             except Exception:
                 logger.exception("reaper.redispatch_failed", model="SymbolAnalysis", id=str(aid))
         counts["symbol_analyses"] = len(stale_analysis_ids)

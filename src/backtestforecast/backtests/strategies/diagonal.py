@@ -116,7 +116,9 @@ class DiagonalSpreadStrategy(StrategyDefinition):
         far_strikes = sorted_unique_strikes(far_cc)
         far_strike = offset_strike(far_strikes, near_strike, -1)
         if far_strike is None:
-            far_strike = near_strike
+            raise DataUnavailableError(
+                "No lower strike available in far-dated chain for diagonal spread."
+            )
         short_c = require_contract_for_strike(near_cc, near_strike)
         long_c = require_contract_for_strike(far_cc, far_strike)
 

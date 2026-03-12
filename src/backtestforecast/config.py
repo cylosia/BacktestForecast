@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import secrets
 from functools import lru_cache
 
 from pydantic import Field, field_validator, model_validator
@@ -151,7 +150,7 @@ class Settings(BaseSettings):
         "ABNB",
     ]
 
-    ip_hash_salt: str = Field(default_factory=lambda: secrets.token_hex(16))
+    ip_hash_salt: str = "bff-default-ip-hash-salt-change-in-production"
 
     db_pool_size: int = 5
     db_pool_recycle: int = 1800

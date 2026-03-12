@@ -72,27 +72,27 @@ export function RecommendationList({
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <div className="rounded-lg border border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">Trades</p>
-                <p className="mt-1 font-semibold">{rec.summary.trade_count}</p>
+                <p className="mt-1 font-semibold">{rec.summary.trade_count ?? "—"}</p>
               </div>
               <div className="rounded-lg border border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">Win rate</p>
-                <p className="mt-1 font-semibold">{formatPercent(rec.summary.win_rate)}</p>
+                <p className="mt-1 font-semibold">{rec.summary.win_rate != null ? formatPercent(rec.summary.win_rate) : "—"}</p>
               </div>
               <div className="rounded-lg border border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">ROI</p>
-                <p className="mt-1 font-semibold">{formatPercent(rec.summary.total_roi_pct)}</p>
+                <p className="mt-1 font-semibold">{rec.summary.total_roi_pct != null ? formatPercent(rec.summary.total_roi_pct) : "—"}</p>
               </div>
               <div className="rounded-lg border border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">Net P&L</p>
-                <p className="mt-1 font-semibold">{formatCurrency(rec.summary.total_net_pnl)}</p>
+                <p className="mt-1 font-semibold">{rec.summary.total_net_pnl != null ? formatCurrency(rec.summary.total_net_pnl) : "—"}</p>
               </div>
               <div className="rounded-lg border border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">Max DD</p>
-                <p className="mt-1 font-semibold">{formatPercent(rec.summary.max_drawdown_pct)}</p>
+                <p className="mt-1 font-semibold">{rec.summary.max_drawdown_pct != null ? formatPercent(rec.summary.max_drawdown_pct) : "—"}</p>
               </div>
               <div className="rounded-lg border border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">Commissions</p>
-                <p className="mt-1 font-semibold">{formatCurrency(rec.summary.total_commissions)}</p>
+                <p className="mt-1 font-semibold">{rec.summary.total_commissions != null ? formatCurrency(rec.summary.total_commissions) : "—"}</p>
               </div>
             </div>
 
@@ -100,12 +100,12 @@ export function RecommendationList({
               <div className="rounded-lg border border-border/60 p-3 space-y-1">
                 <p className="text-xs font-medium text-muted-foreground">Forecast</p>
                 <p className="text-sm">
-                  {formatPercent(rec.forecast.expected_return_low_pct)} to{" "}
-                  {formatPercent(rec.forecast.expected_return_high_pct)} expected range
+                  {rec.forecast.expected_return_low_pct != null ? formatPercent(rec.forecast.expected_return_low_pct) : "—"} to{" "}
+                  {rec.forecast.expected_return_high_pct != null ? formatPercent(rec.forecast.expected_return_high_pct) : "—"} expected range
                 </p>
                 <p className="text-sm">
-                  Median: {formatPercent(rec.forecast.expected_return_median_pct)} ·{" "}
-                  Positive outcome: {formatPercent(rec.forecast.positive_outcome_rate_pct)}
+                  Median: {rec.forecast.expected_return_median_pct != null ? formatPercent(rec.forecast.expected_return_median_pct) : "—"} ·{" "}
+                  Positive outcome: {rec.forecast.positive_outcome_rate_pct != null ? formatPercent(rec.forecast.positive_outcome_rate_pct) : "—"}
                 </p>
                 <p className="text-xs text-muted-foreground">{rec.forecast.disclaimer}</p>
               </div>

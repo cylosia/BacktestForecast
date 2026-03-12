@@ -326,7 +326,7 @@ class OptionsBacktestEngine:
             return True, "expiration"
         if (bar.trade_date - position.entry_date).days >= max_holding_days:
             return True, "max_holding_days"
-        if bar.trade_date > backtest_end_date and bar.trade_date == last_bar_date:
+        if bar.trade_date >= backtest_end_date and bar.trade_date == last_bar_date:
             return True, "backtest_end"
         return False, ""
 

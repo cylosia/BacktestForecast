@@ -13,6 +13,7 @@ from backtestforecast.config import Settings, get_settings
 from backtestforecast.errors import (
     AuthenticationError,
     ConfigurationError,
+    ExternalServiceError,
     NotFoundError,
     ValidationError,
 )
@@ -159,6 +160,9 @@ class BillingService:
 
         event_type = str(event["type"])
         event_id = self._coerce_stripe_id(event.get("id")) or str(event.get("id") or "")
+        if not event_id:
+            logger.warning("billing.webhook.missing_event_id", event_type=event_type)
+            return {"status": "ignored", "reason": "missing_event_id"}
         if self.audit_events.exists(
             event_type=f"billing.webhook.{event_type}",
             subject_type="stripe_event",
@@ -215,8 +219,19 @@ class BillingService:
         subscription_id = self._coerce_stripe_id(checkout_session.get("subscription"))
         if subscription_id:
             user.stripe_subscription_id = subscription_id
-            client = self._get_stripe_client()
-            subscription = client.subscriptions.retrieve(subscription_id)
+            try:
+                client = self._get_stripe_client()
+                subscription = client.subscriptions.retrieve(subscription_id)
+            except Exception as exc:
+                logger.exception(
+                    "billing.stripe_api_error",
+                    action="subscriptions.retrieve",
+                    subscription_id=subscription_id,
+                    user_id=str(user.id),
+                )
+                raise ExternalServiceError(
+                    "Unable to verify subscription with Stripe. The webhook will be retried.",
+                ) from exc
             self._apply_subscription_to_user(user, subscription)
         return user
 

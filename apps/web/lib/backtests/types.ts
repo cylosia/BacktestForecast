@@ -36,7 +36,7 @@ export type StrategyType =
   | "custom_8_leg"
   | "naked_call"
   | "naked_put";
-export type RunStatus = "queued" | "running" | "succeeded" | "failed";
+export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type ComparisonOperator = "lt" | "lte" | "gt" | "gte";
 export type CrossoverDirection = "bullish" | "bearish";
 export type MovingAverageRuleType = "sma_crossover" | "ema_crossover";

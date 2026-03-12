@@ -36,6 +36,7 @@ class ClerkTokenVerifier:
                 algorithms=["RS256"],
                 audience=self.settings.clerk_audience or None,
                 issuer=self.settings.clerk_issuer or None,
+                leeway=30,
                 options={
                     "verify_aud": bool(self.settings.clerk_audience),
                     "require": ["sub", "exp", "nbf", "iat"],
