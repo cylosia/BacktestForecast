@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import delete, select
 
 from backtestforecast.db.base import Base
-from backtestforecast.db.session import SessionLocal, engine
+from backtestforecast.db.session import SessionLocal, build_engine
 from backtestforecast.models import (
     AuditEvent,
     BacktestEquityPoint,
@@ -279,7 +279,7 @@ def seed_export_job(session, user: User, run: BacktestRun) -> ExportJob:
 def main() -> None:
     args = parse_args()
     if args.create_schema:
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=build_engine())
 
     with SessionLocal() as session:
         user = ensure_user(

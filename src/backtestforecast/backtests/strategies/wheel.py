@@ -275,7 +275,9 @@ class WheelStrategyBacktestEngine:
                             config.commission_per_contract * position.quantity
                         )
                 else:
-                    position = self._open_covered_call(config, bar, index, option_gateway, held_shares.quantity)
+                    position = self._open_covered_call(
+                        config, bar, index, option_gateway, held_shares.quantity, warnings, warning_codes
+                    )
                     if position is not None:
                         active_option = position
                         cash += (position.entry_mid * 100.0 * position.quantity) - (
@@ -419,14 +421,33 @@ class WheelStrategyBacktestEngine:
         bar_index: int,
         option_gateway: OptionDataGateway,
         quantity: int,
+        warnings: list[dict[str, Any]],
+        warning_codes: set[str],
     ) -> OpenShortOptionPhase | None:
-        calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
-        expiration = choose_primary_expiration(calls, bar.trade_date, config.target_dte)
-        call_contracts = contracts_for_expiration(calls, expiration)
-        strike = choose_call_otm_strike([contract.strike_price for contract in call_contracts], bar.close_price)
-        contract = require_contract_for_strike(call_contracts, strike)
+        try:
+            calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
+            expiration = choose_primary_expiration(calls, bar.trade_date, config.target_dte)
+            call_contracts = contracts_for_expiration(calls, expiration)
+            strike = choose_call_otm_strike([contract.strike_price for contract in call_contracts], bar.close_price)
+            contract = require_contract_for_strike(call_contracts, strike)
+        except DataUnavailableError:
+            self._add_warning_once(
+                warnings,
+                warning_codes,
+                "missing_contract_chain",
+                "One or more entry dates could not be evaluated because"
+                " no eligible option contract chain was returned.",
+            )
+            return None
+
         quote = option_gateway.get_quote(contract.ticker, bar.trade_date)
         if quote is None:
+            self._add_warning_once(
+                warnings,
+                warning_codes,
+                "missing_entry_quote",
+                "One or more entry dates were skipped because no valid same-day option quote was returned.",
+            )
             return None
         return OpenShortOptionPhase(
             ticker=contract.ticker,
