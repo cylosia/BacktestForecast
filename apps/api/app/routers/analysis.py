@@ -79,6 +79,7 @@ def create_analysis(
                 logger.exception("analysis.enqueue_failed.commit_error", analysis_id=str(analysis.id))
                 db.rollback()
 
+    db.expire_all()
     return _to_summary(analysis)
 
 

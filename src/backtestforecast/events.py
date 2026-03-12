@@ -26,7 +26,12 @@ def _get_redis():
         if _redis_client is not None:
             return _redis_client
         settings = get_settings()
-        _redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+        _redis_client = Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_timeout=5.0,
+            socket_connect_timeout=2.0,
+        )
         atexit.register(_shutdown_redis)
         return _redis_client
 

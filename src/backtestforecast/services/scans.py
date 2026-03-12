@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any, Self
 from uuid import UUID
 
+import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -44,6 +45,8 @@ from backtestforecast.schemas.scans import (
 )
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.backtests import to_decimal
+
+logger = structlog.get_logger("services.scans")
 
 
 class ScanService:
@@ -237,6 +240,13 @@ class ScanService:
                             }
                         )
                     except Exception:  # pragma: no cover - safeguard
+                        logger.warning(
+                            "scan.candidate_failed",
+                            symbol=symbol,
+                            strategy=strategy.value,
+                            rule_set=rule_set.name,
+                            exc_info=True,
+                        )
                         warnings.append(
                             {
                                 "code": "candidate_failed_internal",

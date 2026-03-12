@@ -9,7 +9,7 @@ import {
   fetchAnalysisStatus,
 } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
-import { strategyLabel } from "@/lib/backtests/format";
+import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
 import type {
   AnalysisTopResult,
   LandscapeCell,
@@ -41,7 +41,7 @@ function indicatorCard(label: string, value: number | null, suffix?: string) {
     <div className="rounded-lg border border-border/60 p-3">
       <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
       <p className="mt-1 text-lg font-semibold">
-        {value != null ? `${value.toFixed(2)}${suffix || ""}` : "—"}
+        {value != null ? `${formatNumber(value)}${suffix || ""}` : "—"}
       </p>
     </div>
   );
@@ -52,7 +52,7 @@ function RegimeSection({ regime }: { regime: RegimeDetail }) {
     <Card>
       <CardHeader>
         <CardTitle>Current regime</CardTitle>
-        <CardDescription>Technical indicator snapshot as of the latest close at ${regime.close_price.toFixed(2)}</CardDescription>
+        <CardDescription>Technical indicator snapshot as of the latest close at {formatCurrency(regime.close_price)}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
@@ -116,7 +116,7 @@ function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium truncate">{strategyLabel(stratType)}</p>
                 <p className="text-xs text-muted-foreground">
-                  DTE {best.target_dte} · {best.trade_count} trades · {best.win_rate.toFixed(0)}% WR
+                  DTE {best.target_dte} · {best.trade_count} trades · {formatPercent(best.win_rate)} WR
                 </p>
               </div>
               <div className="w-24 shrink-0">
@@ -129,7 +129,7 @@ function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
               </div>
               <div className="w-16 text-right shrink-0">
                 <span className={`text-sm font-semibold ${best.total_roi_pct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                  {best.total_roi_pct.toFixed(1)}%
+                  {formatPercent(best.total_roi_pct)}
                 </span>
               </div>
             </div>
@@ -157,7 +157,7 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
           </div>
           <div className="text-right">
             <p className="text-xs text-muted-foreground">Score</p>
-            <p className="text-lg font-semibold">{result.score.toFixed(1)}</p>
+            <p className="text-lg font-semibold">{formatNumber(result.score)}</p>
           </div>
         </div>
 
@@ -165,12 +165,12 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
           <div>
             <span className="text-xs text-muted-foreground">ROI</span>
             <p className={`font-medium ${(summary.total_roi_pct ?? 0) >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-              {summary.total_roi_pct?.toFixed(1) ?? "—"}%
+              {summary.total_roi_pct != null ? formatPercent(summary.total_roi_pct) : "—"}
             </p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Win rate</span>
-            <p className="font-medium">{summary.win_rate?.toFixed(0) ?? "—"}%</p>
+            <p className="font-medium">{summary.win_rate != null ? formatPercent(summary.win_rate) : "—"}</p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Trades</span>
@@ -178,7 +178,7 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Max DD</span>
-            <p className="font-medium">{summary.max_drawdown_pct?.toFixed(1) ?? "—"}%</p>
+            <p className="font-medium">{summary.max_drawdown_pct != null ? formatPercent(summary.max_drawdown_pct) : "—"}</p>
           </div>
         </div>
 
@@ -186,10 +186,10 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
           <div className="rounded-lg border border-border/60 bg-muted/30 p-2 text-xs">
             <span className="text-muted-foreground">Forecast: </span>
             <span className="font-medium">
-              {Number(forecast.expected_return_median_pct).toFixed(1)}% median
+              {formatPercent(forecast.expected_return_median_pct)} median
             </span>
             <span className="text-muted-foreground">
-              {" "}({Number(forecast.positive_outcome_rate_pct ?? 0).toFixed(0)}% positive,{" "}
+              {" "}({formatPercent(forecast.positive_outcome_rate_pct ?? 0)} positive,{" "}
               {forecast.analog_count ?? 0} analogs)
             </span>
           </div>
@@ -345,7 +345,7 @@ export function SymbolAnalysisLauncher() {
             </div>
             <div className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Duration</p>
-              <p className="mt-1 text-xl font-semibold">{result.duration_seconds?.toFixed(0) ?? "—"}s</p>
+              <p className="mt-1 text-xl font-semibold">{result.duration_seconds != null ? `${Math.round(result.duration_seconds)}s` : "—"}</p>
             </div>
           </div>
 

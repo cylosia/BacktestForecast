@@ -65,6 +65,7 @@ def create_scan(
             except Exception:
                 logger.exception("scan.enqueue_failed.commit_error", job_id=str(job.id))
                 db.rollback()
+    db.expire_all()
     return service.get_job(user, job.id)
 
 

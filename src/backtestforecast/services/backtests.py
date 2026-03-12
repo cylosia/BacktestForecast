@@ -5,6 +5,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Self
 from uuid import UUID
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -34,6 +35,8 @@ from backtestforecast.schemas.backtests import (
     UsageSummaryResponse,
 )
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+
+logger = structlog.get_logger("services.backtests")
 
 DECIMAL_QUANT = Decimal("0.0001")
 
@@ -153,6 +156,7 @@ class BacktestService:
             self.session.commit()
             raise
         except Exception:
+            logger.exception("backtest.execution_failed", run_id=str(run.id))
             run.status = "failed"
             run.error_code = "internal_error"
             run.error_message = "An internal error occurred during backtest execution."
@@ -217,6 +221,7 @@ class BacktestService:
             self.session.commit()
             raise
         except Exception:
+            logger.exception("backtest.execution_failed", run_id=str(run.id))
             run.status = "failed"
             run.error_code = "internal_error"
             run.error_message = "An internal error occurred during backtest execution."

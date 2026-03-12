@@ -107,8 +107,26 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             }
         except Exception as exc:  # pragma: no cover
             session.rollback()
-            delay = 30 * (self.request.retries + 1)
-            raise self.retry(exc=exc, countdown=delay)
+            try:
+                delay = 30 * (self.request.retries + 1)
+                raise self.retry(exc=exc, countdown=delay)
+            except self.MaxRetriesExceededError:
+                from datetime import UTC, datetime
+
+                from backtestforecast.models import BacktestRun
+
+                run_obj = session.get(BacktestRun, UUID(run_id))
+                if run_obj is not None and run_obj.status in ("queued", "running"):
+                    run_obj.status = "failed"
+                    run_obj.error_code = "max_retries_exceeded"
+                    run_obj.error_message = "Backtest failed after exhausting retries."
+                    run_obj.completed_at = datetime.now(UTC)
+                    session.commit()
+                publish_job_status(
+                    "backtest", UUID(run_id), "failed",
+                    metadata={"error_code": "max_retries_exceeded"},
+                )
+                return {"status": "failed", "run_id": run_id, "error_code": "max_retries_exceeded"}
         finally:
             service.close()
 
@@ -137,8 +155,26 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             }
         except Exception as exc:  # pragma: no cover
             session.rollback()
-            delay = 15 * (self.request.retries + 1)
-            raise self.retry(exc=exc, countdown=delay)
+            try:
+                delay = 15 * (self.request.retries + 1)
+                raise self.retry(exc=exc, countdown=delay)
+            except self.MaxRetriesExceededError:
+                from datetime import UTC, datetime
+
+                from backtestforecast.models import ExportJob
+
+                export_obj = session.get(ExportJob, UUID(export_job_id))
+                if export_obj is not None and export_obj.status in ("queued", "running"):
+                    export_obj.status = "failed"
+                    export_obj.error_code = "max_retries_exceeded"
+                    export_obj.error_message = "Export failed after exhausting retries."
+                    export_obj.completed_at = datetime.now(UTC)
+                    session.commit()
+                publish_job_status(
+                    "export", UUID(export_job_id), "failed",
+                    metadata={"error_code": "max_retries_exceeded"},
+                )
+                return {"status": "failed", "export_job_id": export_job_id, "error_code": "max_retries_exceeded"}
         finally:
             service.close()
 
@@ -242,8 +278,26 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             }
         except Exception as exc:  # pragma: no cover
             session.rollback()
-            delay = 60 * (self.request.retries + 1)
-            raise self.retry(exc=exc, countdown=delay)
+            try:
+                delay = 60 * (self.request.retries + 1)
+                raise self.retry(exc=exc, countdown=delay)
+            except self.MaxRetriesExceededError:
+                from datetime import UTC, datetime
+
+                from backtestforecast.models import ScannerJob as ScannerJobModel
+
+                scan_obj = session.get(ScannerJobModel, UUID(job_id))
+                if scan_obj is not None and scan_obj.status in ("queued", "running"):
+                    scan_obj.status = "failed"
+                    scan_obj.error_code = "max_retries_exceeded"
+                    scan_obj.error_message = "Scan failed after exhausting retries."
+                    scan_obj.completed_at = datetime.now(UTC)
+                    session.commit()
+                publish_job_status(
+                    "scan", UUID(job_id), "failed",
+                    metadata={"error_code": "max_retries_exceeded"},
+                )
+                return {"status": "failed", "job_id": job_id, "error_code": "max_retries_exceeded"}
         finally:
             service.close()
 

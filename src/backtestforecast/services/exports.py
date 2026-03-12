@@ -6,6 +6,7 @@ import io
 from datetime import UTC, datetime
 from uuid import UUID
 
+import structlog
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat, ensure_export_access
@@ -17,6 +18,8 @@ from backtestforecast.schemas.backtests import BacktestRunDetailResponse
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
+
+logger = structlog.get_logger("services.exports")
 
 
 class ExportService:
@@ -103,6 +106,7 @@ class ExportService:
             export_job.completed_at = datetime.now(UTC)
             self.session.commit()
         except Exception:
+            logger.exception("export.execution_failed", export_job_id=str(export_job.id))
             export_job.status = "failed"
             export_job.error_code = "export_generation_failed"
             export_job.error_message = "Export generation failed. Please try again."
