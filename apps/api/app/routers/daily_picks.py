@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/daily-picks", tags=["daily-picks"])
 
 @router.get("")
 def get_latest_daily_picks(
+    response: Response,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     trade_date: date | None = Query(default=None),
@@ -27,6 +28,7 @@ def get_latest_daily_picks(
     Pro+ feature gated via ensure_forecasting_access.
     """
     ensure_forecasting_access(user.plan_tier, user.subscription_status)
+    response.headers["Cache-Control"] = "private, max-age=300"
 
     if trade_date is not None:
         run_stmt = (

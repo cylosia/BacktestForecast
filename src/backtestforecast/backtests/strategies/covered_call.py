@@ -84,7 +84,7 @@ class CoveredCallStrategy(StrategyDefinition):
                 " only option commission_per_contract is charged.",
                 "Combined position is exited at option expiration, max_holding_days, or backtest end.",
             ],
-            "capital_required_per_unit": entry_value_per_unit,
+            "capital_required_per_unit": margin,
             "max_loss_per_unit": max_loss_per_unit,
             "max_profit_per_unit": max_profit_per_unit,
             "entry_package_market_value": entry_value_per_unit,

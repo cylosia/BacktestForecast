@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from apps.api.app.dependencies import require_authenticated_user
 from backtestforecast.schemas.catalog import (
@@ -17,8 +17,10 @@ router = APIRouter(tags=["catalog"])
 
 @router.get("/strategy-catalog", response_model=StrategyCatalogResponse)
 def get_strategy_catalog(
+    response: Response,
     _user_id: str = Depends(require_authenticated_user),
 ) -> StrategyCatalogResponse:
+    response.headers["Cache-Control"] = "public, max-age=3600"
     grouped = get_catalog_entries_grouped()
     groups = []
     for category, entries in grouped:

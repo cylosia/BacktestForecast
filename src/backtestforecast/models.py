@@ -179,6 +179,7 @@ class BacktestTemplate(Base):
     __table_args__ = (
         Index("ix_backtest_templates_user_created_at", "user_id", "created_at"),
         Index("ix_backtest_templates_user_strategy", "user_id", "strategy_type"),
+        Index("ix_backtest_templates_user_updated_at", "user_id", "updated_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -204,6 +205,8 @@ class ScannerJob(Base):
         Index("ix_scanner_jobs_user_status", "user_id", "status"),
         Index("ix_scanner_jobs_request_hash", "request_hash"),
         Index("ix_scanner_jobs_celery_task_id", "celery_task_id"),
+        Index("ix_scanner_jobs_dedup_lookup", "user_id", "request_hash", "mode", "created_at"),
+        Index("ix_scanner_jobs_refresh_sources", "refresh_daily", "status"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="valid_job_status",
@@ -346,6 +349,7 @@ class NightlyPipelineRun(Base):
     __table_args__ = (
         Index("ix_nightly_pipeline_runs_trade_date", "trade_date"),
         Index("ix_nightly_pipeline_runs_status", "status"),
+        Index("ix_nightly_pipeline_runs_date_status", "trade_date", "status"),
         CheckConstraint(
             "status IN ('running', 'succeeded', 'failed')",
             name="valid_pipeline_status",

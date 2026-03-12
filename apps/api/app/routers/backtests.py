@@ -15,6 +15,7 @@ from backtestforecast.models import User
 from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
     BacktestRunListResponse,
+    BacktestRunStatusResponse,
     CompareBacktestsRequest,
     CompareBacktestsResponse,
     CreateBacktestRunRequest,
@@ -86,6 +87,16 @@ def compare_backtests(
 ) -> CompareBacktestsResponse:
     service = BacktestService(db)
     return service.compare_runs(user, payload)
+
+
+@router.get("/{run_id}/status", response_model=BacktestRunStatusResponse)
+def get_backtest_status(
+    run_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BacktestRunStatusResponse:
+    service = BacktestService(db)
+    return service.get_run_status(user, run_id)
 
 
 @router.get("/{run_id}", response_model=BacktestRunDetailResponse)

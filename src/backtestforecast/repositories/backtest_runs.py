@@ -76,6 +76,11 @@ class BacktestRunRepository:
         )
         return self.session.scalar(stmt)
 
+    def get_status_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRun | None:
+        """Lightweight query that skips eager-loading trades/equity for polling."""
+        stmt = select(BacktestRun).where(BacktestRun.id == run_id, BacktestRun.user_id == user_id)
+        return self.session.scalar(stmt)
+
     def get_many_for_user(self, run_ids: list[UUID], user_id: UUID) -> list[BacktestRun]:
         if not run_ids:
             return []

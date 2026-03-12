@@ -550,6 +550,15 @@ class BacktestRunDetailResponse(BaseModel):
     equity_curve: list[EquityCurvePointResponse]
 
 
+class BacktestRunStatusResponse(BaseModel):
+    id: UUID
+    status: RunStatus
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 class BacktestRunListResponse(BaseModel):
     items: list[BacktestRunHistoryItemResponse]
 

@@ -22,6 +22,7 @@ from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
     BacktestRunHistoryItemResponse,
     BacktestRunListResponse,
+    BacktestRunStatusResponse,
     BacktestSummaryResponse,
     BacktestTradeResponse,
     CompareBacktestsRequest,
@@ -238,6 +239,20 @@ class BacktestService:
         effective_limit = min(limit, feature_policy.history_item_limit)
         runs = self.run_repository.list_for_user(user.id, limit=effective_limit, created_since=created_since)
         return BacktestRunListResponse(items=[self._to_history_item(run) for run in runs])
+
+    def get_run_status(self, user: User, run_id: UUID) -> BacktestRunStatusResponse:
+        """Lightweight status check without loading trades/equity."""
+        run = self.run_repository.get_status_for_user(run_id, user.id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        return BacktestRunStatusResponse(
+            id=run.id,
+            status=run.status,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            error_code=run.error_code,
+            error_message=run.error_message,
+        )
 
     def get_run(self, user: User, run_id: UUID) -> BacktestRunDetailResponse:
         return self.get_run_for_owner(user_id=user.id, run_id=run_id)
