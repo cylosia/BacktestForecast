@@ -38,6 +38,16 @@ celery_app.conf.task_queues = (
     Queue("pipeline"),
 )
 
+celery_app.conf.task_routes = {
+    "backtests.run": {"queue": "research"},
+    "scans.run_job": {"queue": "research"},
+    "scans.refresh_prioritized": {"queue": "maintenance"},
+    "exports.generate": {"queue": "exports"},
+    "pipeline.nightly_scan": {"queue": "pipeline"},
+    "maintenance.reap_stale_jobs": {"queue": "maintenance"},
+    "analysis.deep_symbol": {"queue": "research"},
+}
+
 celery_app.conf.beat_schedule = {
     "refresh-prioritized-scans-daily": {
         "task": "scans.refresh_prioritized",

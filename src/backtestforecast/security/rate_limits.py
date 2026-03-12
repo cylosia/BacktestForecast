@@ -20,23 +20,45 @@ class ServiceUnavailableError(AppError):
         super().__init__(code="service_unavailable", message=message, status_code=503)
 
 
+_RATE_LIMIT_LUA = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return count
+"""
+
+
 class RateLimiter:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self._fail_closed = self.settings.rate_limit_fail_closed
         self._memory_lock = Lock()
         self._memory_counters: dict[str, tuple[int, int]] = {}
+        self._redis: Redis | None = None
+        self._redis_retry_after: float = 0.0
+        self._lua_sha: str | None = None
+
+    def _get_redis(self) -> Redis | None:
+        if self._redis is not None:
+            return self._redis
+        if time.time() < self._redis_retry_after:
+            return None
         try:
             self._redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
-        except Exception:  # pragma: no cover - defensive init fallback
+            self._redis.ping()
+        except Exception:
             self._redis = None
+            self._redis_retry_after = time.time() + 30.0
+        return self._redis
 
     def check(self, *, bucket: str, actor_key: str, limit: int, window_seconds: int) -> None:
         if limit <= 0:
             return
         namespaced = f"{self.settings.rate_limit_prefix}:{bucket}:{actor_key}"
+        redis = self._get_redis()
         try:
-            if self._redis is not None:
+            if redis is not None:
                 self._check_redis(namespaced, limit, window_seconds)
                 return
         except RateLimitError:
@@ -63,9 +85,10 @@ class RateLimiter:
 
     def ping(self) -> bool:
         try:
-            if self._redis is None:
+            redis = self._get_redis()
+            if redis is None:
                 return False
-            return bool(self._redis.ping())
+            return bool(redis.ping())
         except RedisError:
             return False
 
@@ -76,9 +99,15 @@ class RateLimiter:
     def _check_redis(self, key: str, limit: int, window_seconds: int) -> None:
         bucket = int(time.time() // window_seconds)
         bucket_key = f"{key}:{bucket}"
-        count = self._redis.incr(bucket_key)  # type: ignore[union-attr]
-        if count == 1:
-            self._redis.expire(bucket_key, window_seconds * 2)  # type: ignore[union-attr]
+        redis = self._redis
+        assert redis is not None
+        if self._lua_sha is None:
+            self._lua_sha = redis.script_load(_RATE_LIMIT_LUA)
+        try:
+            count = redis.evalsha(self._lua_sha, 1, bucket_key, window_seconds * 2)
+        except Exception:
+            self._lua_sha = redis.script_load(_RATE_LIMIT_LUA)
+            count = redis.evalsha(self._lua_sha, 1, bucket_key, window_seconds * 2)
         if int(count) > limit:
             raise RateLimitError()
 
@@ -100,8 +129,20 @@ class RateLimiter:
                 raise RateLimitError()
 
 
-rate_limiter = RateLimiter()
+_rate_limiter: RateLimiter | None = None
+_rate_limiter_lock = Lock()
+
+
+def get_rate_limiter() -> RateLimiter:
+    global _rate_limiter
+    if _rate_limiter is not None:
+        return _rate_limiter
+    with _rate_limiter_lock:
+        if _rate_limiter is not None:
+            return _rate_limiter
+        _rate_limiter = RateLimiter()
+        return _rate_limiter
 
 
 def ping_redis() -> bool:
-    return rate_limiter.ping()
+    return get_rate_limiter().ping()

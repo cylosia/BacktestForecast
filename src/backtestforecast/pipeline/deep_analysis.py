@@ -19,6 +19,7 @@ from uuid import UUID
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
@@ -162,7 +163,20 @@ class SymbolDeepAnalysisService:
             idempotency_key=idempotency_key,
         )
         self.session.add(analysis)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            if idempotency_key:
+                existing = self.session.scalar(
+                    select(SymbolAnalysis).where(
+                        SymbolAnalysis.user_id == user.id,
+                        SymbolAnalysis.idempotency_key == idempotency_key,
+                    )
+                )
+                if existing is not None:
+                    return existing
+            raise
         self.session.refresh(analysis)
         return analysis
 
@@ -307,11 +321,17 @@ class SymbolDeepAnalysisService:
             )
 
         except Exception:
-            analysis.status = "failed"
-            analysis.error_message = "Analysis failed. Please try again."
-            analysis.completed_at = datetime.now(UTC)
-            analysis.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
-            self.session.commit()
+            self.session.rollback()
+            analysis = self.session.get(SymbolAnalysis, analysis_id)
+            if analysis is not None:
+                analysis.status = "failed"
+                analysis.error_message = "Analysis failed. Please try again."
+                analysis.completed_at = datetime.now(UTC)
+                analysis.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
+                try:
+                    self.session.commit()
+                except Exception:
+                    self.session.rollback()
             logger.exception("deep_analysis.failed", analysis_id=str(analysis_id))
             raise
 
@@ -384,7 +404,7 @@ class SymbolDeepAnalysisService:
                     score=score,
                 )
             except Exception:
-                logger.debug(
+                logger.warning(
                     "deep_analysis.landscape_cell_failed",
                     strategy_type=strategy_type,
                     exc_info=True,
@@ -421,7 +441,7 @@ class SymbolDeepAnalysisService:
                     strategy_overrides=cell.config_snapshot.get("strategy_overrides"),
                 )
             except Exception:
-                logger.debug(
+                logger.warning(
                     "deep_analysis.deep_dive_candidate_failed",
                     strategy_type=cell.strategy_type,
                     exc_info=True,
@@ -461,10 +481,10 @@ class SymbolDeepAnalysisService:
                     if f:
                         forecast = f
                         median_return = f.get("expected_return_median_pct", 0)
-                        if (roi > 0) == (float(median_return) > 0):
+                        if roi != 0 and float(median_return) != 0 and (roi > 0) == (float(median_return) > 0):
                             score *= 1.2
                 except Exception:
-                    logger.debug(
+                    logger.warning(
                         "deep_analysis.candidate_forecast_failed",
                         strategy_type=cell.strategy_type,
                         exc_info=True,

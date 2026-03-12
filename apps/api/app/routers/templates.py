@@ -15,7 +15,7 @@ from backtestforecast.schemas.templates import (
     TemplateResponse,
     UpdateTemplateRequest,
 )
-from backtestforecast.security import rate_limiter
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.templates import BacktestTemplateService
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -38,7 +38,7 @@ def create_template(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TemplateResponse:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="templates:mutate",
         actor_key=str(user.id),
         limit=settings.template_mutate_rate_limit,
@@ -66,7 +66,7 @@ def update_template(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TemplateResponse:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="templates:mutate",
         actor_key=str(user.id),
         limit=settings.template_mutate_rate_limit,
@@ -83,7 +83,7 @@ def delete_template(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="templates:mutate",
         actor_key=str(user.id),
         limit=settings.template_mutate_rate_limit,

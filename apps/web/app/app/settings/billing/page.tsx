@@ -18,7 +18,12 @@ function planLabel(planTier: string) {
 }
 
 export default async function BillingSettingsPage() {
-  const user = await getCurrentUser();
+  let user;
+  try {
+    user = await getCurrentUser();
+  } catch {
+    return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
+  }
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-6 py-12">

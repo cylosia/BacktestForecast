@@ -13,7 +13,7 @@ from apps.api.app.dependencies import get_db, token_verifier
 from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 from backtestforecast.db.base import Base
-from backtestforecast.security.rate_limits import rate_limiter
+from backtestforecast.security.rate_limits import get_rate_limiter
 
 
 def _make_engine():
@@ -76,12 +76,12 @@ def client(
 
     monkeypatch.setattr(token_verifier, "verify_bearer_token", fake_verify)
     app.dependency_overrides[get_db] = override_get_db
-    rate_limiter.reset()
+    get_rate_limiter().reset()
     try:
         with TestClient(app, base_url="http://localhost") as test_client:
             yield test_client
     finally:
-        rate_limiter.reset()
+        get_rate_limiter().reset()
         app.dependency_overrides.clear()
 
 

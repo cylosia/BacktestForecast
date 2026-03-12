@@ -78,6 +78,7 @@ class CollarStrategy(StrategyDefinition):
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
             max_loss_per_unit=max(max_loss, 0.0),
+            max_profit_per_unit=max((call_strike - bar.close_price) * 100.0 - net_option_cost, 0.0),
             detail_json={
                 "legs": [
                     {
@@ -162,16 +163,25 @@ class CoveredStrangleStrategy(StrategyDefinition):
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
             max_loss_per_unit=None,
-            max_profit_per_unit=credit,
+            max_profit_per_unit=max((call_strike - bar.close_price) * 100.0, 0.0) + credit,
             detail_json={
                 "legs": [
-                    {"asset_type": "stock", "symbol": config.symbol, "side": "long", "shares": 100},
+                    {
+                        "asset_type": "stock",
+                        "identifier": config.symbol,
+                        "side": "long",
+                        "share_quantity_per_unit": 100,
+                        "entry_price": bar.close_price,
+                    },
                     {
                         "asset_type": "option",
                         "ticker": short_call.ticker,
                         "side": "short",
                         "contract_type": "call",
                         "strike_price": call_strike,
+                        "expiration_date": expiration.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": cq.mid_price,
                     },
                     {
                         "asset_type": "option",
@@ -179,8 +189,11 @@ class CoveredStrangleStrategy(StrategyDefinition):
                         "side": "short",
                         "contract_type": "put",
                         "strike_price": put_strike,
+                        "expiration_date": expiration.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": pq.mid_price,
                     },
-                ]
+                ],
             },
         )
 

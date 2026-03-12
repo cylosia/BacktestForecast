@@ -12,9 +12,12 @@ COPY src /app/src
 COPY alembic /app/alembic
 COPY alembic.ini /app/alembic.ini
 
-RUN pip install --upgrade pip && pip install -e .
+RUN pip install --upgrade pip && pip install .
 
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD celery -A apps.worker.app.celery_app.celery_app inspect ping --timeout=5 || exit 1
 
 CMD ["celery", "-A", "apps.worker.app.celery_app.celery_app", "worker", "--loglevel=INFO", "--queues=research,market_data,exports,maintenance,pipeline"]

@@ -158,7 +158,6 @@ class BacktestEquityPoint(Base):
     __tablename__ = "backtest_equity_points"
     __table_args__ = (
         UniqueConstraint("run_id", "trade_date", name="uq_backtest_equity_points_run_date"),
-        Index("ix_backtest_equity_points_run_date", "run_id", "trade_date"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -315,6 +314,7 @@ class ExportJob(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="export_jobs")
@@ -380,7 +380,7 @@ class NightlyPipelineRun(Base):
 class DailyRecommendation(Base):
     __tablename__ = "daily_recommendations"
     __table_args__ = (
-        Index("ix_daily_recs_pipeline_rank", "pipeline_run_id", "rank"),
+        UniqueConstraint("pipeline_run_id", "rank", name="uq_daily_recs_pipeline_rank"),
         Index("ix_daily_recs_trade_date", "trade_date"),
         Index("ix_daily_recs_symbol_strategy", "symbol", "strategy_type"),
     )

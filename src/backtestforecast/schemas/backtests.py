@@ -385,9 +385,9 @@ class CreateBacktestRunRequest(BaseModel):
     target_dte: int = Field(ge=7, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
-    account_size: Decimal = Field(gt=0)
+    account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
-    commission_per_contract: Decimal = Field(ge=0)
+    commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
     idempotency_key: str | None = Field(default=None, max_length=80)
     custom_legs: list[CustomLegDefinition] | None = Field(default=None, max_length=8)
@@ -407,6 +407,9 @@ class CreateBacktestRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self) -> "CreateBacktestRunRequest":
+        from datetime import UTC, datetime as _dt
+        if self.end_date > _dt.now(UTC).date():
+            raise ValueError("end_date cannot be in the future.")
         if self.start_date >= self.end_date:
             raise ValueError("start_date must be earlier than end_date")
         if (self.end_date - self.start_date).days > get_settings().max_backtest_window_days:

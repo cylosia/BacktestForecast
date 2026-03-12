@@ -101,17 +101,23 @@ class ShortVolatilityStrategy(StrategyDefinition):
             detail_json={
                 "legs": [
                     {
+                        "asset_type": "option",
                         "ticker": call_c.ticker,
                         "side": "short",
                         "contract_type": "call",
                         "strike_price": call_c.strike_price,
+                        "expiration_date": expiration.isoformat(),
+                        "quantity_per_unit": 1,
                         "entry_mid": cq.mid_price,
                     },
                     {
+                        "asset_type": "option",
                         "ticker": put_c.ticker,
                         "side": "short",
                         "contract_type": "put",
                         "strike_price": put_c.strike_price,
+                        "expiration_date": expiration.isoformat(),
+                        "quantity_per_unit": 1,
                         "entry_mid": pq.mid_price,
                     },
                 ],

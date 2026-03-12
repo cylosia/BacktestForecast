@@ -75,6 +75,8 @@ def choose_atm_strike(strikes: list[float], underlying_close: float) -> float:
 
 
 def choose_call_otm_strike(strikes: list[float], underlying_close: float) -> float:
+    if not strikes:
+        raise DataUnavailableError("No strikes available for the selected expiration.")
     above = [strike for strike in strikes if strike >= underlying_close]
     if above:
         return min(above)
@@ -82,6 +84,8 @@ def choose_call_otm_strike(strikes: list[float], underlying_close: float) -> flo
 
 
 def choose_put_otm_strike(strikes: list[float], underlying_close: float) -> float:
+    if not strikes:
+        raise DataUnavailableError("No strikes available for the selected expiration.")
     below = [strike for strike in strikes if strike <= underlying_close]
     if below:
         return max(below)
@@ -90,9 +94,10 @@ def choose_put_otm_strike(strikes: list[float], underlying_close: float) -> floa
 
 def offset_strike(strikes: list[float], base_strike: float, steps: int) -> float | None:
     ordered = sorted(strikes)
-    if base_strike not in ordered:
+    insert_pos = bisect.bisect_left(ordered, base_strike)
+    if insert_pos >= len(ordered) or ordered[insert_pos] != base_strike:
         bisect.insort(ordered, base_strike)
-    index = ordered.index(base_strike)
+    index = bisect.bisect_left(ordered, base_strike)
     target_index = index + steps
     if target_index < 0 or target_index >= len(ordered):
         return None
@@ -216,6 +221,8 @@ def resolve_strike(
         return resolved
 
     if selection.mode == StrikeSelectionMode.DELTA_TARGET:
+        if not strikes:
+            raise DataUnavailableError("No strikes available for delta targeting.")
         target_delta = val / 100.0  # User provides 30 for 30Δ
         best_strike = strikes[0]
         best_diff = float("inf")
@@ -252,33 +259,34 @@ def resolve_wing_strike(
     Returns:
         The resolved wing strike, or None if no valid strike exists.
     """
+    result: float | None = None
+
     if width_config is None:
-        # Default: one listed-strike increment
-        return offset_strike(sorted(set(strikes)), short_strike, direction)
-
-    val = float(width_config.value)
-
-    if width_config.mode == SpreadWidthMode.STRIKE_STEPS:
-        steps = int(val)
-        return offset_strike(sorted(set(strikes)), short_strike, direction * steps)
-
-    if width_config.mode == SpreadWidthMode.DOLLAR_WIDTH:
-        if direction > 0:
-            target = short_strike + val
-        else:
-            target = short_strike - val
-        return _nearest_strike(strikes, target)
-
-    if width_config.mode == SpreadWidthMode.PCT_WIDTH:
+        result = offset_strike(sorted(set(strikes)), short_strike, direction)
+    elif width_config.mode == SpreadWidthMode.STRIKE_STEPS:
+        steps = int(float(width_config.value))
+        result = offset_strike(sorted(set(strikes)), short_strike, direction * steps)
+    elif width_config.mode == SpreadWidthMode.DOLLAR_WIDTH:
+        val = float(width_config.value)
+        target = short_strike + val if direction > 0 else short_strike - val
+        result = _nearest_strike(strikes, target)
+    elif width_config.mode == SpreadWidthMode.PCT_WIDTH:
+        val = float(width_config.value)
         dollar_width = underlying_close * val / 100.0
-        if direction > 0:
-            target = short_strike + dollar_width
-        else:
-            target = short_strike - dollar_width
-        return _nearest_strike(strikes, target)
+        target = short_strike + dollar_width if direction > 0 else short_strike - dollar_width
+        result = _nearest_strike(strikes, target)
+    else:
+        result = offset_strike(sorted(set(strikes)), short_strike, direction)
 
-    # Fallback
-    return offset_strike(sorted(set(strikes)), short_strike, direction)
+    if result is not None and result == short_strike:
+        candidates = sorted(set(strikes))
+        fallback = offset_strike(candidates, short_strike, direction)
+        if fallback is not None and fallback != short_strike:
+            result = fallback
+        else:
+            result = None
+
+    return result
 
 
 def get_overrides(config_overrides: StrategyOverrides | None) -> StrategyOverrides:

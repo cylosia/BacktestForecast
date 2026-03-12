@@ -4,7 +4,12 @@ import { ScannerForm } from "@/components/scanner/scanner-form";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 
 export default async function NewScanPage() {
-  const user = await getCurrentUser();
+  let user;
+  try {
+    user = await getCurrentUser();
+  } catch {
+    return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
+  }
   const scannerModes = user.features.scanner_modes;
 
   if (scannerModes.length === 0) {

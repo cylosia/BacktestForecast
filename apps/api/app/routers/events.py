@@ -60,8 +60,12 @@ def _verify_ownership(db: Session, model: type, resource_id: UUID, user_id: UUID
         raise NotFoundError("Resource not found.")
 
 
-async def _subscribe_redis(channel: str) -> AsyncGenerator[str, None]:
-    """Subscribe to a Redis Pub/Sub channel and yield messages."""
+async def _subscribe_redis(channel: str) -> AsyncGenerator[str | None, None]:
+    """Subscribe to a Redis Pub/Sub channel and yield messages.
+
+    Yields ``None`` when no message arrives within the heartbeat window so
+    callers can check deadlines / disconnections during quiet periods.
+    """
     pool = await _get_async_redis()
     pubsub = pool.pubsub()
     await pubsub.subscribe(channel)
@@ -73,6 +77,8 @@ async def _subscribe_redis(channel: str) -> AsyncGenerator[str, None]:
             )
             if message and message["type"] == "message":
                 yield message["data"]
+            else:
+                yield None
     finally:
         await pubsub.unsubscribe(channel)
         await pubsub.close()
@@ -94,7 +100,8 @@ async def _event_stream(
             if asyncio.get_running_loop().time() > deadline:
                 yield {"event": "timeout", "data": "Connection timed out"}
                 break
-            yield {"event": "status", "data": data}
+            if data is not None:
+                yield {"event": "status", "data": data}
     except (RedisError, OSError) as exc:
         logger.warning("sse.redis_error", channel=channel, error=str(exc))
         yield {"event": "error", "data": "Event stream unavailable. Please poll for status instead."}
@@ -110,6 +117,7 @@ async def backtest_events(
     db: Session = Depends(get_db),
 ) -> EventSourceResponse:
     _verify_ownership(db, BacktestRun, run_id, user.id)
+    db.close()
     channel = f"job:backtest:{run_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
@@ -126,6 +134,7 @@ async def scan_events(
     db: Session = Depends(get_db),
 ) -> EventSourceResponse:
     _verify_ownership(db, ScannerJob, job_id, user.id)
+    db.close()
     channel = f"job:scan:{job_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
@@ -142,6 +151,7 @@ async def export_events(
     db: Session = Depends(get_db),
 ) -> EventSourceResponse:
     _verify_ownership(db, ExportJob, export_job_id, user.id)
+    db.close()
     channel = f"job:export:{export_job_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
@@ -158,6 +168,7 @@ async def analysis_events(
     db: Session = Depends(get_db),
 ) -> EventSourceResponse:
     _verify_ownership(db, SymbolAnalysis, analysis_id, user.id)
+    db.close()
     channel = f"job:analysis:{analysis_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(

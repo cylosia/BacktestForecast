@@ -57,9 +57,9 @@ class CreateScannerJobRequest(BaseModel):
     target_dte: int = Field(ge=7, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
-    account_size: Decimal = Field(gt=0)
+    account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
-    commission_per_contract: Decimal = Field(ge=0)
+    commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
     max_recommendations: int = Field(default=10, ge=1, le=30)
     refresh_daily: bool = False
     refresh_priority: int = Field(default=50, ge=0, le=100)
@@ -96,6 +96,8 @@ class CreateScannerJobRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self) -> "CreateScannerJobRequest":
+        if self.end_date > date.today():
+            raise ValueError("end_date cannot be in the future")
         if self.start_date >= self.end_date:
             raise ValueError("start_date must be earlier than end_date")
         if (self.end_date - self.start_date).days > get_settings().max_scanner_window_days:

@@ -61,7 +61,7 @@ export function ExportActions({
         }
 
         if (result.status === "failed") {
-          throw new Error("Export generation failed on the server.");
+          throw new Error(result.error_message || "Export generation failed on the server.");
         }
       }
       throw new Error("Export is still processing. Please try downloading from the history later.");
@@ -83,7 +83,7 @@ export function ExportActions({
       const exportJob = await createExport(token, {
         run_id: runId,
         format,
-        idempotency_key: `${runId}:${format}:${Date.now()}`,
+        idempotency_key: `${runId}:${format}`,
       });
 
       if (exportJob.status === "succeeded") {

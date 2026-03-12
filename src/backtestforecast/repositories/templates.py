@@ -17,10 +17,6 @@ class BacktestTemplateRepository:
         self.session.flush()
         return template
 
-    def get_by_id(self, template_id: UUID) -> BacktestTemplate | None:
-        stmt = select(BacktestTemplate).where(BacktestTemplate.id == template_id)
-        return self.session.scalar(stmt)
-
     def get_for_user(self, template_id: UUID, user_id: UUID) -> BacktestTemplate | None:
         stmt = select(BacktestTemplate).where(
             BacktestTemplate.id == template_id,

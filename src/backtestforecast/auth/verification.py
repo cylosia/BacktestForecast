@@ -4,7 +4,6 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
 import jwt
 from jwt import InvalidTokenError, PyJWKClient
 
@@ -29,18 +28,29 @@ class ClerkTokenVerifier:
     def verify_bearer_token(self, token: str) -> AuthenticatedPrincipal:
         signing_key = self._resolve_signing_key(token)
 
+        decode_options: dict[str, Any] = {
+            "require": ["sub", "exp", "nbf", "iat"],
+        }
+        audience = self.settings.clerk_audience or None
+        issuer = self.settings.clerk_issuer or None
+        if audience:
+            decode_options["verify_aud"] = True
+        else:
+            decode_options["verify_aud"] = False
+        if issuer:
+            decode_options["verify_iss"] = True
+        else:
+            decode_options["verify_iss"] = False
+
         try:
             claims = jwt.decode(
                 token,
                 key=signing_key,
                 algorithms=["RS256"],
-                audience=self.settings.clerk_audience or None,
-                issuer=self.settings.clerk_issuer or None,
+                audience=audience,
+                issuer=issuer,
                 leeway=30,
-                options={
-                    "verify_aud": bool(self.settings.clerk_audience),
-                    "require": ["sub", "exp", "nbf", "iat"],
-                },
+                options=decode_options,
             )
         except InvalidTokenError as exc:
             raise AuthenticationError("Invalid Clerk session token.") from exc
@@ -68,7 +78,7 @@ class ClerkTokenVerifier:
             claims=claims,
         )
 
-    def _resolve_signing_key(self, token: str) -> str:
+    def _resolve_signing_key(self, token: str) -> Any:
         if self.settings.clerk_jwt_key:
             return self.settings.clerk_jwt_key
 
@@ -98,9 +108,3 @@ class ClerkTokenVerifier:
             self._jwks_client = PyJWKClient(jwks_url)
             return self._jwks_client
 
-
-def fetch_clerk_jwks(url: str) -> dict[str, Any]:
-    with httpx.Client(timeout=10.0) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        return response.json()

@@ -28,6 +28,7 @@ class HistoricalAnalogForecaster:
         strategy_type: str | None = None,
     ) -> HistoricalAnalogForecastResponse:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
+        calendar_horizon = horizon_days
         horizon_days = self._calendar_to_trading_days(horizon_days)
         if len(sorted_bars) < max(80, horizon_days + 40):
             raise ValueError("Not enough historical bars were available to build a forecast.")
@@ -39,7 +40,7 @@ class HistoricalAnalogForecaster:
         ema8 = ema(closes, 8)
         ema21 = ema(closes, 21)
         avg_volume20 = sma(volumes, 20)
-        vol20 = rolling_stddev(daily_returns, 20)
+        vol20 = rolling_stddev(daily_returns, 20, ddof=1)
 
         as_of_index = len(sorted_bars) - 1
         current_features = self._features_for_index(
@@ -102,13 +103,13 @@ class HistoricalAnalogForecaster:
         low = self._percentile(returns, 0.25)
         med = median(returns)
         high = self._percentile(returns, 0.75)
-        summary = self._build_summary(strategy_type, med, low, high, positive_rate, horizon_days)
+        summary = self._build_summary(strategy_type, med, low, high, positive_rate, calendar_horizon)
 
         return HistoricalAnalogForecastResponse(
             symbol=symbol,
             strategy_type=strategy_type,
             as_of_date=sorted_bars[as_of_index].trade_date,
-            horizon_days=horizon_days,
+            horizon_days=calendar_horizon,
             analog_count=len(analogs),
             expected_return_low_pct=self._to_decimal(low),
             expected_return_median_pct=self._to_decimal(med),

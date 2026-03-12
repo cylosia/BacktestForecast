@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import math
+import random
 import time
 from datetime import UTC, date, datetime
 from typing import Any, Self
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 import structlog
@@ -22,14 +24,14 @@ class MassiveClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
         settings = get_settings()
         self.api_key = api_key or settings.massive_api_key
+        if not self.api_key:
+            raise ConfigurationError("MASSIVE_API_KEY is required.")
         self.base_url = (base_url or settings.massive_base_url).rstrip("/")
+        self._base_netloc = urlparse(self.base_url).netloc
         self.timeout = settings.massive_timeout_seconds
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.Client(timeout=self.timeout)
-
-        if not self.api_key:
-            raise ConfigurationError("MASSIVE_API_KEY is required.")
 
     def close(self) -> None:
         self._http.close()
@@ -104,12 +106,15 @@ class MassiveClient:
                 continue
             if strike_price is None or not isinstance(row_contract_type, str):
                 continue
+            strike = float(strike_price)
+            if not math.isfinite(strike) or strike <= 0:
+                continue
             contracts.append(
                 OptionContractRecord(
                     ticker=ticker,
                     contract_type=row_contract_type,
                     expiration_date=date.fromisoformat(expiration_text),
-                    strike_price=float(strike_price),
+                    strike_price=strike,
                     shares_per_contract=float(row.get("shares_per_contract", 100)),
                 )
             )
@@ -138,6 +143,10 @@ class MassiveClient:
             bid = float(bid_price)
             ask = float(ask_price)
             if bid <= 0 or ask <= 0:
+                continue
+            if not math.isfinite(bid) or not math.isfinite(ask):
+                continue
+            if bid > ask:
                 continue
             return OptionQuoteRecord(
                 trade_date=trade_date,
@@ -204,8 +213,9 @@ class MassiveClient:
             next_url = payload.get("next_url")
             if not isinstance(next_url, str) or not next_url:
                 break
-            if next_url.startswith("http") and not next_url.startswith(self.base_url):
-                break
+            if next_url.startswith("http"):
+                if urlparse(next_url).netloc != self._base_netloc:
+                    break
 
             next_path = next_url
             next_params = None
@@ -278,7 +288,9 @@ class MassiveClient:
                 pass
         if self.retry_backoff_seconds <= 0:
             return
-        time.sleep(self.retry_backoff_seconds * (attempt + 1))
+        base_delay = self.retry_backoff_seconds * (2 ** attempt)
+        jitter = random.uniform(0, base_delay * 0.5)
+        time.sleep(min(base_delay + jitter, self._MAX_RETRY_AFTER_SECONDS))
 
     @staticmethod
     def _pick_quote_timestamp(row: dict[str, Any]) -> int | None:
@@ -295,14 +307,14 @@ class AsyncMassiveClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
         settings = get_settings()
         self.api_key = api_key or settings.massive_api_key
+        if not self.api_key:
+            raise ConfigurationError("MASSIVE_API_KEY is required.")
         self.base_url = (base_url or settings.massive_base_url).rstrip("/")
+        self._base_netloc = urlparse(self.base_url).netloc
         self.timeout = settings.massive_timeout_seconds
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.AsyncClient(timeout=self.timeout)
-
-        if not self.api_key:
-            raise ConfigurationError("MASSIVE_API_KEY is required.")
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -371,12 +383,15 @@ class AsyncMassiveClient:
                 continue
             if strike_price is None or not isinstance(row_contract_type, str):
                 continue
+            strike = float(strike_price)
+            if not math.isfinite(strike) or strike <= 0:
+                continue
             contracts.append(
                 OptionContractRecord(
                     ticker=ticker,
                     contract_type=row_contract_type,
                     expiration_date=date.fromisoformat(expiration_text),
-                    strike_price=float(strike_price),
+                    strike_price=strike,
                     shares_per_contract=float(row.get("shares_per_contract", 100)),
                 )
             )
@@ -401,6 +416,10 @@ class AsyncMassiveClient:
             ask = float(ask_price)
             if bid <= 0 or ask <= 0:
                 continue
+            if not math.isfinite(bid) or not math.isfinite(ask):
+                continue
+            if bid > ask:
+                continue
             return OptionQuoteRecord(
                 trade_date=trade_date,
                 bid_price=bid,
@@ -423,8 +442,9 @@ class AsyncMassiveClient:
             next_url = payload.get("next_url")
             if not isinstance(next_url, str) or not next_url:
                 break
-            if next_url.startswith("http") and not next_url.startswith(self.base_url):
-                break
+            if next_url.startswith("http"):
+                if urlparse(next_url).netloc != self._base_netloc:
+                    break
             next_path = next_url
             next_params = None
             page += 1
@@ -492,4 +512,6 @@ class AsyncMassiveClient:
                 pass
         if self.retry_backoff_seconds <= 0:
             return
-        await asyncio.sleep(self.retry_backoff_seconds * (attempt + 1))
+        base_delay = self.retry_backoff_seconds * (2 ** attempt)
+        jitter = random.uniform(0, base_delay * 0.5)
+        await asyncio.sleep(min(base_delay + jitter, self._MAX_RETRY_AFTER_SECONDS))

@@ -24,7 +24,20 @@ BULLISH_STRATEGIES = {
     "bull_put_credit_spread",
     "wheel_strategy",
 }
-BEARISH_STRATEGIES = {"long_put", "bear_put_debit_spread", "bear_call_credit_spread"}
+BEARISH_STRATEGIES = {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put"}
+NEUTRAL_STRATEGIES = {
+    "iron_condor",
+    "iron_butterfly",
+    "short_straddle",
+    "short_strangle",
+    "long_straddle",
+    "long_strangle",
+    "butterfly",
+    "calendar_spread",
+    "double_diagonal",
+    "covered_strangle",
+    "jade_lizard",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +74,8 @@ def is_strategy_rule_set_compatible(strategy_type: str, entry_rules: Sequence[En
         return bias == "bullish"
     if strategy_type in BEARISH_STRATEGIES:
         return bias == "bearish"
+    if strategy_type in NEUTRAL_STRATEGIES:
+        return False
     return True
 
 
@@ -117,11 +132,11 @@ def build_ranking_breakdown(
     reasons: list[str] = []
 
     current_score = (
-        (_clamp(summary.total_roi_pct / 30.0, -1.0, 1.5) * 0.45)
+        (_clamp(summary.total_roi_pct / 30.0, -1.0, 1.0) * 0.45)
         + (_clamp((summary.win_rate - 50.0) / 50.0, -1.0, 1.0) * 0.20)
-        + (_clamp((summary.total_net_pnl / max(account_size, 1.0)) / 0.20, -1.0, 1.5) * 0.20)
+        + (_clamp((summary.total_net_pnl / max(account_size, 1.0)) / 0.20, -1.0, 1.0) * 0.20)
         + (_clamp(summary.trade_count / 12.0, 0.0, 1.0) * 0.10)
-        - (_clamp(summary.max_drawdown_pct / 30.0, 0.0, 1.5) * 0.25)
+        - (_clamp(summary.max_drawdown_pct / 30.0, 0.0, 1.0) * 0.25)
     )
     if summary.trade_count >= 3:
         reasons.append("Current backtest generated multiple trades rather than a single isolated outcome.")
@@ -132,13 +147,13 @@ def build_ranking_breakdown(
     if historical_performance.sample_count > 0:
         confidence = min(1.0, historical_performance.sample_count / 12.0)
         hist_score = confidence * (
-            (_clamp(float(historical_performance.weighted_total_roi_pct) / 25.0, -1.0, 1.2) * 0.45)
+            (_clamp(float(historical_performance.weighted_total_roi_pct) / 25.0, -1.0, 1.0) * 0.45)
             + (_clamp((float(historical_performance.weighted_win_rate) - 50.0) / 50.0, -1.0, 1.0) * 0.25)
             + (
-                _clamp(float(historical_performance.weighted_total_net_pnl) / max(account_size * 0.15, 1.0), -1.0, 1.2)
+                _clamp(float(historical_performance.weighted_total_net_pnl) / max(account_size * 0.15, 1.0), -1.0, 1.0)
                 * 0.15
             )
-            - (_clamp(float(historical_performance.weighted_max_drawdown_pct) / 30.0, 0.0, 1.5) * 0.20)
+            - (_clamp(float(historical_performance.weighted_max_drawdown_pct) / 30.0, 0.0, 1.0) * 0.20)
         )
         reasons.append(
             f"Historical weighting included {historical_performance.sample_count} "
@@ -185,11 +200,16 @@ def _forecast_alignment_score(
         alignment = (neutral_bonus * 0.8) - (dispersion_penalty * 0.4)
         reasons.append("Neutral/volatility structure score favored contained median direction and bounded dispersion.")
 
-    probability_bonus = _clamp((positive_rate - 50.0) / 50.0, -1.0, 1.0)
+    if strategy_type in BEARISH_STRATEGIES:
+        probability_bonus = _clamp(((100.0 - positive_rate) - 50.0) / 50.0, -1.0, 1.0)
+    else:
+        probability_bonus = _clamp((positive_rate - 50.0) / 50.0, -1.0, 1.0)
     return (alignment * 0.7) + (probability_bonus * 0.3)
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
+    if not math.isfinite(value):
+        return 0.0
     return max(lower, min(upper, value))
 
 
@@ -197,4 +217,6 @@ _QUANT = Decimal("0.0001")
 
 
 def _to_decimal(value: float) -> Decimal:
+    if not math.isfinite(value):
+        return Decimal("0")
     return Decimal(str(value)).quantize(_QUANT, rounding=ROUND_HALF_UP)

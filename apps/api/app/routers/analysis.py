@@ -17,7 +17,7 @@ from backtestforecast.db.session import get_db
 from backtestforecast.errors import ValidationError
 from backtestforecast.models import User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
-from backtestforecast.security import rate_limiter
+from backtestforecast.security import get_rate_limiter
 
 _SYMBOL_RE = re.compile(r"^[A-Za-z]{1,10}$")
 
@@ -39,7 +39,7 @@ def create_analysis(
 ) -> dict[str, Any]:
     """Create and enqueue a single-symbol deep analysis (Pro+ gated)."""
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="analysis:create",
         actor_key=str(user.id),
         limit=settings.analysis_create_rate_limit,

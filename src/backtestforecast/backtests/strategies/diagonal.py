@@ -189,8 +189,10 @@ class DoubleDiagonalStrategy(StrategyDefinition):
         near_put_strike = resolve_strike(
             [c.strike_price for c in near_pc], bar.close_price, "put", overrides.short_put_strike, dte
         )
-        far_call_strike = offset_strike(sorted_unique_strikes(far_cc), near_call_strike, -1) or near_call_strike
-        far_put_strike = offset_strike(sorted_unique_strikes(far_pc), near_put_strike, 1) or near_put_strike
+        far_call_strike = offset_strike(sorted_unique_strikes(far_cc), near_call_strike, -1)
+        far_put_strike = offset_strike(sorted_unique_strikes(far_pc), near_put_strike, 1)
+        if far_call_strike is None or far_put_strike is None:
+            raise DataUnavailableError("No adjacent strike available in far-dated chain for double diagonal spread.")
 
         sc = require_contract_for_strike(near_cc, near_call_strike)
         sp = require_contract_for_strike(near_pc, near_put_strike)

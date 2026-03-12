@@ -8,7 +8,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware import Middleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
@@ -55,10 +54,8 @@ app = FastAPI(
     docs_url="/docs" if _is_dev else None,
     redoc_url="/redoc" if _is_dev else None,
     lifespan=_lifespan,
-    middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)],
 )
 
-app.add_middleware(RequestContextMiddleware)
 app.add_middleware(PrometheusMiddleware)
 app.add_middleware(ApiSecurityHeadersMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
@@ -66,9 +63,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.web_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
+app.add_middleware(RequestContextMiddleware)
 
 app.include_router(health.router)
 app.include_router(meta.router, prefix="/v1")
@@ -145,21 +144,33 @@ def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSO
 @app.exception_handler(Exception)
 def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("api.unhandled_exception", exc_info=exc)
-    return JSONResponse(
+    response = JSONResponse(
         status_code=500,
         content=_error_payload(
             request,
             code="internal_server_error",
             message="An unexpected server error occurred.",
         ),
-        headers={REQUEST_ID_HEADER: getattr(request.state, "request_id", "")},
     )
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        response.headers[REQUEST_ID_HEADER] = request_id
+    return response
 
 
 if settings.app_env != "test":
 
     @app.get("/metrics", include_in_schema=False)
-    def prometheus_metrics() -> Response:
+    def prometheus_metrics(request: Request) -> Response:
+        if settings.app_env in ("production", "staging"):
+            import hmac as _hmac
+
+            auth = request.headers.get("Authorization", "")
+            token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+            if not token:
+                token = request.query_params.get("token", "")
+            if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
+                return JSONResponse(status_code=403, content={"error": "forbidden"})
         return metrics_response()
 
 

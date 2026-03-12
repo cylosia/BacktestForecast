@@ -81,6 +81,7 @@ def classify_regime(
     vol_20_values = rolling_stddev(
         _daily_returns(closes),
         20,
+        ddof=1,
     )
     avg_volume_20 = sma(volumes, 20)
 

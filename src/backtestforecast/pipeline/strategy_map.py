@@ -41,7 +41,6 @@ REGIME_STRATEGY_MAP: dict[tuple[Regime, Regime | None], list[str]] = {
     ],
     (Regime.BEARISH, Regime.HIGH_IV): [
         "bear_call_credit_spread",
-        "naked_put",
         "bear_put_debit_spread",
     ],
     (Regime.BEARISH, None): [

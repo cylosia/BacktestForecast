@@ -3,7 +3,12 @@ import { SymbolAnalysisLauncher } from "@/components/analysis/symbol-analysis-la
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 
 export default async function AnalysisPage() {
-  const user = await getCurrentUser();
+  let user;
+  try {
+    user = await getCurrentUser();
+  } catch {
+    return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
+  }
   const hasAccess = user.features.forecasting_access;
 
   return (

@@ -41,28 +41,32 @@ export function formatNumber(value: NumericValue): string {
   return numberFormatter.format(toNumber(value));
 }
 
+const dateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(d);
+  return dateFormatter.format(d);
 }
 
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(d);
+  return dateTimeFormatter.format(d);
 }
 
 export function strategyLabel(strategy: string | StrategyType): string {
@@ -167,6 +171,7 @@ export function isTerminalStatus(status: RunStatus | string): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
+// Uses client-local timezone; acceptable for display purposes.
 export function getCurrentMonthRunCount(items: BacktestRunHistoryItemResponse[]): number {
   const now = new Date();
   const month = now.getMonth();

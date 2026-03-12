@@ -54,38 +54,48 @@ class VerticalSpreadStrategy(StrategyDefinition):
         short_override = overrides.short_call_strike if self.contract_type == "call" else overrides.short_put_strike
 
         if self.contract_type == "call":
-            base_strike = resolve_strike(strikes, bar.close_price, "call", short_override, dte)
-            upper_strike = resolve_wing_strike(
-                strikes,
-                base_strike,
-                1,
-                bar.close_price,
-                overrides.spread_width,
-            )
+            if self.is_debit:
+                base_strike = resolve_strike(strikes, bar.close_price, "call", None, dte)
+                if short_override is not None:
+                    upper_strike = resolve_strike(strikes, bar.close_price, "call", short_override, dte)
+                else:
+                    upper_strike = resolve_wing_strike(
+                        strikes, base_strike, 1, bar.close_price, overrides.spread_width,
+                    )
+            else:
+                base_strike = resolve_strike(strikes, bar.close_price, "call", short_override, dte)
+                upper_strike = resolve_wing_strike(
+                    strikes, base_strike, 1, bar.close_price, overrides.spread_width,
+                )
             if upper_strike is None:
                 raise DataUnavailableError("No higher call strike was available to build the spread.")
             lower_contract = require_contract_for_strike(expiration_contracts, base_strike)
             upper_contract = require_contract_for_strike(expiration_contracts, upper_strike)
-            if self.strategy_type == "bull_call_debit_spread":
+            if self.is_debit:
                 long_contract = lower_contract
                 short_contract = upper_contract
             else:
                 short_contract = lower_contract
                 long_contract = upper_contract
         else:
-            base_strike = resolve_strike(strikes, bar.close_price, "put", short_override, dte)
-            lower_strike = resolve_wing_strike(
-                strikes,
-                base_strike,
-                -1,
-                bar.close_price,
-                overrides.spread_width,
-            )
+            if self.is_debit:
+                base_strike = resolve_strike(strikes, bar.close_price, "put", None, dte)
+                if short_override is not None:
+                    lower_strike = resolve_strike(strikes, bar.close_price, "put", short_override, dte)
+                else:
+                    lower_strike = resolve_wing_strike(
+                        strikes, base_strike, -1, bar.close_price, overrides.spread_width,
+                    )
+            else:
+                base_strike = resolve_strike(strikes, bar.close_price, "put", short_override, dte)
+                lower_strike = resolve_wing_strike(
+                    strikes, base_strike, -1, bar.close_price, overrides.spread_width,
+                )
             if lower_strike is None:
                 raise DataUnavailableError("No lower put strike was available to build the spread.")
             upper_contract = require_contract_for_strike(expiration_contracts, base_strike)
             lower_contract = require_contract_for_strike(expiration_contracts, lower_strike)
-            if self.strategy_type == "bear_put_debit_spread":
+            if self.is_debit:
                 long_contract = upper_contract
                 short_contract = lower_contract
             else:

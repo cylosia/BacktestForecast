@@ -150,7 +150,9 @@ class Settings(BaseSettings):
         "ABNB",
     ]
 
-    ip_hash_salt: str = "bff-default-ip-hash-salt-change-in-production"
+    metrics_token: str | None = None
+
+    ip_hash_salt: str = Field(default="backtestforecast-default-ip-salt-change-me")
 
     db_pool_size: int = 5
     db_pool_recycle: int = 1800
@@ -184,6 +186,9 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_app_env(cls, value: str) -> str:
         normalized = value.strip().lower()
+        valid_envs = {"development", "test", "staging", "production"}
+        if normalized and normalized not in valid_envs:
+            raise ValueError(f"app_env must be one of {valid_envs}, got '{normalized}'")
         return normalized or "development"
 
     @field_validator("log_level")
@@ -192,10 +197,19 @@ class Settings(BaseSettings):
         normalized = value.strip().upper()
         return normalized or "INFO"
 
-    @field_validator("request_max_body_bytes", "max_backtest_window_days", "max_scanner_window_days")
+    @field_validator(
+        "request_max_body_bytes", "max_backtest_window_days", "max_scanner_window_days",
+        "rate_limit_window_seconds", "db_pool_size", "db_pool_recycle",
+        "analysis_rate_limit_window_seconds",
+    )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
         return max(int(value), 1)
+
+    @field_validator("massive_timeout_seconds")
+    @classmethod
+    def validate_positive_floats(cls, value: float) -> float:
+        return max(float(value), 0.1)
 
     @field_validator("massive_max_retries")
     @classmethod
@@ -242,12 +256,18 @@ class Settings(BaseSettings):
         if self.app_env in {"production", "staging"}:
             if not (self.clerk_jwt_key or self.clerk_jwks_url or self.clerk_issuer):
                 raise ValueError("Production-like environments require CLERK_JWT_KEY, CLERK_JWKS_URL, or CLERK_ISSUER.")
+            if not self.clerk_issuer:
+                raise ValueError("Production-like environments require CLERK_ISSUER for JWT issuer verification.")
             if not self.log_json:
                 raise ValueError("Production-like environments must enable structured JSON logging.")
             if "*" in self.api_allowed_hosts:
                 raise ValueError("Production-like environments must not allow wildcard API hosts.")
             if "*" in self.web_cors_origins:
                 raise ValueError("Production-like environments must not allow wildcard CORS origins.")
+            if "default" in self.ip_hash_salt.lower() or "change" in self.ip_hash_salt.lower():
+                raise ValueError("Production-like environments must use a custom IP_HASH_SALT.")
+            if not self.metrics_token:
+                raise ValueError("Production-like environments require METRICS_TOKEN to be set.")
         return self
 
 

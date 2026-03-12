@@ -84,7 +84,12 @@ class MassiveOptionGateway:
         target_dte: int,
         dte_tolerance_days: int,
     ) -> OptionContractRecord:
-        contract_type = "call" if strategy_type in {"long_call", "covered_call"} else "put"
+        _CALL_STRATEGIES = {
+            "long_call", "covered_call", "naked_call",
+            "bull_call_debit_spread", "bear_call_credit_spread",
+            "poor_mans_covered_call",
+        }
+        contract_type = "call" if strategy_type in _CALL_STRATEGIES else "put"
         contracts = self.list_contracts(
             entry_date=entry_date,
             contract_type=contract_type,
@@ -150,8 +155,6 @@ class MarketDataService:
         self.client = client
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
-        if not request.entry_rules:
-            raise ValidationError("At least one entry rule is required for this vertical slice.")
 
         warmup_trading_days = self._resolve_warmup_trading_days(request)
         extended_start = request.start_date - timedelta(days=(warmup_trading_days * 3))
@@ -225,7 +228,7 @@ class MarketDataService:
             if (
                 bar.close_price <= 0
                 or bar.open_price <= 0
-                or bar.volume < 0
+                or bar.volume <= 0
                 or bar.high_price < bar.low_price
                 or bar.high_price < max(bar.open_price, bar.close_price)
                 or bar.low_price > min(bar.open_price, bar.close_price)

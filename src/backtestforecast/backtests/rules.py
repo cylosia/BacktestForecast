@@ -86,6 +86,8 @@ class EntryRuleEvaluator:
             elif isinstance(rule, AvoidEarningsRule):
                 if not self._evaluate_avoid_earnings_rule(rule, index):
                     return False
+            else:
+                return False
         return True
 
     def _evaluate_rsi_rule(self, rule: RsiRule, index: int) -> bool:
@@ -303,8 +305,10 @@ def estimate_atm_iv_for_date(
     if not common_strikes:
         return None
     chosen_strike = min(common_strikes, key=lambda strike: abs(strike - underlying_close))
-    call_contract = next(contract for contract in call_contracts if contract.strike_price == chosen_strike)
-    put_contract = next(contract for contract in put_contracts if contract.strike_price == chosen_strike)
+    call_contract = next((c for c in call_contracts if c.strike_price == chosen_strike), None)
+    put_contract = next((c for c in put_contracts if c.strike_price == chosen_strike), None)
+    if call_contract is None or put_contract is None:
+        return None
 
     dte = max((chosen_expiration - trade_date).days, 1)
     estimates: list[float] = []

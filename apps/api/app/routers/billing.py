@@ -13,7 +13,7 @@ from backtestforecast.schemas.billing import (
     CreatePortalSessionRequest,
     PortalSessionResponse,
 )
-from backtestforecast.security import rate_limiter
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.billing import BillingService
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -27,7 +27,7 @@ def create_checkout_session(
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> CheckoutSessionResponse:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="billing:checkout",
         actor_key=str(user.id),
         limit=settings.billing_create_rate_limit,
@@ -48,7 +48,7 @@ def create_portal_session(
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> PortalSessionResponse:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="billing:portal",
         actor_key=str(user.id),
         limit=settings.billing_create_rate_limit,

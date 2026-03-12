@@ -58,7 +58,15 @@ class ButterflyStrategy(StrategyDefinition):
         entry_value_per_unit = (lower_quote.mid_price + upper_quote.mid_price - (2.0 * center_quote.mid_price)) * 100.0
         left_width = (center_call.strike_price - lower_call.strike_price) * 100.0
         right_width = (upper_call.strike_price - center_call.strike_price) * 100.0
-        max_profit_per_unit = max(min(left_width, right_width) - max(entry_value_per_unit, 0.0), 0.0)
+        wing_width = min(left_width, right_width)
+        if entry_value_per_unit >= 0:
+            capital_per_unit = entry_value_per_unit
+            max_loss_per_unit = entry_value_per_unit
+            max_profit_per_unit = max(wing_width - entry_value_per_unit, 0.0)
+        else:
+            capital_per_unit = max(wing_width + entry_value_per_unit, 0.0)
+            max_loss_per_unit = capital_per_unit
+            max_profit_per_unit = abs(entry_value_per_unit)
 
         detail_json = {
             "legs": [
@@ -98,8 +106,8 @@ class ButterflyStrategy(StrategyDefinition):
                 "The wings use the immediately adjacent listed strikes above and below the center.",
                 "If strike spacing is asymmetric, max-profit uses the narrower wing width.",
             ],
-            "capital_required_per_unit": max(entry_value_per_unit, 0.0),
-            "max_loss_per_unit": max(entry_value_per_unit, 0.0),
+            "capital_required_per_unit": capital_per_unit,
+            "max_loss_per_unit": max_loss_per_unit,
             "max_profit_per_unit": max_profit_per_unit,
             "entry_package_market_value": entry_value_per_unit,
         }
@@ -144,8 +152,8 @@ class ButterflyStrategy(StrategyDefinition):
                 ),
             ],
             scheduled_exit_date=expiration,
-            capital_required_per_unit=max(entry_value_per_unit, 0.0),
-            max_loss_per_unit=max(entry_value_per_unit, 0.0),
+            capital_required_per_unit=capital_per_unit,
+            max_loss_per_unit=max_loss_per_unit,
             max_profit_per_unit=max_profit_per_unit,
             detail_json=detail_json,
         )

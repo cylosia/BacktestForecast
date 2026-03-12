@@ -22,7 +22,12 @@ function statusBadgeVariant(status: string): "default" | "success" | "destructiv
 }
 
 export default async function ScannerPage() {
-  const user = await getCurrentUser();
+  let user;
+  try {
+    user = await getCurrentUser();
+  } catch {
+    return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
+  }
   const scannerModes = user.features.scanner_modes;
   const hasAccess = scannerModes.length > 0;
 

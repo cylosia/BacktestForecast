@@ -4,13 +4,15 @@ import csv
 import hashlib
 import io
 from datetime import UTC, datetime
+from typing import Self
 from uuid import UUID
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat, ensure_export_access
-from backtestforecast.errors import NotFoundError
+from backtestforecast.errors import AppError, NotFoundError
 from backtestforecast.models import ExportJob, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
@@ -36,6 +38,12 @@ class ExportService:
 
     def close(self) -> None:
         self.backtest_service.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def enqueue_export(
         self,
@@ -81,7 +89,15 @@ class ExportService:
                 "format": payload.export_format.value,
             },
         )
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            if payload.idempotency_key:
+                existing = self.exports.get_by_idempotency_key(user.id, payload.idempotency_key)
+                if existing is not None:
+                    return self._to_response(existing)
+            raise
         self.session.refresh(export_job)
         return self._to_response(export_job)
 
@@ -95,6 +111,7 @@ class ExportService:
             return export_job
 
         export_job.status = "running"
+        export_job.started_at = datetime.now(UTC)
         self.session.flush()
 
         try:
@@ -116,12 +133,26 @@ class ExportService:
             export_job.status = "succeeded"
             export_job.completed_at = datetime.now(UTC)
             self.session.commit()
-        except Exception:
+        except AppError:
             logger.exception("export.execution_failed", export_job_id=str(export_job.id))
             export_job.status = "failed"
             export_job.error_code = "export_generation_failed"
             export_job.error_message = "Export generation failed. Please try again."
             export_job.completed_at = datetime.now(UTC)
+            self.session.commit()
+            raise
+        except (ValueError, RuntimeError) as exc:
+            logger.exception("export.terminal_failure", export_job_id=str(export_job.id))
+            export_job.status = "failed"
+            export_job.error_code = "export_generation_failed"
+            export_job.error_message = str(exc)
+            export_job.completed_at = datetime.now(UTC)
+            self.session.commit()
+            raise
+        except Exception:
+            logger.exception("export.execution_failed", export_job_id=str(export_job.id))
+            export_job.status = "queued"
+            export_job.started_at = None
             self.session.commit()
             raise
 
@@ -193,8 +224,10 @@ class ExportService:
 
     @staticmethod
     def _build_file_name(symbol: str, strategy_type: str, export_format: ExportFormat) -> str:
-        safe_symbol = symbol.replace("/", "-").replace(" ", "-").lower()
-        safe_strategy = strategy_type.replace("/", "-").replace(" ", "-").lower()
+        import re
+
+        safe_symbol = re.sub(r'[<>:"/\\|?*\s]', "-", symbol).strip("-").lower()
+        safe_strategy = re.sub(r'[<>:"/\\|?*\s]', "-", strategy_type).strip("-").lower()
         extension = "csv" if export_format == ExportFormat.CSV else "pdf"
         return f"{safe_symbol}-{safe_strategy}-backtest.{extension}"
 

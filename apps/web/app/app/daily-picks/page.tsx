@@ -21,7 +21,7 @@ function regimeColor(regime: string): string {
 }
 
 function ScoreBar({ score, max }: { score: number; max: number }) {
-  const pct = Math.min((score / max) * 100, 100);
+  const pct = max > 0 ? Math.min((score / max) * 100, 100) : 0;
   return (
     <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
       <div
@@ -106,7 +106,12 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
 }
 
 export default async function DailyPicksPage() {
-  const user = await getCurrentUser();
+  let user;
+  try {
+    user = await getCurrentUser();
+  } catch {
+    return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
+  }
   const hasAccess = user.features.forecasting_access;
 
   if (!hasAccess) {

@@ -113,17 +113,17 @@ class NightlyPipelineService:
         started_at = time.monotonic()
 
         # Prevent duplicate runs for the same trade_date (retry safety)
-        existing = self.session.scalar(
+        succeeded = self.session.scalar(
             select(NightlyPipelineRun).where(
                 NightlyPipelineRun.trade_date == trade_date,
-                NightlyPipelineRun.status.in_(("running", "succeeded")),
+                NightlyPipelineRun.status == "succeeded",
             )
         )
-        if existing is not None:
-            logger.info("pipeline.already_exists", run_id=str(existing.id), status=existing.status)
-            return existing
+        if succeeded is not None:
+            logger.info("pipeline.already_exists", run_id=str(succeeded.id), status=succeeded.status)
+            return succeeded
 
-        # Mark any prior failed runs for this date so they don't block retries
+        # Mark any prior stale "running" runs for this date so they don't block retries
         stale = list(self.session.scalars(
             select(NightlyPipelineRun).where(
                 NightlyPipelineRun.trade_date == trade_date,
@@ -237,6 +237,8 @@ class NightlyPipelineService:
             )
 
         except Exception:
+            self.session.rollback()
+            run = self.session.get(NightlyPipelineRun, run.id)
             run.status = "failed"
             run.error_message = "Pipeline execution failed. See logs for details."
             run.completed_at = datetime.now(UTC)
@@ -366,7 +368,7 @@ class NightlyPipelineService:
                 )
 
             except Exception as exc:
-                logger.debug(
+                logger.warning(
                     "pipeline.stage3_skip",
                     symbol=pair.symbol,
                     strategy=pair.strategy_type,
@@ -432,7 +434,7 @@ class NightlyPipelineService:
                 )
 
             except Exception as exc:
-                logger.debug(
+                logger.warning(
                     "pipeline.stage4_skip",
                     symbol=candidate.symbol,
                     strategy=candidate.strategy_type,
@@ -468,6 +470,7 @@ class NightlyPipelineService:
                         symbol=candidate.symbol,
                         strategy_type=candidate.strategy_type,
                         horizon_days=candidate.target_dte,
+                        as_of_date=trade_date,
                     )
                     return candidate, forecast
                 except Exception as exc:
@@ -478,6 +481,7 @@ class NightlyPipelineService:
                     )
                     return candidate, None
 
+            _BEARISH = {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put"}
             max_workers = min(8, len(candidates)) if candidates else 1
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = [pool.submit(_fetch_forecast, c) for c in candidates]
@@ -492,11 +496,15 @@ class NightlyPipelineService:
                         backtest_positive = candidate.summary.get("total_roi_pct", 0) > 0
                         forecast_positive = float(median_return) > 0
 
-                        if backtest_positive == forecast_positive:
+                        backtest_roi = candidate.summary.get("total_roi_pct", 0)
+                        if backtest_roi != 0 and float(median_return) != 0 and backtest_positive == forecast_positive:
                             candidate.score *= 1.2
 
-                        if float(positive_rate) > 60:
-                            candidate.score *= 1.0 + (float(positive_rate) - 60) / 200.0
+                        effective_rate = float(positive_rate)
+                        if candidate.strategy_type in _BEARISH:
+                            effective_rate = 100.0 - effective_rate
+                        if effective_rate > 60:
+                            candidate.score *= 1.0 + (effective_rate - 60) / 200.0
 
         # Final sort
         candidates.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))

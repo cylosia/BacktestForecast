@@ -50,7 +50,7 @@ class WheelStrategyBacktestEngine:
         self,
         config: BacktestConfig,
         bars: list[DailyBar],
-        earnings_dates: set,
+        earnings_dates: set[date],
         option_gateway: OptionDataGateway,
     ) -> BacktestExecutionResult:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
@@ -141,6 +141,11 @@ class WheelStrategyBacktestEngine:
                         and exit_reason == "expiration"
                         and bar.close_price < active_option.strike_price
                     ):
+                        exit_mid = 0.0
+                        option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
+                        option_net_pnl = option_gross_pnl - (
+                            (config.commission_per_contract * active_option.quantity) + exit_commission
+                        )
                         cash -= (active_option.strike_price * 100.0 * active_option.quantity) + exit_commission
                         held_shares = HeldShares(
                             quantity=active_option.quantity,
@@ -177,6 +182,11 @@ class WheelStrategyBacktestEngine:
                         and bar.close_price > active_option.strike_price
                         and held_shares is not None
                     ):
+                        exit_mid = 0.0
+                        option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
+                        option_net_pnl = option_gross_pnl - (
+                            (config.commission_per_contract * active_option.quantity) + exit_commission
+                        )
                         cash += (active_option.strike_price * 100.0 * active_option.quantity) - exit_commission
                         trades.append(
                             TradeResult(
@@ -266,7 +276,16 @@ class WheelStrategyBacktestEngine:
 
             shares_value = 0.0 if held_shares is None else bar.close_price * 100.0 * held_shares.quantity
 
-            if active_option is None and bar.trade_date <= config.end_date and evaluator.is_entry_allowed(index):
+            entry_allowed = False
+            if active_option is None and bar.trade_date <= config.end_date:
+                try:
+                    entry_allowed = evaluator.is_entry_allowed(index)
+                except Exception:
+                    self._add_warning_once(
+                        warnings, warning_codes, "entry_rule_evaluation_error",
+                        "One or more entry rule evaluations failed and were treated as not-allowed.",
+                    )
+            if entry_allowed:
                 if held_shares is None:
                     position = self._open_short_put(config, bar, index, option_gateway, cash, warnings, warning_codes)
                     if position is not None:
@@ -301,6 +320,9 @@ class WheelStrategyBacktestEngine:
                     drawdown_pct=drawdown_pct,
                 )
             )
+
+            if active_option is None and held_shares is None and bar.trade_date > config.end_date:
+                break
 
         if active_option is not None:
             final_bar = sorted_bars[-1]
@@ -377,17 +399,14 @@ class WheelStrategyBacktestEngine:
 
         if equity_curve and ending_equity != equity_curve[-1].equity:
             last_td = equity_curve[-1].trade_date
-            peak_equity = max(pt.equity for pt in equity_curve)
             peak_equity = max(peak_equity, ending_equity)
             dd = 0.0 if peak_equity == 0 else ((peak_equity - ending_equity) / peak_equity) * 100.0
-            equity_curve.append(
-                EquityPointResult(
-                    trade_date=last_td,
-                    equity=ending_equity,
-                    cash=cash,
-                    position_value=0.0,
-                    drawdown_pct=dd,
-                )
+            equity_curve[-1] = EquityPointResult(
+                trade_date=last_td,
+                equity=ending_equity,
+                cash=cash,
+                position_value=0.0,
+                drawdown_pct=dd,
             )
 
         summary = build_summary(

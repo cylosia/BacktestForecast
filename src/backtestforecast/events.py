@@ -31,19 +31,27 @@ def _get_redis():
             decode_responses=True,
             socket_timeout=5.0,
             socket_connect_timeout=2.0,
+            retry_on_timeout=True,
         )
         atexit.register(_shutdown_redis)
         return _redis_client
 
 
-def _shutdown_redis() -> None:
+def _reset_redis() -> None:
+    """Close the current Redis client and clear the reference so next call reconnects."""
     global _redis_client
-    if _redis_client is not None:
+    with _redis_lock:
+        client = _redis_client
+        _redis_client = None
+    if client is not None:
         try:
-            _redis_client.close()
+            client.close()
         except Exception:
             pass
-        _redis_client = None
+
+
+def _shutdown_redis() -> None:
+    _reset_redis()
 
 
 def publish_job_status(
@@ -62,8 +70,13 @@ def publish_job_status(
     channel = f"job:{job_type}:{job_id}:status"
     payload = json.dumps({"status": status, "job_id": str(job_id), **(metadata or {})})
 
-    try:
-        client = _get_redis()
-        client.publish(channel, payload)
-    except RedisError:
-        logger.warning("events.publish_failed", channel=channel, status=status, exc_info=True)
+    for attempt in range(2):
+        try:
+            client = _get_redis()
+            client.publish(channel, payload)
+            return
+        except RedisError:
+            if attempt == 0:
+                _reset_redis()
+                continue
+            logger.warning("events.publish_failed", channel=channel, status=status, exc_info=True)

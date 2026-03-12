@@ -12,7 +12,7 @@ from backtestforecast.errors import ValidationError
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import StrategyType
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
-from backtestforecast.security import rate_limiter
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.scans import ScanService
 
 router = APIRouter(prefix="/forecasts", tags=["forecasts"])
@@ -29,7 +29,7 @@ def get_forecast(
     strategy_type: StrategyType | None = Query(default=None),
     horizon_days: int = Query(default=20, ge=5, le=90),
 ) -> ForecastEnvelopeResponse:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="forecasts:get",
         actor_key=str(user.id),
         limit=settings.forecast_rate_limit,

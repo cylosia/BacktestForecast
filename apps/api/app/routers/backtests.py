@@ -20,7 +20,7 @@ from backtestforecast.schemas.backtests import (
     CompareBacktestsResponse,
     CreateBacktestRunRequest,
 )
-from backtestforecast.security import rate_limiter
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.backtests import BacktestService
 
 router = APIRouter(prefix="/backtests", tags=["backtests"])
@@ -45,7 +45,7 @@ def create_backtest(
     _metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> BacktestRunDetailResponse:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="backtests:create",
         actor_key=str(user.id),
         limit=settings.backtest_create_rate_limit,

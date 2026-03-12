@@ -128,7 +128,7 @@ export function ScannerForm({
 
     const numericChecks = [
       { label: "Target DTE", value: Number(targetDte), min: 1, max: 365 },
-      { label: "DTE tolerance", value: Number(dteTolerance), min: 1, max: 60 },
+      { label: "DTE tolerance", value: Number(dteTolerance), min: 0, max: 60 },
       { label: "Max holding days", value: Number(maxHolding), min: 1, max: 365 },
       { label: "Account size", value: Number(accountSize), min: 100 },
       { label: "Risk %", value: Number(riskPct), min: 0.1, max: 100 },
@@ -152,9 +152,9 @@ export function ScannerForm({
         setErrorMessage("RSI threshold must be a number between 0 and 100.");
         return;
       }
-      if (!Number.isFinite(rsiPeriodNum) || rsiPeriodNum < 2 || rsiPeriodNum > 50) {
+      if (!Number.isFinite(rsiPeriodNum) || rsiPeriodNum < 2 || rsiPeriodNum > 100) {
         setStatus("error");
-        setErrorMessage("RSI period must be a number between 2 and 50.");
+        setErrorMessage("RSI period must be a number between 2 and 100.");
         return;
       }
       entryRules.push({

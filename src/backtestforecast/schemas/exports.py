@@ -25,7 +25,7 @@ class ExportJobResponse(BaseModel):
     status: str
     file_name: str
     mime_type: str
-    size_bytes: int
+    size_bytes: int = 0
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime

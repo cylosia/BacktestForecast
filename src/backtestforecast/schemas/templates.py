@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
+
+
+class _Unset(Enum):
+    UNSET = "UNSET"
+
+
+UNSET = _Unset.UNSET
 
 
 class TemplateConfig(BaseModel):
@@ -40,7 +48,7 @@ class CreateTemplateRequest(BaseModel):
 
 class UpdateTemplateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    description: str | None = Field(default=None, max_length=500)
+    description: str | None | _Unset = Field(default=UNSET, max_length=500)
     config: TemplateConfig | None = None
 
 

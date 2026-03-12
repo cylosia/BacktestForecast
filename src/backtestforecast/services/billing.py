@@ -19,6 +19,7 @@ from backtestforecast.errors import (
 )
 from backtestforecast.models import User
 from backtestforecast.observability import get_logger
+from backtestforecast.observability.metrics import STRIPE_WEBHOOK_EVENTS_TOTAL
 from backtestforecast.repositories.audit_events import AuditEventRepository
 from backtestforecast.repositories.users import UserRepository
 from backtestforecast.schemas.billing import (
@@ -162,6 +163,7 @@ class BillingService:
         event_id = self._coerce_stripe_id(event.get("id")) or str(event.get("id") or "")
         if not event_id:
             logger.warning("billing.webhook.missing_event_id", event_type=event_type)
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ignored").inc()
             return {"status": "ignored", "reason": "missing_event_id"}
         if self.audit_events.exists(
             event_type=f"billing.webhook.{event_type}",
@@ -169,6 +171,7 @@ class BillingService:
             subject_id=event_id,
         ):
             logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
             return {"status": "duplicate", "event_type": event_type}
 
         data_object = event["data"]["object"]
@@ -201,6 +204,7 @@ class BillingService:
             },
         )
         self.session.commit()
+        STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ok").inc()
         return {"status": "ok", "event_type": event_type}
 
     def _sync_checkout_session(self, checkout_session: Any) -> User | None:
@@ -264,9 +268,12 @@ class BillingService:
         if status not in PAID_STATUSES:
             effective_tier = PlanTier.FREE.value
 
-        user.stripe_subscription_id = subscription_id
-        user.stripe_customer_id = customer_id
-        user.stripe_price_id = price_id
+        if subscription_id is not None:
+            user.stripe_subscription_id = subscription_id
+        if customer_id is not None:
+            user.stripe_customer_id = customer_id
+        if price_id is not None:
+            user.stripe_price_id = price_id
         user.subscription_status = status
         user.subscription_billing_interval = billing_interval
         user.subscription_current_period_end = current_period_end

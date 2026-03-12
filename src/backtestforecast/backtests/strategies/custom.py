@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from backtestforecast.backtests.margin import naked_option_margin
+from backtestforecast.backtests.margin import credit_spread_margin, naked_option_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_atm_strike,
@@ -95,7 +95,8 @@ class CustomNLegStrategy(StrategyDefinition):
                 continue
 
             # Option leg
-            assert leg_def.contract_type is not None
+            if leg_def.contract_type is None:
+                raise DataUnavailableError("contract_type is required for option legs.")
             exp = expirations.get(leg_def.expiration_offset, primary_exp)
             if leg_def.contract_type == "call":
                 chain = contracts_for_expiration(calls, exp)
@@ -154,13 +155,7 @@ class CustomNLegStrategy(StrategyDefinition):
         )
 
         if capital <= 0:
-            short_leg_margin = sum(
-                naked_option_margin(
-                    leg.contract_type, bar.close_price, leg.strike_price, leg.entry_mid,
-                ) * leg.quantity_per_unit
-                for leg in option_legs
-                if leg.side == -1
-            )
+            short_leg_margin = self._estimate_credit_margin(option_legs, bar.close_price)
             capital = max(short_leg_margin, abs(net_cost), 1.0)
 
         return OpenMultiLegPosition(
@@ -197,6 +192,42 @@ class CustomNLegStrategy(StrategyDefinition):
                 ],
             },
         )
+
+
+    @staticmethod
+    def _estimate_credit_margin(
+        option_legs: list[OpenOptionLeg],
+        underlying_price: float,
+    ) -> float:
+        short_legs = [leg for leg in option_legs if leg.side == -1]
+        long_legs = [leg for leg in option_legs if leg.side == 1]
+        paired_short_indices: set[int] = set()
+        paired_long_indices: set[int] = set()
+        spread_margin = 0.0
+
+        for si, short in enumerate(short_legs):
+            for li, long in enumerate(long_legs):
+                if li in paired_long_indices:
+                    continue
+                if (
+                    long.contract_type == short.contract_type
+                    and long.expiration_date == short.expiration_date
+                ):
+                    width = abs(short.strike_price - long.strike_price)
+                    qty = min(short.quantity_per_unit, long.quantity_per_unit)
+                    spread_margin += credit_spread_margin(width) * qty
+                    paired_short_indices.add(si)
+                    paired_long_indices.add(li)
+                    break
+
+        for si, short in enumerate(short_legs):
+            if si in paired_short_indices:
+                continue
+            spread_margin += naked_option_margin(
+                short.contract_type, underlying_price, short.strike_price, short.entry_mid,
+            ) * short.quantity_per_unit
+
+        return spread_margin
 
 
 CUSTOM_2_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_2_leg")

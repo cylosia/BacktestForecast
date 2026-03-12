@@ -40,7 +40,6 @@ export function SelectableHistoryList({
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const succeededItems = items.filter((item) => item.status === "succeeded");
   const canCompare = selected.size >= 2 && selected.size <= comparisonLimit;
 
   function toggle(id: string) {

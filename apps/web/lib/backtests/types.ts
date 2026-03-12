@@ -99,27 +99,30 @@ export interface MacdRule {
 export interface BollingerBandsRule {
   type: "bollinger_bands";
   period: number;
-  num_std: number;
+  standard_deviations: number;
   operator: ComparisonOperator;
-  band: "upper" | "lower";
+  band: "upper" | "middle" | "lower";
 }
 
 export interface IvRankRule {
   type: "iv_rank";
   operator: ComparisonOperator;
   threshold: number;
+  lookback_days?: number;
 }
 
 export interface IvPercentileRule {
   type: "iv_percentile";
   operator: ComparisonOperator;
   threshold: number;
+  lookback_days?: number;
 }
 
 export interface VolumeSpikeRule {
   type: "volume_spike";
-  lookback_days: number;
-  spike_multiplier: number;
+  operator: ComparisonOperator;
+  multiplier: number;
+  lookback_period: number;
 }
 
 export type SupportResistanceMode =
@@ -131,7 +134,7 @@ export type SupportResistanceMode =
 export interface SupportResistanceRule {
   type: "support_resistance";
   mode: SupportResistanceMode;
-  lookback_days: number;
+  lookback_period: number;
   tolerance_pct: number;
 }
 
@@ -333,6 +336,8 @@ export interface ExportJobResponse {
   file_name: string;
   mime_type: string;
   size_bytes: number;
+  error_code: string | null;
+  error_message: string | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -390,7 +395,7 @@ export interface TemplateListResponse {
 // --- Scanner ---
 
 export type ScannerMode = "basic" | "advanced";
-export type ScannerJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type ScannerJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export interface RuleSetDefinition {
   name: string;
@@ -462,6 +467,7 @@ export interface ForecastResponse {
   positive_outcome_rate_pct: NumericValue;
   summary: string;
   disclaimer: string;
+  analog_dates?: string[];
 }
 
 export interface RankingBreakdownResponse {

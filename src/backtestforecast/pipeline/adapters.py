@@ -8,7 +8,9 @@ MarketDataService, BacktestExecutionService, and HistoricalAnalogForecaster.
 from __future__ import annotations
 
 import threading
-from datetime import date, timedelta
+from collections import OrderedDict
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Any, Self
 
@@ -45,10 +47,12 @@ class PipelineBacktestExecutor:
       - run_full_backtest: 365-day lookback, returns full results
     """
 
+    _MAX_BUNDLE_CACHE_SIZE = 200
+
     def __init__(self, execution_service: BacktestExecutionService | None = None) -> None:
         self._owns_service = execution_service is None
         self._execution_service = execution_service or BacktestExecutionService()
-        self._bundle_cache: dict[tuple[str, date, date], HistoricalDataBundle] = {}
+        self._bundle_cache: OrderedDict[tuple[str, date, date], HistoricalDataBundle] = OrderedDict()
         self._bundle_cache_lock = threading.Lock()
 
     def close(self) -> None:
@@ -65,11 +69,16 @@ class PipelineBacktestExecutor:
         key = (request.symbol, request.start_date, request.end_date)
         with self._bundle_cache_lock:
             bundle = self._bundle_cache.get(key)
-        if bundle is not None:
-            return bundle
+            if bundle is not None:
+                self._bundle_cache.move_to_end(key)
+                return bundle
         bundle = self._execution_service.market_data_service.prepare_backtest(request)
         with self._bundle_cache_lock:
-            self._bundle_cache.setdefault(key, bundle)
+            if key not in self._bundle_cache:
+                if len(self._bundle_cache) >= self._MAX_BUNDLE_CACHE_SIZE:
+                    self._bundle_cache.popitem(last=False)
+                self._bundle_cache[key] = bundle
+            self._bundle_cache.move_to_end(key)
             return self._bundle_cache[key]
 
     def run_quick_backtest(
@@ -144,15 +153,7 @@ class PipelineBacktestExecutor:
                     }
                     for t in result.trades[:50]  # Cap trade detail for storage
                 ],
-                "equity_curve": [
-                    {
-                        "trade_date": p.trade_date.isoformat(),
-                        "equity": p.equity,
-                        "drawdown_pct": p.drawdown_pct,
-                    }
-                    for i, p in enumerate(result.equity_curve)
-                    if i % 5 == 0 or i == len(result.equity_curve) - 1
-                ],
+                "equity_curve": self._downsample_equity_curve(result.equity_curve),
                 "warnings": [w for w in result.warnings],
             }
         except (DataUnavailableError, ExternalServiceError, ValidationError):
@@ -179,22 +180,37 @@ class PipelineBacktestExecutor:
             "account_size": Decimal("10000"),
             "risk_per_trade_pct": Decimal("5"),
             "commission_per_contract": Decimal("0.65"),
-            "entry_rules": [
-                {"type": "rsi", "operator": "lte", "threshold": Decimal("40"), "period": 14},
-            ],
+            "entry_rules": [],
         }
         if strategy_overrides:
             payload["strategy_overrides"] = strategy_overrides
         return CreateBacktestRunRequest(**payload)
 
+    @staticmethod
+    def _downsample_equity_curve(curve: list[Any]) -> list[dict[str, Any]]:
+        if not curve:
+            return []
+        max_dd_idx = max(range(len(curve)), key=lambda i: curve[i].drawdown_pct)
+        return [
+            {
+                "trade_date": p.trade_date.isoformat(),
+                "equity": p.equity,
+                "drawdown_pct": p.drawdown_pct,
+            }
+            for i, p in enumerate(curve)
+            if i % 5 == 0 or i == max_dd_idx or i == len(curve) - 1
+        ]
+
 
 class PipelineForecaster:
     """Wraps the existing HistoricalAnalogForecaster for pipeline use."""
 
+    _MAX_BAR_CACHE_SIZE = 500
+
     def __init__(self, forecaster: Any, market_data: PipelineMarketDataFetcher) -> None:
         self._forecaster = forecaster
         self._market_data = market_data
-        self._bar_cache: dict[str, list[DailyBar]] = {}
+        self._bar_cache: OrderedDict[str, list[DailyBar]] = OrderedDict()
         self._bar_cache_lock = threading.Lock()
 
     def get_forecast(
@@ -202,19 +218,27 @@ class PipelineForecaster:
         symbol: str,
         strategy_type: str,
         horizon_days: int,
+        *,
+        as_of_date: date | None = None,
     ) -> dict[str, Any] | None:
         try:
             with self._bar_cache_lock:
                 bars = self._bar_cache.get(symbol)
+                if bars is not None:
+                    self._bar_cache.move_to_end(symbol)
             if bars is None:
-                end_date = date.today()
+                end_date = as_of_date or datetime.now(ZoneInfo("America/New_York")).date()
                 bars = self._market_data.get_daily_bars(
                     symbol,
                     end_date - timedelta(days=400),
                     end_date,
                 )
                 with self._bar_cache_lock:
-                    self._bar_cache.setdefault(symbol, bars)
+                    if symbol not in self._bar_cache:
+                        if len(self._bar_cache) >= self._MAX_BAR_CACHE_SIZE:
+                            self._bar_cache.popitem(last=False)
+                        self._bar_cache[symbol] = bars
+                    self._bar_cache.move_to_end(symbol)
                     bars = self._bar_cache[symbol]
             if len(bars) < 80:
                 return None

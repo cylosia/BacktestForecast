@@ -13,7 +13,7 @@ from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import ExportJob, User
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
-from backtestforecast.security import rate_limiter
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.exports import ExportService
 
 router = APIRouter(prefix="/exports", tags=["exports"])
@@ -28,7 +28,7 @@ def create_export(
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> ExportJobResponse:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="exports:create",
         actor_key=str(user.id),
         limit=settings.export_create_rate_limit,

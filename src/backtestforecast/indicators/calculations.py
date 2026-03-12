@@ -22,10 +22,15 @@ def rolling_mean(values: list[float], period: int) -> list[float | None]:
     return sma(values, period)
 
 
-def rolling_stddev(values: list[float], period: int) -> list[float | None]:
-    """O(n) rolling sample standard deviation using an online sliding window."""
+def rolling_stddev(values: list[float], period: int, *, ddof: int = 0) -> list[float | None]:
+    """O(n) rolling standard deviation using an online sliding window.
+
+    Args:
+        ddof: Delta degrees of freedom. Use 0 for population stddev (Bollinger Bands),
+              1 for sample stddev (realized volatility).
+    """
     result: list[float | None] = [None] * len(values)
-    if period <= 1:
+    if period <= 1 or period <= ddof:
         return result
     sum_x = 0.0
     sum_x2 = 0.0
@@ -38,7 +43,7 @@ def rolling_stddev(values: list[float], period: int) -> list[float | None]:
             sum_x2 -= old * old
         if index >= period - 1:
             mean = sum_x / period
-            variance = (sum_x2 - period * mean * mean) / (period - 1)
+            variance = (sum_x2 - period * mean * mean) / (period - ddof)
             result[index] = math.sqrt(max(variance, 0.0))
     return result
 

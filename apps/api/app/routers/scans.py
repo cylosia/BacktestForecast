@@ -18,7 +18,7 @@ from backtestforecast.schemas.scans import (
     ScannerJobResponse,
     ScannerRecommendationListResponse,
 )
-from backtestforecast.security import rate_limiter
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.scans import ScanService
 
 logger = structlog.get_logger("api.scans")
@@ -42,7 +42,7 @@ def create_scan(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ScannerJobResponse:
-    rate_limiter.check(
+    get_rate_limiter().check(
         bucket="scans:create",
         actor_key=str(user.id),
         limit=settings.scan_create_rate_limit,

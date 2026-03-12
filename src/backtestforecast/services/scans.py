@@ -151,8 +151,26 @@ class ScanService:
         job.recommendation_count = 0
         job.evaluated_candidate_count = 0
         job.warnings_json = []
-        self.session.flush()
+        self.session.commit()
+        self.session.refresh(job)
 
+        try:
+            return self._execute_scan(job, payload)
+        except Exception:
+            logger.exception("scan.run_job_failed", job_id=str(job_id))
+            self.session.rollback()
+            job.status = "failed"
+            job.error_code = "internal_error"
+            job.error_message = "An unexpected error occurred during scan execution."
+            job.completed_at = datetime.now(UTC)
+            self.session.commit()
+            raise
+
+    def _execute_scan(
+        self,
+        job: ScannerJob,
+        payload: CreateScannerJobRequest,
+    ) -> ScannerJob:
         compatibility_candidate_count, compatibility_warnings = self._count_compatible_candidates(payload)
         job.candidate_count = compatibility_candidate_count
         warnings: list[dict[str, Any]] = list(compatibility_warnings)
@@ -569,7 +587,7 @@ class ScanService:
                 expected_return_low_pct=Decimal("0"),
                 expected_return_median_pct=Decimal("0"),
                 expected_return_high_pct=Decimal("0"),
-                positive_outcome_rate_pct=Decimal("0"),
+                positive_outcome_rate_pct=Decimal("50"),
                 summary="Not enough analog history was available to build a bounded expected range for this symbol.",
                 disclaimer=(
                     "This is a bounded probability range based on historical analogs "

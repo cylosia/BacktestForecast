@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Self
@@ -7,6 +8,7 @@ from uuid import UUID
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.types import BacktestExecutionResult
@@ -43,7 +45,11 @@ DECIMAL_QUANT = Decimal("0.0001")
 
 def to_decimal(value: float | Decimal) -> Decimal:
     if isinstance(value, Decimal):
+        if not value.is_finite():
+            return Decimal("0")
         return value.quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
+    if not math.isfinite(value):
+        return Decimal("0")
     return Decimal(str(value)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 
 
@@ -115,7 +121,15 @@ class BacktestService:
             ending_equity=to_decimal(request.account_size),
         )
         self.run_repository.add(run)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            if request.idempotency_key:
+                existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
+                if existing is not None:
+                    return existing
+            raise
         self.session.refresh(run)
         return run
 
@@ -149,6 +163,7 @@ class BacktestService:
             run.completed_at = datetime.now(UTC)
             self.session.commit()
         except AppError as exc:
+            self.session.rollback()
             run.status = "failed"
             run.error_code = exc.code
             run.error_message = "Backtest execution failed. Please try again."
@@ -157,6 +172,7 @@ class BacktestService:
             raise
         except Exception:
             logger.exception("backtest.execution_failed", run_id=str(run.id))
+            self.session.rollback()
             run.status = "failed"
             run.error_code = "internal_error"
             run.error_message = "An internal error occurred during backtest execution."
@@ -177,6 +193,7 @@ class BacktestService:
         run = BacktestRun(
             user_id=user.id,
             status="running",
+            started_at=datetime.now(UTC),
             symbol=request.symbol,
             strategy_type=request.strategy_type.value,
             date_from=request.start_date,
@@ -214,6 +231,7 @@ class BacktestService:
             run.completed_at = datetime.now(UTC)
             self.session.commit()
         except AppError as exc:
+            self.session.rollback()
             run.status = "failed"
             run.error_code = exc.code
             run.error_message = "Backtest execution failed. Please try again."
@@ -222,6 +240,7 @@ class BacktestService:
             raise
         except Exception:
             logger.exception("backtest.execution_failed", run_id=str(run.id))
+            self.session.rollback()
             run.status = "failed"
             run.error_code = "internal_error"
             run.error_message = "An internal error occurred during backtest execution."
@@ -277,6 +296,12 @@ class BacktestService:
         limit = feature_policy.side_by_side_comparison_limit
 
         if len(request.run_ids) > limit:
+            if feature_policy.tier.value == "premium":
+                raise FeatureLockedError(
+                    f"Your plan allows comparing up to {limit} runs at a time. "
+                    f"You requested {len(request.run_ids)}.",
+                    required_tier="premium",
+                )
             raise FeatureLockedError(
                 f"Your {feature_policy.tier.value} plan allows comparing up to {limit} runs at a time. "
                 f"You requested {len(request.run_ids)}. Upgrade for more.",

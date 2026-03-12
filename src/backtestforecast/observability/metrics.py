@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 
 from prometheus_client import Counter, Histogram, generate_latest
@@ -56,16 +57,29 @@ JOBS_STUCK_REDISPATCHED_TOTAL = Counter(
 )
 
 
+_RE_UUID = re.compile(
+    r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_RE_INT = re.compile(r"/\d+(?=/|$)")
+_DYNAMIC_SEGMENT_PREFIXES = {
+    "/symbols/", "/tickers/", "/api/v1/symbols/", "/api/v1/tickers/",
+}
+
+
 def _normalize_path(path: str) -> str:
     """Collapse path parameters to avoid high-cardinality labels."""
-    import re
-
-    path = re.sub(
-        r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-        "/{id}",
-        path,
-    )
-    path = re.sub(r"/\d+(?=/|$)", "/{id}", path)
+    path = _RE_UUID.sub("/{id}", path)
+    path = _RE_INT.sub("/{id}", path)
+    for prefix in _DYNAMIC_SEGMENT_PREFIXES:
+        if prefix in path:
+            idx = path.find(prefix) + len(prefix)
+            rest = path[idx:]
+            slug_end = rest.find("/")
+            if slug_end == -1:
+                path = path[:idx] + "{symbol}"
+            else:
+                path = path[:idx] + "{symbol}" + rest[slug_end:]
+            break
     return path
 
 
@@ -73,15 +87,18 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         method = request.method
         start = time.perf_counter()
+        status_code = 500
 
-        response: Response = await call_next(request)
-
-        duration = time.perf_counter() - start
-        path = _normalize_path(request.url.path)
-        status = str(response.status_code)
-
-        HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status=status).inc()
-        HTTP_REQUEST_DURATION_SECONDS.labels(method=method, path=path).observe(duration)
+        try:
+            response: Response = await call_next(request)
+            status_code = response.status_code
+        except Exception:
+            raise
+        finally:
+            duration = time.perf_counter() - start
+            path = _normalize_path(request.url.path)
+            HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status=str(status_code)).inc()
+            HTTP_REQUEST_DURATION_SECONDS.labels(method=method, path=path).observe(duration)
 
         return response
 

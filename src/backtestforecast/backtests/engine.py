@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 from typing import Any
 
@@ -28,7 +29,7 @@ class OptionsBacktestEngine:
         self,
         config: BacktestConfig,
         bars: list[DailyBar],
-        earnings_dates: set,
+        earnings_dates: set[date],
         option_gateway: OptionDataGateway,
     ) -> BacktestExecutionResult:
         if config.strategy_type == "wheel_strategy":
@@ -70,7 +71,6 @@ class OptionsBacktestEngine:
                 exit_prices = {leg.ticker: leg.last_mid for leg in position.option_legs}
 
                 should_exit, exit_reason = self._resolve_exit(
-                    bar_index=index,
                     bar=bar,
                     position=position,
                     max_holding_days=config.max_holding_days,
@@ -84,10 +84,12 @@ class OptionsBacktestEngine:
                     entry_value_per_unit = self._entry_value_per_unit(position)
                     exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0
                     gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position.quantity
-                    total_commissions = self._option_commission_total(position, config.commission_per_contract) * 2.0
+                    total_commissions = exit_commission * 2.0
                     net_pnl = gross_pnl - total_commissions
-                    expiration_date = position.scheduled_exit_date or max(
-                        leg.expiration_date for leg in position.option_legs
+                    expiration_date = position.scheduled_exit_date or (
+                        max(leg.expiration_date for leg in position.option_legs)
+                        if position.option_legs
+                        else bar.trade_date
                     )
                     trades.append(
                         TradeResult(
@@ -115,7 +117,16 @@ class OptionsBacktestEngine:
                     position = None
                     position_value = 0.0
 
-            if position is None and bar.trade_date <= config.end_date and evaluator.is_entry_allowed(index):
+            entry_allowed = False
+            if position is None and bar.trade_date <= config.end_date:
+                try:
+                    entry_allowed = evaluator.is_entry_allowed(index)
+                except Exception:
+                    self._add_warning_once(
+                        warnings, warning_codes, "entry_rule_evaluation_error",
+                        "One or more entry rule evaluations failed and were treated as not-allowed.",
+                    )
+            if entry_allowed:
                 try:
                     build_kwargs: dict = {}
                     if config.custom_legs is not None:
@@ -144,12 +155,17 @@ class OptionsBacktestEngine:
                             "One or more entry dates were skipped because no valid same-day option quote was returned.",
                         )
                     else:
+                        ev_per_unit = self._entry_value_per_unit(candidate)
+                        contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
+                        commission_per_unit = config.commission_per_contract * contracts_per_unit
                         quantity = self._resolve_position_size(
                             available_cash=cash,
                             account_size=config.account_size,
                             risk_per_trade_pct=config.risk_per_trade_pct,
                             capital_required_per_unit=candidate.capital_required_per_unit,
                             max_loss_per_unit=candidate.max_loss_per_unit,
+                            entry_cost_per_unit=abs(ev_per_unit),
+                            commission_per_unit=commission_per_unit,
                         )
                         if quantity <= 0:
                             self._add_warning_once(
@@ -163,11 +179,10 @@ class OptionsBacktestEngine:
                             candidate.quantity = quantity
                             candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
                             entry_commission = self._option_commission_total(candidate, config.commission_per_contract)
-                            cash -= (self._entry_value_per_unit(candidate) * quantity) + entry_commission
+                            cash -= (ev_per_unit * quantity) + entry_commission
                             position = candidate
-                            position_value = self._entry_value_per_unit(position) * position.quantity
                             if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
-                                self._entry_value_per_unit(candidate)
+                                ev_per_unit
                             ):
                                 self._add_warning_once(
                                     warnings, warning_codes, "margin_reserved", strategy.margin_warning_message
@@ -191,6 +206,67 @@ class OptionsBacktestEngine:
 
             if position is None and bar.trade_date > config.end_date:
                 break
+
+        # Force-close any position still open when data is exhausted
+        if position is not None:
+            snapshot = self._mark_position(position, sorted_bars[-1], option_gateway, warnings, warning_codes)
+            exit_value = snapshot.position_value
+            exit_commission = self._option_commission_total(position, config.commission_per_contract)
+            cash += exit_value - exit_commission
+            entry_value_per_unit = self._entry_value_per_unit(position)
+            exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0
+            gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position.quantity
+            total_commissions = exit_commission * 2.0
+            net_pnl = gross_pnl - total_commissions
+            expiration_date = position.scheduled_exit_date or max(
+                leg.expiration_date for leg in position.option_legs
+            ) if position.option_legs else sorted_bars[-1].trade_date
+            trades.append(
+                TradeResult(
+                    option_ticker=position.display_ticker,
+                    strategy_type=config.strategy_type,
+                    underlying_symbol=config.symbol,
+                    entry_date=position.entry_date,
+                    exit_date=sorted_bars[-1].trade_date,
+                    expiration_date=expiration_date,
+                    quantity=position.quantity,
+                    dte_at_open=position.dte_at_open,
+                    holding_period_days=(sorted_bars[-1].trade_date - position.entry_date).days,
+                    entry_underlying_close=self._entry_underlying_close(position),
+                    exit_underlying_close=sorted_bars[-1].close_price,
+                    entry_mid=entry_value_per_unit / 100.0,
+                    exit_mid=exit_value_per_unit / 100.0,
+                    gross_pnl=gross_pnl,
+                    net_pnl=net_pnl,
+                    total_commissions=total_commissions,
+                    entry_reason=position.entry_reason,
+                    exit_reason="data_exhausted",
+                    detail_json=self._build_trade_detail_json(
+                        position,
+                        {leg.ticker: leg.last_mid for leg in position.option_legs},
+                        exit_value_per_unit,
+                    ),
+                )
+            )
+            position = None
+            equity = cash
+            peak_equity = max(peak_equity, equity)
+            drawdown_pct = 0.0 if peak_equity == 0 else ((peak_equity - equity) / peak_equity) * 100.0
+            force_close_point = EquityPointResult(
+                trade_date=sorted_bars[-1].trade_date,
+                equity=equity,
+                cash=cash,
+                position_value=0.0,
+                drawdown_pct=drawdown_pct,
+            )
+            if equity_curve and equity_curve[-1].trade_date == sorted_bars[-1].trade_date:
+                equity_curve[-1] = force_close_point
+            else:
+                equity_curve.append(force_close_point)
+            self._add_warning_once(
+                warnings, warning_codes, "position_force_closed",
+                "An open position was force-closed because no more market data was available.",
+            )
 
         ending_equity = equity_curve[-1].equity if equity_curve else config.account_size
         summary = build_summary(config.account_size, ending_equity, trades, equity_curve)
@@ -216,6 +292,9 @@ class OptionsBacktestEngine:
                     missing_quote_tickers.append(leg.ticker)
             else:
                 current_mid = quote.mid_price
+                if not math.isfinite(current_mid):
+                    current_mid = leg.last_mid
+                    missing_quote_tickers.append(leg.ticker)
             leg.last_mid = current_mid
             option_value += leg.side * leg.quantity_per_unit * current_mid * 100.0 * position.quantity
 
@@ -255,6 +334,8 @@ class OptionsBacktestEngine:
         risk_per_trade_pct: float,
         capital_required_per_unit: float,
         max_loss_per_unit: float | None,
+        entry_cost_per_unit: float = 0.0,
+        commission_per_unit: float = 0.0,
     ) -> int:
         if capital_required_per_unit <= 0:
             return 0
@@ -265,7 +346,8 @@ class OptionsBacktestEngine:
         if effective_risk <= 0:
             return 0
         by_risk = int(risk_budget // effective_risk)
-        by_cash = int(available_cash // capital_required_per_unit)
+        cash_per_unit = max(capital_required_per_unit, entry_cost_per_unit) + commission_per_unit
+        by_cash = int(available_cash // cash_per_unit) if cash_per_unit > 0 else 0
         return max(0, min(by_risk, by_cash))
 
     @staticmethod
@@ -311,7 +393,6 @@ class OptionsBacktestEngine:
 
     @staticmethod
     def _resolve_exit(
-        bar_index: int,
         bar: DailyBar,
         position: OpenMultiLegPosition,
         max_holding_days: int,

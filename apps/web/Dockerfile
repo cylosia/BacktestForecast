@@ -10,6 +10,7 @@ COPY packages/api-client/package.json /app/packages/api-client/package.json
 RUN pnpm install --frozen-lockfile --filter @backtestforecast/web...
 
 COPY apps/web /app/apps/web
+COPY packages/api-client /app/packages/api-client
 
 FROM base AS builder
 WORKDIR /app

@@ -23,11 +23,12 @@ class AuditEventRepository:
         return event
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:
-        if not subject_id:
-            return False
         stmt = select(AuditEvent.id).where(
             AuditEvent.event_type == event_type,
             AuditEvent.subject_type == subject_type,
-            AuditEvent.subject_id == subject_id,
         )
+        if subject_id is not None:
+            stmt = stmt.where(AuditEvent.subject_id == subject_id)
+        else:
+            stmt = stmt.where(AuditEvent.subject_id.is_(None))
         return self.session.execute(stmt).first() is not None

@@ -11,6 +11,7 @@ from backtestforecast.errors import NotFoundError, QuotaExceededError
 from backtestforecast.models import BacktestTemplate, User
 from backtestforecast.repositories.templates import BacktestTemplateRepository
 from backtestforecast.schemas.templates import (
+    UNSET,
     CreateTemplateRequest,
     TemplateListResponse,
     TemplateResponse,
@@ -57,7 +58,7 @@ class BacktestTemplateService:
     def list_templates(self, user: User, *, limit: int = 100) -> TemplateListResponse:
         templates = self.repository.list_for_user(user.id, limit=limit)
         total = self.repository.count_for_user(user.id)
-        template_limit = _resolve_template_limit(user.plan_tier, user.subscription_status)
+        template_limit = _resolve_template_limit(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
         return TemplateListResponse(
             items=[self._to_response(t) for t in templates],
             total=total,
@@ -77,7 +78,7 @@ class BacktestTemplateService:
 
         if request.name is not None:
             template.name = request.name
-        if request.description is not None:
+        if request.description is not UNSET:
             template.description = request.description
         if request.config is not None:
             template.strategy_type = request.config.strategy_type.value

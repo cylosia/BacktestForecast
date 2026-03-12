@@ -53,7 +53,9 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
       ...init,
       headers: buildHeaders(token, init),
       cache: init?.cache ?? "no-store",
-      signal: init?.signal ?? controller.signal,
+      signal: init?.signal
+        ? AbortSignal.any([init.signal, controller.signal])
+        : controller.signal,
     });
 
     if (!response.ok) {
@@ -61,7 +63,7 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
     }
 
     if (response.status === 204) {
-      return undefined as T;
+      return undefined as unknown as T;
     }
 
     try {
@@ -87,7 +89,9 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
       ...init,
       headers: buildHeaders(token, init),
       cache: "no-store",
-      signal: init?.signal ?? controller.signal,
+      signal: init?.signal
+        ? AbortSignal.any([init.signal, controller.signal])
+        : controller.signal,
     });
 
     if (!response.ok) {

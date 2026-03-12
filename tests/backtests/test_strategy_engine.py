@@ -174,9 +174,9 @@ def test_custom_2_leg_stock_only_uses_end_date() -> None:
         ],
     )
     result = engine.run(config, bars, set(), FakeGateway(contracts={}, quotes={}))
-    if result.trades:
-        for trade in result.trades:
-            assert trade.exit_date <= date(2025, 1, 9)
+    assert result.summary is not None
+    for trade in result.trades:
+        assert trade.exit_date <= date(2025, 1, 9)
 
 
 # ---------------------------------------------------------------------------

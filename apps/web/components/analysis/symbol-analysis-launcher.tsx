@@ -79,8 +79,6 @@ function RegimeSection({ regime }: { regime: RegimeDetail }) {
 
 function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
   const strategies = [...new Set(cells.map((c) => c.strategy_type))];
-  const dtes = [...new Set(cells.map((c) => c.target_dte))].sort((a, b) => a - b);
-
   // Best score per strategy
   const bestByStrategy = new Map<string, LandscapeCell>();
   for (const cell of cells) {
@@ -261,7 +259,7 @@ export function SymbolAnalysisLauncher() {
       const token = await getToken();
       if (!token) throw new Error("Session expired.");
 
-      const created = await createSymbolAnalysis(token, sym, `deep-${sym}-${Date.now()}`);
+      const created = await createSymbolAnalysis(token, sym, `deep-${sym}-${crypto.randomUUID()}`);
 
       if (created.status === "succeeded") {
         const full = await fetchAnalysisFull(token, created.id);
