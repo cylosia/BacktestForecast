@@ -10,7 +10,7 @@ import structlog
 
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError, ValidationError
 from backtestforecast.integrations.massive_client import MassiveClient
-from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
 from backtestforecast.schemas.backtests import (
     AvoidEarningsRule,
     BollingerBandsRule,
@@ -36,6 +36,7 @@ class HistoricalDataBundle:
 
 _GATEWAY_CONTRACT_CACHE_MAX = 2_000
 _GATEWAY_QUOTE_CACHE_MAX = 10_000
+_GATEWAY_SNAPSHOT_CACHE_MAX = 5_000
 
 
 class MassiveOptionGateway:
@@ -44,6 +45,8 @@ class MassiveOptionGateway:
         self.symbol = symbol
         self._contract_cache: OrderedDict[tuple[date, str, int, int], list[OptionContractRecord]] = OrderedDict()
         self._quote_cache: OrderedDict[tuple[str, date], OptionQuoteRecord | None] = OrderedDict()
+        self._snapshot_cache: OrderedDict[str, OptionSnapshotRecord | None] = OrderedDict()
+        self._chain_snapshot_loaded: bool = False
         self._lock = threading.Lock()
 
     def list_contracts(
@@ -134,6 +137,48 @@ class MassiveOptionGateway:
                     self._quote_cache.popitem(last=False)
             self._quote_cache[cache_key] = quote
         return quote
+
+    def get_snapshot(self, option_ticker: str) -> OptionSnapshotRecord | None:
+        """Return a real-time snapshot (greeks, IV) for a single option contract.
+
+        Results are cached for the lifetime of the gateway.
+        """
+        with self._lock:
+            if option_ticker in self._snapshot_cache:
+                self._snapshot_cache.move_to_end(option_ticker)
+                return self._snapshot_cache[option_ticker]
+        snapshot = self.client.get_option_snapshot(self.symbol, option_ticker)
+        with self._lock:
+            if len(self._snapshot_cache) >= _GATEWAY_SNAPSHOT_CACHE_MAX:
+                for _ in range(len(self._snapshot_cache) // 4):
+                    self._snapshot_cache.popitem(last=False)
+            self._snapshot_cache[option_ticker] = snapshot
+        return snapshot
+
+    def get_chain_delta_lookup(
+        self,
+        contracts: list[OptionContractRecord],
+    ) -> dict[float, float]:
+        """Build a strike->delta lookup using the chain snapshot endpoint.
+
+        Fetches the full option chain snapshot once, caches individual results,
+        and returns a mapping of strike_price to absolute delta for the given
+        contracts. Strikes without available delta are omitted.
+        """
+        if not self._chain_snapshot_loaded:
+            chain = self.client.get_option_chain_snapshot(self.symbol)
+            with self._lock:
+                for snap in chain:
+                    if snap.ticker not in self._snapshot_cache:
+                        self._snapshot_cache[snap.ticker] = snap
+                self._chain_snapshot_loaded = True
+
+        lookup: dict[float, float] = {}
+        for contract in contracts:
+            snap = self._snapshot_cache.get(contract.ticker)
+            if snap is not None and snap.greeks is not None and snap.greeks.delta is not None:
+                lookup[contract.strike_price] = snap.greeks.delta
+        return lookup
 
     @staticmethod
     def _expiration_sort_key(expiration: date, entry_date: date, target_dte: int) -> tuple[int, int, int]:

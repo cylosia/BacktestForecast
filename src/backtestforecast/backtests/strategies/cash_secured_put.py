@@ -45,7 +45,8 @@ class CashSecuredPutStrategy(StrategyDefinition):
         put_contracts = contracts_for_expiration(puts, primary_expiration)
         dte = (primary_expiration - bar.trade_date).days
         strike = resolve_strike(
-            [c.strike_price for c in put_contracts], bar.close_price, "put", overrides.short_put_strike, dte
+            [c.strike_price for c in put_contracts], bar.close_price, "put", overrides.short_put_strike, dte,
+            contracts=put_contracts, option_gateway=option_gateway, trade_date=bar.trade_date,
         )
         short_put = require_contract_for_strike(put_contracts, strike)
         quote = option_gateway.get_quote(short_put.ticker, bar.trade_date)

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol, Sequence
 
-from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
+from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
 from backtestforecast.schemas.backtests import CustomLegDefinition, EntryRule, StrategyOverrides
 
 
@@ -27,6 +27,11 @@ class OptionDataGateway(Protocol):
     ) -> OptionContractRecord: ...
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None: ...
+
+    def get_chain_delta_lookup(
+        self,
+        contracts: list[OptionContractRecord],
+    ) -> dict[float, float]: ...
 
 
 @dataclass(frozen=True, slots=True)

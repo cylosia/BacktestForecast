@@ -52,13 +52,13 @@ class JadeLizardStrategy(StrategyDefinition):
         pc = contracts_for_expiration(puts, expiration)
         dte = (expiration - bar.trade_date).days
 
-        # Short put: configurable OTM
         put_strike = resolve_strike(
-            [c.strike_price for c in pc], bar.close_price, "put", overrides.short_put_strike, dte
+            [c.strike_price for c in pc], bar.close_price, "put", overrides.short_put_strike, dte,
+            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date,
         )
-        # Short call spread: configurable short call + configurable width
         call_short_strike = resolve_strike(
-            [c.strike_price for c in cc], bar.close_price, "call", overrides.short_call_strike, dte
+            [c.strike_price for c in cc], bar.close_price, "call", overrides.short_call_strike, dte,
+            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date,
         )
         call_long_strike = resolve_wing_strike(
             [c.strike_price for c in cc],

@@ -13,7 +13,13 @@ import structlog
 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import ConfigurationError, ExternalServiceError
-from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+from backtestforecast.market_data.types import (
+    DailyBar,
+    OptionContractRecord,
+    OptionGreeks,
+    OptionQuoteRecord,
+    OptionSnapshotRecord,
+)
 
 logger = structlog.get_logger("massive_client")
 
@@ -155,6 +161,92 @@ class MassiveClient:
                 participant_timestamp=self._pick_quote_timestamp(row),
             )
         return None
+
+    def get_option_snapshot(
+        self,
+        underlying: str,
+        option_ticker: str,
+    ) -> OptionSnapshotRecord | None:
+        """Fetch real-time greeks for a single option contract via the snapshot endpoint."""
+        try:
+            payload = self._get_json(
+                f"/v3/snapshot/options/{quote(underlying, safe='')}/{quote(option_ticker, safe='')}",
+            )
+        except ExternalServiceError:
+            logger.debug("massive_client.snapshot_unavailable", option_ticker=option_ticker)
+            return None
+        results = payload.get("results")
+        if not isinstance(results, dict):
+            return None
+        return self._parse_snapshot_result(results)
+
+    def get_option_chain_snapshot(
+        self,
+        underlying: str,
+    ) -> list[OptionSnapshotRecord]:
+        """Fetch real-time snapshots for all contracts on an underlying.
+
+        Returns a list of snapshot records with greeks attached.
+        """
+        try:
+            payload = self._get_json(
+                f"/v3/snapshot/options/{quote(underlying, safe='')}",
+                params={"limit": 250},
+            )
+        except ExternalServiceError:
+            logger.debug("massive_client.chain_snapshot_unavailable", underlying=underlying)
+            return []
+        results = payload.get("results", [])
+        if not isinstance(results, list):
+            return []
+        snapshots: list[OptionSnapshotRecord] = []
+        for item in results:
+            parsed = self._parse_snapshot_result(item)
+            if parsed is not None:
+                snapshots.append(parsed)
+        return snapshots
+
+    @staticmethod
+    def _parse_snapshot_result(result: dict[str, Any]) -> OptionSnapshotRecord | None:
+        details = result.get("details", {})
+        ticker = details.get("ticker") or result.get("ticker")
+        if not isinstance(ticker, str):
+            return None
+        underlying = result.get("underlying_asset", {})
+        underlying_ticker = underlying.get("ticker", "") if isinstance(underlying, dict) else ""
+
+        greeks_raw = result.get("greeks")
+        greeks: OptionGreeks | None = None
+        if isinstance(greeks_raw, dict):
+            greeks = OptionGreeks(
+                delta=greeks_raw.get("delta"),
+                gamma=greeks_raw.get("gamma"),
+                theta=greeks_raw.get("theta"),
+                vega=greeks_raw.get("vega"),
+            )
+
+        iv_raw = result.get("implied_volatility")
+        implied_volatility = float(iv_raw) if iv_raw is not None else None
+
+        last_quote = result.get("last_quote", {})
+        bid = last_quote.get("bid") if isinstance(last_quote, dict) else None
+        ask = last_quote.get("ask") if isinstance(last_quote, dict) else None
+        bid_f = float(bid) if bid is not None else None
+        ask_f = float(ask) if ask is not None else None
+
+        break_even_raw = result.get("break_even_price")
+        open_interest_raw = result.get("open_interest")
+
+        return OptionSnapshotRecord(
+            ticker=ticker,
+            underlying_ticker=underlying_ticker,
+            greeks=greeks,
+            implied_volatility=implied_volatility,
+            break_even_price=float(break_even_raw) if break_even_raw is not None else None,
+            open_interest=int(open_interest_raw) if open_interest_raw is not None else None,
+            bid_price=bid_f,
+            ask_price=ask_f,
+        )
 
     def list_earnings_event_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         attempts = [
@@ -427,6 +519,45 @@ class AsyncMassiveClient:
                 participant_timestamp=MassiveClient._pick_quote_timestamp(row),
             )
         return None
+
+    async def get_option_snapshot(
+        self,
+        underlying: str,
+        option_ticker: str,
+    ) -> OptionSnapshotRecord | None:
+        try:
+            payload = await self._get_json(
+                f"/v3/snapshot/options/{quote(underlying, safe='')}/{quote(option_ticker, safe='')}",
+            )
+        except ExternalServiceError:
+            logger.debug("massive_client.async_snapshot_unavailable", option_ticker=option_ticker)
+            return None
+        results = payload.get("results")
+        if not isinstance(results, dict):
+            return None
+        return MassiveClient._parse_snapshot_result(results)
+
+    async def get_option_chain_snapshot(
+        self,
+        underlying: str,
+    ) -> list[OptionSnapshotRecord]:
+        try:
+            payload = await self._get_json(
+                f"/v3/snapshot/options/{quote(underlying, safe='')}",
+                params={"limit": 250},
+            )
+        except ExternalServiceError:
+            logger.debug("massive_client.async_chain_snapshot_unavailable", underlying=underlying)
+            return []
+        results = payload.get("results", [])
+        if not isinstance(results, list):
+            return []
+        snapshots: list[OptionSnapshotRecord] = []
+        for item in results:
+            parsed = MassiveClient._parse_snapshot_result(item)
+            if parsed is not None:
+                snapshots.append(parsed)
+        return snapshots
 
     async def _get_paginated_json(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []

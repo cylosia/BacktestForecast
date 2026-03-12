@@ -24,6 +24,14 @@ class OptionContractRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class OptionGreeks:
+    delta: float | None = None
+    gamma: float | None = None
+    theta: float | None = None
+    vega: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class OptionQuoteRecord:
     trade_date: date
     bid_price: float
@@ -33,3 +41,26 @@ class OptionQuoteRecord:
     @property
     def mid_price(self) -> float:
         return (self.bid_price + self.ask_price) / 2.0
+
+
+@dataclass(frozen=True, slots=True)
+class OptionSnapshotRecord:
+    """Real-time snapshot from the Massive /v3/snapshot/options endpoint.
+
+    Only available for current-day data — the API has no historical parameter.
+    """
+
+    ticker: str
+    underlying_ticker: str
+    greeks: OptionGreeks | None = None
+    implied_volatility: float | None = None
+    break_even_price: float | None = None
+    open_interest: int | None = None
+    bid_price: float | None = None
+    ask_price: float | None = None
+
+    @property
+    def mid_price(self) -> float | None:
+        if self.bid_price is not None and self.ask_price is not None:
+            return (self.bid_price + self.ask_price) / 2.0
+        return None

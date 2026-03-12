@@ -53,17 +53,18 @@ class VerticalSpreadStrategy(StrategyDefinition):
         # Determine short leg placement override based on contract type
         short_override = overrides.short_call_strike if self.contract_type == "call" else overrides.short_put_strike
 
+        _kw = dict(contracts=expiration_contracts, option_gateway=option_gateway, trade_date=bar.trade_date)
         if self.contract_type == "call":
             if self.is_debit:
-                base_strike = resolve_strike(strikes, bar.close_price, "call", None, dte)
+                base_strike = resolve_strike(strikes, bar.close_price, "call", None, dte, **_kw)
                 if short_override is not None:
-                    upper_strike = resolve_strike(strikes, bar.close_price, "call", short_override, dte)
+                    upper_strike = resolve_strike(strikes, bar.close_price, "call", short_override, dte, **_kw)
                 else:
                     upper_strike = resolve_wing_strike(
                         strikes, base_strike, 1, bar.close_price, overrides.spread_width,
                     )
             else:
-                base_strike = resolve_strike(strikes, bar.close_price, "call", short_override, dte)
+                base_strike = resolve_strike(strikes, bar.close_price, "call", short_override, dte, **_kw)
                 upper_strike = resolve_wing_strike(
                     strikes, base_strike, 1, bar.close_price, overrides.spread_width,
                 )
@@ -79,15 +80,15 @@ class VerticalSpreadStrategy(StrategyDefinition):
                 long_contract = upper_contract
         else:
             if self.is_debit:
-                base_strike = resolve_strike(strikes, bar.close_price, "put", None, dte)
+                base_strike = resolve_strike(strikes, bar.close_price, "put", None, dte, **_kw)
                 if short_override is not None:
-                    lower_strike = resolve_strike(strikes, bar.close_price, "put", short_override, dte)
+                    lower_strike = resolve_strike(strikes, bar.close_price, "put", short_override, dte, **_kw)
                 else:
                     lower_strike = resolve_wing_strike(
                         strikes, base_strike, -1, bar.close_price, overrides.spread_width,
                     )
             else:
-                base_strike = resolve_strike(strikes, bar.close_price, "put", short_override, dte)
+                base_strike = resolve_strike(strikes, bar.close_price, "put", short_override, dte, **_kw)
                 lower_strike = resolve_wing_strike(
                     strikes, base_strike, -1, bar.close_price, overrides.spread_width,
                 )

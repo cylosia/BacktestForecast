@@ -164,6 +164,10 @@ export interface CustomLegDefinition {
   quantity_ratio: number;
 }
 
+/**
+ * "delta_target" uses API-provided greeks when available (current-day operations)
+ * and falls back to IV-improved Black-Scholes approximation for historical dates.
+ */
 export type StrikeSelectionMode = "nearest_otm" | "pct_from_spot" | "atm_offset_steps" | "delta_target";
 export type SpreadWidthMode = "strike_steps" | "dollar_width" | "pct_width";
 

@@ -54,7 +54,8 @@ class PMCCStrategy(StrategyDefinition):
         dte = (near_exp - bar.trade_date).days
 
         short_strike = resolve_strike(
-            [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte
+            [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte,
+            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date,
         )
         long_strike = _deep_itm_call_strike([c.strike_price for c in far_cc], bar.close_price)
         short_c = require_contract_for_strike(near_cc, short_strike)
@@ -111,7 +112,8 @@ class DiagonalSpreadStrategy(StrategyDefinition):
         dte = (near_exp - bar.trade_date).days
 
         near_strike = resolve_strike(
-            [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte
+            [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte,
+            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date,
         )
         far_strikes = sorted_unique_strikes(far_cc)
         far_strike = offset_strike(far_strikes, near_strike, -1)
@@ -184,10 +186,12 @@ class DoubleDiagonalStrategy(StrategyDefinition):
         dte = (near_exp - bar.trade_date).days
 
         near_call_strike = resolve_strike(
-            [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte
+            [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte,
+            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date,
         )
         near_put_strike = resolve_strike(
-            [c.strike_price for c in near_pc], bar.close_price, "put", overrides.short_put_strike, dte
+            [c.strike_price for c in near_pc], bar.close_price, "put", overrides.short_put_strike, dte,
+            contracts=near_pc, option_gateway=option_gateway, trade_date=bar.trade_date,
         )
         far_call_strike = offset_strike(sorted_unique_strikes(far_cc), near_call_strike, -1)
         far_put_strike = offset_strike(sorted_unique_strikes(far_pc), near_put_strike, 1)

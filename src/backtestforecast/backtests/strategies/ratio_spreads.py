@@ -45,7 +45,10 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
         strikes = sorted_unique_strikes(cc)
         dte = (expiration - bar.trade_date).days
 
-        short_strike = resolve_strike(strikes, bar.close_price, "call", overrides.short_call_strike, dte)
+        short_strike = resolve_strike(
+            strikes, bar.close_price, "call", overrides.short_call_strike, dte,
+            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+        )
         long_strike = offset_strike(strikes, short_strike, 1)
         if long_strike is None:
             raise DataUnavailableError("No higher strike for ratio call backspread.")
@@ -109,7 +112,10 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
         strikes = sorted_unique_strikes(pc)
         dte = (expiration - bar.trade_date).days
 
-        short_strike = resolve_strike(strikes, bar.close_price, "put", overrides.short_put_strike, dte)
+        short_strike = resolve_strike(
+            strikes, bar.close_price, "put", overrides.short_put_strike, dte,
+            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date,
+        )
         long_strike = offset_strike(strikes, short_strike, -1)
         if long_strike is None:
             raise DataUnavailableError("No lower strike for ratio put backspread.")
