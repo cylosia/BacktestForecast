@@ -249,8 +249,15 @@ class MassiveClient:
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 400:
-                detail = response.text
-                raise ExternalServiceError(f"Massive returned {response.status_code}: {detail}")
+                logger.warning(
+                    "massive_client_error",
+                    status=response.status_code,
+                    detail=response.text[:500],
+                    url=url,
+                )
+                raise ExternalServiceError(
+                    f"Massive returned {response.status_code}. The request could not be completed."
+                )
 
             data = response.json()
             if not isinstance(data, dict):
@@ -456,8 +463,15 @@ class AsyncMassiveClient:
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 400:
-                detail = response.text
-                raise ExternalServiceError(f"Massive returned {response.status_code}: {detail}")
+                logger.warning(
+                    "massive_client_error",
+                    status=response.status_code,
+                    detail=response.text[:500],
+                    url=url,
+                )
+                raise ExternalServiceError(
+                    f"Massive returned {response.status_code}. The request could not be completed."
+                )
 
             data = response.json()
             if not isinstance(data, dict):

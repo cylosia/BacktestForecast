@@ -194,7 +194,25 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 }
             except Exception as exc:
                 session.rollback()
-                raise self.retry(exc=exc, countdown=60)
+                try:
+                    raise self.retry(exc=exc, countdown=60)
+                except self.MaxRetriesExceededError:
+                    from backtestforecast.models import SymbolAnalysis
+
+                    analysis = session.get(SymbolAnalysis, UUID(analysis_id))
+                    if analysis is not None:
+                        analysis.status = "failed"
+                        analysis.error_message = "Analysis failed after exhausting retries."
+                        session.commit()
+                    publish_job_status(
+                        "analysis", UUID(analysis_id), "failed",
+                        metadata={"error_code": "max_retries_exceeded"},
+                    )
+                    return {
+                        "status": "failed",
+                        "analysis_id": analysis_id,
+                        "error_code": "max_retries_exceeded",
+                    }
 
             publish_job_status("analysis", UUID(analysis_id), result.status)
             return {

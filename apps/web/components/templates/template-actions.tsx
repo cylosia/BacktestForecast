@@ -29,7 +29,10 @@ export function TemplateActions({
     setError(null);
     try {
       const token = await getToken();
-      if (!token) return;
+      if (!token) {
+        setDeleting(false);
+        return;
+      }
       await deleteTemplate(token, templateId);
       router.refresh();
     } catch {

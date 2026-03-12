@@ -120,6 +120,12 @@ export function ScannerForm({
       return;
     }
 
+    if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
+      setStatus("error");
+      setErrorMessage("Start date must be before end date.");
+      return;
+    }
+
     const numericChecks = [
       { label: "Target DTE", value: Number(targetDte), min: 1, max: 365 },
       { label: "DTE tolerance", value: Number(dteTolerance), min: 1, max: 60 },
@@ -139,11 +145,23 @@ export function ScannerForm({
 
     const entryRules: CreateScannerJobRequest["rule_sets"][0]["entry_rules"] = [];
     if (rsiEnabled) {
+      const rsiThresholdNum = Number(rsiThreshold);
+      const rsiPeriodNum = Number(rsiPeriod);
+      if (!Number.isFinite(rsiThresholdNum) || rsiThresholdNum < 0 || rsiThresholdNum > 100) {
+        setStatus("error");
+        setErrorMessage("RSI threshold must be a number between 0 and 100.");
+        return;
+      }
+      if (!Number.isFinite(rsiPeriodNum) || rsiPeriodNum < 2 || rsiPeriodNum > 50) {
+        setStatus("error");
+        setErrorMessage("RSI period must be a number between 2 and 50.");
+        return;
+      }
       entryRules.push({
         type: "rsi" as const,
         operator: rsiOperator as "lt" | "lte" | "gt" | "gte",
-        threshold: Number(rsiThreshold),
-        period: Number(rsiPeriod),
+        threshold: rsiThresholdNum,
+        period: rsiPeriodNum,
       });
     }
 
@@ -225,7 +243,7 @@ export function ScannerForm({
 
           <div className="space-y-2">
             <Label htmlFor="symbols">Symbols (comma-separated)</Label>
-            <Input id="symbols" placeholder="SPY, QQQ, AAPL, MSFT" value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} />
+            <Input id="symbols" maxLength={500} placeholder="SPY, QQQ, AAPL, MSFT" value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} />
           </div>
 
           <div className="space-y-2">
