@@ -11,11 +11,15 @@ from apps.api.app.dependencies import get_current_user
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.db.session import get_db
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun, User
+from backtestforecast.schemas.analysis import (
+    DailyPicksResponse,
+    PipelineHistoryResponse,
+)
 
 router = APIRouter(prefix="/daily-picks", tags=["daily-picks"])
 
 
-@router.get("")
+@router.get("", response_model=DailyPicksResponse)
 def get_latest_daily_picks(
     response: Response,
     user: User = Depends(get_current_user),
@@ -102,7 +106,7 @@ def get_latest_daily_picks(
     }
 
 
-@router.get("/history")
+@router.get("/history", response_model=PipelineHistoryResponse)
 def get_pipeline_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

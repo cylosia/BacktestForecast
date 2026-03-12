@@ -17,6 +17,11 @@ from backtestforecast.db.session import get_db
 from backtestforecast.errors import ValidationError
 from backtestforecast.models import User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
+from backtestforecast.schemas.analysis import (
+    AnalysisDetailResponse,
+    AnalysisListResponse,
+    AnalysisSummaryResponse,
+)
 from backtestforecast.security import get_rate_limiter
 
 _SYMBOL_RE = re.compile(r"^[A-Za-z]{1,10}$")
@@ -31,7 +36,7 @@ settings = get_settings()
 logger = structlog.get_logger("api.analysis")
 
 
-@router.post("", status_code=status.HTTP_202_ACCEPTED)
+@router.post("", response_model=AnalysisSummaryResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_analysis(
     payload: CreateAnalysisRequest,
     user: User = Depends(get_current_user),
@@ -83,7 +88,7 @@ def create_analysis(
     return _to_summary(analysis)
 
 
-@router.get("/{analysis_id}")
+@router.get("/{analysis_id}", response_model=AnalysisDetailResponse)
 def get_analysis(
     analysis_id: UUID,
     user: User = Depends(get_current_user),
@@ -106,7 +111,7 @@ def get_analysis(
     return result
 
 
-@router.get("/{analysis_id}/status")
+@router.get("/{analysis_id}/status", response_model=AnalysisSummaryResponse)
 def get_analysis_status(
     analysis_id: UUID,
     user: User = Depends(get_current_user),
@@ -122,7 +127,7 @@ def get_analysis_status(
     return _to_summary(analysis)
 
 
-@router.get("")
+@router.get("", response_model=AnalysisListResponse)
 def list_analyses(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
