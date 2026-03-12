@@ -171,6 +171,8 @@ class Settings(BaseSettings):
     forecast_rate_limit: int = 6
     rate_limit_window_seconds: int = 60
 
+    pipeline_max_workers: int = Field(default=20, ge=1, le=64)
+
     risk_free_rate: float = 0.045
 
     max_backtest_window_days: int = 1_825
@@ -268,6 +270,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments must use a custom IP_HASH_SALT.")
             if not self.metrics_token:
                 raise ValueError("Production-like environments require METRICS_TOKEN to be set.")
+            if not self.clerk_audience:
+                raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
         return self
 
 

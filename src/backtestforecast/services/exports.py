@@ -24,6 +24,7 @@ from backtestforecast.services.backtests import BacktestService
 logger = structlog.get_logger("services.exports")
 
 _MAX_CSV_TRADES = 10_000
+_MAX_CSV_EQUITY_POINTS = 50_000
 _MAX_PDF_TRADES = 100
 _MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
 
@@ -300,7 +301,8 @@ class ExportService:
 
         writer.writerow([])
         writer.writerow(safe_row(["equity_curve", "trade_date", "equity", "cash", "position_value", "drawdown_pct"]))
-        for point in detail.equity_curve:
+        exported_points = detail.equity_curve[:_MAX_CSV_EQUITY_POINTS]
+        for point in exported_points:
             writer.writerow(
                 safe_row(
                     [
@@ -311,6 +313,12 @@ class ExportService:
                         point.position_value,
                         point.drawdown_pct,
                     ]
+                )
+            )
+        if len(detail.equity_curve) > _MAX_CSV_EQUITY_POINTS:
+            writer.writerow(
+                safe_row(
+                    ["equity_point", f"... {len(detail.equity_curve) - _MAX_CSV_EQUITY_POINTS} additional points omitted ..."]
                 )
             )
 

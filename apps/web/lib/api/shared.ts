@@ -59,6 +59,15 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new ApiError("Your session has expired. Please sign in again.", 401, "authentication_error");
+      }
+      if (response.status === 403) {
+        throw new ApiError("You don't have permission to access this resource.", 403, "authorization_error");
+      }
+      if (response.status === 429) {
+        throw new ApiError("Too many requests. Please try again later.", 429, "rate_limited");
+      }
       await parseApiError(response);
     }
 
@@ -72,8 +81,11 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
       throw new ApiError("Received an invalid response from the server.", response.status);
     }
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
+    if (err instanceof DOMException && err.name === "TimeoutError") {
       throw new ApiError("The request timed out.", 0, "timeout");
+    }
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError("The request was cancelled.", 0, "abort");
     }
     throw err;
   } finally {
@@ -95,13 +107,25 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new ApiError("Your session has expired. Please sign in again.", 401, "authentication_error");
+      }
+      if (response.status === 403) {
+        throw new ApiError("You don't have permission to access this resource.", 403, "authorization_error");
+      }
+      if (response.status === 429) {
+        throw new ApiError("Too many requests. Please try again later.", 429, "rate_limited");
+      }
       await parseApiError(response);
     }
 
     return response;
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
+    if (err instanceof DOMException && err.name === "TimeoutError") {
       throw new ApiError("The request timed out.", 0, "timeout");
+    }
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError("The request was cancelled.", 0, "abort");
     }
     throw err;
   } finally {

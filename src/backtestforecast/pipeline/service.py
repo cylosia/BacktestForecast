@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from backtestforecast.pipeline.regime import RegimeSnapshot, classify_regime
+from backtestforecast.config import get_settings
 from backtestforecast.pipeline.strategy_map import (
     DEFAULT_PARAM_GRID,
     strategies_for_regime,
@@ -117,7 +118,7 @@ class NightlyPipelineService:
             select(NightlyPipelineRun).where(
                 NightlyPipelineRun.trade_date == trade_date,
                 NightlyPipelineRun.status == "succeeded",
-            )
+            ).with_for_update()
         )
         if succeeded is not None:
             logger.info("pipeline.already_exists", run_id=str(succeeded.id), status=succeeded.status)
@@ -272,7 +273,7 @@ class NightlyPipelineService:
                 return None
 
         results: list[RegimeSnapshot] = []
-        max_workers = min(8, len(symbols)) if symbols else 1
+        max_workers = min(get_settings().pipeline_max_workers, len(symbols)) if symbols else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_screen_one, s): s for s in symbols}
             for future in as_completed(futures):
@@ -377,7 +378,7 @@ class NightlyPipelineService:
                 return None
 
         results: list[QuickBacktestResult] = []
-        max_workers = min(8, len(work_items)) if work_items else 1
+        max_workers = min(get_settings().pipeline_max_workers, len(work_items)) if work_items else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, item): item for item in work_items}
             for future in as_completed(futures):
@@ -443,7 +444,7 @@ class NightlyPipelineService:
                 return None
 
         results: list[FullBacktestResult] = []
-        max_workers = min(8, len(candidates)) if candidates else 1
+        max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, c): c for c in candidates}
             for future in as_completed(futures):
@@ -482,7 +483,7 @@ class NightlyPipelineService:
                     return candidate, None
 
             _BEARISH = {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put"}
-            max_workers = min(8, len(candidates)) if candidates else 1
+            max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = [pool.submit(_fetch_forecast, c) for c in candidates]
                 for future in as_completed(futures):

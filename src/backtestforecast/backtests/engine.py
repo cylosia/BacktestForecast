@@ -41,7 +41,7 @@ class OptionsBacktestEngine:
         if strategy is None:
             raise ValidationError(f"Unsupported strategy_type: {config.strategy_type}")
 
-        sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
+        sorted_bars = bars
         if not sorted_bars:
             return BacktestExecutionResult(
                 summary=build_summary(config.account_size, config.account_size, [], []), trades=[], equity_curve=[]

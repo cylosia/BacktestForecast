@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -206,6 +207,12 @@ class ScannerJob(Base):
         Index("ix_scanner_jobs_celery_task_id", "celery_task_id"),
         Index("ix_scanner_jobs_dedup_lookup", "user_id", "request_hash", "mode", "created_at"),
         Index("ix_scanner_jobs_refresh_sources", "refresh_daily", "status"),
+        Index(
+            "uq_scanner_jobs_active_dedup",
+            "user_id", "request_hash", "mode",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+        ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="valid_job_status",

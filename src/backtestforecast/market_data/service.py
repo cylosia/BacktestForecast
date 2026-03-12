@@ -198,6 +198,7 @@ class MassiveOptionGateway:
 class MarketDataService:
     def __init__(self, client: MassiveClient) -> None:
         self.client = client
+        self._bars_cache: dict[tuple[str, date, date], list[DailyBar]] = {}
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
 
@@ -207,7 +208,12 @@ class MarketDataService:
             days=max(request.max_holding_days, request.target_dte + request.dte_tolerance_days) + 45
         )
 
-        raw_bars = self.client.get_stock_daily_bars(request.symbol, extended_start, extended_end)
+        cache_key = (request.symbol, extended_start, extended_end)
+        if cache_key in self._bars_cache:
+            raw_bars = self._bars_cache[cache_key]
+        else:
+            raw_bars = self.client.get_stock_daily_bars(request.symbol, extended_start, extended_end)
+            self._bars_cache[cache_key] = raw_bars
         bars = self._validate_bars(raw_bars, request.symbol)
 
         if not bars:
@@ -260,6 +266,7 @@ class MarketDataService:
     def _validate_bars(raw_bars: list[DailyBar], symbol: str) -> list[DailyBar]:
         seen_dates: dict[date, DailyBar] = {}
         dropped = 0
+        duplicate_count = 0
         for bar in raw_bars:
             if not (
                 math.isfinite(bar.open_price)
@@ -280,9 +287,13 @@ class MarketDataService:
             ):
                 dropped += 1
                 continue
+            if bar.trade_date in seen_dates:
+                duplicate_count += 1
             seen_dates[bar.trade_date] = bar
         if dropped:
             logger.warning("market_data.bars_filtered", symbol=symbol, dropped=dropped)
+        if duplicate_count:
+            logger.warning("market_data.duplicate_dates", symbol=symbol, count=duplicate_count)
         return sorted(seen_dates.values(), key=lambda b: b.trade_date)
 
     @staticmethod

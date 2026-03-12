@@ -86,6 +86,7 @@ class RunStatus(str, Enum):
 
 
 class RsiRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["rsi"]
     operator: ComparisonOperator
     threshold: Decimal = Field(ge=0, le=100)
@@ -93,6 +94,7 @@ class RsiRule(BaseModel):
 
 
 class MovingAverageCrossoverRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["sma_crossover", "ema_crossover"]
     fast_period: int = Field(ge=2, le=200)
     slow_period: int = Field(ge=3, le=400)
@@ -106,6 +108,7 @@ class MovingAverageCrossoverRule(BaseModel):
 
 
 class MacdRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["macd"]
     direction: CrossoverDirection
     fast_period: int = Field(default=12, ge=2, le=100)
@@ -120,6 +123,7 @@ class MacdRule(BaseModel):
 
 
 class BollingerBandsRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["bollinger_bands"]
     band: BollingerBand
     operator: ComparisonOperator
@@ -128,6 +132,7 @@ class BollingerBandsRule(BaseModel):
 
 
 class IvRankRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["iv_rank"]
     operator: ComparisonOperator
     threshold: Decimal = Field(ge=0, le=100)
@@ -135,6 +140,7 @@ class IvRankRule(BaseModel):
 
 
 class IvPercentileRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["iv_percentile"]
     operator: ComparisonOperator
     threshold: Decimal = Field(ge=0, le=100)
@@ -142,6 +148,7 @@ class IvPercentileRule(BaseModel):
 
 
 class VolumeSpikeRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["volume_spike"]
     operator: ComparisonOperator = Field(default=ComparisonOperator.GTE)
     multiplier: Decimal = Field(default=Decimal("1.5"), gt=0, le=Decimal("20"))
@@ -149,6 +156,7 @@ class VolumeSpikeRule(BaseModel):
 
 
 class SupportResistanceRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["support_resistance"]
     mode: SupportResistanceMode
     lookback_period: int = Field(default=20, ge=5, le=252)
@@ -156,6 +164,7 @@ class SupportResistanceRule(BaseModel):
 
 
 class AvoidEarningsRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["avoid_earnings"]
     days_before: int = Field(default=0, ge=0, le=30)
     days_after: int = Field(default=0, ge=0, le=30)
@@ -266,7 +275,7 @@ class CustomLegDefinition(BaseModel):
         le=2,
         description="0=primary expiration, 1=next available, 2=second-next.",
     )
-    quantity_ratio: int = Field(default=1, ge=1, le=10)
+    quantity_ratio: float = Field(default=1.0, ge=0.1, le=10.0)
 
     @model_validator(mode="after")
     def validate_leg(self) -> "CustomLegDefinition":

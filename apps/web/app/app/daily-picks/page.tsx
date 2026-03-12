@@ -2,6 +2,7 @@ import { getCurrentUser, getDailyPicks } from "@/lib/api/server";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
 import type { DailyPickItem, DailyPicksResponse } from "@/lib/backtests/types";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
+import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -18,18 +19,6 @@ function regimeColor(regime: string): string {
     default:
       return "bg-muted text-muted-foreground";
   }
-}
-
-function ScoreBar({ score, max }: { score: number; max: number }) {
-  const pct = max > 0 ? Math.min((score / max) * 100, 100) : 0;
-  return (
-    <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-      <div
-        className="h-full rounded-full bg-primary transition-all"
-        style={{ width: `${pct}%` }}
-      />
-    </div>
-  );
 }
 
 function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number }) {

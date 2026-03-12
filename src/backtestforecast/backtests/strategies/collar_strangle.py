@@ -79,7 +79,7 @@ class CollarStrategy(StrategyDefinition):
             stock_legs=[OpenStockLeg(config.symbol, 1, 100, bar.close_price, bar.close_price)],
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
-            max_loss_per_unit=max(max_loss, 0.0),
+            max_loss_per_unit=max_loss,
             max_profit_per_unit=max((call_strike - bar.close_price) * 100.0 - net_option_cost, 0.0),
             detail_json={
                 "legs": [

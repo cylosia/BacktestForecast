@@ -132,11 +132,11 @@ def build_ranking_breakdown(
     reasons: list[str] = []
 
     current_score = (
-        (_clamp(summary.total_roi_pct / 30.0, -1.0, 1.0) * 0.45)
-        + (_clamp((summary.win_rate - 50.0) / 50.0, -1.0, 1.0) * 0.20)
+        (_clamp(summary.total_roi_pct / 30.0, -1.0, 1.0) * 0.35)
+        + (_clamp((summary.win_rate - 50.0) / 50.0, -1.0, 1.0) * 0.15)
         + (_clamp((summary.total_net_pnl / max(account_size, 1.0)) / 0.20, -1.0, 1.0) * 0.20)
         + (_clamp(summary.trade_count / 12.0, 0.0, 1.0) * 0.10)
-        - (_clamp(summary.max_drawdown_pct / 30.0, 0.0, 1.0) * 0.25)
+        - (_clamp(summary.max_drawdown_pct / 30.0, 0.0, 1.0) * 0.20)
     )
     if summary.trade_count >= 3:
         reasons.append("Current backtest generated multiple trades rather than a single isolated outcome.")
@@ -147,7 +147,7 @@ def build_ranking_breakdown(
     if historical_performance.sample_count > 0:
         confidence = min(1.0, historical_performance.sample_count / 12.0)
         hist_score = confidence * (
-            (_clamp(float(historical_performance.weighted_total_roi_pct) / 25.0, -1.0, 1.0) * 0.45)
+            (_clamp(float(historical_performance.weighted_total_roi_pct) / 25.0, -1.0, 1.0) * 0.40)
             + (_clamp((float(historical_performance.weighted_win_rate) - 50.0) / 50.0, -1.0, 1.0) * 0.25)
             + (
                 _clamp(float(historical_performance.weighted_total_net_pnl) / max(account_size * 0.15, 1.0), -1.0, 1.0)

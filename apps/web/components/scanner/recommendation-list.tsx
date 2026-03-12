@@ -1,16 +1,8 @@
 import type { ScannerRecommendationResponse } from "@/lib/backtests/types";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
+import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-
-function ScoreBar({ score, max }: { score: number; max: number }) {
-  const pct = max > 0 ? Math.min((score / max) * 100, 100) : 0;
-  return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-      <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
-    </div>
-  );
-}
 
 export function RecommendationList({
   items,

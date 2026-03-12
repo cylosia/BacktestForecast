@@ -13,6 +13,7 @@ from backtestforecast.schemas.backtests import (
     BollingerBand,
     BollingerBandsRule,
     ComparisonOperator,
+    IvPercentileRule,
     IvRankRule,
     MacdRule,
     MovingAverageCrossoverRule,
@@ -241,6 +242,36 @@ def test_iv_insufficient_history(monkeypatch):
     assert ev.is_entry_allowed(9) is False
 
 
+def test_iv_percentile_high(monkeypatch):
+    closes = [100.0] * 50
+    rule = IvPercentileRule(
+        type="iv_percentile", operator=ComparisonOperator.GTE, threshold=Decimal("50"), lookback_days=30
+    )
+
+    iv_series = [0.2 + i * 0.005 for i in range(50)]
+    import backtestforecast.backtests.rules as rules_mod
+
+    monkeypatch.setattr(rules_mod, "build_estimated_iv_series", lambda **kwargs: iv_series)
+
+    ev = _build_evaluator(closes, [rule])
+    assert ev.is_entry_allowed(49) is True
+
+
+def test_iv_percentile_low(monkeypatch):
+    closes = [100.0] * 50
+    rule = IvPercentileRule(
+        type="iv_percentile", operator=ComparisonOperator.LTE, threshold=Decimal("20"), lookback_days=30
+    )
+
+    iv_series = [0.2 + i * 0.005 for i in range(50)]
+    import backtestforecast.backtests.rules as rules_mod
+
+    monkeypatch.setattr(rules_mod, "build_estimated_iv_series", lambda **kwargs: iv_series)
+
+    ev = _build_evaluator(closes, [rule])
+    assert ev.is_entry_allowed(49) is False
+
+
 # ---------------------------------------------------------------------------
 # 7. Volume Spike
 # ---------------------------------------------------------------------------
@@ -324,6 +355,44 @@ def test_zero_support_returns_false():
     )
     ev = _build_evaluator(closes, [rule])
     assert ev.is_entry_allowed(10) is False
+
+
+def test_rsi_lt_operator():
+    closes = [100 - i * 2 for i in range(20)]
+    rule = RsiRule(type="rsi", operator=ComparisonOperator.LT, threshold=Decimal("30"), period=14)
+    ev = _build_evaluator(closes, [rule])
+    assert ev.is_entry_allowed(19) is True
+
+
+def test_rsi_gt_operator():
+    closes = [100 + i * 2 for i in range(20)]
+    rule = RsiRule(type="rsi", operator=ComparisonOperator.GT, threshold=Decimal("70"), period=14)
+    ev = _build_evaluator(closes, [rule])
+    assert ev.is_entry_allowed(19) is True
+
+
+def test_near_resistance():
+    closes = [95.0, 100.0, 97.0, 101.0, 98.0, 102.0, 99.0, 101.5]
+    rule = SupportResistanceRule(
+        type="support_resistance",
+        mode=SupportResistanceMode.NEAR_RESISTANCE,
+        lookback_period=5,
+        tolerance_pct=Decimal("2.0"),
+    )
+    ev = _build_evaluator(closes, [rule])
+    assert ev.is_entry_allowed(len(closes) - 1) is True
+
+
+def test_breakdown_below_support():
+    closes = [100.0] * 10 + [99.0, 98.0, 97.0, 96.0, 95.0, 85.0]
+    rule = SupportResistanceRule(
+        type="support_resistance",
+        mode=SupportResistanceMode.BREAKDOWN_BELOW_SUPPORT,
+        lookback_period=10,
+        tolerance_pct=Decimal("1.0"),
+    )
+    ev = _build_evaluator(closes, [rule])
+    assert ev.is_entry_allowed(len(closes) - 1) is True
 
 
 # ---------------------------------------------------------------------------

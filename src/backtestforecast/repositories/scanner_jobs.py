@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, desc, select, tuple_
+from sqlalchemy import delete, desc, func, select, tuple_
 from sqlalchemy.orm import Session, selectinload
 
 from backtestforecast.models import ScannerJob, ScannerRecommendation
@@ -126,8 +126,20 @@ class ScannerJobRepository:
             ScannerRecommendation.strategy_type,
             ScannerRecommendation.rule_set_hash,
         )
-        stmt = (
-            select(ScannerRecommendation, ScannerJob.completed_at)
+        row_num = func.row_number().over(
+            partition_by=[
+                ScannerRecommendation.symbol,
+                ScannerRecommendation.strategy_type,
+                ScannerRecommendation.rule_set_hash,
+            ],
+            order_by=desc(ScannerJob.completed_at),
+        ).label("rn")
+        subq = (
+            select(
+                ScannerRecommendation.id.label("rec_id"),
+                ScannerJob.completed_at.label("completed_at"),
+                row_num,
+            )
             .join(ScannerJob, ScannerRecommendation.scanner_job_id == ScannerJob.id)
             .where(
                 col_triple.in_(keys),
@@ -135,8 +147,13 @@ class ScannerJobRepository:
                 ScannerJob.completed_at.is_not(None),
                 ScannerJob.completed_at < before,
             )
-            .order_by(desc(ScannerJob.completed_at))
-            .limit(len(keys) * limit_per_key)
+            .subquery()
+        )
+        stmt = (
+            select(ScannerRecommendation, subq.c.completed_at)
+            .join(subq, ScannerRecommendation.id == subq.c.rec_id)
+            .where(subq.c.rn <= limit_per_key)
+            .order_by(desc(subq.c.completed_at))
         )
         rows = list(self.session.execute(stmt).all())
         result: dict[tuple[str, str, str], list[tuple[ScannerRecommendation, datetime | None]]] = {
@@ -145,6 +162,6 @@ class ScannerJobRepository:
         for rec, completed_at in rows:
             key = (rec.symbol, rec.strategy_type, rec.rule_set_hash)
             bucket = result.get(key)
-            if bucket is not None and len(bucket) < limit_per_key:
+            if bucket is not None:
                 bucket.append((rec, completed_at))
         return result

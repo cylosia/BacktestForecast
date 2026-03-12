@@ -256,6 +256,13 @@ class BillingService:
         return user
 
     def _apply_subscription_to_user(self, user: User, subscription: Any) -> None:
+        locked_user = self.session.scalar(
+            select(User).where(User.id == user.id).with_for_update()
+        )
+        if locked_user is None:
+            raise NotFoundError("User account no longer exists.")
+        user = locked_user
+
         subscription_id = self._coerce_stripe_id(subscription.get("id"))
         customer_id = self._coerce_stripe_id(subscription.get("customer"))
         status = str(subscription.get("status") or "") or None

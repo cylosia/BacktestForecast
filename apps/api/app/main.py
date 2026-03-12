@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -27,7 +28,7 @@ from apps.api.app.routers import (
     templates,
 )
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppError
+from backtestforecast.errors import AppError, RateLimitError
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
 from backtestforecast.observability.logging import RequestContextMiddleware
 from backtestforecast.observability.metrics import PrometheusMiddleware, metrics_response
@@ -104,6 +105,12 @@ def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None)
     if request_id:
         response.headers[REQUEST_ID_HEADER] = request_id
+    if isinstance(exc, RateLimitError):
+        info = getattr(exc, "rate_limit_info", None)
+        if info is not None:
+            response.headers["Retry-After"] = str(max(info.reset_at - int(time.time()), 1))
+            response.headers["X-RateLimit-Limit"] = str(info.limit)
+            response.headers["X-RateLimit-Remaining"] = str(info.remaining)
     return response
 
 

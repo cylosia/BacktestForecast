@@ -158,12 +158,18 @@ class ScanService:
             return self._execute_scan(job, payload)
         except Exception:
             logger.exception("scan.run_job_failed", job_id=str(job_id))
-            self.session.rollback()
-            job.status = "failed"
-            job.error_code = "internal_error"
-            job.error_message = "An unexpected error occurred during scan execution."
-            job.completed_at = datetime.now(UTC)
-            self.session.commit()
+            try:
+                self.session.rollback()
+                job = self.repository.get(job_id, for_update=True)
+                if job is not None and job.status != "succeeded":
+                    job.status = "failed"
+                    job.error_code = "internal_error"
+                    job.error_message = "An unexpected error occurred during scan execution."
+                    job.completed_at = datetime.now(UTC)
+                    self.session.commit()
+            except Exception:
+                logger.exception("scan.run_job_failed.recovery_failed", job_id=str(job_id))
+                self.session.rollback()
             raise
 
     def _execute_scan(
@@ -358,8 +364,30 @@ class ScanService:
             key = (source.user_id, source.request_hash, source.mode)
             latest_sources.setdefault(key, source)
 
+        user_cache: dict[UUID, User | None] = {}
         refresh_day = datetime.now(UTC).date().isoformat()
         for source in list(latest_sources.values())[:limit]:
+            if source.user_id not in user_cache:
+                user_cache[source.user_id] = self.session.get(User, source.user_id)
+            owner = user_cache[source.user_id]
+            if owner is None:
+                continue
+            try:
+                policy = resolve_scanner_policy(
+                    owner.plan_tier,
+                    source.mode,
+                    subscription_status=owner.subscription_status,
+                    subscription_current_period_end=owner.subscription_current_period_end,
+                )
+                payload = CreateScannerJobRequest.model_validate(source.request_snapshot_json)
+                validate_strategy_access(policy, payload.strategy_types)
+            except (AppError, Exception):
+                logger.info(
+                    "refresh.skipped_entitlement",
+                    user_id=str(source.user_id),
+                    mode=source.mode,
+                )
+                continue
             refresh_key = f"{source.user_id}:{source.request_hash}:{refresh_day}:{source.mode}"
             job = ScannerJob(
                 user_id=source.user_id,

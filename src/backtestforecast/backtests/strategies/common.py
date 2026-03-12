@@ -6,6 +6,8 @@ from collections import defaultdict
 from datetime import date
 from typing import TYPE_CHECKING, Iterable
 
+import structlog
+
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import OptionContractRecord
 from backtestforecast.schemas.backtests import (
@@ -15,6 +17,8 @@ from backtestforecast.schemas.backtests import (
     StrikeSelection,
     StrikeSelectionMode,
 )
+
+_logger = structlog.get_logger("strategies.common")
 
 if TYPE_CHECKING:
     from backtestforecast.backtests.types import OptionDataGateway
@@ -83,6 +87,7 @@ def choose_call_otm_strike(strikes: list[float], underlying_close: float) -> flo
     above = [strike for strike in strikes if strike >= underlying_close]
     if above:
         return min(above)
+    _logger.warning("strike_selection.no_otm_call", underlying_close=underlying_close, fallback_strike=max(strikes))
     return max(strikes)
 
 
@@ -92,6 +97,7 @@ def choose_put_otm_strike(strikes: list[float], underlying_close: float) -> floa
     below = [strike for strike in strikes if strike <= underlying_close]
     if below:
         return max(below)
+    _logger.warning("strike_selection.no_otm_put", underlying_close=underlying_close, fallback_strike=min(strikes))
     return min(strikes)
 
 
@@ -263,7 +269,7 @@ def resolve_strike(
         return _nearest_strike(strikes, target)
 
     if selection.mode == StrikeSelectionMode.ATM_OFFSET_STEPS:
-        steps = int(val)
+        steps = round(val)
         atm = choose_atm_strike(strikes, underlying_close)
         sorted_strikes = sorted(set(strikes))
         if contract_type == "call":

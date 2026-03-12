@@ -477,12 +477,11 @@ def refresh_prioritized_scans() -> dict[str, int]:
                 try:
                     result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
                     job.celery_task_id = result.id
+                    session.commit()
                     dispatched += 1
                 except Exception:
                     logger.exception("refresh.dispatch_failed", job_id=str(job.id))
-
-            if dispatched:
-                session.commit()
+                    session.rollback()
         finally:
             try:
                 service.close()

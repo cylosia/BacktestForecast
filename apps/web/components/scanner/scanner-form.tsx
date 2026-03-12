@@ -23,17 +23,94 @@ const BASIC_STRATEGIES = [
   { value: "bear_put_debit_spread", label: "Bear Put Spread" },
 ] as const;
 
-const ADVANCED_STRATEGIES = [
-  ...BASIC_STRATEGIES,
-  { value: "bull_put_credit_spread", label: "Bull Put Credit Spread" },
-  { value: "bear_call_credit_spread", label: "Bear Call Credit Spread" },
-  { value: "iron_condor", label: "Iron Condor" },
-  { value: "long_straddle", label: "Long Straddle" },
-  { value: "long_strangle", label: "Long Strangle" },
-  { value: "calendar_spread", label: "Calendar Spread" },
-  { value: "butterfly", label: "Butterfly" },
-  { value: "wheel_strategy", label: "Wheel Strategy" },
-] as const;
+const ADVANCED_STRATEGY_GROUPS: Array<{
+  category: string;
+  strategies: ReadonlyArray<{ value: string; label: string }>;
+}> = [
+  { category: "Basic", strategies: BASIC_STRATEGIES },
+  {
+    category: "Credit Spreads",
+    strategies: [
+      { value: "bull_put_credit_spread", label: "Bull Put Credit Spread" },
+      { value: "bear_call_credit_spread", label: "Bear Call Credit Spread" },
+    ],
+  },
+  {
+    category: "Multi-Leg",
+    strategies: [
+      { value: "iron_condor", label: "Iron Condor" },
+      { value: "iron_butterfly", label: "Iron Butterfly" },
+      { value: "jade_lizard", label: "Jade Lizard" },
+    ],
+  },
+  {
+    category: "Volatility",
+    strategies: [
+      { value: "long_straddle", label: "Long Straddle" },
+      { value: "long_strangle", label: "Long Strangle" },
+      { value: "short_straddle", label: "Short Straddle" },
+      { value: "short_strangle", label: "Short Strangle" },
+    ],
+  },
+  {
+    category: "Diagonal/Calendar",
+    strategies: [
+      { value: "poor_mans_covered_call", label: "Poor Man's Covered Call" },
+      { value: "diagonal_spread", label: "Diagonal Spread" },
+      { value: "double_diagonal", label: "Double Diagonal" },
+      { value: "calendar_spread", label: "Calendar Spread" },
+    ],
+  },
+  {
+    category: "Stock+Options",
+    strategies: [
+      { value: "collar", label: "Collar" },
+      { value: "covered_strangle", label: "Covered Strangle" },
+    ],
+  },
+  {
+    category: "Ratio",
+    strategies: [
+      { value: "ratio_call_backspread", label: "Ratio Call Backspread" },
+      { value: "ratio_put_backspread", label: "Ratio Put Backspread" },
+    ],
+  },
+  {
+    category: "Naked",
+    strategies: [
+      { value: "naked_call", label: "Naked Call" },
+      { value: "naked_put", label: "Naked Put" },
+    ],
+  },
+  {
+    category: "Butterfly",
+    strategies: [{ value: "butterfly", label: "Butterfly" }],
+  },
+  {
+    category: "Wheel",
+    strategies: [{ value: "wheel_strategy", label: "Wheel Strategy" }],
+  },
+  {
+    category: "Custom",
+    strategies: [
+      { value: "custom_2_leg", label: "Custom 2-Leg" },
+      { value: "custom_3_leg", label: "Custom 3-Leg" },
+      { value: "custom_4_leg", label: "Custom 4-Leg" },
+      { value: "custom_5_leg", label: "Custom 5-Leg" },
+      { value: "custom_6_leg", label: "Custom 6-Leg" },
+      { value: "custom_8_leg", label: "Custom 8-Leg" },
+    ],
+  },
+  {
+    category: "Synthetic/Conversion",
+    strategies: [
+      { value: "synthetic_put", label: "Synthetic Put" },
+      { value: "reverse_conversion", label: "Reverse Conversion" },
+    ],
+  },
+];
+
+const ADVANCED_STRATEGIES = ADVANCED_STRATEGY_GROUPS.flatMap((g) => g.strategies);
 
 function daysAgo(n: number): string {
   const d = new Date();
@@ -76,8 +153,6 @@ export function ScannerForm({
   const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
-
-  const activeStrategies = mode === "advanced" ? ADVANCED_STRATEGIES : BASIC_STRATEGIES;
 
   useEffect(() => {
     const allowed: Set<string> = new Set(
@@ -248,19 +323,50 @@ export function ScannerForm({
 
           <div className="space-y-2">
             <Label>Strategy types</Label>
-            <div className="flex flex-wrap gap-2">
-              {activeStrategies.map((strategy) => (
-                <label key={strategy.value} className="inline-flex items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-sm cursor-pointer hover:bg-accent">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-input"
-                    checked={selectedStrategies.has(strategy.value)}
-                    onChange={() => toggleStrategy(strategy.value)}
-                  />
-                  {strategy.label}
-                </label>
-              ))}
-            </div>
+            {mode === "advanced" ? (
+              <div className="space-y-4">
+                {ADVANCED_STRATEGY_GROUPS.map((group) => (
+                  <div key={group.category}>
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      {group.category}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {group.strategies.map((strategy) => (
+                        <label
+                          key={strategy.value}
+                          className="inline-flex items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-sm cursor-pointer hover:bg-accent"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-input"
+                            checked={selectedStrategies.has(strategy.value)}
+                            onChange={() => toggleStrategy(strategy.value)}
+                          />
+                          {strategy.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {BASIC_STRATEGIES.map((strategy) => (
+                  <label
+                    key={strategy.value}
+                    className="inline-flex items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-sm cursor-pointer hover:bg-accent"
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-input"
+                      checked={selectedStrategies.has(strategy.value)}
+                      onChange={() => toggleStrategy(strategy.value)}
+                    />
+                    {strategy.label}
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

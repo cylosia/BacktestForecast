@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from threading import Lock
 
 import structlog
@@ -13,6 +14,13 @@ from backtestforecast.errors import AppError, RateLimitError
 from backtestforecast.observability.metrics import RATE_LIMIT_HITS_TOTAL
 
 logger = structlog.get_logger("security.rate_limits")
+
+
+@dataclass(frozen=True, slots=True)
+class RateLimitInfo:
+    limit: int
+    remaining: int
+    reset_at: int
 
 
 class ServiceUnavailableError(AppError):
@@ -52,34 +60,38 @@ class RateLimiter:
             self._redis_retry_after = time.time() + 30.0
         return self._redis
 
-    def check(self, *, bucket: str, actor_key: str, limit: int, window_seconds: int) -> None:
+    def check(self, *, bucket: str, actor_key: str, limit: int, window_seconds: int) -> RateLimitInfo:
         if limit <= 0:
-            return
+            return RateLimitInfo(limit=0, remaining=0, reset_at=0)
         namespaced = f"{self.settings.rate_limit_prefix}:{bucket}:{actor_key}"
         redis = self._get_redis()
+        count: int | None = None
+        current_bucket = int(time.time() // window_seconds)
         try:
             if redis is not None:
-                self._check_redis(namespaced, limit, window_seconds)
-                return
-        except RateLimitError:
-            RATE_LIMIT_HITS_TOTAL.labels(bucket=bucket).inc()
-            raise
+                count, current_bucket = self._check_redis(namespaced, window_seconds)
         except RedisError:
             logger.warning("rate_limiter.redis_fallback", key=bucket, exc_info=True)
             if self._fail_closed:
                 logger.error("rate_limiter.fail_closed", bucket=bucket)
                 raise ServiceUnavailableError()
-        try:
-            self._check_memory(namespaced, limit, window_seconds)
-        except RateLimitError:
+        if count is None:
+            count, current_bucket = self._check_memory(namespaced, window_seconds)
+        remaining = max(limit - count, 0)
+        reset_at = (current_bucket + 1) * window_seconds
+        info = RateLimitInfo(limit=limit, remaining=remaining, reset_at=reset_at)
+        if count > limit:
             RATE_LIMIT_HITS_TOTAL.labels(bucket=bucket).inc()
-            raise
+            err = RateLimitError()
+            err.rate_limit_info = info  # type: ignore[attr-defined]
+            raise err
+        return info
 
     async def async_check(
         self, *, bucket: str, actor_key: str, limit: int, window_seconds: int,
-    ) -> None:
+    ) -> RateLimitInfo:
         """Async wrapper for use in async handlers or middleware."""
-        await asyncio.to_thread(
+        return await asyncio.to_thread(
             self.check, bucket=bucket, actor_key=actor_key, limit=limit, window_seconds=window_seconds,
         )
 
@@ -96,7 +108,7 @@ class RateLimiter:
         with self._memory_lock:
             self._memory_counters.clear()
 
-    def _check_redis(self, key: str, limit: int, window_seconds: int) -> None:
+    def _check_redis(self, key: str, window_seconds: int) -> tuple[int, int]:
         bucket = int(time.time() // window_seconds)
         bucket_key = f"{key}:{bucket}"
         redis = self._redis
@@ -108,10 +120,9 @@ class RateLimiter:
         except Exception:
             self._lua_sha = redis.script_load(_RATE_LIMIT_LUA)
             count = redis.evalsha(self._lua_sha, 1, bucket_key, window_seconds * 2)
-        if int(count) > limit:
-            raise RateLimitError()
+        return int(count), bucket
 
-    def _check_memory(self, key: str, limit: int, window_seconds: int) -> None:
+    def _check_memory(self, key: str, window_seconds: int) -> tuple[int, int]:
         bucket = int(time.time() // window_seconds)
         namespaced = f"{key}:{bucket}"
         with self._memory_lock:
@@ -125,8 +136,7 @@ class RateLimiter:
                 counter_value = 0
             counter_value += 1
             self._memory_counters[namespaced] = (bucket, counter_value)
-            if counter_value > limit:
-                raise RateLimitError()
+            return counter_value, bucket
 
 
 _rate_limiter: RateLimiter | None = None

@@ -151,9 +151,11 @@ def macd(
         (i for i, v in enumerate(macd_line) if v is not None),
         len(values),
     )
-    macd_seed = [v if v is not None else 0.0 for v in macd_line[first_valid:]]
+    macd_valid = [(i, v) for i, v in enumerate(macd_line[first_valid:]) if v is not None]
+    macd_seed = [v for _, v in macd_valid]
     raw_signal = ema(macd_seed, signal_period)
-    signal_line: list[float | None] = [None] * first_valid + raw_signal
+    none_gap = len(macd_line[first_valid:]) - len(macd_seed)
+    signal_line: list[float | None] = [None] * (first_valid + none_gap) + raw_signal
     histogram: list[float | None] = [None] * len(values)
     for index in range(len(values)):
         if macd_line[index] is None or signal_line[index] is None:

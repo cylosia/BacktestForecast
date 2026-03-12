@@ -42,6 +42,9 @@ class FakeGateway:
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         return self.quotes.get((option_ticker, trade_date))
 
+    def get_chain_delta_lookup(self, contracts):
+        return {}
+
 
 def make_bar(trade_date: date, close_price: float, volume: float = 1_000_000) -> DailyBar:
     return DailyBar(
@@ -179,6 +182,40 @@ def test_custom_2_leg_stock_only_uses_end_date() -> None:
         assert trade.exit_date <= date(2025, 1, 9)
 
 
+def test_zero_trade_run_has_empty_stats() -> None:
+    engine = OptionsBacktestEngine()
+    bars = [
+        make_bar(date(2025, 1, 1), 100),
+        make_bar(date(2025, 1, 2), 101),
+        make_bar(date(2025, 1, 3), 102),
+    ]
+    result = engine.run(
+        BacktestConfig(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 3),
+            target_dte=30,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=10_000,
+            risk_per_trade_pct=5,
+            commission_per_contract=0,
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        FakeGateway(contracts={}, quotes={}),
+    )
+    assert result.summary.trade_count == 0
+    assert result.summary.total_net_pnl == 0.0
+    assert result.summary.total_roi_pct == 0.0
+    assert result.summary.win_rate == 0.0
+    assert result.summary.max_drawdown_pct == 0.0
+    assert len(result.equity_curve) >= 1
+    assert result.equity_curve[0].equity == pytest.approx(10_000)
+
+
 # ---------------------------------------------------------------------------
 # Parametrized strategy smoke tests
 # ---------------------------------------------------------------------------
@@ -232,6 +269,9 @@ class SyntheticGateway:
         distance = abs(strike - self.underlying_close)
         mid = max(0.50, 5.0 - distance * 0.1)
         return make_quote(trade_date, mid)
+
+    def get_chain_delta_lookup(self, contracts):
+        return {}
 
 
 ALL_NON_WHEEL_STRATEGIES = [
