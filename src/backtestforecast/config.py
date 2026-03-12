@@ -247,6 +247,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments must enable structured JSON logging.")
             if "*" in self.api_allowed_hosts:
                 raise ValueError("Production-like environments must not allow wildcard API hosts.")
+            if "*" in self.web_cors_origins:
+                raise ValueError("Production-like environments must not allow wildcard CORS origins.")
         return self
 
 

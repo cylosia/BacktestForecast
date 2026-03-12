@@ -57,7 +57,11 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
     return undefined as T;
   }
 
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiError("Received an invalid response from the server.", response.status);
+  }
 }
 
 export async function apiDownload(path: string, token: string, init?: RequestInit): Promise<Response> {

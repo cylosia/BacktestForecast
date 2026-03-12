@@ -242,18 +242,21 @@ def refresh_prioritized_scans() -> dict[str, int]:
     dispatched = 0
     with SessionLocal() as session:
         service = ScanService(session)
-        jobs = service.create_scheduled_refresh_jobs(limit=25)
+        try:
+            jobs = service.create_scheduled_refresh_jobs(limit=25)
 
-        for job in jobs:
-            try:
-                result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
-                job.celery_task_id = result.id
-                dispatched += 1
-            except Exception:
-                logger.exception("refresh.dispatch_failed", job_id=str(job.id))
+            for job in jobs:
+                try:
+                    result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
+                    job.celery_task_id = result.id
+                    dispatched += 1
+                except Exception:
+                    logger.exception("refresh.dispatch_failed", job_id=str(job.id))
 
-        if dispatched:
-            session.commit()
+            if dispatched:
+                session.commit()
+        finally:
+            service.close()
 
     return {
         "scheduled_jobs": dispatched,

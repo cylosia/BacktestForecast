@@ -57,11 +57,12 @@ export function BacktestRunPoller({
             : "Your backtest is running. Results will appear automatically when complete."}
         </CardDescription>
       </CardHeader>
-      {pollStatus === "timeout" ? (
+      {pollStatus === "timeout" || pollStatus === "error" ? (
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Polling timed out after {attempts} attempts. Refresh the page to check the latest
-            status.
+            {pollStatus === "error"
+              ? "Something went wrong while checking status. Refresh the page to see the latest results."
+              : `Polling timed out after ${attempts} attempts. Refresh the page to check the latest status.`}
           </p>
         </CardContent>
       ) : null}

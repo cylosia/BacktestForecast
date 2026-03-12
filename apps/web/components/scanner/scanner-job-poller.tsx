@@ -73,10 +73,12 @@ export function ScannerJobPoller({
           </div>
         </CardContent>
       ) : null}
-      {pollStatus === "timeout" ? (
+      {pollStatus === "timeout" || pollStatus === "error" ? (
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Polling timed out. Refresh the page to check the latest status.
+            {pollStatus === "error"
+              ? "Something went wrong while checking status. Refresh the page to see the latest results."
+              : "Polling timed out. Refresh the page to check the latest status."}
           </p>
         </CardContent>
       ) : null}
