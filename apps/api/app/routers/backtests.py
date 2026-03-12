@@ -73,7 +73,11 @@ def create_backtest(
             run.status = "failed"
             run.error_code = "enqueue_failed"
             run.error_message = "Unable to dispatch job. Please try again."
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                logger.exception("backtest.enqueue_failed.commit_error", run_id=str(run.id))
+                db.rollback()
 
     db.expire_all()
     return service.get_run(user, run.id)

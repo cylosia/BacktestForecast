@@ -73,7 +73,11 @@ def create_analysis(
             logger.exception("analysis.enqueue_failed", analysis_id=str(analysis.id))
             analysis.status = "failed"
             analysis.error_message = "Unable to dispatch job. Please try again."
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                logger.exception("analysis.enqueue_failed.commit_error", analysis_id=str(analysis.id))
+                db.rollback()
 
     return _to_summary(analysis)
 

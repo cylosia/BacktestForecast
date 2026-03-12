@@ -61,7 +61,11 @@ def create_export(
                 export_job.status = "failed"
                 export_job.error_code = "enqueue_failed"
                 export_job.error_message = "Unable to dispatch job. Please try again."
-                db.commit()
+                try:
+                    db.commit()
+                except Exception:
+                    logger.exception("export.enqueue_failed.commit_error", export_job_id=str(job_response.id))
+                    db.rollback()
 
     db.expire_all()
     return service.get_export_status(user, job_response.id)

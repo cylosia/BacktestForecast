@@ -60,7 +60,11 @@ def create_scan(
             job.status = "failed"
             job.error_code = "enqueue_failed"
             job.error_message = "Unable to dispatch job. Please try again."
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                logger.exception("scan.enqueue_failed.commit_error", job_id=str(job.id))
+                db.rollback()
     return service.get_job(user, job.id)
 
 

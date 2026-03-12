@@ -83,15 +83,21 @@ async def _event_stream(
     request: Request,
 ) -> AsyncGenerator[dict[str, str], None]:
     """Wrap Redis subscription in SSE event format with heartbeats and timeout."""
+    from redis.exceptions import RedisError
+
     deadline = asyncio.get_running_loop().time() + SSE_TIMEOUT_SECONDS
 
-    async for data in _subscribe_redis(channel):
-        if await request.is_disconnected():
-            break
-        if asyncio.get_running_loop().time() > deadline:
-            yield {"event": "timeout", "data": "Connection timed out"}
-            break
-        yield {"event": "status", "data": data}
+    try:
+        async for data in _subscribe_redis(channel):
+            if await request.is_disconnected():
+                break
+            if asyncio.get_running_loop().time() > deadline:
+                yield {"event": "timeout", "data": "Connection timed out"}
+                break
+            yield {"event": "status", "data": data}
+    except (RedisError, OSError) as exc:
+        logger.warning("sse.redis_error", channel=channel, error=str(exc))
+        yield {"event": "error", "data": "Event stream unavailable. Please poll for status instead."}
 
     yield {"event": "done", "data": "stream_ended"}
 

@@ -1,5 +1,5 @@
 import { getCurrentUser, getDailyPicks } from "@/lib/api/server";
-import { formatPercent, strategyLabel } from "@/lib/backtests/format";
+import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
 import type { DailyPickItem, DailyPicksResponse } from "@/lib/backtests/types";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Badge } from "@/components/ui/badge";
@@ -56,7 +56,7 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
           </div>
           <div className="text-right shrink-0">
             <p className="text-xs text-muted-foreground">Score</p>
-            <p className="text-lg font-semibold">{pick.score.toFixed(1)}</p>
+            <p className="text-lg font-semibold">{formatNumber(pick.score)}</p>
           </div>
         </div>
 
@@ -67,11 +67,11 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
           <div>
             <span className="text-xs text-muted-foreground">ROI</span>
-            <p className="font-medium">{summary.total_roi_pct?.toFixed(1) ?? "—"}%</p>
+            <p className="font-medium">{summary.total_roi_pct != null ? formatPercent(summary.total_roi_pct) : "—"}</p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Win rate</span>
-            <p className="font-medium">{summary.win_rate?.toFixed(0) ?? "—"}%</p>
+            <p className="font-medium">{summary.win_rate != null ? formatPercent(summary.win_rate) : "—"}</p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Trades</span>
@@ -79,7 +79,7 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Max DD</span>
-            <p className="font-medium">{summary.max_drawdown_pct?.toFixed(1) ?? "—"}%</p>
+            <p className="font-medium">{summary.max_drawdown_pct != null ? formatPercent(summary.max_drawdown_pct) : "—"}</p>
           </div>
         </div>
 
@@ -87,17 +87,17 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
           <div className="mt-3 rounded-lg border border-border/60 bg-muted/30 p-2 text-xs">
             <span className="text-muted-foreground">Forecast: </span>
             <span className="font-medium">
-              {Number(forecast.expected_return_median_pct).toFixed(1)}% median
+              {formatPercent(forecast.expected_return_median_pct)} median
             </span>
             <span className="text-muted-foreground">
-              {" "}({Number(forecast.positive_outcome_rate_pct).toFixed(0)}% positive rate,{" "}
+              {" "}({formatPercent(forecast.positive_outcome_rate_pct)} positive rate,{" "}
               {forecast.analog_count} analogs)
             </span>
           </div>
         ) : null}
 
         <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-          <span>Close: ${pick.close_price.toFixed(2)}</span>
+          <span>Close: {formatCurrency(pick.close_price)}</span>
           <span>DTE: {pick.target_dte}d</span>
         </div>
       </CardContent>
@@ -164,7 +164,7 @@ export default async function DailyPicksPage() {
             { label: "Pairs tested", value: data.pipeline_stats.pairs_generated },
             { label: "Quick backtests", value: data.pipeline_stats.quick_backtests_run },
             { label: "Full backtests", value: data.pipeline_stats.full_backtests_run },
-            { label: "Duration", value: data.pipeline_stats.duration_seconds ? `${data.pipeline_stats.duration_seconds.toFixed(0)}s` : "—" },
+            { label: "Duration", value: data.pipeline_stats.duration_seconds ? `${Math.round(data.pipeline_stats.duration_seconds)}s` : "—" },
           ].map((stat) => (
             <div key={stat.label} className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{stat.label}</p>
