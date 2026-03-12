@@ -185,7 +185,7 @@ export default async function DailyPicksPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {data.items.map((pick) => (
-            <PickCard key={`${pick.symbol}-${pick.strategy_type}`} pick={pick} maxScore={maxScore} />
+            <PickCard key={`${pick.symbol}-${pick.strategy_type}-${pick.rank}`} pick={pick} maxScore={maxScore} />
           ))}
         </div>
       )}

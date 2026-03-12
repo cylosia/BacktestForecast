@@ -231,18 +231,18 @@ class ScanService:
                                 "code": "candidate_failed",
                                 "message": (
                                     f"{symbol} / {strategy.value} / {rule_set.name} "
-                                    f"could not be evaluated: {exc.message}"
+                                    f"could not be evaluated ({exc.code})"
                                 ),
                                 "error_code": exc.code,
                             }
                         )
-                    except Exception as exc:  # pragma: no cover - safeguard
+                    except Exception:  # pragma: no cover - safeguard
                         warnings.append(
                             {
                                 "code": "candidate_failed_internal",
                                 "message": (
                                     f"{symbol} / {strategy.value} / {rule_set.name} "
-                                    f"failed with an unexpected error: {exc}"
+                                    f"failed with an unexpected error"
                                 ),
                             }
                         )
@@ -460,7 +460,7 @@ class ScanService:
             except AppError as exc:
                 warnings.append({
                     "code": "symbol_data_unavailable",
-                    "message": f"{symbol} could not be loaded: {exc.message}",
+                    "message": f"{symbol} could not be loaded ({exc.code})",
                     "error_code": exc.code,
                 })
         return bundles

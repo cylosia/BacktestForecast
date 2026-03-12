@@ -147,7 +147,7 @@ class BacktestService:
         except AppError as exc:
             run.status = "failed"
             run.error_code = exc.code
-            run.error_message = exc.message
+            run.error_message = "Backtest execution failed. Please try again."
             run.completed_at = datetime.now(UTC)
             self.session.commit()
             raise
@@ -211,7 +211,7 @@ class BacktestService:
         except AppError as exc:
             run.status = "failed"
             run.error_code = exc.code
-            run.error_message = exc.message
+            run.error_message = "Backtest execution failed. Please try again."
             run.completed_at = datetime.now(UTC)
             self.session.commit()
             raise

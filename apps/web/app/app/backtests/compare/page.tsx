@@ -93,6 +93,28 @@ export default async function ComparePage({
     const data = await compareBacktests(runIds);
     const runs = data.items;
 
+    if (runs.length === 0) {
+      return (
+        <div className="space-y-6">
+          <Button asChild className="px-0" variant="ghost">
+            <Link href="/app/backtests">
+              <ArrowLeft className="h-4 w-4" />
+              Back to history
+            </Link>
+          </Button>
+          <Card>
+            <CardHeader>
+              <CardTitle>No matching runs found</CardTitle>
+              <CardDescription>
+                The selected runs may have been deleted or are no longer available.
+                Go back and select different runs to compare.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
