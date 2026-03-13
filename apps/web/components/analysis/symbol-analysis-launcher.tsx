@@ -52,11 +52,11 @@ function RegimeSection({ regime }: { regime: RegimeDetail }) {
     <Card>
       <CardHeader>
         <CardTitle>Current regime</CardTitle>
-        <CardDescription>Technical indicator snapshot as of the latest close at {formatCurrency(regime.close_price)}</CardDescription>
+        <CardDescription>Technical indicator snapshot as of the latest close at {regime.close_price != null ? formatCurrency(regime.close_price) : "—"}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
-          {regime.regimes.map((r) => (
+          {(regime.regimes ?? []).map((r) => (
             <Badge key={r} variant="secondary" className={regimeColor(r)}>
               {r.replace(/_/g, " ")}
             </Badge>
@@ -138,9 +138,16 @@ function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
   );
 }
 
+function asNullableNumericRecord(value: unknown): Partial<Record<string, number | null>> {
+  if (value != null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Partial<Record<string, number | null>>;
+  }
+  return {};
+}
+
 function TopResultCard({ result }: { result: AnalysisTopResult }) {
-  const summary = (result.summary ?? {}) as Partial<Record<string, number | null>>;
-  const forecast = (result.forecast ?? {}) as Partial<Record<string, number | null>>;
+  const summary = asNullableNumericRecord(result.summary);
+  const forecast = asNullableNumericRecord(result.forecast);
 
   return (
     <Card>
@@ -224,10 +231,26 @@ export function SymbolAnalysisLauncher() {
 
   const pollForCompletion = useCallback(
     async (token: string, analysisId: string, signal: AbortSignal) => {
+      let consecutiveErrors = 0;
       for (let i = 0; i < MAX_POLLS; i++) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL));
         if (signal.aborted || !mountedRef.current) return;
-        const status = await fetchAnalysisStatus(token, analysisId);
+
+        let status;
+        try {
+          status = await fetchAnalysisStatus(token, analysisId);
+          consecutiveErrors = 0;
+        } catch (err) {
+          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+            throw err;
+          }
+          consecutiveErrors++;
+          if (consecutiveErrors >= 3) {
+            throw new Error("Status check failed repeatedly. Please try again.");
+          }
+          continue;
+        }
+
         if (signal.aborted || !mountedRef.current) return;
         setStage(status.stage);
 
@@ -350,15 +373,15 @@ export function SymbolAnalysisLauncher() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Strategies</p>
-              <p className="mt-1 text-xl font-semibold">{result.strategies_tested}</p>
+              <p className="mt-1 text-xl font-semibold">{result.strategies_tested ?? 0}</p>
             </div>
             <div className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Configs tested</p>
-              <p className="mt-1 text-xl font-semibold">{result.configs_tested}</p>
+              <p className="mt-1 text-xl font-semibold">{result.configs_tested ?? 0}</p>
             </div>
             <div className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Top results</p>
-              <p className="mt-1 text-xl font-semibold">{result.top_results_count}</p>
+              <p className="mt-1 text-xl font-semibold">{result.top_results_count ?? 0}</p>
             </div>
             <div className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Duration</p>

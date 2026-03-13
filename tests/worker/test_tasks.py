@@ -331,6 +331,280 @@ def test_run_backtest_fails_when_user_missing(mock_session_local, mock_publish):
     assert mock_run.status == "failed"
 
 
+# ---------------------------------------------------------------------------
+# generate_export
+# ---------------------------------------------------------------------------
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_generate_export_success(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import generate_export
+
+    mock_job = SimpleNamespace(status="succeeded", size_bytes=4096)
+    mock_service = MagicMock()
+    mock_service.execute_export_by_id.return_value = mock_job
+    mock_service.close = MagicMock()
+
+    session = MagicMock()
+    session.get.return_value = None  # skip entitlement check (no ExportJob found)
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service):
+        result = generate_export(str(uuid4()))
+
+    assert result["status"] == "succeeded"
+    assert result["size_bytes"] == 4096
+    mock_service.close.assert_called_once()
+    assert mock_publish.call_count >= 2
+    assert mock_publish.call_args_list[0].args[2] == "running"
+    assert mock_publish.call_args_list[-1].args[2] == "succeeded"
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_generate_export_app_error(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import generate_export
+
+    mock_service = MagicMock()
+    mock_service.execute_export_by_id.side_effect = AppError("export_error", "Export broke")
+    mock_service.close = MagicMock()
+
+    session = MagicMock()
+    session.get.return_value = None
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service):
+        result = generate_export(str(uuid4()))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "export_error"
+    mock_service.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# run_deep_analysis
+# ---------------------------------------------------------------------------
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_deep_analysis_success(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import run_deep_analysis
+
+    mock_result = SimpleNamespace(status="succeeded", top_results_count=3)
+    mock_service = MagicMock()
+    mock_service.execute_analysis.return_value = mock_result
+
+    user_mock = MagicMock()
+    user_mock.plan_tier = "pro"
+    user_mock.subscription_status = "active"
+    user_mock.subscription_current_period_end = None
+
+    analysis_mock = MagicMock()
+    analysis_mock.user_id = uuid4()
+    analysis_mock.status = "queued"
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        name = model.__name__
+        if name == "SymbolAnalysis":
+            return analysis_mock
+        if name == "User":
+            return user_mock
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    policy = SimpleNamespace(forecasting_access=True)
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=policy),
+        patch("backtestforecast.config.get_settings") as mock_settings,
+        patch("backtestforecast.integrations.massive_client.MassiveClient") as mock_client_cls,
+        patch("backtestforecast.market_data.service.MarketDataService"),
+        patch("backtestforecast.services.backtest_execution.BacktestExecutionService"),
+        patch("backtestforecast.pipeline.adapters.PipelineBacktestExecutor") as mock_executor_cls,
+        patch("backtestforecast.pipeline.adapters.PipelineMarketDataFetcher"),
+        patch("backtestforecast.pipeline.adapters.PipelineForecaster"),
+        patch("backtestforecast.forecasts.analog.HistoricalAnalogForecaster"),
+        patch("backtestforecast.pipeline.deep_analysis.SymbolDeepAnalysisService", return_value=mock_service),
+    ):
+        mock_settings.return_value = SimpleNamespace(massive_api_key="test")
+        mock_client_cls.return_value = MagicMock()
+        mock_executor_cls.return_value = MagicMock()
+        result = run_deep_analysis(str(uuid4()))
+
+    assert result["status"] == "succeeded"
+    assert result["top_results"] == 3
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_deep_analysis_app_error(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import run_deep_analysis
+
+    mock_service = MagicMock()
+    mock_service.execute_analysis.side_effect = AppError("analysis_error", "Boom")
+
+    user_mock = MagicMock()
+    user_mock.plan_tier = "pro"
+    user_mock.subscription_status = "active"
+    user_mock.subscription_current_period_end = None
+
+    analysis_mock = MagicMock()
+    analysis_mock.user_id = uuid4()
+    analysis_mock.status = "queued"
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        name = model.__name__
+        if name == "SymbolAnalysis":
+            return analysis_mock
+        if name == "User":
+            return user_mock
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    policy = SimpleNamespace(forecasting_access=True)
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=policy),
+        patch("backtestforecast.config.get_settings") as mock_settings,
+        patch("backtestforecast.integrations.massive_client.MassiveClient") as mock_client_cls,
+        patch("backtestforecast.market_data.service.MarketDataService"),
+        patch("backtestforecast.services.backtest_execution.BacktestExecutionService"),
+        patch("backtestforecast.pipeline.adapters.PipelineBacktestExecutor") as mock_executor_cls,
+        patch("backtestforecast.pipeline.adapters.PipelineMarketDataFetcher"),
+        patch("backtestforecast.pipeline.adapters.PipelineForecaster"),
+        patch("backtestforecast.forecasts.analog.HistoricalAnalogForecaster"),
+        patch("backtestforecast.pipeline.deep_analysis.SymbolDeepAnalysisService", return_value=mock_service),
+    ):
+        mock_settings.return_value = SimpleNamespace(massive_api_key="test")
+        mock_client_cls.return_value = MagicMock()
+        mock_executor_cls.return_value = MagicMock()
+        result = run_deep_analysis(str(uuid4()))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "analysis_error"
+
+
+# ---------------------------------------------------------------------------
+# nightly_scan_pipeline
+# ---------------------------------------------------------------------------
+
+
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_nightly_scan_pipeline_success(mock_session_local):
+    from apps.worker.app.tasks import nightly_scan_pipeline
+
+    mock_run = SimpleNamespace(
+        status="succeeded",
+        id=uuid4(),
+        recommendations_produced=5,
+        duration_seconds=42.0,
+    )
+    mock_service = MagicMock()
+    mock_service.run_pipeline.return_value = mock_run
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=MagicMock())
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with (
+        patch("backtestforecast.config.get_settings") as mock_settings,
+        patch("backtestforecast.integrations.massive_client.MassiveClient") as mock_client_cls,
+        patch("backtestforecast.market_data.service.MarketDataService"),
+        patch("backtestforecast.services.backtest_execution.BacktestExecutionService"),
+        patch("backtestforecast.pipeline.adapters.PipelineBacktestExecutor") as mock_executor_cls,
+        patch("backtestforecast.pipeline.adapters.PipelineMarketDataFetcher"),
+        patch("backtestforecast.pipeline.adapters.PipelineForecaster"),
+        patch("backtestforecast.forecasts.analog.HistoricalAnalogForecaster"),
+        patch("backtestforecast.pipeline.service.NightlyPipelineService", return_value=mock_service),
+    ):
+        mock_settings.return_value = SimpleNamespace(
+            massive_api_key="test",
+            pipeline_default_symbols=["AAPL", "MSFT"],
+        )
+        mock_client_cls.return_value = MagicMock()
+        mock_executor_cls.return_value = MagicMock()
+        result = nightly_scan_pipeline()
+
+    assert result["status"] == "succeeded"
+    assert result["recommendations"] == 5
+    assert result["duration_seconds"] == 42.0
+
+
+# ---------------------------------------------------------------------------
+# refresh_prioritized_scans
+# ---------------------------------------------------------------------------
+
+
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_refresh_prioritized_scans_dispatches(mock_session_local):
+    from apps.worker.app.tasks import refresh_prioritized_scans
+
+    job1 = SimpleNamespace(id=uuid4())
+    job2 = SimpleNamespace(id=uuid4())
+
+    mock_service = MagicMock()
+    mock_service.create_scheduled_refresh_jobs.return_value = [job1, job2]
+    mock_service.close = MagicMock()
+
+    session = MagicMock()
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with (
+        patch("apps.worker.app.tasks.ScanService", return_value=mock_service),
+        patch("apps.worker.app.tasks.celery_app") as mock_celery,
+    ):
+        mock_celery.send_task.return_value = SimpleNamespace(id="celery-task-1")
+        result = refresh_prioritized_scans()
+
+    assert result["scheduled_jobs"] == 2
+    assert mock_celery.send_task.call_count == 2
+    mock_service.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# maintenance.ping
+# ---------------------------------------------------------------------------
+
+
+def test_ping_returns_expected_format():
+    from apps.worker.app.tasks import ping
+
+    result = ping()
+
+    assert result["status"] == "ok"
+    assert result["task"] == "maintenance.ping"
+    assert "note" in result
+
+
+# ---------------------------------------------------------------------------
+# Entitlement checks — verify all 4 tasks reject when user is missing
+# ---------------------------------------------------------------------------
+
+
 @patch("apps.worker.app.tasks.publish_job_status")
 @patch("apps.worker.app.tasks.SessionLocal")
 def test_generate_export_fails_when_user_missing(mock_session_local, mock_publish):
@@ -396,7 +670,20 @@ def test_run_deep_analysis_fails_when_user_missing(mock_session_local, mock_publ
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    result = run_deep_analysis(str(analysis_id))
+    with (
+        patch("backtestforecast.config.get_settings") as mock_settings,
+        patch("backtestforecast.integrations.massive_client.MassiveClient") as mock_client_cls,
+        patch("backtestforecast.market_data.service.MarketDataService"),
+        patch("backtestforecast.services.backtest_execution.BacktestExecutionService"),
+        patch("backtestforecast.pipeline.adapters.PipelineBacktestExecutor") as mock_executor_cls,
+        patch("backtestforecast.pipeline.adapters.PipelineMarketDataFetcher"),
+        patch("backtestforecast.pipeline.adapters.PipelineForecaster"),
+        patch("backtestforecast.forecasts.analog.HistoricalAnalogForecaster"),
+    ):
+        mock_settings.return_value = SimpleNamespace(massive_api_key="test")
+        mock_client_cls.return_value = MagicMock()
+        mock_executor_cls.return_value = MagicMock()
+        result = run_deep_analysis(str(analysis_id))
 
     assert result["status"] == "failed"
     assert result["error_code"] == "entitlement_revoked"
@@ -404,19 +691,22 @@ def test_run_deep_analysis_fails_when_user_missing(mock_session_local, mock_publ
 
 @patch("apps.worker.app.tasks.publish_job_status")
 @patch("apps.worker.app.tasks.SessionLocal")
-def test_run_backtest_fails_when_quota_zero(mock_session_local, mock_publish):
-    """Verifies the monthly_backtest_quota entitlement check."""
+def test_run_backtest_allows_pro_user(mock_session_local, mock_publish):
+    """Pro users (unlimited quota) must not be rejected at the worker level."""
     from apps.worker.app.tasks import run_backtest
 
     run_id = uuid4()
-    user_id = uuid4()
     mock_run = MagicMock()
-    mock_run.user_id = user_id
+    mock_run.user_id = uuid4()
     mock_run.status = "queued"
     mock_user = MagicMock()
-    mock_user.plan_tier = "free"
-    mock_user.subscription_status = None
+    mock_user.plan_tier = "pro"
+    mock_user.subscription_status = "active"
     mock_user.subscription_current_period_end = None
+
+    mock_service = MagicMock()
+    mock_service.execute_run_by_id.return_value = SimpleNamespace(status="succeeded", trade_count=2)
+    mock_service.close = MagicMock()
 
     session = MagicMock()
 
@@ -433,12 +723,141 @@ def test_run_backtest_fails_when_quota_zero(mock_session_local, mock_publish):
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    zero_policy = SimpleNamespace(monthly_backtest_quota=0)
-    with (
-        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=zero_policy),
-        patch("apps.worker.app.tasks.BacktestService"),
-    ):
+    with patch("apps.worker.app.tasks.BacktestService", return_value=mock_service):
         result = run_backtest(str(run_id))
+
+    assert result["status"] == "succeeded"
+    mock_service.close.assert_called_once()
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_generate_export_rejects_no_export_formats(mock_session_local, mock_publish):
+    """Free users have empty export_formats — worker should reject."""
+    from apps.worker.app.tasks import generate_export
+
+    export_id = uuid4()
+    mock_export = MagicMock()
+    mock_export.user_id = uuid4()
+    mock_export.status = "queued"
+    mock_user = MagicMock()
+    mock_user.plan_tier = "free"
+    mock_user.subscription_status = None
+    mock_user.subscription_current_period_end = None
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "ExportJob":
+            return mock_export
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    no_export_policy = SimpleNamespace(export_formats=frozenset())
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=no_export_policy),
+        patch("apps.worker.app.tasks.ExportService"),
+    ):
+        result = generate_export(str(export_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "entitlement_revoked"
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_scan_job_rejects_no_scanner_access(mock_session_local, mock_publish):
+    """Free users have basic_scanner_access=False — worker should reject."""
+    from apps.worker.app.tasks import run_scan_job
+
+    job_id = uuid4()
+    mock_job = MagicMock()
+    mock_job.user_id = uuid4()
+    mock_job.status = "queued"
+    mock_user = MagicMock()
+    mock_user.plan_tier = "free"
+    mock_user.subscription_status = None
+    mock_user.subscription_current_period_end = None
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "ScannerJob":
+            return mock_job
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    no_scanner_policy = SimpleNamespace(basic_scanner_access=False)
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=no_scanner_policy),
+        patch("apps.worker.app.tasks.ScanService"),
+    ):
+        result = run_scan_job(str(job_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "entitlement_revoked"
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_deep_analysis_rejects_no_forecasting(mock_session_local, mock_publish):
+    """Free users have forecasting_access=False — worker should reject."""
+    from apps.worker.app.tasks import run_deep_analysis
+
+    analysis_id = uuid4()
+    mock_analysis = MagicMock()
+    mock_analysis.user_id = uuid4()
+    mock_analysis.status = "queued"
+    mock_user = MagicMock()
+    mock_user.plan_tier = "free"
+    mock_user.subscription_status = None
+    mock_user.subscription_current_period_end = None
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "SymbolAnalysis":
+            return mock_analysis
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    no_forecast_policy = SimpleNamespace(forecasting_access=False)
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=no_forecast_policy),
+        patch("backtestforecast.config.get_settings") as mock_settings,
+        patch("backtestforecast.integrations.massive_client.MassiveClient") as mock_client_cls,
+        patch("backtestforecast.market_data.service.MarketDataService"),
+        patch("backtestforecast.services.backtest_execution.BacktestExecutionService"),
+        patch("backtestforecast.pipeline.adapters.PipelineBacktestExecutor") as mock_executor_cls,
+        patch("backtestforecast.pipeline.adapters.PipelineMarketDataFetcher"),
+        patch("backtestforecast.pipeline.adapters.PipelineForecaster"),
+        patch("backtestforecast.forecasts.analog.HistoricalAnalogForecaster"),
+    ):
+        mock_settings.return_value = SimpleNamespace(massive_api_key="test")
+        mock_client_cls.return_value = MagicMock()
+        mock_executor_cls.return_value = MagicMock()
+        result = run_deep_analysis(str(analysis_id))
 
     assert result["status"] == "failed"
     assert result["error_code"] == "entitlement_revoked"

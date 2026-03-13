@@ -8,6 +8,11 @@ from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Iterable, Sequence
 
+from backtestforecast.backtests.strategies.registry import (
+    BEARISH_STRATEGIES,
+    BULLISH_STRATEGIES,
+    NEUTRAL_STRATEGIES,
+)
 from backtestforecast.backtests.types import BacktestExecutionResult
 from backtestforecast.schemas.backtests import EntryRule, rule_bias
 from backtestforecast.schemas.scans import (
@@ -15,38 +20,6 @@ from backtestforecast.schemas.scans import (
     HistoricalPerformanceResponse,
     RankingBreakdownResponse,
 )
-
-BULLISH_STRATEGIES = {
-    "long_call",
-    "covered_call",
-    "cash_secured_put",
-    "bull_call_debit_spread",
-    "bull_put_credit_spread",
-    "wheel_strategy",
-    "poor_mans_covered_call",
-    "collar",
-    "diagonal_spread",
-}
-BEARISH_STRATEGIES = {
-    "long_put",
-    "bear_put_debit_spread",
-    "bear_call_credit_spread",
-    "synthetic_put",
-    "ratio_put_backspread",
-}
-NEUTRAL_STRATEGIES = {
-    "iron_condor",
-    "iron_butterfly",
-    "short_straddle",
-    "short_strangle",
-    "long_straddle",
-    "long_strangle",
-    "butterfly",
-    "calendar_spread",
-    "double_diagonal",
-    "covered_strangle",
-    "jade_lizard",
-}
 
 
 @dataclass(frozen=True, slots=True)

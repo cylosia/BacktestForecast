@@ -483,10 +483,12 @@ class WheelStrategyBacktestEngine:
             return None
 
         capital_required_per_unit = contract.strike_price * 100.0
+        commission_per_unit = config.commission_per_contract * 2
+        total_cost_per_unit = capital_required_per_unit + commission_per_unit
         max_loss_per_unit = max((contract.strike_price - quote.mid_price) * 100.0, 0.0)
         risk_budget = config.account_size * (config.risk_per_trade_pct / 100.0)
         by_risk = int(risk_budget // max_loss_per_unit) if max_loss_per_unit > 0 else 0
-        by_cash = int(cash // capital_required_per_unit) if capital_required_per_unit > 0 else 0
+        by_cash = int(cash // total_cost_per_unit) if total_cost_per_unit > 0 else 0
         quantity = max(0, min(by_risk, by_cash))
         if quantity <= 0:
             self._add_warning_once(

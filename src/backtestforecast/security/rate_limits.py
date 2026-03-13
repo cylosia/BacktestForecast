@@ -11,7 +11,7 @@ from redis.exceptions import RedisError
 
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.errors import AppError, RateLimitError
-from backtestforecast.observability.metrics import RATE_LIMIT_HITS_TOTAL
+from backtestforecast.observability.metrics import RATE_LIMIT_HITS_TOTAL, REDIS_RATE_LIMIT_FALLBACK_TOTAL
 
 logger = structlog.get_logger("security.rate_limits")
 
@@ -76,6 +76,7 @@ class RateLimiter:
             if redis is not None:
                 count, current_bucket = self._check_redis(namespaced, window_seconds)
         except RedisError:
+            REDIS_RATE_LIMIT_FALLBACK_TOTAL.labels(bucket=bucket).inc()
             logger.warning("rate_limiter.redis_fallback", key=bucket, exc_info=True)
             if self._fail_closed:
                 logger.error("rate_limiter.fail_closed", bucket=bucket)

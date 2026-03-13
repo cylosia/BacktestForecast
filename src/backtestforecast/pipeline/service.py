@@ -22,9 +22,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from backtestforecast.pipeline.regime import RegimeSnapshot, classify_regime
 from backtestforecast.config import get_settings
+from backtestforecast.observability.metrics import DUPLICATE_NIGHTLY_RUNS_TOTAL
 from backtestforecast.pipeline.strategy_map import (
     DEFAULT_PARAM_GRID,
     strategies_for_regime,
@@ -122,6 +124,7 @@ class NightlyPipelineService:
             ).with_for_update()
         )
         if succeeded is not None:
+            DUPLICATE_NIGHTLY_RUNS_TOTAL.inc()
             logger.info("pipeline.already_exists", run_id=str(succeeded.id), status=succeeded.status)
             return succeeded
 
@@ -156,6 +159,7 @@ class NightlyPipelineService:
                 )
             )
             if succeeded is not None:
+                DUPLICATE_NIGHTLY_RUNS_TOTAL.inc()
                 logger.info("pipeline.already_exists_on_conflict", run_id=str(succeeded.id))
                 return succeeded
             raise
@@ -533,7 +537,6 @@ class NightlyPipelineService:
                     )
                     return candidate, None
 
-            _BEARISH = {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put", "ratio_put_backspread"}
             max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = [pool.submit(_fetch_forecast, c) for c in candidates]
@@ -551,14 +554,14 @@ class NightlyPipelineService:
 
                         backtest_roi = candidate.summary.get("total_roi_pct", 0)
                         forecast_supports = float(median_return) > 0
-                        if candidate.strategy_type in _BEARISH:
+                        if candidate.strategy_type in BEARISH_STRATEGIES:
                             forecast_supports = float(median_return) < 0
 
                         if backtest_roi > 0 and float(median_return) != 0 and forecast_supports:
                             candidate.score *= 1.2
 
                         effective_rate = float(positive_rate)
-                        if candidate.strategy_type in _BEARISH:
+                        if candidate.strategy_type in BEARISH_STRATEGIES:
                             effective_rate = 100.0 - effective_rate
                         if effective_rate > 60:
                             candidate.score *= 1.0 + (effective_rate - 60) / 200.0

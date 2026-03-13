@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PlanTier, normalize_plan_tier
-from backtestforecast.errors import NotFoundError, QuotaExceededError
+from backtestforecast.errors import ConflictError, NotFoundError, QuotaExceededError
 from backtestforecast.models import BacktestTemplate, User
 from backtestforecast.repositories.templates import BacktestTemplateRepository
 from backtestforecast.schemas.templates import (
@@ -75,6 +75,12 @@ class BacktestTemplateService:
         template = self.repository.get_for_user(template_id, user.id)
         if template is None:
             raise NotFoundError("Template not found.")
+
+        if request.expected_updated_at is not None:
+            if template.updated_at != request.expected_updated_at:
+                raise ConflictError(
+                    "Template was modified by another request. Please refresh and try again."
+                )
 
         if request.name is not None:
             template.name = request.name

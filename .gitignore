@@ -30,3 +30,6 @@ apps/web/.env.local
 # Local data
 postgres_data
 redis_data
+
+# Playwright auth state (contains session cookies)
+apps/web/e2e/.auth/user.json

@@ -61,7 +61,7 @@ class CalendarSpreadStrategy(StrategyDefinition):
 
         entry_value_per_unit = (long_quote.mid_price - short_quote.mid_price) * 100.0
         if entry_value_per_unit >= 0:
-            capital = max(entry_value_per_unit, 1.0)
+            capital = max(entry_value_per_unit, 50.0)
             max_loss: float | None = entry_value_per_unit
         else:
             capital = naked_call_margin(bar.close_price, short_near.strike_price, short_quote.mid_price)

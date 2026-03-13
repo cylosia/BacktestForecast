@@ -83,6 +83,8 @@ export function validateBacktestForm(values: BacktestFormValues): {
     errors.symbol = "Symbol is required.";
   } else if (normalizedSymbol.length > 16) {
     errors.symbol = "Symbol must be 16 characters or fewer.";
+  } else if (!/^[A-Z0-9./^]{1,16}$/.test(normalizedSymbol)) {
+    errors.symbol = "Symbol may only contain letters, digits, dots, slashes, or ^.";
   }
 
   if (!values.startDate) {

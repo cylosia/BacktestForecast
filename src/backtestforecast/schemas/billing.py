@@ -5,11 +5,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from backtestforecast.billing.entitlements import BillingInterval, PlanTier
+from backtestforecast.billing.entitlements import BillingInterval
+from backtestforecast.billing.entitlements import PlanTier as EntitlementPlanTier
+from backtestforecast.schemas.common import PlanTier
 
 
 class CreateCheckoutSessionRequest(BaseModel):
-    tier: Literal[PlanTier.PRO.value, PlanTier.PREMIUM.value]
+    tier: Literal[EntitlementPlanTier.PRO.value, EntitlementPlanTier.PREMIUM.value]
     billing_interval: BillingInterval = Field(default=BillingInterval.MONTHLY)
 
 
@@ -30,7 +32,7 @@ class PortalSessionResponse(BaseModel):
 
 
 class BillingStateResponse(BaseModel):
-    plan_tier: str
+    plan_tier: PlanTier
     subscription_status: str | None = None
     subscription_billing_interval: str | None = None
     subscription_current_period_end: datetime | None = None

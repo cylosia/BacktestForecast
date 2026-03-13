@@ -61,6 +61,11 @@ def make_quote(trade_date: date, mid: float) -> OptionQuoteRecord:
     return OptionQuoteRecord(trade_date=trade_date, bid_price=mid, ask_price=mid, participant_timestamp=None)
 
 
+def make_spread_quote(trade_date: date, bid: float, ask: float) -> OptionQuoteRecord:
+    """Quote with explicit bid/ask spread — mid_price = (bid + ask) / 2."""
+    return OptionQuoteRecord(trade_date=trade_date, bid_price=bid, ask_price=ask, participant_timestamp=None)
+
+
 def test_bull_call_debit_spread_realizes_expected_profit() -> None:
     engine = OptionsBacktestEngine()
     bars = [
@@ -380,3 +385,300 @@ def test_wheel_records_assignment_callaway_and_stock_exit() -> None:
     assert result.trades[2].exit_reason == "called_away"
     assert result.trades[2].exit_mid == 100.0, "shares called away at strike, not close"
     assert round(result.summary.total_net_pnl, 2) == -1400.0
+
+
+# ---------------------------------------------------------------------------
+# Financial correctness tests — verifiable P&L against hand-calculated values
+# ---------------------------------------------------------------------------
+
+
+class TestBullCallSpreadCorrectness:
+    """Verify exact P&L, commissions, and position sizing for a bull call debit spread.
+
+    Setup:
+        Long C100 (mid 4.00) / Short C105 (mid 1.50)
+        Debit per unit = 2.50 × 100 = $250
+        Width = $500, max_profit = $250, max_loss = $250
+        Account $10,000 @ 5% risk → 2 units
+        Commission $0.65/contract
+    """
+
+    def test_profit_scenario_with_commissions(self) -> None:
+        engine = OptionsBacktestEngine()
+        expiration = date(2025, 4, 5)
+        entry_date = date(2025, 4, 2)
+        bars = [
+            make_bar(date(2025, 4, 1), 99),
+            make_bar(entry_date, 100),
+            make_bar(date(2025, 4, 3), 102),
+            make_bar(date(2025, 4, 4), 106),
+            make_bar(expiration, 108),
+        ]
+        contracts = {
+            (entry_date, "call"): [
+                OptionContractRecord("C95", "call", expiration, 95, 100),
+                OptionContractRecord("C100", "call", expiration, 100, 100),
+                OptionContractRecord("C105", "call", expiration, 105, 100),
+            ]
+        }
+        quotes = {
+            ("C100", entry_date): make_spread_quote(entry_date, bid=3.80, ask=4.20),
+            ("C105", entry_date): make_spread_quote(entry_date, bid=1.30, ask=1.70),
+        }
+        commission = 0.65
+        result = engine.run(
+            BacktestConfig(
+                symbol="AAPL",
+                strategy_type="bull_call_debit_spread",
+                start_date=date(2025, 4, 1),
+                end_date=date(2025, 4, 3),
+                target_dte=30,
+                dte_tolerance_days=30,
+                max_holding_days=30,
+                account_size=10_000,
+                risk_per_trade_pct=5,
+                commission_per_contract=commission,
+                entry_rules=[],
+            ),
+            bars,
+            set(),
+            FakeGateway(contracts=contracts, quotes=quotes),
+        )
+
+        assert result.summary.trade_count == 1
+        trade = result.trades[0]
+
+        # risk_budget = $500, max_loss_per_unit = $250 → by_risk = 2
+        assert trade.quantity == 2
+
+        # At expiration: C100 intrinsic = 8.00, C105 intrinsic = 3.00
+        # exit_value_per_unit = (8 − 3) × 100 = 500
+        # gross = (500 − 250) × 2 = 500
+        assert round(trade.gross_pnl, 2) == 500.0
+
+        # 2 legs × 2 units × $0.65, charged at entry and exit
+        expected_comm = commission * 2 * 2 * 2  # 5.20
+        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
+
+        assert round(trade.net_pnl, 2) == round(500.0 - expected_comm, 2)
+        assert trade.detail_json["max_profit_per_unit"] == 250.0
+        assert trade.detail_json["actual_units"] == 2
+
+
+class TestIronCondorCorrectness:
+    """Verify iron condor P&L for range-bound and breakout scenarios.
+
+    Setup (shared):
+        Short C100 (3.00) / Long C105 (1.00) / Short P100 (3.00) / Long P95 (1.00)
+        Net credit per unit = (3+3−1−1) × 100 = $400
+        Wing width = $500, max_loss_per_unit = $100
+        Account $10,000 @ 2% risk → 2 units
+        Commission $0.65/contract
+    """
+
+    @staticmethod
+    def _build_fixtures(
+        exit_underlying: float,
+    ) -> tuple[list, dict, dict]:
+        entry_date = date(2025, 5, 2)
+        expiration = date(2025, 5, 5)
+        bars = [
+            make_bar(date(2025, 5, 1), 100),
+            make_bar(entry_date, 100),
+            make_bar(date(2025, 5, 3), 101),
+            make_bar(date(2025, 5, 4), 102),
+            make_bar(expiration, exit_underlying),
+        ]
+        contracts = {
+            (entry_date, "call"): [
+                OptionContractRecord("C95", "call", expiration, 95, 100),
+                OptionContractRecord("C100", "call", expiration, 100, 100),
+                OptionContractRecord("C105", "call", expiration, 105, 100),
+            ],
+            (entry_date, "put"): [
+                OptionContractRecord("P95", "put", expiration, 95, 100),
+                OptionContractRecord("P100", "put", expiration, 100, 100),
+                OptionContractRecord("P105", "put", expiration, 105, 100),
+            ],
+        }
+        quotes = {
+            ("C100", entry_date): make_quote(entry_date, 3.0),
+            ("C105", entry_date): make_quote(entry_date, 1.0),
+            ("P100", entry_date): make_quote(entry_date, 3.0),
+            ("P95", entry_date): make_quote(entry_date, 1.0),
+        }
+        return bars, contracts, quotes
+
+    def _run(self, exit_underlying: float, commission: float = 0.65):
+        bars, contracts, quotes = self._build_fixtures(exit_underlying)
+        engine = OptionsBacktestEngine()
+        return engine.run(
+            BacktestConfig(
+                symbol="SPY",
+                strategy_type="iron_condor",
+                start_date=date(2025, 5, 1),
+                end_date=date(2025, 5, 3),
+                target_dte=30,
+                dte_tolerance_days=30,
+                max_holding_days=30,
+                account_size=10_000,
+                risk_per_trade_pct=2,
+                commission_per_contract=commission,
+                entry_rules=[],
+            ),
+            bars,
+            set(),
+            FakeGateway(contracts=contracts, quotes=quotes),
+        )
+
+    def test_profit_when_range_bound(self) -> None:
+        """Underlying stays at 100 — all legs expire worthless, full credit kept."""
+        commission = 0.65
+        result = self._run(exit_underlying=100, commission=commission)
+
+        assert result.summary.trade_count == 1
+        trade = result.trades[0]
+
+        # risk_budget = $200, max_loss_per_unit = $100 → 2 units
+        assert trade.quantity == 2
+
+        # All intrinsics = 0 at expiration with underlying = 100
+        # gross = (0 − (−400)) × 2 = 800
+        assert round(trade.gross_pnl, 2) == 800.0
+
+        # 4 legs × 2 units × $0.65 × 2 (entry + exit) = $10.40
+        expected_comm = commission * 4 * 2 * 2
+        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
+
+        assert round(trade.net_pnl, 2) == round(800.0 - expected_comm, 2)
+        assert trade.net_pnl > 0
+
+        # Gross profit does not exceed wing_width × quantity
+        wing_width = 500
+        assert abs(trade.gross_pnl) <= wing_width * trade.quantity
+
+    def test_max_loss_when_market_breaks_out(self) -> None:
+        """Underlying surges to 110 — call side fully breached, max loss realised."""
+        commission = 0.65
+        result = self._run(exit_underlying=110, commission=commission)
+
+        assert result.summary.trade_count == 1
+        trade = result.trades[0]
+        assert trade.quantity == 2
+
+        # At 110: C100 intrinsic = 10, C105 = 5, puts = 0
+        # exit_value_per_unit = (−10 + 5) × 100 = −500
+        # gross = (−500 − (−400)) × 2 = −200
+        assert round(trade.gross_pnl, 2) == -200.0
+        assert trade.net_pnl < 0
+
+        # Max loss per unit ($100) × 2 units — gross loss exactly equals maximum
+        assert abs(trade.gross_pnl) == trade.detail_json["max_loss_total"]
+
+        # Gross loss bounded by wing width × quantity
+        wing_width_per_unit = 500
+        assert abs(trade.gross_pnl) <= wing_width_per_unit * trade.quantity
+
+        expected_comm = commission * 4 * 2 * 2
+        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
+        assert round(trade.net_pnl, 2) == round(-200.0 - expected_comm, 2)
+
+
+class TestCashSecuredPutCorrectness:
+    """Verify cash-secured put P&L for OTM expiration and ITM assignment loss.
+
+    Setup:
+        Short P100 (mid 2.00), underlying at 105 on entry
+        Credit = $200, cash required = strike × 100 = $10,000
+        Account $100,000 @ 10% risk → 1 unit
+        Commission $0.65/contract
+    """
+
+    COMMISSION = 0.65
+    STRIKE = 100.0
+    PREMIUM = 2.0
+    ENTRY_DATE = date(2025, 6, 2)
+    EXPIRATION = date(2025, 6, 5)
+
+    def _config(self) -> BacktestConfig:
+        return BacktestConfig(
+            symbol="TSLA",
+            strategy_type="cash_secured_put",
+            start_date=date(2025, 6, 1),
+            end_date=date(2025, 6, 3),
+            target_dte=30,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=100_000,
+            risk_per_trade_pct=10,
+            commission_per_contract=self.COMMISSION,
+            entry_rules=[],
+        )
+
+    def _gateway(self) -> FakeGateway:
+        return FakeGateway(
+            contracts={
+                (self.ENTRY_DATE, "put"): [
+                    OptionContractRecord("P95", "put", self.EXPIRATION, 95, 100),
+                    OptionContractRecord("P100", "put", self.EXPIRATION, 100, 100),
+                ]
+            },
+            quotes={
+                ("P100", self.ENTRY_DATE): make_quote(self.ENTRY_DATE, self.PREMIUM),
+            },
+        )
+
+    def test_otm_collects_full_premium(self) -> None:
+        """Underlying stays at 105 — put expires worthless, full premium is profit."""
+        bars = [
+            make_bar(date(2025, 6, 1), 105),
+            make_bar(self.ENTRY_DATE, 105),
+            make_bar(date(2025, 6, 3), 106),
+            make_bar(date(2025, 6, 4), 107),
+            make_bar(self.EXPIRATION, 105),
+        ]
+        engine = OptionsBacktestEngine()
+        result = engine.run(self._config(), bars, set(), self._gateway())
+
+        assert result.summary.trade_count == 1
+        trade = result.trades[0]
+        assert trade.quantity == 1
+
+        # cash_required = strike × 100 × quantity
+        assert trade.detail_json["capital_required_total"] == self.STRIKE * 100 * trade.quantity
+
+        # Full premium: gross = 2.00 × 100 = $200
+        premium_collected = self.PREMIUM * 100
+        assert round(trade.gross_pnl, 2) == premium_collected
+
+        # 1 leg × 1 unit × $0.65 × 2 (entry + exit) = $1.30
+        expected_comm = self.COMMISSION * 1 * 1 * 2
+        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
+        assert round(trade.net_pnl, 2) == round(premium_collected - expected_comm, 2)
+
+    def test_itm_realizes_assignment_loss(self) -> None:
+        """Underlying drops to 90 — put ITM, loss = (strike − spot) × 100 − premium."""
+        bars = [
+            make_bar(date(2025, 6, 1), 105),
+            make_bar(self.ENTRY_DATE, 105),
+            make_bar(date(2025, 6, 3), 100),
+            make_bar(date(2025, 6, 4), 95),
+            make_bar(self.EXPIRATION, 90),
+        ]
+        engine = OptionsBacktestEngine()
+        result = engine.run(self._config(), bars, set(), self._gateway())
+
+        assert result.summary.trade_count == 1
+        trade = result.trades[0]
+        assert trade.quantity == 1
+
+        # intrinsic = (100 − 90) × 100 = $1,000 loss on short put
+        # offset by premium = $200 → gross = −$800
+        intrinsic_loss = (self.STRIKE - 90) * 100
+        expected_gross = -(intrinsic_loss - self.PREMIUM * 100)  # -800
+        assert round(trade.gross_pnl, 2) == expected_gross
+
+        expected_comm = self.COMMISSION * 1 * 1 * 2
+        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
+        assert round(trade.net_pnl, 2) == round(expected_gross - expected_comm, 2)
+        assert trade.net_pnl < 0

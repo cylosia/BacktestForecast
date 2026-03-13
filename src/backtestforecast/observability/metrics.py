@@ -56,6 +56,23 @@ JOBS_STUCK_REDISPATCHED_TOTAL = Counter(
     ["model"],
 )
 
+DUPLICATE_NIGHTLY_RUNS_TOTAL = Counter(
+    "duplicate_nightly_runs_total",
+    "Nightly pipeline runs rejected as duplicates for an already-succeeded trade_date",
+)
+
+DUPLICATE_TASK_EXECUTION_TOTAL = Counter(
+    "duplicate_task_execution_total",
+    "Celery tasks that were no-ops because the task_id did not match the job's celery_task_id",
+    ["task_name"],
+)
+
+REDIS_RATE_LIMIT_FALLBACK_TOTAL = Counter(
+    "redis_rate_limit_fallback_total",
+    "Times rate-limiting fell back to allow-all due to Redis unavailability",
+    ["bucket"],
+)
+
 
 _RE_UUID = re.compile(
     r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"

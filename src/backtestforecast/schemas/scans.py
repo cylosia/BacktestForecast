@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from enum import Enum
 from typing import Any
 from uuid import UUID
 
@@ -10,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from backtestforecast.billing.entitlements import ScannerMode
 from backtestforecast.config import get_settings
+from backtestforecast.schemas.common import JobStatus, PlanTier
 from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
@@ -21,12 +21,7 @@ from backtestforecast.schemas.backtests import (
 )
 
 
-class ScannerJobStatus(str, Enum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+ScannerJobStatus = JobStatus
 
 
 class RuleSetDefinition(BaseModel):
@@ -171,7 +166,7 @@ class ScannerJobResponse(BaseModel):
     name: str | None
     status: ScannerJobStatus
     mode: ScannerMode
-    plan_tier_snapshot: str
+    plan_tier_snapshot: PlanTier
     job_kind: str
     candidate_count: int
     evaluated_candidate_count: int

@@ -3,7 +3,7 @@ export function ScoreBar({ score, max }: { score: number; max: number }) {
   return (
     <div
       className="h-2 w-full overflow-hidden rounded-full bg-muted"
-      role="meter"
+      role="progressbar"
       aria-label={`Score ${score} of ${max}`}
       aria-valuenow={score}
       aria-valuemin={0}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -7,6 +8,8 @@ from uuid import UUID
 
 import pytest
 
+from apps.api.app.dependencies import token_verifier
+from backtestforecast.auth.verification import AuthenticatedPrincipal
 from backtestforecast.backtests.types import (
     BacktestExecutionResult,
     BacktestSummary,
@@ -949,3 +952,111 @@ def test_daily_picks_history_empty(client, auth_headers, db_session):
     resp = client.get("/v1/daily-picks/history", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["items"] == []
+
+
+# ===========================================================================
+# 15. Cross-user data isolation
+# ===========================================================================
+
+_USER_B_CLERK_ID = "clerk_other_user"
+_USER_B_EMAIL = "other@example.com"
+
+
+@contextmanager
+def _as_user(clerk_id: str, email: str):
+    """Temporarily switch the authenticated user returned by token verification."""
+    original = token_verifier.verify_bearer_token
+
+    def _verify(_token: str) -> AuthenticatedPrincipal:
+        return AuthenticatedPrincipal(
+            clerk_user_id=clerk_id,
+            session_id=f"sess_{clerk_id}",
+            email=email,
+            claims={"sub": clerk_id, "email": email},
+        )
+
+    token_verifier.verify_bearer_token = _verify
+    try:
+        yield
+    finally:
+        token_verifier.verify_bearer_token = original
+
+
+def test_backtest_not_visible_to_other_user(client, auth_headers, immediate_backtest_execution):
+    """User B must not see User A's backtests."""
+    created = _create_backtest(client, auth_headers)
+    backtest_id = created["id"]
+
+    with _as_user(_USER_B_CLERK_ID, _USER_B_EMAIL):
+        client.get("/v1/me", headers=auth_headers)
+        resp = client.get(f"/v1/backtests/{backtest_id}", headers=auth_headers)
+        assert resp.status_code == 404
+
+
+def test_template_not_visible_to_other_user(client, auth_headers):
+    """User B must not read, update, or delete User A's templates."""
+    created = client.post("/v1/templates", json=_template_payload(), headers=auth_headers)
+    assert created.status_code == 201
+    tid = created.json()["id"]
+
+    with _as_user(_USER_B_CLERK_ID, _USER_B_EMAIL):
+        client.get("/v1/me", headers=auth_headers)
+
+        assert client.get(f"/v1/templates/{tid}", headers=auth_headers).status_code == 404
+        assert client.patch(f"/v1/templates/{tid}", json={"name": "Hijack"}, headers=auth_headers).status_code == 404
+        assert client.delete(f"/v1/templates/{tid}", headers=auth_headers).status_code == 404
+
+    # Verify User A still owns the template and it's unchanged
+    detail = client.get(f"/v1/templates/{tid}", headers=auth_headers)
+    assert detail.status_code == 200
+    assert detail.json()["name"] == "Test template"
+
+
+def test_scan_not_visible_to_other_user(client, auth_headers, db_session, immediate_scan_execution):
+    """User B must not see User A's scanner jobs."""
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    scan_payload = {
+        "name": "Isolation scan",
+        "mode": "basic",
+        "symbols": ["AAPL"],
+        "strategy_types": ["long_call"],
+        "rule_sets": [
+            {"name": "RSI", "entry_rules": [{"type": "rsi", "operator": "lte", "threshold": "40", "period": 14}]}
+        ],
+        "start_date": "2024-01-02",
+        "end_date": "2024-03-29",
+        "target_dte": 30,
+        "dte_tolerance_days": 5,
+        "max_holding_days": 10,
+        "account_size": "10000",
+        "risk_per_trade_pct": "5",
+        "commission_per_contract": "1",
+    }
+    created = client.post("/v1/scans", json=scan_payload, headers=auth_headers)
+    assert created.status_code == 202
+    job_id = created.json()["id"]
+
+    with _as_user(_USER_B_CLERK_ID, _USER_B_EMAIL):
+        client.get("/v1/me", headers=auth_headers)
+        resp = client.get(f"/v1/scans/{job_id}", headers=auth_headers)
+        assert resp.status_code == 404
+
+
+def test_export_not_visible_to_other_user(
+    client, auth_headers, db_session, immediate_backtest_execution, immediate_export_execution
+):
+    """User B must not see User A's export status."""
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    run_id = _create_backtest(client, auth_headers)["id"]
+    export = client.post("/v1/exports", json={"run_id": run_id, "format": "csv"}, headers=auth_headers)
+    assert export.status_code == 202
+    export_id = export.json()["id"]
+
+    with _as_user(_USER_B_CLERK_ID, _USER_B_EMAIL):
+        client.get("/v1/me", headers=auth_headers)
+        resp = client.get(f"/v1/exports/{export_id}/status", headers=auth_headers)
+        assert resp.status_code == 404

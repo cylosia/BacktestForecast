@@ -54,7 +54,8 @@ async function parseApiError(response: Response): Promise<never> {
 
 export async function apiRequest<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DEFAULT_TIMEOUT_MS);
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
@@ -99,7 +100,7 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
       throw new ApiError("Received an invalid response from the server.", response.status);
     }
   } catch (err) {
-    if (err instanceof DOMException && err.name === "TimeoutError") {
+    if (timedOut || (err instanceof DOMException && err.name === "TimeoutError")) {
       throw new ApiError("The request timed out.", 0, "timeout");
     }
     if (err instanceof DOMException && err.name === "AbortError") {
@@ -113,7 +114,8 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
 
 export async function apiDownload(path: string, token: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DEFAULT_TIMEOUT_MS);
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
@@ -150,7 +152,7 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
 
     return response;
   } catch (err) {
-    if (err instanceof DOMException && err.name === "TimeoutError") {
+    if (timedOut || (err instanceof DOMException && err.name === "TimeoutError")) {
       throw new ApiError("The request timed out.", 0, "timeout");
     }
     if (err instanceof DOMException && err.name === "AbortError") {

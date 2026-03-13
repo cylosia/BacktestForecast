@@ -91,17 +91,6 @@ const ADVANCED_STRATEGY_GROUPS: Array<{
     strategies: [{ value: "wheel_strategy", label: "Wheel Strategy" }],
   },
   {
-    category: "Custom",
-    strategies: [
-      { value: "custom_2_leg", label: "Custom 2-Leg" },
-      { value: "custom_3_leg", label: "Custom 3-Leg" },
-      { value: "custom_4_leg", label: "Custom 4-Leg" },
-      { value: "custom_5_leg", label: "Custom 5-Leg" },
-      { value: "custom_6_leg", label: "Custom 6-Leg" },
-      { value: "custom_8_leg", label: "Custom 8-Leg" },
-    ],
-  },
-  {
     category: "Synthetic/Conversion",
     strategies: [
       { value: "synthetic_put", label: "Synthetic Put" },
@@ -184,27 +173,32 @@ export function ScannerForm({
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
 
+    const errors: string[] = [];
+
     if (symbols.length === 0) {
-      setStatus("error");
-      setErrorMessage("At least one symbol is required.");
-      return;
+      errors.push("At least one symbol is required.");
     }
     if (selectedStrategies.size === 0) {
-      setStatus("error");
-      setErrorMessage("At least one strategy type is required.");
-      return;
+      errors.push("At least one strategy type is required.");
+    }
+
+    const maxSymbols = mode === "advanced" ? 25 : 10;
+    const maxStrategies = mode === "advanced" ? 14 : 6;
+    if (symbols.length > maxSymbols) {
+      errors.push(`${mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxSymbols} symbols.`);
+    }
+    if (selectedStrategies.size > maxStrategies) {
+      errors.push(`${mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxStrategies} strategies.`);
     }
 
     if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
-      setStatus("error");
-      setErrorMessage("Start date must be before end date.");
-      return;
+      errors.push("Start date must be before end date.");
     }
 
     const numericChecks = [
-      { label: "Target DTE", value: Number(targetDte), min: 1, max: 365 },
+      { label: "Target DTE", value: Number(targetDte), min: 7, max: 365 },
       { label: "DTE tolerance", value: Number(dteTolerance), min: 0, max: 60 },
-      { label: "Max holding days", value: Number(maxHolding), min: 1, max: 365 },
+      { label: "Max holding days", value: Number(maxHolding), min: 1, max: 120 },
       { label: "Account size", value: Number(accountSize), min: 100 },
       { label: "Risk %", value: Number(riskPct), min: 0.1, max: 100 },
       { label: "Commission", value: Number(commission), min: 0 },
@@ -212,10 +206,14 @@ export function ScannerForm({
     ];
     for (const check of numericChecks) {
       if (!Number.isFinite(check.value) || check.value < check.min || (check.max !== undefined && check.value > check.max)) {
-        setStatus("error");
-        setErrorMessage(`${check.label} must be a number between ${check.min} and ${check.max ?? "∞"}.`);
-        return;
+        errors.push(`${check.label} must be a number between ${check.min} and ${check.max ?? "∞"}.`);
       }
+    }
+
+    if (errors.length > 0) {
+      setStatus("error");
+      setErrorMessage(errors.join(" "));
+      return;
     }
 
     const entryRules: CreateScannerJobRequest["rule_sets"][0]["entry_rules"] = [];

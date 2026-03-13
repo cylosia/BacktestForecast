@@ -1,6 +1,7 @@
 from celery import Celery
 from celery.schedules import crontab
 from kombu import Queue
+from redbeat import RedBeatSchedulerEntry  # noqa: F401 — registers the custom scheduler
 
 from backtestforecast.config import get_settings
 from backtestforecast.observability import configure_logging
@@ -29,7 +30,12 @@ celery_app.conf.update(
     task_time_limit=3900,
     result_expires=86400,
     worker_max_tasks_per_child=200,
+    worker_max_memory_per_child=500_000,
     broker_connection_retry_on_startup=True,
+    redbeat_redis_url=settings.redis_url,
+    # visibility_timeout must exceed the longest task's hard time_limit
+    # (currently pipeline.nightly_scan at 1860s) to prevent re-delivery
+    # of tasks that are still running.  4200s = 70 minutes.
     broker_transport_options={"visibility_timeout": 4200},
 )
 

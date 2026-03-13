@@ -1,0 +1,87 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/backtestforecast/api:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file: .env.prod
+    environment:
+      REQUEST_MAX_BODY_BYTES: ${REQUEST_MAX_BODY_BYTES:-1048576}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  worker:
+    image: ${WORKER_IMAGE:-ghcr.io/backtestforecast/worker:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env.prod
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+      resources:
+        limits:
+          memory: 1g
+
+  beat:
+    image: ${WORKER_IMAGE:-ghcr.io/backtestforecast/worker:latest}
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file: .env.prod
+    command: >-
+      celery -A apps.worker.app.celery_app.celery_app beat
+      --scheduler=redbeat.RedBeatScheduler
+      --loglevel=INFO
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/backtestforecast/web:latest}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -33,23 +33,42 @@ export function ExportActions({
   const [message, setMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const mountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      abortRef.current?.abort();
     };
   }, []);
 
   const pollAndDownload = useCallback(
-    async (token: string, exportJobId: string, fileName: string) => {
+    async (token: string, exportJobId: string, fileName: string, signal: AbortSignal) => {
+      let consecutiveErrors = 0;
       for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-        if (!mountedRef.current) return;
-        const result = await fetchExportStatus(token, exportJobId);
-        if (!mountedRef.current) return;
+        if (signal.aborted || !mountedRef.current) return;
+
+        let result;
+        try {
+          result = await fetchExportStatus(token, exportJobId);
+          consecutiveErrors = 0;
+        } catch (err) {
+          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+            throw err;
+          }
+          consecutiveErrors++;
+          if (consecutiveErrors >= 3) {
+            throw new Error("Export status check failed repeatedly. Please try again.");
+          }
+          continue;
+        }
+
+        if (signal.aborted || !mountedRef.current) return;
 
         if (result.status === "succeeded") {
           const response = await downloadExport(token, exportJobId);
+          if (signal.aborted) return;
           const blob = await response.blob();
           const blobUrl = window.URL.createObjectURL(blob);
           const anchor = document.createElement("a");
@@ -70,6 +89,10 @@ export function ExportActions({
   );
 
   async function handleExport(format: ExportFormat) {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setBusyFormat(format);
     setMessage(null);
     setErrorCode(undefined);
@@ -86,9 +109,11 @@ export function ExportActions({
         idempotency_key: `${runId}:${format}`,
       });
 
+      if (controller.signal.aborted) return;
+
       if (exportJob.status === "succeeded") {
-        // Already complete (idempotent hit or instant generation)
         const response = await downloadExport(token, exportJob.id);
+        if (controller.signal.aborted) return;
         const blob = await response.blob();
         const blobUrl = window.URL.createObjectURL(blob);
         const anchor = document.createElement("a");
@@ -97,10 +122,10 @@ export function ExportActions({
         anchor.click();
         window.URL.revokeObjectURL(blobUrl);
       } else {
-        // Queued or running — poll until ready
-        await pollAndDownload(token, exportJob.id, exportJob.file_name);
+        await pollAndDownload(token, exportJob.id, exportJob.file_name, controller.signal);
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       const nextMessage =
         error instanceof ApiError
           ? error.message

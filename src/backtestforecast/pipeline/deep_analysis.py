@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
+from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES, STRATEGY_REGISTRY
 from backtestforecast.errors import ConfigurationError, DataUnavailableError, NotFoundError
 from backtestforecast.schemas.json_shapes import (
     _REGIME_REQUIRED_KEYS,
@@ -202,6 +202,7 @@ class SymbolDeepAnalysisService:
         started_at = time.monotonic()
         analysis.status = "running"
         analysis.stage = "regime"
+        analysis.started_at = datetime.now(UTC)
         self.session.commit()
 
         try:
@@ -497,19 +498,14 @@ class SymbolDeepAnalysisService:
                     if f:
                         forecast = f
                         median_return = f.get("expected_return_median_pct", 0)
-                        _BEARISH_STRATS = {
-                            "long_put", "bear_put_debit_spread",
-                            "bear_call_credit_spread", "synthetic_put",
-                            "ratio_put_backspread",
-                        }
                         forecast_supports = float(median_return) > 0
-                        if cell.strategy_type in _BEARISH_STRATS:
+                        if cell.strategy_type in BEARISH_STRATEGIES:
                             forecast_supports = float(median_return) < 0
                         if roi > 0 and float(median_return) != 0 and forecast_supports:
                             score *= 1.2
                         positive_rate = f.get("positive_outcome_rate_pct", 50)
                         effective_rate = float(positive_rate)
-                        if cell.strategy_type in _BEARISH_STRATS:
+                        if cell.strategy_type in BEARISH_STRATEGIES:
                             effective_rate = 100.0 - effective_rate
                         if effective_rate > 60:
                             score *= 1.0 + (effective_rate - 60) / 200.0
@@ -528,7 +524,7 @@ class SymbolDeepAnalysisService:
                     target_dte=cell.target_dte,
                     config_snapshot=cell.config_snapshot,
                     summary=full,
-                    trades=full.get("trades", [])[:25],
+                    trades=full.get("trades", [])[:50],
                     equity_curve=full.get("equity_curve", []),
                     forecast=forecast,
                     score=score,

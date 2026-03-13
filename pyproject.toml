@@ -24,7 +24,8 @@ dependencies = [
   "stripe>=11.0,<12.0",
   "reportlab>=4.2,<5.0",
   "prometheus-client>=0.21,<1.0",
-  "sse-starlette>=2.0,<3.0"
+  "sse-starlette>=2.0,<3.0",
+  "celery-redbeat>=2.2,<3.0"
 ]
 
 [project.optional-dependencies]
@@ -50,6 +51,11 @@ select = ["E", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 "alembic/versions/*" = ["E501"]
+
+[tool.pytest.ini_options]
+markers = [
+    "smoke: full-stack smoke tests (run with pytest -m smoke)",
+]
 
 [tool.mypy]
 python_version = "3.12"

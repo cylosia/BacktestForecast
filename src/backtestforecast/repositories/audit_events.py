@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -27,6 +29,14 @@ class AuditEventRepository:
             nested.rollback()
             AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
             return event, False
+
+    def add_always(self, event: AuditEvent) -> AuditEvent:
+        """Insert an audit event unconditionally (no dedup). Appends a UUID suffix to subject_id."""
+        if event.subject_id is not None:
+            event.subject_id = f"{event.subject_id}:{uuid4()}"
+        self.session.add(event)
+        self.session.flush()
+        return event
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:
         stmt = select(AuditEvent.id).where(

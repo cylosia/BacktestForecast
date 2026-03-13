@@ -65,6 +65,7 @@ class BacktestRunRepository:
         return int(self.session.scalar(stmt) or 0)
 
     def get_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRun | None:
+        """Full load including trades + equity curve (detail pages, exports)."""
         stmt = (
             select(BacktestRun)
             .where(BacktestRun.id == run_id, BacktestRun.user_id == user_id)
@@ -75,10 +76,14 @@ class BacktestRunRepository:
         )
         return self.session.scalar(stmt)
 
-    def get_status_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRun | None:
-        """Lightweight query that skips eager-loading trades/equity for polling."""
+    def get_lightweight_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRun | None:
+        """Ownership check + scalar columns only; no collection eager-loading."""
         stmt = select(BacktestRun).where(BacktestRun.id == run_id, BacktestRun.user_id == user_id)
         return self.session.scalar(stmt)
+
+    def get_status_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRun | None:
+        """Alias for lightweight lookup (polling endpoints)."""
+        return self.get_lightweight_for_user(run_id, user_id)
 
     def get_many_for_user(self, run_ids: list[UUID], user_id: UUID) -> list[BacktestRun]:
         if not run_ids:

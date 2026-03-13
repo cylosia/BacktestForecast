@@ -56,7 +56,9 @@ class ClerkTokenVerifier:
             raise AuthenticationError("Invalid Clerk session token.") from exc
 
         azp = claims.get("azp")
-        if azp and self.settings.clerk_authorized_parties:
+        if self.settings.clerk_authorized_parties:
+            if not azp:
+                raise AuthenticationError("Token is missing the authorized party (azp) claim.")
             if azp not in self.settings.clerk_authorized_parties:
                 raise AuthenticationError("Token authorized party is not allowed.")
 

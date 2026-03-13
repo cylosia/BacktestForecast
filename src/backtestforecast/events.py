@@ -79,4 +79,55 @@ def publish_job_status(
             if attempt == 0:
                 _reset_redis()
                 continue
-            logger.warning("events.publish_failed", channel=channel, status=status, exc_info=True)
+            logger.error(
+                "events.publish_failed",
+                channel=channel,
+                status=status,
+                job_type=job_type,
+                job_id=str(job_id),
+                exc_info=True,
+            )
+            _fallback_persist_status(job_type, job_id, status)
+
+
+_JOB_TYPE_MODEL_MAP: dict[str, str] = {
+    "backtest": "BacktestRun",
+    "export": "ExportJob",
+    "scan": "ScannerJob",
+    "analysis": "SymbolAnalysis",
+}
+
+
+def _fallback_persist_status(job_type: str, job_id: UUID, status: str) -> None:
+    """Write status directly to the job row so polling consumers can pick it up."""
+    try:
+        from backtestforecast import models
+        from backtestforecast.db.session import SessionLocal
+
+        model_name = _JOB_TYPE_MODEL_MAP.get(job_type)
+        if model_name is None:
+            logger.error("events.fallback_unknown_job_type", job_type=job_type)
+            return
+
+        model_cls = getattr(models, model_name, None)
+        if model_cls is None:
+            return
+
+        with SessionLocal() as session:
+            obj = session.get(model_cls, job_id)
+            if obj is not None and hasattr(obj, "status"):
+                obj.status = status
+                session.commit()
+                logger.info(
+                    "events.fallback_persisted",
+                    job_type=job_type,
+                    job_id=str(job_id),
+                    status=status,
+                )
+    except Exception:
+        logger.error(
+            "events.fallback_persist_failed",
+            job_type=job_type,
+            job_id=str(job_id),
+            exc_info=True,
+        )

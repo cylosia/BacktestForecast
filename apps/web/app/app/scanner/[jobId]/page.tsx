@@ -34,12 +34,13 @@ export default async function ScannerDetailPage({
     const isComplete = isTerminalStatus(job.status);
 
     let recommendations: ScannerRecommendationResponse[] = [];
+    let recommendationsError: string | null = null;
     if (job.status === "succeeded") {
       try {
         const data = await getScannerRecommendations(jobId);
         recommendations = data.items;
-      } catch {
-        recommendations = [];
+      } catch (err) {
+        recommendationsError = err instanceof Error ? err.message : "Failed to load recommendations.";
       }
     }
 
@@ -157,7 +158,13 @@ export default async function ScannerDetailPage({
           </Card>
         ) : null}
 
-        {job.status === "succeeded" ? (
+        {job.status === "succeeded" && recommendationsError ? (
+          <Card>
+            <CardContent className="p-6 text-center text-destructive">
+              {recommendationsError}
+            </CardContent>
+          </Card>
+        ) : job.status === "succeeded" ? (
           <RecommendationList items={recommendations} />
         ) : null}
       </div>

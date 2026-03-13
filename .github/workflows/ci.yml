@@ -34,11 +34,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev]'
 
-      - name: Audit Python dependencies
-        run: |
-          python -m pip install pip-audit
-          python -m pip_audit --strict --desc
-
       - name: Lint Python (ruff)
         run: python -m ruff check .
 
@@ -157,25 +152,150 @@ jobs:
       - name: Worker task registration smoke check
         run: python scripts/check_worker_tasks.py
 
+  dependency-audit:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src:.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Audit Python dependencies (pip-audit)
+        run: |
+          python -m pip install pip-audit
+          python -m pip_audit --strict --desc
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit JS dependencies (pnpm audit)
+        run: pnpm audit --prod
+
+  e2e-tests:
+    if: ${{ secrets.CLERK_TESTING_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+      CLERK_TESTING_TOKEN: ${{ secrets.CLERK_TESTING_TOKEN }}
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_dummy' }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_dummy' }}
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
+      NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: /app/dashboard
+      NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: /app/dashboard
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @backtestforecast/web exec playwright install --with-deps chromium
+
+      - name: Build web app
+        run: pnpm --filter @backtestforecast/web build
+
+      - name: Run E2E tests
+        run: pnpm --filter @backtestforecast/web test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
+
+  secret-scanning:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   container-smoke:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build API image
-        run: docker build -f apps/api/Dockerfile -t backtestforecast-api:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          tags: backtestforecast-api:ci
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build Worker image
-        run: docker build -f apps/worker/Dockerfile -t backtestforecast-worker:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          tags: backtestforecast-worker:ci
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build Web image
-        run: >
-          docker build -f apps/web/Dockerfile
-          --build-arg NEXT_PUBLIC_APP_URL=http://localhost:3000
-          --build-arg NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-          --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_dummy
-          --build-arg NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
-          --build-arg NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app/dashboard
-          --build-arg NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app/dashboard
-          -t backtestforecast-web:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          tags: backtestforecast-web:ci
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_APP_URL=http://localhost:3000
+            NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_dummy
+            NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+            NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app/dashboard
+            NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app/dashboard

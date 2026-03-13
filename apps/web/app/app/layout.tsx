@@ -2,9 +2,22 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { Activity, BarChart3, Bookmark, CreditCard, History, Microscope, PlusCircle, ScanSearch, TrendingUp, Zap } from "lucide-react";
 import { AppNavLink } from "@/components/app-nav-link";
+import { MobileNav, type NavItem } from "@/components/mobile-nav";
 import { Badge } from "@/components/ui/badge";
 import { getCurrentUser } from "@/lib/api/server";
 import { planBadgeVariant, planLabel } from "@/lib/plan";
+
+const NAV_ITEMS: NavItem[] = [
+  { href: "/app/dashboard", icon: BarChart3, label: "Dashboard" },
+  { href: "/app/backtests", icon: History, label: "History" },
+  { href: "/app/backtests/new", icon: PlusCircle, label: "New backtest" },
+  { href: "/app/templates", icon: Bookmark, label: "Templates" },
+  { href: "/app/daily-picks", icon: Zap, label: "Daily Picks" },
+  { href: "/app/analysis", icon: Microscope, label: "Deep Analysis" },
+  { href: "/app/scanner", icon: ScanSearch, label: "Scanner" },
+  { href: "/app/forecasts", icon: TrendingUp, label: "Forecasts" },
+  { href: "/app/settings/billing", icon: CreditCard, label: "Billing" },
+];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   let planTier = "free";
@@ -36,36 +49,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
 
           <div className="hidden items-center gap-2 md:flex">
-            <AppNavLink href="/app/dashboard" icon={BarChart3}>
-              Dashboard
-            </AppNavLink>
-            <AppNavLink href="/app/backtests" icon={History}>
-              History
-            </AppNavLink>
-            <AppNavLink href="/app/backtests/new" icon={PlusCircle}>
-              New backtest
-            </AppNavLink>
-            <AppNavLink href="/app/templates" icon={Bookmark}>
-              Templates
-            </AppNavLink>
-            <AppNavLink href="/app/daily-picks" icon={Zap}>
-              Daily Picks
-            </AppNavLink>
-            <AppNavLink href="/app/analysis" icon={Microscope}>
-              Deep Analysis
-            </AppNavLink>
-            <AppNavLink href="/app/scanner" icon={ScanSearch}>
-              Scanner
-            </AppNavLink>
-            <AppNavLink href="/app/forecasts" icon={TrendingUp}>
-              Forecasts
-            </AppNavLink>
-            <AppNavLink href="/app/settings/billing" icon={CreditCard}>
-              Billing
-            </AppNavLink>
+            {NAV_ITEMS.map((item) => (
+              <AppNavLink key={item.href} href={item.href} icon={item.icon}>
+                {item.label}
+              </AppNavLink>
+            ))}
           </div>
 
-          <UserButton showName />
+          <div className="flex items-center gap-2">
+            <UserButton showName />
+            <MobileNav items={NAV_ITEMS} />
+          </div>
         </div>
       </header>
 

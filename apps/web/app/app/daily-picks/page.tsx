@@ -21,9 +21,16 @@ function regimeColor(regime: string): string {
   }
 }
 
+function asNumericRecord(value: unknown): Record<string, number> {
+  if (value != null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, number>;
+  }
+  return {};
+}
+
 function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number }) {
-  const summary = pick.summary as Record<string, number>;
-  const forecast = (pick.forecast ?? {}) as Record<string, number>;
+  const summary = asNumericRecord(pick.summary);
+  const forecast = asNumericRecord(pick.forecast);
 
   return (
     <Card>
@@ -118,7 +125,16 @@ export default async function DailyPicksPage() {
   let data: DailyPicksResponse;
   try {
     data = await getDailyPicks();
-  } catch {
+  } catch (err) {
+    const isApiError = err != null && typeof err === "object" && "status" in err;
+    const status = isApiError ? (err as { status: number }).status : 0;
+    const message =
+      status === 404
+        ? "No pipeline data available yet. The nightly scan runs at 4:00 AM UTC."
+        : err instanceof Error
+          ? err.message
+          : "Daily picks could not be loaded. Please try again later.";
+
     return (
       <div className="space-y-6">
         <div>
@@ -126,8 +142,8 @@ export default async function DailyPicksPage() {
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">Today&apos;s top trades</h1>
         </div>
         <Card>
-          <CardContent className="p-6 text-center text-muted-foreground">
-            Daily picks could not be loaded. The nightly pipeline may not have run yet.
+          <CardContent className="p-6 text-center text-destructive">
+            {message}
           </CardContent>
         </Card>
       </div>

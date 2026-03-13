@@ -71,7 +71,25 @@ def get_export_status(
     return ExportService(db).get_export_status(user, export_job_id)
 
 
-@router.get("/{export_job_id}")
+@router.get(
+    "/{export_job_id}",
+    responses={
+        200: {
+            "description": "Exported file streamed as an attachment.",
+            "content": {
+                "text/csv": {"schema": {"type": "string", "format": "binary"}},
+                "application/pdf": {"schema": {"type": "string", "format": "binary"}},
+                "application/octet-stream": {"schema": {"type": "string", "format": "binary"}},
+            },
+            "headers": {
+                "Content-Disposition": {
+                    "schema": {"type": "string"},
+                    "description": 'attachment; filename="<safe_name>"',
+                },
+            },
+        },
+    },
+)
 def download_export(
     export_job_id: UUID,
     user: User = Depends(get_current_user),

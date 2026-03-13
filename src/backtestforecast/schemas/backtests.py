@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backtestforecast.config import get_settings
+from backtestforecast.schemas.common import JobStatus, PlanTier
 
 SYMBOL_ALLOWED_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
 
@@ -77,12 +78,7 @@ class SupportResistanceMode(str, Enum):
     BREAKDOWN_BELOW_SUPPORT = "breakdown_below_support"
 
 
-class RunStatus(str, Enum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+RunStatus = JobStatus
 
 
 class RsiRule(BaseModel):
@@ -442,7 +438,7 @@ class CreateBacktestRunRequest(BaseModel):
 
 
 class FeatureAccessResponse(BaseModel):
-    plan_tier: str
+    plan_tier: PlanTier
     monthly_backtest_quota: int | None = None
     history_days: int | None = None
     history_item_limit: int
@@ -458,10 +454,19 @@ class UsageSummaryResponse(BaseModel):
 
 
 class CurrentUserResponse(BaseModel):
+    """Response schema for the authenticated user endpoint.
+
+    ``features`` and ``usage`` are computed fields that do not correspond to
+    database columns on the User model.  Callers must construct this response
+    explicitly (see ``BacktestService.to_current_user_response``) rather than
+    passing an ORM User object directly — ``from_attributes`` is enabled only
+    for the flat scalar fields inherited from the User row.
+    """
+
     id: UUID
     clerk_user_id: str
     email: str | None
-    plan_tier: str
+    plan_tier: PlanTier
     subscription_status: str | None = None
     subscription_billing_interval: str | None = None
     subscription_current_period_end: datetime | None = None

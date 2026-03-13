@@ -6,7 +6,7 @@ function requireValue(
   name?: string,
 ): string {
   const result = value && value.trim().length > 0 ? value : fallback;
-  if (!isDev && !result && name) {
+  if (!result && name) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return result;

@@ -115,7 +115,7 @@ def offset_strike(strikes: list[float], base_strike: float, steps: int) -> float
 
 def require_contract_for_strike(contracts: Iterable[OptionContractRecord], strike: float) -> OptionContractRecord:
     for contract in contracts:
-        if contract.strike_price == strike:
+        if abs(contract.strike_price - strike) < 0.005:
             return contract
     raise DataUnavailableError(f"No contract was available for strike {strike}.")
 

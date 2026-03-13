@@ -55,6 +55,40 @@ from backtestforecast.backtests.strategies.volatility import (
     LONG_STRANGLE_STRATEGY,
 )
 
+BULLISH_STRATEGIES: frozenset[str] = frozenset({
+    "long_call",
+    "covered_call",
+    "cash_secured_put",
+    "bull_call_debit_spread",
+    "bull_put_credit_spread",
+    "wheel_strategy",
+    "poor_mans_covered_call",
+    "collar",
+    "diagonal_spread",
+})
+
+BEARISH_STRATEGIES: frozenset[str] = frozenset({
+    "long_put",
+    "bear_put_debit_spread",
+    "bear_call_credit_spread",
+    "synthetic_put",
+    "ratio_put_backspread",
+})
+
+NEUTRAL_STRATEGIES: frozenset[str] = frozenset({
+    "iron_condor",
+    "iron_butterfly",
+    "short_straddle",
+    "short_strangle",
+    "long_straddle",
+    "long_strangle",
+    "butterfly",
+    "calendar_spread",
+    "double_diagonal",
+    "covered_strangle",
+    "jade_lizard",
+})
+
 STRATEGY_REGISTRY: dict[str, StrategyDefinition] = {
     LONG_CALL_STRATEGY.strategy_type: LONG_CALL_STRATEGY,
     LONG_PUT_STRATEGY.strategy_type: LONG_PUT_STRATEGY,

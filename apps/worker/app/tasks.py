@@ -13,6 +13,7 @@ from backtestforecast.events import publish_job_status
 from backtestforecast.observability.metrics import (
     BACKTEST_RUNS_TOTAL,
     CELERY_TASKS_TOTAL,
+    DUPLICATE_TASK_EXECUTION_TOTAL,
 )
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.exports import ExportService
@@ -177,6 +178,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
     with SessionLocal() as session:
         from backtestforecast.models import BacktestRun, User
         if not _validate_task_ownership(session, BacktestRun, UUID(run_id), self.request.id):
+            DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="backtests.run").inc()
             logger.info("backtests.run.duplicate_delivery", run_id=run_id, task_id=self.request.id)
             return {"status": "skipped", "run_id": run_id, "reason": "duplicate_delivery"}
         run_obj = session.get(BacktestRun, UUID(run_id))
@@ -289,6 +291,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
     with SessionLocal() as session:
         from backtestforecast.models import ExportJob as ExportJobModel, User
         if not _validate_task_ownership(session, ExportJobModel, UUID(export_job_id), self.request.id):
+            DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="exports.generate").inc()
             logger.info("exports.generate.duplicate_delivery", export_job_id=export_job_id, task_id=self.request.id)
             return {"status": "skipped", "export_job_id": export_job_id, "reason": "duplicate_delivery"}
         ej = session.get(ExportJobModel, UUID(export_job_id))
@@ -425,6 +428,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
         with SessionLocal() as session:
             from backtestforecast.models import SymbolAnalysis, User
             if not _validate_task_ownership(session, SymbolAnalysis, UUID(analysis_id), self.request.id):
+                DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="analysis.deep_symbol").inc()
                 logger.info("analysis.deep_symbol.duplicate_delivery", analysis_id=analysis_id, task_id=self.request.id)
                 return {"status": "skipped", "analysis_id": analysis_id, "reason": "duplicate_delivery"}
             sa_obj = session.get(SymbolAnalysis, UUID(analysis_id))
@@ -542,6 +546,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
     with SessionLocal() as session:
         from backtestforecast.models import ScannerJob as ScannerJobModel, User
         if not _validate_task_ownership(session, ScannerJobModel, UUID(job_id), self.request.id):
+            DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="scans.run_job").inc()
             logger.info("scans.run_job.duplicate_delivery", job_id=job_id, task_id=self.request.id)
             return {"status": "skipped", "job_id": job_id, "reason": "duplicate_delivery"}
         sj = session.get(ScannerJobModel, UUID(job_id))
@@ -643,23 +648,32 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
 
 @celery_app.task(name="scans.refresh_prioritized")
 def refresh_prioritized_scans() -> dict[str, int]:
+    from sqlalchemy import update as sa_update
+
+    from backtestforecast.models import ScannerJob
+
     dispatched = 0
     with SessionLocal() as session:
         service = ScanService(session)
         try:
             jobs = service.create_scheduled_refresh_jobs(limit=25)
+            job_ids = [job.id for job in jobs]
+            session.commit()
 
-            for job in jobs:
+            for job_id in job_ids:
                 try:
-                    result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
-                    job.celery_task_id = result.id
+                    result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job_id)})
+                    session.execute(
+                        sa_update(ScannerJob)
+                        .where(ScannerJob.id == job_id)
+                        .values(celery_task_id=result.id)
+                    )
                     session.commit()
                     dispatched += 1
                 except Exception:
-                    logger.exception("refresh.dispatch_failed", job_id=str(job.id))
+                    logger.exception("refresh.dispatch_failed", job_id=str(job_id))
                     session.rollback()
-                    from backtestforecast.models import ScannerJob
-                    job_obj = session.get(ScannerJob, job.id)
+                    job_obj = session.get(ScannerJob, job_id)
                     if job_obj is not None and job_obj.status == "queued":
                         job_obj.status = "failed"
                         job_obj.error_code = "enqueue_failed"
@@ -737,9 +751,15 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         for run_id in stale_run_ids:
             try:
                 result = celery_app.send_task("backtests.run", kwargs={"run_id": str(run_id)})
-                session.execute(
-                    update(BacktestRun).where(BacktestRun.id == run_id).values(celery_task_id=result.id)
+                rows = session.execute(
+                    update(BacktestRun)
+                    .where(BacktestRun.id == run_id, BacktestRun.celery_task_id.is_(None))
+                    .values(celery_task_id=result.id)
                 )
+                if rows.rowcount == 0:
+                    session.rollback()
+                    logger.info("reaper.already_dispatched", model="BacktestRun", id=str(run_id))
+                    continue
                 session.commit()
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="BacktestRun").inc()
             except Exception:
@@ -784,9 +804,15 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         for eid in stale_export_ids:
             try:
                 result = celery_app.send_task("exports.generate", kwargs={"export_job_id": str(eid)})
-                session.execute(
-                    update(ExportJob).where(ExportJob.id == eid).values(celery_task_id=result.id)
+                rows = session.execute(
+                    update(ExportJob)
+                    .where(ExportJob.id == eid, ExportJob.celery_task_id.is_(None))
+                    .values(celery_task_id=result.id)
                 )
+                if rows.rowcount == 0:
+                    session.rollback()
+                    logger.info("reaper.already_dispatched", model="ExportJob", id=str(eid))
+                    continue
                 session.commit()
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="ExportJob").inc()
             except Exception:
@@ -831,9 +857,15 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         for sid in stale_scan_ids:
             try:
                 result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(sid)})
-                session.execute(
-                    update(ScannerJob).where(ScannerJob.id == sid).values(celery_task_id=result.id)
+                rows = session.execute(
+                    update(ScannerJob)
+                    .where(ScannerJob.id == sid, ScannerJob.celery_task_id.is_(None))
+                    .values(celery_task_id=result.id)
                 )
+                if rows.rowcount == 0:
+                    session.rollback()
+                    logger.info("reaper.already_dispatched", model="ScannerJob", id=str(sid))
+                    continue
                 session.commit()
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="ScannerJob").inc()
             except Exception:
@@ -878,9 +910,15 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         for aid in stale_analysis_ids:
             try:
                 result = celery_app.send_task("analysis.deep_symbol", kwargs={"analysis_id": str(aid)})
-                session.execute(
-                    update(SymbolAnalysis).where(SymbolAnalysis.id == aid).values(celery_task_id=result.id)
+                rows = session.execute(
+                    update(SymbolAnalysis)
+                    .where(SymbolAnalysis.id == aid, SymbolAnalysis.celery_task_id.is_(None))
+                    .values(celery_task_id=result.id)
                 )
+                if rows.rowcount == 0:
+                    session.rollback()
+                    logger.info("reaper.already_dispatched", model="SymbolAnalysis", id=str(aid))
+                    continue
                 session.commit()
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="SymbolAnalysis").inc()
             except Exception:
@@ -892,7 +930,8 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             select(SymbolAnalysis.id)
             .where(
                 SymbolAnalysis.status == "running",
-                SymbolAnalysis.created_at < cutoff,
+                SymbolAnalysis.started_at.isnot(None),
+                SymbolAnalysis.started_at < cutoff,
             )
             .limit(50)
         )

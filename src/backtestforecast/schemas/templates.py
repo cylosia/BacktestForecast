@@ -50,18 +50,32 @@ class UpdateTemplateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None | _Unset = Field(default=UNSET, max_length=500)
     config: TemplateConfig | None = None
+    expected_updated_at: datetime | None = None
 
 
 class TemplateResponse(BaseModel):
     id: UUID
     name: str
     description: str | None
-    strategy_type: str
-    config: dict[str, Any] = Field(alias="config_json")
+    strategy_type: StrategyType
+    config: TemplateConfig = Field(alias="config_json")
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_config(cls, data: Any) -> Any:
+        if hasattr(data, "__dict__"):
+            raw = getattr(data, "config_json", None)
+            if isinstance(raw, dict):
+                object.__setattr__(data, "config_json", TemplateConfig(**raw))
+        elif isinstance(data, dict):
+            raw = data.get("config_json") or data.get("config")
+            if isinstance(raw, dict):
+                data["config_json"] = TemplateConfig(**raw)
+        return data
 
 
 class TemplateListResponse(BaseModel):

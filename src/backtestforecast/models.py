@@ -309,8 +309,9 @@ class ExportJob(Base):
         Index("ix_export_jobs_user_status", "user_id", "status"),
         Index("ix_export_jobs_celery_task_id", "celery_task_id"),
         Index("ix_export_jobs_backtest_run_id", "backtest_run_id"),
+        Index("ix_export_jobs_expires_at", "expires_at"),
         CheckConstraint(
-            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')",
             name="valid_export_status",
         ),
     )
@@ -329,11 +330,13 @@ class ExportJob(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="export_jobs")
     backtest_run: Mapped["BacktestRun"] = relationship(back_populates="exports")
@@ -345,6 +348,12 @@ class AuditEvent(Base):
         Index("ix_audit_events_user_created_at", "user_id", "created_at"),
         Index("ix_audit_events_event_type_created_at", "event_type", "created_at"),
         UniqueConstraint("event_type", "subject_type", "subject_id", name="uq_audit_events_dedup"),
+        Index(
+            "uq_audit_events_dedup_null_subject",
+            "event_type", "subject_type",
+            unique=True,
+            postgresql_where=text("subject_id IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -462,6 +471,7 @@ class SymbolAnalysis(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="symbol_analyses")

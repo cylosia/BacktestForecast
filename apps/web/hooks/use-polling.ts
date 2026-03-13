@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError } from "@/lib/api/shared";
 
 export type PollingStatus = "idle" | "polling" | "done" | "timeout" | "error";
 
@@ -79,8 +80,12 @@ export function usePolling<T>({
         timerRef.current = setTimeout(poll, interval);
         return next;
       });
-    } catch {
+    } catch (err) {
       if (!mountedRef.current) return;
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setStatus("error");
+        return;
+      }
       setAttempts((prev) => {
         const next = prev + 1;
         if (next >= maxAttempts) {

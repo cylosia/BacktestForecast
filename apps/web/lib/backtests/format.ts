@@ -1,5 +1,4 @@
 import type {
-  BacktestRunHistoryItemResponse,
   RunStatus,
   StrategyType,
 } from "@backtestforecast/api-client";
@@ -170,16 +169,4 @@ export function statusLabel(status: RunStatus | string): string {
 
 export function isTerminalStatus(status: RunStatus | string): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
-}
-
-// Uses client-local timezone; acceptable for display purposes.
-export function getCurrentMonthRunCount(items: BacktestRunHistoryItemResponse[]): number {
-  const now = new Date();
-  const month = now.getMonth();
-  const year = now.getFullYear();
-
-  return items.filter((item) => {
-    const createdAt = new Date(item.created_at);
-    return createdAt.getMonth() === month && createdAt.getFullYear() === year;
-  }).length;
 }

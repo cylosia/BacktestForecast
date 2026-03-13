@@ -104,7 +104,12 @@ class CustomNLegStrategy(StrategyDefinition):
             # Option leg
             if leg_def.contract_type is None:
                 raise DataUnavailableError("contract_type is required for option legs.")
-            exp = expirations.get(leg_def.expiration_offset, primary_exp)
+            exp = expirations.get(leg_def.expiration_offset)
+            if exp is None:
+                raise DataUnavailableError(
+                    f"Expiration offset {leg_def.expiration_offset} is not available. "
+                    f"Only offsets 0–2 are supported and the requested expiration must exist in the chain."
+                )
             if leg_def.contract_type == "call":
                 chain = contracts_for_expiration(calls, exp)
             else:

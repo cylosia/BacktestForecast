@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -56,6 +57,62 @@ app = FastAPI(
     redoc_url="/redoc" if _is_dev else None,
     lifespan=_lifespan,
 )
+
+
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        routes=app.routes,
+    )
+    schema["components"] = schema.get("components", {})
+    schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Clerk-issued JWT via Authorization header.",
+        },
+    }
+    schema["security"] = [{"BearerAuth": []}]
+
+    error_schema = {
+        "type": "object",
+        "properties": {
+            "error": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string"},
+                    "message": {"type": "string"},
+                    "request_id": {"type": "string", "nullable": True},
+                },
+                "required": ["code", "message"],
+            },
+        },
+        "required": ["error"],
+    }
+    schema["components"]["schemas"]["ErrorEnvelope"] = error_schema
+    for path_obj in schema.get("paths", {}).values():
+        for operation in path_obj.values():
+            if not isinstance(operation, dict):
+                continue
+            operation.setdefault("responses", {})
+            operation["responses"]["422"] = {
+                "description": "Validation Error",
+                "content": {
+                    "application/json": {
+                        "schema": {"$ref": "#/components/schemas/ErrorEnvelope"},
+                    },
+                },
+            }
+
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
 
 app.add_middleware(PrometheusMiddleware)
 app.add_middleware(ApiSecurityHeadersMiddleware)

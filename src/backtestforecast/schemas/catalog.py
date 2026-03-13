@@ -25,3 +25,4 @@ class StrategyCatalogGroupResponse(BaseModel):
 class StrategyCatalogResponse(BaseModel):
     groups: list[StrategyCatalogGroupResponse]
     total_strategies: int
+    user_tier: str | None = None

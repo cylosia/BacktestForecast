@@ -60,6 +60,11 @@ export function ForecastLookup() {
       setErrorMessage("Enter a ticker symbol.");
       return;
     }
+    if (!/^[A-Z]{1,10}$/.test(normalizedTicker)) {
+      setStatus("error");
+      setErrorMessage("Ticker must be 1–10 alphabetic characters.");
+      return;
+    }
 
     setStatus("loading");
     setErrorMessage(null);

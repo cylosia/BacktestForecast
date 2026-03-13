@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import desc, select
@@ -45,6 +46,19 @@ class ExportJobRepository:
             .where(ExportJob.user_id == user_id)
             .options(defer(ExportJob.content_bytes))
             .order_by(desc(ExportJob.created_at))
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_expired_for_cleanup(self, before: datetime, limit: int) -> list[ExportJob]:
+        stmt = (
+            select(ExportJob)
+            .where(
+                ExportJob.expires_at < before,
+                ExportJob.status == "succeeded",
+                ExportJob.storage_key.isnot(None),
+            )
+            .options(defer(ExportJob.content_bytes))
             .limit(limit)
         )
         return list(self.session.scalars(stmt))

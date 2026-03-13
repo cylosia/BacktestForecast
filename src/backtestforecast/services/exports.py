@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Self
 from uuid import UUID
 
@@ -12,7 +12,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat, ensure_export_access
+from backtestforecast.config import Settings, get_settings
 from backtestforecast.errors import AppError, NotFoundError
+from backtestforecast.exports.storage import DatabaseStorage, ExportStorage, get_export_storage
 from backtestforecast.models import ExportJob, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
@@ -30,12 +32,19 @@ _MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 class ExportService:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        settings: Settings | None = None,
+        storage: ExportStorage | None = None,
+    ) -> None:
         self.session = session
         self.exports = ExportJobRepository(session)
         self.backtests = BacktestRunRepository(session)
         self.audit = AuditService(session)
         self.backtest_service = BacktestService(session)
+        self._storage = storage or get_export_storage(settings or get_settings())
 
     def close(self) -> None:
         self.backtest_service.close()
@@ -64,7 +73,7 @@ class ExportService:
             if existing is not None:
                 return self._to_response(existing)
 
-        run = self.backtests.get_for_user(payload.run_id, user.id)
+        run = self.backtests.get_lightweight_for_user(payload.run_id, user.id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
 
@@ -76,6 +85,7 @@ class ExportService:
             file_name=self._build_file_name(run.symbol, run.strategy_type, payload.export_format),
             mime_type=self._mime_type(payload.export_format),
             idempotency_key=payload.idempotency_key,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
         )
         self.exports.add(export_job)
         self.audit.record(
@@ -129,7 +139,10 @@ class ExportService:
                 raise ValueError(
                     f"Generated export exceeds the {_MAX_EXPORT_BYTES // (1024 * 1024)} MB size limit."
                 )
-            export_job.content_bytes = content
+            storage_key = self._storage.put(export_job.id, content, export_job.file_name)
+            if isinstance(self._storage, DatabaseStorage):
+                export_job.content_bytes = content
+            export_job.storage_key = storage_key
             export_job.size_bytes = len(content)
             export_job.sha256_hex = hashlib.sha256(content).hexdigest()
             export_job.status = "succeeded"
@@ -164,6 +177,44 @@ class ExportService:
 
         self.session.refresh(export_job)
         return export_job
+
+    def cleanup_expired_exports(self, *, batch_size: int = 100) -> int:
+        """Delete storage content for expired exports. Returns count cleaned."""
+        cleaned = 0
+        now = datetime.now(UTC)
+
+        while True:
+            jobs = self.exports.list_expired_for_cleanup(now, batch_size)
+            if not jobs:
+                break
+
+            for job in jobs:
+                if job.storage_key:
+                    try:
+                        self._storage.delete(job.storage_key)
+                    except Exception:
+                        logger.warning(
+                            "cleanup.delete_failed",
+                            export_job_id=str(job.id),
+                            storage_key=job.storage_key,
+                            exc_info=True,
+                        )
+                job.content_bytes = None
+                job.storage_key = None
+                job.status = "expired"
+                cleaned += 1
+                logger.info(
+                    "cleanup.expired",
+                    export_job_id=str(job.id),
+                )
+
+            self.session.commit()
+            logger.info("cleanup.batch_committed", batch_size=len(jobs), cleaned_so_far=cleaned)
+
+            if len(jobs) < batch_size:
+                break
+
+        return cleaned
 
     def get_export_status(self, user: User, export_job_id: UUID) -> ExportJobResponse:
         """Return current status of an export job (for polling)."""
@@ -208,12 +259,21 @@ class ExportService:
         request_id: str | None = None,
         ip_address: str | None = None,
     ) -> ExportJob:
-        export_job = self.exports.get_for_user(export_job_id, user.id, include_content=True)
+        use_db_content = isinstance(self._storage, DatabaseStorage)
+        export_job = self.exports.get_for_user(
+            export_job_id, user.id, include_content=use_db_content,
+        )
         if export_job is None:
             raise NotFoundError("Export not found.")
-        if export_job.status != "succeeded" or not export_job.content_bytes:
+        if export_job.status != "succeeded":
             raise NotFoundError("Export content is not available.")
-        self.audit.record(
+        if use_db_content and not export_job.content_bytes:
+            raise NotFoundError("Export content is not available.")
+        if not use_db_content and export_job.storage_key:
+            export_job.content_bytes = self._storage.get(export_job.storage_key)
+        if not export_job.content_bytes:
+            raise NotFoundError("Export content is not available.")
+        self.audit.record_always(
             event_type="export.downloaded",
             subject_type="export_job",
             subject_id=export_job.id,

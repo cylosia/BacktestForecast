@@ -20,6 +20,13 @@ from backtestforecast.security import get_rate_limiter
 router = APIRouter(prefix="/events", tags=["events"])
 logger = structlog.get_logger("api.events")
 
+_SSE_RESPONSES = {
+    200: {
+        "description": "Server-Sent Events stream. Events: status, timeout, error, done.",
+        "content": {"text/event-stream": {"schema": {"type": "string"}}},
+    },
+}
+
 SSE_TIMEOUT_SECONDS = 300
 SSE_HEARTBEAT_SECONDS = 15
 
@@ -136,7 +143,7 @@ async def _event_stream(
     yield {"event": "done", "data": "stream_ended"}
 
 
-@router.get("/backtests/{run_id}")
+@router.get("/backtests/{run_id}", responses=_SSE_RESPONSES)
 async def backtest_events(
     run_id: UUID,
     request: Request,
@@ -153,7 +160,7 @@ async def backtest_events(
     )
 
 
-@router.get("/scans/{job_id}")
+@router.get("/scans/{job_id}", responses=_SSE_RESPONSES)
 async def scan_events(
     job_id: UUID,
     request: Request,
@@ -171,7 +178,7 @@ async def scan_events(
     )
 
 
-@router.get("/exports/{export_job_id}")
+@router.get("/exports/{export_job_id}", responses=_SSE_RESPONSES)
 async def export_events(
     export_job_id: UUID,
     request: Request,
@@ -189,7 +196,7 @@ async def export_events(
     )
 
 
-@router.get("/analyses/{analysis_id}")
+@router.get("/analyses/{analysis_id}", responses=_SSE_RESPONSES)
 async def analysis_events(
     analysis_id: UUID,
     request: Request,

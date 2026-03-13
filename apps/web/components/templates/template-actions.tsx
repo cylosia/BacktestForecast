@@ -18,15 +18,18 @@ export function TemplateActions({
   const router = useRouter();
   const { getToken } = useAuth();
   const [deleting, setDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleDelete() {
-    if (!confirm(`Delete template "${templateName}"? This cannot be undone.`)) {
+    if (!confirming) {
+      setConfirming(true);
       return;
     }
 
     setDeleting(true);
     setError(null);
+    setConfirming(false);
     try {
       const token = await getToken();
       if (!token) {
@@ -49,14 +52,35 @@ export function TemplateActions({
           Apply
         </Link>
       </Button>
-      <Button
-        disabled={deleting}
-        size="sm"
-        variant="ghost"
-        onClick={handleDelete}
-      >
-        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-      </Button>
+      {confirming ? (
+        <>
+          <span className="text-xs text-destructive">Delete &quot;{templateName}&quot;?</span>
+          <Button
+            disabled={deleting}
+            size="sm"
+            variant="destructive"
+            onClick={handleDelete}
+          >
+            Confirm
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setConfirming(false)}
+          >
+            Cancel
+          </Button>
+        </>
+      ) : (
+        <Button
+          disabled={deleting}
+          size="sm"
+          variant="ghost"
+          onClick={handleDelete}
+        >
+          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+        </Button>
+      )}
       {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   );

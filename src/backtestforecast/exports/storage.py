@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+from typing import Protocol
+from uuid import UUID
+
+import structlog
+
+from backtestforecast.config import Settings
+
+logger = structlog.get_logger("exports.storage")
+
+
+class ExportStorage(Protocol):
+    """Interface for persisting and retrieving export file content."""
+
+    def put(self, export_job_id: UUID, content: bytes, file_name: str) -> str:
+        """Store *content* and return a storage key (opaque string).
+
+        For DB storage the key is simply the stringified job id.
+        For S3 storage the key is the object key.
+        """
+        ...
+
+    def get(self, storage_key: str) -> bytes:
+        """Retrieve previously-stored content by its key."""
+        ...
+
+    def delete(self, storage_key: str) -> None:
+        """Remove stored content (best-effort)."""
+        ...
+
+    def exists(self, storage_key: str) -> bool:
+        """Check if content exists at the given key."""
+        ...
+
+
+class DatabaseStorage:
+    """Stores export content in the ExportJob.content_bytes DB column (default)."""
+
+    def put(self, export_job_id: UUID, content: bytes, file_name: str) -> str:
+        return str(export_job_id)
+
+    def get(self, storage_key: str) -> bytes:
+        raise NotImplementedError(
+            "DatabaseStorage.get should not be called directly; "
+            "content is read via the ExportJob ORM column."
+        )
+
+    def delete(self, storage_key: str) -> None:
+        pass
+
+    def exists(self, storage_key: str) -> bool:
+        """Content is in the DB row; always True when key is provided."""
+        return True
+
+
+class S3Storage:
+    """Stores export content in an S3-compatible object store."""
+
+    def __init__(self, settings: Settings) -> None:
+        import boto3  # type: ignore[import-untyped]
+
+        self._bucket = settings.s3_bucket or ""
+        self._prefix = "exports/"
+        self._client = boto3.client(
+            "s3",
+            region_name=settings.s3_region,
+            endpoint_url=settings.s3_endpoint_url,
+            aws_access_key_id=settings.aws_access_key_id,
+            aws_secret_access_key=settings.aws_secret_access_key,
+        )
+
+    def _object_key(self, export_job_id: UUID, file_name: str) -> str:
+        return f"{self._prefix}{export_job_id}/{file_name}"
+
+    def put(self, export_job_id: UUID, content: bytes, file_name: str) -> str:
+        key = self._object_key(export_job_id, file_name)
+        self._client.put_object(Bucket=self._bucket, Key=key, Body=content)
+        logger.info("s3.put", bucket=self._bucket, key=key, size=len(content))
+        return key
+
+    def get(self, storage_key: str) -> bytes:
+        resp = self._client.get_object(Bucket=self._bucket, Key=storage_key)
+        data: bytes = resp["Body"].read()
+        logger.info("s3.get", bucket=self._bucket, key=storage_key, size=len(data))
+        return data
+
+    def delete(self, storage_key: str) -> None:
+        try:
+            self._client.delete_object(Bucket=self._bucket, Key=storage_key)
+            logger.info("s3.delete", bucket=self._bucket, key=storage_key)
+        except Exception:
+            logger.warning("s3.delete_failed", bucket=self._bucket, key=storage_key, exc_info=True)
+
+    def exists(self, storage_key: str) -> bool:
+        try:
+            self._client.head_object(Bucket=self._bucket, Key=storage_key)
+            return True
+        except Exception:
+            return False
+
+
+def get_export_storage(settings: Settings) -> ExportStorage:
+    """Return S3Storage when an S3 bucket is configured, otherwise DatabaseStorage."""
+    if settings.s3_bucket:
+        logger.info("export_storage.using_s3", bucket=settings.s3_bucket)
+        return S3Storage(settings)
+    logger.info("export_storage.using_database")
+    return DatabaseStorage()

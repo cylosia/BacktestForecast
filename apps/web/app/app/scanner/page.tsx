@@ -32,11 +32,13 @@ export default async function ScannerPage() {
   const hasAccess = scannerModes.length > 0;
 
   let jobs: Awaited<ReturnType<typeof getScannerJobs>> | null = null;
+  let jobsError: string | null = null;
   if (hasAccess) {
     try {
       jobs = await getScannerJobs(20);
-    } catch {
+    } catch (err) {
       jobs = null;
+      jobsError = err instanceof Error ? err.message : "Failed to load scanner history.";
     }
   }
 
@@ -104,6 +106,14 @@ export default async function ScannerPage() {
           </CardContent>
         </Card>
       </div>
+
+      {hasAccess && jobsError ? (
+        <Card>
+          <CardContent className="p-6 text-center text-destructive">
+            {jobsError}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {hasAccess && jobs ? (
         <Card>

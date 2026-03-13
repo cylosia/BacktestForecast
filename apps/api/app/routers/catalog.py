@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, Response
 
-from apps.api.app.dependencies import require_authenticated_user
+from apps.api.app.dependencies import get_current_user
+from backtestforecast.billing.entitlements import normalize_plan_tier
+from backtestforecast.models import User
 from backtestforecast.schemas.catalog import (
     StrategyCatalogGroupResponse,
     StrategyCatalogItemResponse,
@@ -18,7 +20,7 @@ router = APIRouter(tags=["catalog"])
 @router.get("/strategy-catalog", response_model=StrategyCatalogResponse)
 def get_strategy_catalog(
     response: Response,
-    _user_id: str = Depends(require_authenticated_user),
+    user: User = Depends(get_current_user),
 ) -> StrategyCatalogResponse:
     response.headers["Cache-Control"] = "private, max-age=3600"
     grouped = get_catalog_entries_grouped()
@@ -45,7 +47,11 @@ def get_strategy_catalog(
                 ],
             )
         )
+    effective_tier = normalize_plan_tier(
+        user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+    )
     return StrategyCatalogResponse(
         groups=groups,
         total_strategies=len(STRATEGY_CATALOG),
+        user_tier=effective_tier.value,
     )

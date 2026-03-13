@@ -71,6 +71,14 @@ def get_current_user(
     authorization: Annotated[str | None, Header()] = None,
     db: Session = Depends(get_db),
 ) -> User:
+    """Authenticate via Bearer token (primary) or ``__session`` cookie (fallback).
+
+    Cookie auth exists for Clerk's server-side rendering flow, where the JWT
+    is placed in the ``__session`` cookie rather than an Authorization header.
+    State-changing methods require ``X-Requested-With`` to mitigate CSRF when
+    using cookie auth.  This is intentional and should not be removed without
+    replacing the SSR auth flow.
+    """
     token: str | None = None
     if authorization:
         scheme, _, candidate = authorization.partition(" ")

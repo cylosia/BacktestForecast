@@ -57,3 +57,36 @@ class AuditService:
             subject_id=subject_value,
         )
         return None
+
+    def record_always(
+        self,
+        *,
+        event_type: str,
+        subject_type: str,
+        subject_id: str | UUID | None,
+        user_id: UUID | None = None,
+        request_id: str | None = None,
+        ip_address: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AuditEvent:
+        """Record an audit event without deduplication (append-only)."""
+        subject_value = None if subject_id is None else str(subject_id)
+        payload = metadata or {}
+        event = AuditEvent(
+            user_id=user_id,
+            request_id=request_id,
+            event_type=event_type,
+            subject_type=subject_type,
+            subject_id=subject_value,
+            ip_hash=hash_ip(ip_address),
+            metadata_json=payload,
+        )
+        event = self.repository.add_always(event)
+        logger.info(
+            "audit.event.recorded_always",
+            event_type=event_type,
+            subject_type=subject_type,
+            subject_id=subject_value,
+            user_id=str(user_id) if user_id is not None else None,
+        )
+        return event
