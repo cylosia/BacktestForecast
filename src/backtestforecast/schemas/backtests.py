@@ -486,6 +486,16 @@ class BacktestSummaryResponse(BaseModel):
     total_net_pnl: Decimal
     starting_equity: Decimal
     ending_equity: Decimal
+    profit_factor: Decimal | None = None
+    payoff_ratio: Decimal | None = None
+    expectancy: Decimal = Decimal("0")
+    sharpe_ratio: Decimal | None = None
+    sortino_ratio: Decimal | None = None
+    cagr_pct: Decimal | None = None
+    calmar_ratio: Decimal | None = None
+    max_consecutive_wins: int = 0
+    max_consecutive_losses: int = 0
+    recovery_factor: Decimal | None = None
 
 
 class BacktestTradeResponse(BaseModel):

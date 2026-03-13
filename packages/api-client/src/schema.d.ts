@@ -782,10 +782,39 @@ export interface components {
             average_loss_amount: string;
             /** Average Win Amount */
             average_win_amount: string;
+            /** Cagr Pct */
+            cagr_pct?: string | null;
+            /** Calmar Ratio */
+            calmar_ratio?: string | null;
             /** Ending Equity */
             ending_equity: string;
+            /**
+             * Expectancy
+             * @default 0
+             */
+            expectancy: string;
+            /**
+             * Max Consecutive Losses
+             * @default 0
+             */
+            max_consecutive_losses: number;
+            /**
+             * Max Consecutive Wins
+             * @default 0
+             */
+            max_consecutive_wins: number;
             /** Max Drawdown Pct */
             max_drawdown_pct: string;
+            /** Payoff Ratio */
+            payoff_ratio?: string | null;
+            /** Profit Factor */
+            profit_factor?: string | null;
+            /** Recovery Factor */
+            recovery_factor?: string | null;
+            /** Sharpe Ratio */
+            sharpe_ratio?: string | null;
+            /** Sortino Ratio */
+            sortino_ratio?: string | null;
             /** Starting Equity */
             starting_equity: string;
             /** Total Commissions */

@@ -31,6 +31,9 @@ function safePercent(v: unknown): string {
 function safeNum(v: unknown): string {
   return v != null ? formatNumber(v as number) : "—";
 }
+function safeRatio(v: unknown): string {
+  return v != null ? Number(v).toFixed(2) : "—";
+}
 
 const METRIC_ROWS: Array<{
   label: string;
@@ -43,6 +46,16 @@ const METRIC_ROWS: Array<{
   { label: "Total ROI", key: "total_roi_pct", format: safePercent, higherIsBetter: true },
   { label: "Net P&L", key: "total_net_pnl", format: safeCurrency, higherIsBetter: true },
   { label: "Max drawdown", key: "max_drawdown_pct", format: safePercent, higherIsBetter: false },
+  { label: "Sharpe ratio", key: "sharpe_ratio", format: safeRatio, higherIsBetter: true },
+  { label: "Sortino ratio", key: "sortino_ratio", format: safeRatio, higherIsBetter: true },
+  { label: "Profit factor", key: "profit_factor", format: safeRatio, higherIsBetter: true },
+  { label: "Expectancy", key: "expectancy", format: safeCurrency, higherIsBetter: true },
+  { label: "CAGR", key: "cagr_pct", format: safePercent, higherIsBetter: true },
+  { label: "Payoff ratio", key: "payoff_ratio", format: safeRatio, higherIsBetter: true },
+  { label: "Calmar ratio", key: "calmar_ratio", format: safeRatio, higherIsBetter: true },
+  { label: "Recovery factor", key: "recovery_factor", format: safeRatio, higherIsBetter: true },
+  { label: "Max consec. wins", key: "max_consecutive_wins", format: safeNum },
+  { label: "Max consec. losses", key: "max_consecutive_losses", format: safeNum },
   { label: "Avg win", key: "average_win_amount", format: safeCurrency, higherIsBetter: true },
   { label: "Avg loss", key: "average_loss_amount", format: safeCurrency },
   { label: "Avg hold (days)", key: "average_holding_period_days", format: safeNum },

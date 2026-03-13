@@ -44,7 +44,8 @@ class OptionsBacktestEngine:
         sorted_bars = bars
         if not sorted_bars:
             return BacktestExecutionResult(
-                summary=build_summary(config.account_size, config.account_size, [], []), trades=[], equity_curve=[]
+                summary=build_summary(config.account_size, config.account_size, [], [], risk_free_rate=config.risk_free_rate),
+                trades=[], equity_curve=[]
             )
 
         warnings: list[dict[str, Any]] = []
@@ -269,7 +270,9 @@ class OptionsBacktestEngine:
             )
 
         ending_equity = equity_curve[-1].equity if equity_curve else config.account_size
-        summary = build_summary(config.account_size, ending_equity, trades, equity_curve)
+        summary = build_summary(
+            config.account_size, ending_equity, trades, equity_curve, risk_free_rate=config.risk_free_rate,
+        )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
 
     def _mark_position(

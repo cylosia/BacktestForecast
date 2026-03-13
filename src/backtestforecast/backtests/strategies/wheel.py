@@ -56,7 +56,8 @@ class WheelStrategyBacktestEngine:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         if not sorted_bars:
             return BacktestExecutionResult(
-                summary=build_summary(config.account_size, config.account_size, [], []), trades=[], equity_curve=[]
+                summary=build_summary(config.account_size, config.account_size, [], [], risk_free_rate=config.risk_free_rate),
+                trades=[], equity_curve=[]
             )
 
         warnings: list[dict[str, Any]] = []
@@ -414,6 +415,7 @@ class WheelStrategyBacktestEngine:
             ending_equity=ending_equity,
             trades=trades,
             equity_curve=equity_curve,
+            risk_free_rate=config.risk_free_rate,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
 

@@ -98,6 +98,16 @@ class BacktestSummary:
     total_net_pnl: float
     starting_equity: float
     ending_equity: float
+    profit_factor: float | None = None
+    payoff_ratio: float | None = None
+    expectancy: float = 0.0
+    sharpe_ratio: float | None = None
+    sortino_ratio: float | None = None
+    cagr_pct: float | None = None
+    calmar_ratio: float | None = None
+    max_consecutive_wins: int = 0
+    max_consecutive_losses: int = 0
+    recovery_factor: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

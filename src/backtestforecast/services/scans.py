@@ -627,6 +627,9 @@ class ScanService:
 
     @staticmethod
     def _serialize_summary(summary) -> dict[str, Any]:
+        def _opt(val: float | None) -> float | None:
+            return float(to_decimal(val)) if val is not None else None
+
         return {
             "trade_count": summary.trade_count,
             "win_rate": float(to_decimal(summary.win_rate)),
@@ -640,6 +643,16 @@ class ScanService:
             "total_net_pnl": float(to_decimal(summary.total_net_pnl)),
             "starting_equity": float(to_decimal(summary.starting_equity)),
             "ending_equity": float(to_decimal(summary.ending_equity)),
+            "profit_factor": _opt(summary.profit_factor),
+            "payoff_ratio": _opt(summary.payoff_ratio),
+            "expectancy": float(to_decimal(summary.expectancy)),
+            "sharpe_ratio": _opt(summary.sharpe_ratio),
+            "sortino_ratio": _opt(summary.sortino_ratio),
+            "cagr_pct": _opt(summary.cagr_pct),
+            "calmar_ratio": _opt(summary.calmar_ratio),
+            "max_consecutive_wins": summary.max_consecutive_wins,
+            "max_consecutive_losses": summary.max_consecutive_losses,
+            "recovery_factor": _opt(summary.recovery_factor),
         }
 
     @staticmethod

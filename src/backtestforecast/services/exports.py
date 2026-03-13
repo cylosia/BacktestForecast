@@ -255,6 +255,12 @@ class ExportService:
         writer.writerow(safe_row(["summary", "win_rate", detail.summary.win_rate]))
         writer.writerow(safe_row(["summary", "total_roi_pct", detail.summary.total_roi_pct]))
         writer.writerow(safe_row(["summary", "total_net_pnl", detail.summary.total_net_pnl]))
+        writer.writerow(safe_row(["summary", "max_drawdown_pct", detail.summary.max_drawdown_pct]))
+        writer.writerow(safe_row(["summary", "profit_factor", detail.summary.profit_factor]))
+        writer.writerow(safe_row(["summary", "sharpe_ratio", detail.summary.sharpe_ratio]))
+        writer.writerow(safe_row(["summary", "sortino_ratio", detail.summary.sortino_ratio]))
+        writer.writerow(safe_row(["summary", "expectancy", detail.summary.expectancy]))
+        writer.writerow(safe_row(["summary", "cagr_pct", detail.summary.cagr_pct]))
         writer.writerow([])
         writer.writerow(
             safe_row(
@@ -359,6 +365,16 @@ class ExportService:
         line(f"ROI: {detail.summary.total_roi_pct}%")
         line(f"Net P&L: {detail.summary.total_net_pnl}")
         line(f"Max drawdown: {detail.summary.max_drawdown_pct}%")
+        s = detail.summary
+        if s.profit_factor is not None:
+            line(f"Profit factor: {s.profit_factor}")
+        if s.sharpe_ratio is not None:
+            line(f"Sharpe ratio: {s.sharpe_ratio}")
+        if s.sortino_ratio is not None:
+            line(f"Sortino ratio: {s.sortino_ratio}")
+        line(f"Expectancy: {s.expectancy}")
+        if s.cagr_pct is not None:
+            line(f"CAGR: {s.cagr_pct}%")
         line("")
         line("Trades", bold=True, step=20.0)
         for trade in detail.trades[:_MAX_PDF_TRADES]:

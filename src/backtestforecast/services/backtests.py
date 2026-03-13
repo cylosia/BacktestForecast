@@ -413,6 +413,16 @@ class BacktestService:
         run.total_net_pnl = to_decimal(summary.total_net_pnl)
         run.starting_equity = to_decimal(summary.starting_equity)
         run.ending_equity = to_decimal(summary.ending_equity)
+        run.profit_factor = to_decimal(summary.profit_factor) if summary.profit_factor is not None else None
+        run.payoff_ratio = to_decimal(summary.payoff_ratio) if summary.payoff_ratio is not None else None
+        run.expectancy = to_decimal(summary.expectancy)
+        run.sharpe_ratio = to_decimal(summary.sharpe_ratio) if summary.sharpe_ratio is not None else None
+        run.sortino_ratio = to_decimal(summary.sortino_ratio) if summary.sortino_ratio is not None else None
+        run.cagr_pct = to_decimal(summary.cagr_pct) if summary.cagr_pct is not None else None
+        run.calmar_ratio = to_decimal(summary.calmar_ratio) if summary.calmar_ratio is not None else None
+        run.max_consecutive_wins = summary.max_consecutive_wins
+        run.max_consecutive_losses = summary.max_consecutive_losses
+        run.recovery_factor = to_decimal(summary.recovery_factor) if summary.recovery_factor is not None else None
 
         for trade in execution_result.trades:
             run.trades.append(
@@ -465,6 +475,16 @@ class BacktestService:
             total_net_pnl=run.total_net_pnl,
             starting_equity=run.starting_equity,
             ending_equity=run.ending_equity,
+            profit_factor=run.profit_factor,
+            payoff_ratio=run.payoff_ratio,
+            expectancy=run.expectancy,
+            sharpe_ratio=run.sharpe_ratio,
+            sortino_ratio=run.sortino_ratio,
+            cagr_pct=run.cagr_pct,
+            calmar_ratio=run.calmar_ratio,
+            max_consecutive_wins=run.max_consecutive_wins,
+            max_consecutive_losses=run.max_consecutive_losses,
+            recovery_factor=run.recovery_factor,
         )
 
     def _to_history_item(self, run: BacktestRun) -> BacktestRunHistoryItemResponse:
