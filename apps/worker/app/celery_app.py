@@ -28,11 +28,13 @@ celery_app.conf.update(
     task_soft_time_limit=3600,
     task_time_limit=3900,
     result_expires=86400,
+    worker_max_tasks_per_child=200,
+    broker_connection_retry_on_startup=True,
+    broker_transport_options={"visibility_timeout": 4200},
 )
 
 celery_app.conf.task_queues = (
     Queue("research"),
-    Queue("market_data"),
     Queue("exports"),
     Queue("maintenance"),
     Queue("pipeline"),

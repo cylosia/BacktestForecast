@@ -82,7 +82,7 @@ class CustomNLegStrategy(StrategyDefinition):
                     OpenStockLeg(
                         symbol=config.symbol,
                         side=side_sign,
-                        share_quantity_per_unit=100 * leg_def.quantity_ratio,
+                        share_quantity_per_unit=int(100 * leg_def.quantity_ratio),
                         entry_price=bar.close_price,
                         last_price=bar.close_price,
                     )
@@ -135,7 +135,7 @@ class CustomNLegStrategy(StrategyDefinition):
                     side=side_sign,
                     strike_price=strike,
                     expiration_date=exp,
-                    quantity_per_unit=leg_def.quantity_ratio,
+                    quantity_per_unit=int(leg_def.quantity_ratio),
                     entry_mid=quote.mid_price,
                     last_mid=quote.mid_price,
                 )

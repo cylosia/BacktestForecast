@@ -357,13 +357,19 @@ def resolve_wing_strike(
     else:
         result = offset_strike(sorted(set(strikes)), short_strike, direction)
 
-    if result is not None and result == short_strike:
-        candidates = sorted(set(strikes))
-        fallback = offset_strike(candidates, short_strike, direction)
-        if fallback is not None and fallback != short_strike:
-            result = fallback
-        else:
-            result = None
+    if result is not None:
+        wrong_side = (
+            result == short_strike
+            or (direction > 0 and result < short_strike)
+            or (direction < 0 and result > short_strike)
+        )
+        if wrong_side:
+            candidates = sorted(set(strikes))
+            fallback = offset_strike(candidates, short_strike, direction)
+            if fallback is not None and fallback != short_strike:
+                result = fallback
+            else:
+                result = None
 
     return result
 

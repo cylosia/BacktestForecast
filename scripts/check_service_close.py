@@ -11,13 +11,15 @@ import sys
 from pathlib import Path
 
 TARGET = "BacktestExecutionService"
-SEARCH_DIRS = [Path("src"), Path("apps")]
+_ROOT = Path(__file__).resolve().parent.parent
+SEARCH_DIRS = [_ROOT / "src", _ROOT / "apps"]
 
 
 def check_file(path: Path) -> list[str]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
-    except SyntaxError:
+    except SyntaxError as exc:
+        print(f"  WARNING: skipping {path} (SyntaxError: {exc})", file=sys.stderr)
         return []
 
     violations: list[str] = []
@@ -38,7 +40,7 @@ def check_file(path: Path) -> list[str]:
             continue
 
         has_close = any(
-            isinstance(item, ast.FunctionDef) and item.name == "close"
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "close"
             for item in node.body
         )
         if not has_close:

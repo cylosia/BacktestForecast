@@ -23,7 +23,10 @@ def rolling_mean(values: list[float], period: int) -> list[float | None]:
 
 
 def rolling_stddev(values: list[float], period: int, *, ddof: int = 0) -> list[float | None]:
-    """O(n) rolling standard deviation using an online sliding window.
+    """O(n) rolling standard deviation using Welford's online algorithm.
+
+    Numerically stable for large-valued instruments where the naive
+    ``E[X^2] - E[X]^2`` formula suffers from catastrophic cancellation.
 
     Args:
         ddof: Delta degrees of freedom. Use 0 for population stddev (Bollinger Bands),
@@ -32,18 +35,24 @@ def rolling_stddev(values: list[float], period: int, *, ddof: int = 0) -> list[f
     result: list[float | None] = [None] * len(values)
     if period <= 1 or period <= ddof:
         return result
-    sum_x = 0.0
-    sum_x2 = 0.0
+    buf: deque[float] = deque()
+    mean = 0.0
+    m2 = 0.0
     for index in range(len(values)):
-        sum_x += values[index]
-        sum_x2 += values[index] * values[index]
-        if index >= period:
-            old = values[index - period]
-            sum_x -= old
-            sum_x2 -= old * old
+        x = values[index]
+        buf.append(x)
+        n = len(buf)
+        if n <= period:
+            delta = x - mean
+            mean += delta / n
+            m2 += delta * (x - mean)
+        else:
+            old = buf.popleft()
+            old_mean = mean
+            mean += (x - old) / period
+            m2 += (x - old) * ((x - mean) + (old - old_mean))
         if index >= period - 1:
-            mean = sum_x / period
-            variance = (sum_x2 - period * mean * mean) / (period - ddof)
+            variance = m2 / (period - ddof)
             result[index] = math.sqrt(max(variance, 0.0))
     return result
 

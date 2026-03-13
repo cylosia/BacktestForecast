@@ -10,6 +10,7 @@ Postgres service container in CI).  Exit code 1 on drift.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
@@ -21,18 +22,23 @@ from alembic import command
 from backtestforecast.config import get_settings
 from backtestforecast.db.base import Base
 
+_ROOT = Path(__file__).resolve().parent.parent
+
 
 def main() -> int:
     settings = get_settings()
     url = settings.database_url
 
-    alembic_cfg = Config("alembic.ini")
+    alembic_cfg = Config(str(_ROOT / "alembic.ini"))
     command.upgrade(alembic_cfg, "head")
 
     engine = create_engine(url)
-    with engine.connect() as conn:
-        mc = MigrationContext.configure(conn)
-        diffs = compare_metadata(mc, Base.metadata)
+    try:
+        with engine.connect() as conn:
+            mc = MigrationContext.configure(conn)
+            diffs = compare_metadata(mc, Base.metadata)
+    finally:
+        engine.dispose()
 
     if not diffs:
         print("OK — no migration drift detected.")

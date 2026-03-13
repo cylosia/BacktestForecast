@@ -88,9 +88,9 @@ class CollarStrategy(StrategyDefinition):
                 "legs": [
                     {
                         "asset_type": "stock",
-                        "symbol": config.symbol,
+                        "identifier": config.symbol,
                         "side": "long",
-                        "shares": 100,
+                        "share_quantity_per_unit": 100,
                         "entry_price": bar.close_price,
                     },
                     {
@@ -99,6 +99,8 @@ class CollarStrategy(StrategyDefinition):
                         "side": "short",
                         "contract_type": "call",
                         "strike_price": call_strike,
+                        "expiration_date": expiration.isoformat(),
+                        "quantity_per_unit": 1,
                         "entry_mid": cq.mid_price,
                     },
                     {
@@ -107,6 +109,8 @@ class CollarStrategy(StrategyDefinition):
                         "side": "long",
                         "contract_type": "put",
                         "strike_price": put_strike,
+                        "expiration_date": expiration.isoformat(),
+                        "quantity_per_unit": 1,
                         "entry_mid": pq.mid_price,
                     },
                 ]

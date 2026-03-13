@@ -155,7 +155,7 @@ class Settings(BaseSettings):
     ip_hash_salt: str = Field(default="backtestforecast-default-ip-salt-change-me")
 
     db_pool_size: int = 5
-    db_pool_max_overflow: int = 10
+    db_pool_max_overflow: int = Field(default=10, ge=0)
     db_pool_recycle: int = 1800
 
     trusted_proxy_cidrs: str = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
@@ -198,12 +198,19 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_log_level(cls, value: str) -> str:
         normalized = value.strip().upper()
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if normalized and normalized not in valid_levels:
+            raise ValueError(f"log_level must be one of {valid_levels}, got '{normalized}'")
         return normalized or "INFO"
 
     @field_validator(
         "request_max_body_bytes", "max_backtest_window_days", "max_scanner_window_days",
         "rate_limit_window_seconds", "db_pool_size", "db_pool_recycle",
         "analysis_rate_limit_window_seconds",
+        "backtest_create_rate_limit", "scan_create_rate_limit",
+        "export_create_rate_limit", "billing_create_rate_limit",
+        "template_mutate_rate_limit", "analysis_create_rate_limit",
+        "forecast_rate_limit",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
@@ -257,10 +264,10 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if self.app_env in {"production", "staging"}:
-            if not (self.clerk_jwt_key or self.clerk_jwks_url or self.clerk_issuer):
-                raise ValueError("Production-like environments require CLERK_JWT_KEY, CLERK_JWKS_URL, or CLERK_ISSUER.")
             if not self.clerk_issuer:
                 raise ValueError("Production-like environments require CLERK_ISSUER for JWT issuer verification.")
+            if not (self.clerk_jwt_key or self.clerk_jwks_url):
+                raise ValueError("Production-like environments require CLERK_JWT_KEY or CLERK_JWKS_URL for JWT signature verification.")
             if not self.log_json:
                 raise ValueError("Production-like environments must enable structured JSON logging.")
             if "*" in self.api_allowed_hosts:

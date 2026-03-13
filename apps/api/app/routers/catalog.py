@@ -20,7 +20,7 @@ def get_strategy_catalog(
     response: Response,
     _user_id: str = Depends(require_authenticated_user),
 ) -> StrategyCatalogResponse:
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    response.headers["Cache-Control"] = "private, max-age=3600"
     grouped = get_catalog_entries_grouped()
     groups = []
     for category, entries in grouped:

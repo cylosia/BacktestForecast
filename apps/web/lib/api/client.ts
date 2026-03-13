@@ -150,8 +150,8 @@ export async function fetchForecast(
   options?: { strategyType?: string; horizonDays?: number },
 ): Promise<ForecastEnvelopeResponse> {
   const params = new URLSearchParams();
-  if (options?.strategyType) params.set("strategy_type", options.strategyType);
-  if (options?.horizonDays) params.set("horizon_days", String(options.horizonDays));
+  if (options?.strategyType != null) params.set("strategy_type", options.strategyType);
+  if (options?.horizonDays != null) params.set("horizon_days", String(options.horizonDays));
   const qs = params.toString();
   return apiRequest<ForecastEnvelopeResponse>(
     `/v1/forecasts/${encodeURIComponent(ticker)}${qs ? `?${qs}` : ""}`,
