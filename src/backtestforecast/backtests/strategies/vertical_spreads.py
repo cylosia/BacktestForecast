@@ -12,6 +12,7 @@ from backtestforecast.backtests.strategies.common import (
     resolve_strike,
     resolve_wing_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -106,6 +107,8 @@ class VerticalSpreadStrategy(StrategyDefinition):
         long_quote = option_gateway.get_quote(long_contract.ticker, bar.trade_date)
         short_quote = option_gateway.get_quote(short_contract.ticker, bar.trade_date)
         if long_quote is None or short_quote is None:
+            return None
+        if not valid_entry_mids(long_quote.mid_price, short_quote.mid_price):
             return None
 
         long_value = long_quote.mid_price * 100.0

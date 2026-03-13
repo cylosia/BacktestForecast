@@ -12,6 +12,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -71,6 +72,8 @@ class ShortVolatilityStrategy(StrategyDefinition):
         cq = option_gateway.get_quote(call_c.ticker, bar.trade_date)
         pq = option_gateway.get_quote(put_c.ticker, bar.trade_date)
         if cq is None or pq is None:
+            return None
+        if not valid_entry_mids(cq.mid_price, pq.mid_price):
             return None
 
         credit = (cq.mid_price + pq.mid_price) * 100.0

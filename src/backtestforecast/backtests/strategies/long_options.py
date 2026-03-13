@@ -9,6 +9,7 @@ from backtestforecast.backtests.strategies.common import (
     get_overrides,
     require_contract_for_strike,
     resolve_strike,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -58,7 +59,7 @@ class LongOptionStrategy(StrategyDefinition):
         )
         contract = require_contract_for_strike(exp_contracts, strike)
         entry_quote = option_gateway.get_quote(contract.ticker, bar.trade_date)
-        if entry_quote is None:
+        if entry_quote is None or not valid_entry_mids(entry_quote.mid_price):
             return None
 
         entry_value_per_unit = entry_quote.mid_price * 100.0

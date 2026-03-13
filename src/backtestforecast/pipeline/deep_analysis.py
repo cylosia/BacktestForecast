@@ -290,23 +290,8 @@ class SymbolDeepAnalysisService:
             self.session.flush()
 
             # --- Stage 4: Forecast on best result ---
-            if top_results and self.forecaster:
-                best = top_results[0]
-                try:
-                    forecast = self.forecaster.get_forecast(
-                        symbol=symbol,
-                        strategy_type=best.strategy_type,
-                        horizon_days=best.target_dte,
-                        as_of_date=trade_date,
-                    )
-                    if forecast:
-                        analysis.forecast_json = forecast
-                except Exception:
-                    logger.debug(
-                        "deep_analysis.forecast_overlay_failed",
-                        symbol=symbol,
-                        exc_info=True,
-                    )
+            if top_results and top_results[0].forecast:
+                analysis.forecast_json = top_results[0].forecast
 
             analysis.status = "succeeded"
             if not top_results:
@@ -330,9 +315,18 @@ class SymbolDeepAnalysisService:
             )
 
         except Exception:
+            failing_stage = analysis.stage
+            counters = {
+                "strategies_tested": analysis.strategies_tested,
+                "configs_tested": analysis.configs_tested,
+                "top_results_count": analysis.top_results_count,
+            }
             self.session.rollback()
             analysis = self.session.get(SymbolAnalysis, analysis_id)
             if analysis is not None:
+                analysis.stage = failing_stage
+                for attr, value in counters.items():
+                    setattr(analysis, attr, value)
                 analysis.status = "failed"
                 analysis.error_message = "Analysis failed. Please try again."
                 analysis.completed_at = datetime.now(UTC)
@@ -501,6 +495,12 @@ class SymbolDeepAnalysisService:
                             forecast_supports = float(median_return) < 0
                         if roi > 0 and float(median_return) != 0 and forecast_supports:
                             score *= 1.2
+                        positive_rate = f.get("positive_outcome_rate_pct", 50)
+                        effective_rate = float(positive_rate)
+                        if cell.strategy_type in _BEARISH_STRATS:
+                            effective_rate = 100.0 - effective_rate
+                        if effective_rate > 60:
+                            score *= 1.0 + (effective_rate - 60) / 200.0
                 except Exception:
                     logger.warning(
                         "deep_analysis.candidate_forecast_failed",

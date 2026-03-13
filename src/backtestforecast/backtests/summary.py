@@ -54,8 +54,14 @@ def build_summary(
 
     recovery_factor: float | None = None
     if max_drawdown_pct > 0 and equity_curve:
-        peak_equity = max(point.equity for point in equity_curve)
-        max_drawdown_dollars = peak_equity * max_drawdown_pct / 100.0
+        running_peak = equity_curve[0].equity
+        max_drawdown_dollars = 0.0
+        for point in equity_curve:
+            if point.equity > running_peak:
+                running_peak = point.equity
+            dd_dollars = running_peak - point.equity
+            if dd_dollars > max_drawdown_dollars:
+                max_drawdown_dollars = dd_dollars
         if max_drawdown_dollars > 0:
             recovery_factor = total_net_pnl / max_drawdown_dollars
 
@@ -116,10 +122,9 @@ def _compute_sharpe_sortino(
 
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
-    downside = [x for x in excess if x < 0]
-    if len(downside) >= 2:
-        down_mean = sum(d**2 for d in downside) / len(downside)
-        down_dev = math.sqrt(down_mean)
+    downside_sq_sum = sum(x**2 for x in excess if x < 0)
+    if downside_sq_sum > 0:
+        down_dev = math.sqrt(downside_sq_sum / len(excess))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None

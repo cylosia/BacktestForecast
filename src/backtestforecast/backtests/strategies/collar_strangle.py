@@ -11,6 +11,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -58,6 +59,8 @@ class CollarStrategy(StrategyDefinition):
         cq = option_gateway.get_quote(short_call.ticker, bar.trade_date)
         pq = option_gateway.get_quote(long_put.ticker, bar.trade_date)
         if cq is None or pq is None:
+            return None
+        if not valid_entry_mids(cq.mid_price, pq.mid_price):
             return None
 
         net_option_cost = (pq.mid_price - cq.mid_price) * 100.0
@@ -146,6 +149,8 @@ class CoveredStrangleStrategy(StrategyDefinition):
         cq = option_gateway.get_quote(short_call.ticker, bar.trade_date)
         pq = option_gateway.get_quote(short_put.ticker, bar.trade_date)
         if cq is None or pq is None:
+            return None
+        if not valid_entry_mids(cq.mid_price, pq.mid_price):
             return None
 
         credit = (cq.mid_price + pq.mid_price) * 100.0

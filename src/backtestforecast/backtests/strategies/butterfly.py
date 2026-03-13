@@ -11,6 +11,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_wing_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -53,6 +54,8 @@ class ButterflyStrategy(StrategyDefinition):
         center_quote = option_gateway.get_quote(center_call.ticker, bar.trade_date)
         upper_quote = option_gateway.get_quote(upper_call.ticker, bar.trade_date)
         if lower_quote is None or center_quote is None or upper_quote is None:
+            return None
+        if not valid_entry_mids(lower_quote.mid_price, center_quote.mid_price, upper_quote.mid_price):
             return None
 
         entry_value_per_unit = (lower_quote.mid_price + upper_quote.mid_price - (2.0 * center_quote.mid_price)) * 100.0

@@ -218,11 +218,8 @@ class BillingService:
             return None
 
         customer_id = self._coerce_stripe_id(checkout_session.get("customer"))
-        if customer_id:
-            user.stripe_customer_id = customer_id
         subscription_id = self._coerce_stripe_id(checkout_session.get("subscription"))
         if subscription_id:
-            user.stripe_subscription_id = subscription_id
             try:
                 client = self._get_stripe_client()
                 subscription = client.subscriptions.retrieve(subscription_id)
@@ -237,6 +234,13 @@ class BillingService:
                     "Unable to verify subscription with Stripe. The webhook will be retried.",
                 ) from exc
             self._apply_subscription_to_user(user, subscription)
+        elif customer_id:
+            locked_user = self.session.scalar(
+                select(User).where(User.id == user.id).with_for_update()
+            )
+            if locked_user is not None:
+                locked_user.stripe_customer_id = customer_id
+                self.session.flush()
         return user
 
     def _sync_subscription(self, subscription: Any) -> User | None:

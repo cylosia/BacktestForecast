@@ -148,7 +148,7 @@ class ExportService:
             logger.warning("export.terminal_failure", export_job_id=str(export_job.id), error=str(exc))
             export_job.status = "failed"
             export_job.error_code = "export_generation_failed"
-            export_job.error_message = str(exc)
+            export_job.error_message = "Export generation failed due to a data or configuration error."
             export_job.completed_at = datetime.now(UTC)
             self.session.commit()
         except Exception:
@@ -411,9 +411,10 @@ class ExportService:
     def _sanitize_csv_cell(value: object) -> object:
         if not isinstance(value, str):
             return value
-        if value[:1] in {"=", "+", "-", "@"}:
-            return "'" + value
-        return value
+        sanitized = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+        if sanitized[:1] in {"=", "+", "-", "@"}:
+            return "'" + sanitized
+        return sanitized
 
     @staticmethod
     def _to_response(job: ExportJob) -> ExportJobResponse:

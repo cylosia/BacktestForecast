@@ -11,6 +11,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -50,7 +51,7 @@ class CoveredCallStrategy(StrategyDefinition):
         )
         short_call = require_contract_for_strike(call_contracts, strike)
         quote = option_gateway.get_quote(short_call.ticker, bar.trade_date)
-        if quote is None:
+        if quote is None or not valid_entry_mids(quote.mid_price):
             return None
 
         stock_value = bar.close_price * 100.0

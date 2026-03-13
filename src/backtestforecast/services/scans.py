@@ -130,7 +130,21 @@ class ScanService:
             engine_version="options-multileg-v2",
         )
         self.repository.add(job)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            if payload.idempotency_key:
+                existing = self.repository.get_by_idempotency_key(user.id, payload.idempotency_key)
+                if existing is not None:
+                    return existing
+            recent = self.repository.find_recent_duplicate(
+                user.id, request_hash, payload.mode.value,
+                since=datetime.now(UTC) - timedelta(minutes=10),
+            )
+            if recent is not None:
+                return recent
+            raise
         self.session.refresh(job)
         return job
 

@@ -10,6 +10,7 @@ from backtestforecast.backtests.strategies.common import (
     get_overrides,
     require_contract_for_strike,
     resolve_strike,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -55,7 +56,7 @@ class NakedOptionStrategy(StrategyDefinition):
         )
         contract = require_contract_for_strike(exp_contracts, strike)
         quote = option_gateway.get_quote(contract.ticker, bar.trade_date)
-        if quote is None:
+        if quote is None or not valid_entry_mids(quote.mid_price):
             return None
 
         credit = quote.mid_price * 100.0

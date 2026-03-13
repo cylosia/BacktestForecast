@@ -19,16 +19,14 @@ class BacktestRunRepository:
         return run
 
     def get_by_id(self, run_id: UUID, *, for_update: bool = False) -> BacktestRun | None:
-        stmt = (
-            select(BacktestRun)
-            .where(BacktestRun.id == run_id)
-            .options(
+        stmt = select(BacktestRun).where(BacktestRun.id == run_id)
+        if for_update:
+            stmt = stmt.with_for_update()
+        else:
+            stmt = stmt.options(
                 selectinload(BacktestRun.trades),
                 selectinload(BacktestRun.equity_points),
             )
-        )
-        if for_update:
-            stmt = stmt.with_for_update()
         return self.session.scalar(stmt)
 
     def get_by_idempotency_key(self, user_id: UUID, idempotency_key: str) -> BacktestRun | None:

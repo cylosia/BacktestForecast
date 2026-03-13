@@ -501,7 +501,7 @@ class NightlyPipelineService:
                     )
                     return candidate, None
 
-            _BEARISH = {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put"}
+            _BEARISH = {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put", "ratio_put_backspread"}
             max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = [pool.submit(_fetch_forecast, c) for c in candidates]

@@ -10,6 +10,7 @@ from backtestforecast.backtests.strategies.common import (
     contracts_for_expiration,
     require_contract_for_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -44,7 +45,7 @@ class SyntheticPutStrategy(StrategyDefinition):
         long_call = require_contract_for_strike(cc, strike)
 
         cq = option_gateway.get_quote(long_call.ticker, bar.trade_date)
-        if cq is None:
+        if cq is None or not valid_entry_mids(cq.mid_price):
             return None
 
         premium = cq.mid_price * 100.0

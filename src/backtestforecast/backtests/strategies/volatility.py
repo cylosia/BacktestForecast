@@ -11,6 +11,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -88,6 +89,8 @@ class VolatilityExpansionStrategy(StrategyDefinition):
         call_quote = option_gateway.get_quote(call_contract.ticker, bar.trade_date)
         put_quote = option_gateway.get_quote(put_contract.ticker, bar.trade_date)
         if call_quote is None or put_quote is None:
+            return None
+        if not valid_entry_mids(call_quote.mid_price, put_quote.mid_price):
             return None
 
         entry_value_per_unit = (call_quote.mid_price + put_quote.mid_price) * 100.0

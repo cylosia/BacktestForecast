@@ -18,7 +18,7 @@ class ExportJobRepository:
         return job
 
     def get(self, export_job_id: UUID, *, for_update: bool = False) -> ExportJob | None:
-        stmt = select(ExportJob).where(ExportJob.id == export_job_id)
+        stmt = select(ExportJob).where(ExportJob.id == export_job_id).options(defer(ExportJob.content_bytes))
         if for_update:
             stmt = stmt.with_for_update()
         return self.session.scalar(stmt)

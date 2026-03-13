@@ -16,6 +16,7 @@ from backtestforecast.backtests.strategies.common import (
     resolve_strike,
     resolve_wing_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -78,6 +79,8 @@ class JadeLizardStrategy(StrategyDefinition):
         scq = option_gateway.get_quote(sc.ticker, bar.trade_date)
         lcq = option_gateway.get_quote(lc.ticker, bar.trade_date)
         if spq is None or scq is None or lcq is None:
+            return None
+        if not valid_entry_mids(spq.mid_price, scq.mid_price, lcq.mid_price):
             return None
 
         total_credit = (spq.mid_price + scq.mid_price - lcq.mid_price) * 100.0
@@ -173,6 +176,8 @@ class IronButterflyStrategy(StrategyDefinition):
         lcq = option_gateway.get_quote(long_call.ticker, bar.trade_date)
         lpq = option_gateway.get_quote(long_put.ticker, bar.trade_date)
         if any(q is None for q in [scq, spq, lcq, lpq]):
+            return None
+        if not valid_entry_mids(scq.mid_price, spq.mid_price, lcq.mid_price, lpq.mid_price):  # type: ignore[union-attr]
             return None
 
         credit = (scq.mid_price + spq.mid_price - lcq.mid_price - lpq.mid_price) * 100.0  # type: ignore[union-attr]

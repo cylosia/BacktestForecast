@@ -14,6 +14,7 @@ from backtestforecast.backtests.strategies.common import (
     resolve_strike,
     sorted_unique_strikes,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -64,6 +65,8 @@ class PMCCStrategy(StrategyDefinition):
         sq = option_gateway.get_quote(short_c.ticker, bar.trade_date)
         lq = option_gateway.get_quote(long_c.ticker, bar.trade_date)
         if sq is None or lq is None:
+            return None
+        if not valid_entry_mids(sq.mid_price, lq.mid_price):
             return None
 
         entry_value = (lq.mid_price - sq.mid_price) * 100.0
@@ -127,6 +130,8 @@ class DiagonalSpreadStrategy(StrategyDefinition):
         sq = option_gateway.get_quote(short_c.ticker, bar.trade_date)
         lq = option_gateway.get_quote(long_c.ticker, bar.trade_date)
         if sq is None or lq is None:
+            return None
+        if not valid_entry_mids(sq.mid_price, lq.mid_price):
             return None
 
         entry_value = (lq.mid_price - sq.mid_price) * 100.0

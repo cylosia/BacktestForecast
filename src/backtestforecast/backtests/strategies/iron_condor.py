@@ -12,6 +12,7 @@ from backtestforecast.backtests.strategies.common import (
     resolve_strike,
     resolve_wing_strike,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -105,6 +106,8 @@ class IronCondorStrategy(StrategyDefinition):
         lc = quotes[long_call.ticker].mid_price  # type: ignore[union-attr]
         sp = quotes[short_put.ticker].mid_price  # type: ignore[union-attr]
         lp = quotes[long_put.ticker].mid_price  # type: ignore[union-attr]
+        if not valid_entry_mids(sc, lc, sp, lp):
+            return None
         entry_value_per_unit = (lc + lp - sc - sp) * 100.0
         put_width = abs(short_put.strike_price - long_put.strike_price) * 100.0
         call_width = abs(long_call.strike_price - short_call.strike_price) * 100.0

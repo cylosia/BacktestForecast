@@ -368,6 +368,11 @@ def resolve_wing_strike(
     return result
 
 
+def valid_entry_mids(*mids: float) -> bool:
+    """Return True if every mid price is finite and positive."""
+    return all(math.isfinite(m) and m > 0 for m in mids)
+
+
 def get_overrides(config_overrides: StrategyOverrides | None) -> StrategyOverrides:
     """Return the overrides or an empty default."""
     if config_overrides is not None:

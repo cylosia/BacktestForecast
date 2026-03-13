@@ -13,6 +13,7 @@ from backtestforecast.backtests.strategies.common import (
     resolve_strike,
     sorted_unique_strikes,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -59,6 +60,8 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
         sq = option_gateway.get_quote(short_c.ticker, bar.trade_date)
         lq = option_gateway.get_quote(long_c.ticker, bar.trade_date)
         if sq is None or lq is None:
+            return None
+        if not valid_entry_mids(sq.mid_price, lq.mid_price):
             return None
 
         # Sell 1 × short, buy 2 × long
@@ -126,6 +129,8 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
         sq = option_gateway.get_quote(short_c.ticker, bar.trade_date)
         lq = option_gateway.get_quote(long_c.ticker, bar.trade_date)
         if sq is None or lq is None:
+            return None
+        if not valid_entry_mids(sq.mid_price, lq.mid_price):
             return None
 
         entry_cost = (2 * lq.mid_price - sq.mid_price) * 100.0
