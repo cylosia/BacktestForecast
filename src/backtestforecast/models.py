@@ -76,7 +76,7 @@ class BacktestRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
     date_from: Mapped[date] = mapped_column(Date, nullable=False)
@@ -235,7 +235,7 @@ class ScannerJob(Base):
         GUID(), ForeignKey("scanner_jobs.id", ondelete="SET NULL"), nullable=True
     )
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     plan_tier_snapshot: Mapped[str] = mapped_column(String(16), nullable=False)
     job_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
@@ -308,6 +308,7 @@ class ExportJob(Base):
         Index("ix_export_jobs_user_created_at", "user_id", "created_at"),
         Index("ix_export_jobs_user_status", "user_id", "status"),
         Index("ix_export_jobs_celery_task_id", "celery_task_id"),
+        Index("ix_export_jobs_backtest_run_id", "backtest_run_id"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="valid_export_status",
@@ -320,7 +321,7 @@ class ExportJob(Base):
         GUID(), ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False
     )
     export_format: Mapped[str] = mapped_column(String(16), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
@@ -376,7 +377,7 @@ class NightlyPipelineRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running", server_default="running")
     stage: Mapped[str] = mapped_column(String(32), nullable=False, default="universe_screen")
     symbols_screened: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     symbols_after_screen: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -401,6 +402,7 @@ class DailyRecommendation(Base):
         UniqueConstraint("pipeline_run_id", "rank", name="uq_daily_recs_pipeline_rank"),
         Index("ix_daily_recs_trade_date", "trade_date"),
         Index("ix_daily_recs_symbol_strategy", "symbol", "strategy_type"),
+        Index("ix_daily_recs_pipeline_run_id", "pipeline_run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -438,7 +440,7 @@ class SymbolAnalysis(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     stage: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     close_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     regime_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)

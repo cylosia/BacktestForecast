@@ -48,6 +48,10 @@ from backtestforecast.services.backtests import to_decimal
 
 logger = structlog.get_logger("services.scans")
 
+_FALLBACK_ENTRY_RULES: list[dict[str, Any]] = [
+    {"type": "rsi", "operator": "lte", "threshold": "40", "period": 14},
+]
+
 
 class ScanService:
     def __init__(
@@ -522,6 +526,8 @@ class ScanService:
         warnings: list[dict[str, Any]],
     ) -> dict[str, HistoricalDataBundle]:
         all_rules = [rule for rule_set in payload.rule_sets for rule in rule_set.entry_rules]
+        if not all_rules:
+            logger.warning("prepare_bundles_fallback_rules", msg="No entry rules aggregated from rule_sets; using fallback RSI rule for warmup calculation")
         representative = CreateBacktestRunRequest(
             symbol=payload.symbols[0],
             strategy_type=payload.strategy_types[0],
@@ -533,7 +539,7 @@ class ScanService:
             account_size=payload.account_size,
             risk_per_trade_pct=payload.risk_per_trade_pct,
             commission_per_contract=payload.commission_per_contract,
-            entry_rules=all_rules or [{"type": "rsi", "operator": "lte", "threshold": "40", "period": 14}],
+            entry_rules=all_rules or _FALLBACK_ENTRY_RULES,
         )
         bundles: dict[str, HistoricalDataBundle] = {}
         for symbol in payload.symbols:

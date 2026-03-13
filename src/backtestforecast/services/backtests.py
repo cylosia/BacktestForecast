@@ -146,8 +146,7 @@ class BacktestService:
         if run is None:
             raise NotFoundError("Backtest run not found.")
 
-        if run.status not in ("queued", "running"):
-            # Already completed or failed — return as-is (idempotent)
+        if run.status != "queued":
             return run
 
         run.status = "running"
@@ -374,13 +373,12 @@ class BacktestService:
         )
 
     def _enforce_backtest_quota(self, user: User) -> None:
-        # Lock the user row to serialize concurrent quota checks (prevents TOCTOU)
-        self.session.execute(
+        locked_user = self.session.execute(
             select(User).where(User.id == user.id).with_for_update()
         ).scalar_one()
 
         feature_policy = resolve_feature_policy(
-            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+            locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,
         )
         if feature_policy.monthly_backtest_quota is None:
             return

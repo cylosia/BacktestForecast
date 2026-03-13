@@ -429,5 +429,6 @@ class ExportService:
             error_code=job.error_code,
             error_message=job.error_message,
             created_at=job.created_at,
+            started_at=job.started_at,
             completed_at=job.completed_at,
         )

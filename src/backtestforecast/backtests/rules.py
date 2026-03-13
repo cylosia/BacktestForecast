@@ -5,6 +5,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+import structlog
+
 from backtestforecast.backtests.types import BacktestConfig, OptionDataGateway
 from backtestforecast.indicators.calculations import (
     bollinger_bands,
@@ -30,6 +32,8 @@ from backtestforecast.schemas.backtests import (
     SupportResistanceRule,
     VolumeSpikeRule,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -87,6 +91,11 @@ class EntryRuleEvaluator:
                 if not self._evaluate_avoid_earnings_rule(rule, index):
                     return False
             else:
+                logger.warning(
+                    "unknown_entry_rule_type",
+                    rule_type=type(rule).__name__,
+                    bar_index=index,
+                )
                 return False
         return True
 
@@ -349,6 +358,10 @@ def implied_volatility_from_price(
 
     low = 0.01
     high = 5.0
+    # 60 bisection iterations reduce the search interval by ~2^60 ≈ 1e18, far
+    # exceeding the 1e-4 tolerance for any volatility in [0.01, 5.0].  The
+    # fallback return below should therefore only be reached in degenerate cases
+    # (e.g. deep ITM/OTM where the price function is extremely flat).
     for _ in range(60):
         midpoint = (low + high) / 2.0
         theoretical = black_scholes_price(

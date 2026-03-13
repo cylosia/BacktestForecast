@@ -96,20 +96,19 @@ class BacktestTemplateService:
         self.session.commit()
 
     def _enforce_template_limit(self, user: User) -> None:
-        # Lock the user row to serialize concurrent limit checks (prevents TOCTOU)
-        self.session.execute(
+        locked_user = self.session.execute(
             select(User).where(User.id == user.id).with_for_update()
         ).scalar_one()
 
         limit = _resolve_template_limit(
-            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+            locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,
         )
         if limit is None:
             return
         count = self.repository.count_for_user(user.id)
         if count >= limit:
             tier = normalize_plan_tier(
-                user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+                locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,
             )
             raise QuotaExceededError(
                 f"Template limit reached. Your {tier.value} plan allows up to {limit} templates.",

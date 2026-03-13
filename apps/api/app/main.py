@@ -169,13 +169,13 @@ if settings.app_env != "test":
 
     @app.get("/metrics", include_in_schema=False)
     def prometheus_metrics(request: Request) -> Response:
+        # Auth is enforced only in production/staging; dev environments
+        # intentionally allow unauthenticated scraping for local debugging.
         if settings.app_env in ("production", "staging"):
             import hmac as _hmac
 
             auth = request.headers.get("Authorization", "")
             token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-            if not token:
-                token = request.query_params.get("token", "")
             if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
         return metrics_response()

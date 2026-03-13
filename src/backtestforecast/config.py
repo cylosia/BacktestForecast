@@ -162,6 +162,7 @@ class Settings(BaseSettings):
 
     rate_limit_prefix: str = "bff:rate-limit"
     rate_limit_fail_closed: bool = False
+    rate_limit_memory_max_keys: int = 10_000
     backtest_create_rate_limit: int = 10
     scan_create_rate_limit: int = 6
     export_create_rate_limit: int = 20
@@ -212,6 +213,7 @@ class Settings(BaseSettings):
         "export_create_rate_limit", "billing_create_rate_limit",
         "template_mutate_rate_limit", "analysis_create_rate_limit",
         "forecast_rate_limit", "daily_picks_rate_limit",
+        "rate_limit_memory_max_keys",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:

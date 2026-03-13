@@ -296,7 +296,11 @@ class NightlyPipelineService:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_screen_one, s): s for s in symbols}
             for future in as_completed(futures):
-                snapshot = future.result()
+                try:
+                    snapshot = future.result()
+                except Exception:
+                    logger.warning("pipeline.screen_task_failed", exc_info=True)
+                    continue
                 if snapshot is not None:
                     results.append(snapshot)
 
@@ -364,6 +368,9 @@ class NightlyPipelineService:
                 roi = summary.get("total_roi_pct", 0.0)
                 win_rate = summary.get("win_rate", 0.0) / 100.0
                 drawdown = min(summary.get("max_drawdown_pct", 50.0), 99.0)
+                # Composite score: positive only when ROI > 0 AND win_rate > 0.
+                # Strategies with negative ROI are intentionally filtered out
+                # (score <= 0) because the pipeline recommends only profitable configs.
                 score = roi * win_rate * (1.0 - drawdown / 100.0)
 
                 if score <= 0:
@@ -401,7 +408,11 @@ class NightlyPipelineService:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, item): item for item in work_items}
             for future in as_completed(futures):
-                result = future.result()
+                try:
+                    result = future.result()
+                except Exception:
+                    logger.warning("pipeline.quick_backtest_task_failed", exc_info=True)
+                    continue
                 if result is not None:
                     results.append(result)
 
@@ -467,7 +478,11 @@ class NightlyPipelineService:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, c): c for c in candidates}
             for future in as_completed(futures):
-                result = future.result()
+                try:
+                    result = future.result()
+                except Exception:
+                    logger.warning("pipeline.full_backtest_task_failed", exc_info=True)
+                    continue
                 if result is not None:
                     results.append(result)
 
@@ -506,7 +521,11 @@ class NightlyPipelineService:
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = [pool.submit(_fetch_forecast, c) for c in candidates]
                 for future in as_completed(futures):
-                    candidate, forecast = future.result()
+                    try:
+                        candidate, forecast = future.result()
+                    except Exception:
+                        logger.warning("pipeline.forecast_task_failed", exc_info=True)
+                        continue
                     if forecast:
                         candidate.forecast_json = forecast
 

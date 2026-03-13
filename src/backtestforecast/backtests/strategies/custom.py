@@ -93,7 +93,7 @@ class CustomNLegStrategy(StrategyDefinition):
                         last_price=bar.close_price,
                     )
                 )
-                cost = bar.close_price * 100.0 * leg_def.quantity_ratio
+                cost = bar.close_price * share_qty
                 if side_sign == 1:
                     total_debit += cost
                 else:
@@ -152,7 +152,7 @@ class CustomNLegStrategy(StrategyDefinition):
                     last_mid=quote.mid_price,
                 )
             )
-            cost = quote.mid_price * 100.0 * leg_def.quantity_ratio
+            cost = quote.mid_price * 100.0 * option_qty
             if side_sign == 1:
                 total_debit += cost
             else:

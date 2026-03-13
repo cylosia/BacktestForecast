@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 import structlog
@@ -93,19 +94,12 @@ def download_export(
         request_id=metadata.request_id,
         ip_address=metadata.ip_address,
     )
-    safe_name = (
-        export_job.file_name
-        .replace('"', "")
-        .replace("\\", "")
-        .replace("/", "")
-        .replace("..", "")
-        .replace("\x00", "")
-        .replace("\r", "")
-        .replace("\n", "")
-    )
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", export_job.file_name)
+    allowed_mime_types = {"text/csv", "application/pdf"}
+    mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
     return Response(
         content=export_job.content_bytes,
-        media_type=export_job.mime_type,
+        media_type=mime_type,
         headers={
             "Content-Disposition": f'attachment; filename="{safe_name}"',
         },

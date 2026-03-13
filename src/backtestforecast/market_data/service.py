@@ -182,6 +182,8 @@ class MassiveOptionGateway:
         for contract in contracts:
             with self._lock:
                 snap = self._snapshot_cache.get(contract.ticker)
+                if snap is not None:
+                    self._snapshot_cache.move_to_end(contract.ticker)
             if snap is not None and snap.greeks is not None and snap.greeks.delta is not None:
                 lookup[contract.strike_price] = snap.greeks.delta
         return lookup

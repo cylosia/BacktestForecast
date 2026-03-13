@@ -8,6 +8,13 @@ Callers multiply by contract quantity as needed.
 
 from __future__ import annotations
 
+
+def _require_non_negative(**kwargs: float) -> None:
+    for name, value in kwargs.items():
+        if value < 0:
+            raise ValueError(f"{name} must be non-negative, got {value}")
+
+
 # ---------------------------------------------------------------------------
 # Naked options (no stock or spread protection)
 # ---------------------------------------------------------------------------
@@ -26,6 +33,7 @@ def naked_call_margin(
 
     Returns margin per contract (× 100).
     """
+    _require_non_negative(underlying_price=underlying_price, strike=strike, premium_per_share=premium_per_share)
     otm_amount = max(strike - underlying_price, 0.0)
     method_a = 0.20 * underlying_price - otm_amount + premium_per_share
     method_b = 0.10 * underlying_price + premium_per_share
@@ -46,6 +54,7 @@ def naked_put_margin(
 
     Returns margin per contract (× 100).
     """
+    _require_non_negative(underlying_price=underlying_price, strike=strike, premium_per_share=premium_per_share)
     otm_amount = max(underlying_price - strike, 0.0)
     method_a = 0.20 * underlying_price - otm_amount + premium_per_share
     method_b = 0.10 * strike + premium_per_share
@@ -142,6 +151,7 @@ def covered_call_margin(underlying_price: float) -> float:
 
     Returns capital per contract unit (100 shares × price).
     """
+    _require_non_negative(underlying_price=underlying_price)
     return underlying_price * 100.0
 
 
@@ -150,6 +160,7 @@ def cash_secured_put_margin(strike: float) -> float:
 
     Returns capital per contract (strike × 100).
     """
+    _require_non_negative(strike=strike)
     return strike * 100.0
 
 
@@ -179,6 +190,7 @@ def collar_margin(underlying_price: float) -> float:
 
     Returns capital per contract unit (100 shares × price).
     """
+    _require_non_negative(underlying_price=underlying_price)
     return underlying_price * 100.0
 
 
@@ -218,11 +230,8 @@ def jade_lizard_margin(
 
 
 def ratio_backspread_margin(
-    contract_type: str,
-    underlying_price: float,
     short_strike: float,
     long_strike: float,
-    short_premium_per_share: float,
 ) -> float:
     """Ratio backspread (1 short : 2 long): margin on the embedded vertical spread.
 
@@ -244,4 +253,5 @@ def short_stock_margin(underlying_price: float) -> float:
 
     Returns margin per 100 shares.
     """
+    _require_non_negative(underlying_price=underlying_price)
     return underlying_price * 100.0 * 0.50

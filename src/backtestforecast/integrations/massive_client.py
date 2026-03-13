@@ -544,18 +544,15 @@ class AsyncMassiveClient:
         underlying: str,
     ) -> list[OptionSnapshotRecord]:
         try:
-            payload = await self._get_json(
+            rows = await self._get_paginated_json(
                 f"/v3/snapshot/options/{quote(underlying, safe='')}",
                 params={"limit": 250},
             )
         except ExternalServiceError:
             logger.debug("massive_client.async_chain_snapshot_unavailable", underlying=underlying)
             return []
-        results = payload.get("results", [])
-        if not isinstance(results, list):
-            return []
         snapshots: list[OptionSnapshotRecord] = []
-        for item in results:
+        for item in rows:
             parsed = MassiveClient._parse_snapshot_result(item)
             if parsed is not None:
                 snapshots.append(parsed)

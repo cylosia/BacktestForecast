@@ -137,7 +137,7 @@ class RateLimiter:
         bucket = int(time.time() // window_seconds)
         namespaced = f"{key}:{bucket}"
         with self._memory_lock:
-            if len(self._memory_counters) > 10_000:
+            if len(self._memory_counters) > self.settings.rate_limit_memory_max_keys:
                 cutoff = bucket - 2
                 stale = [k for k, (b, _) in self._memory_counters.items() if b < cutoff]
                 for k in stale:

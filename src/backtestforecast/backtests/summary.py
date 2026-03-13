@@ -31,6 +31,8 @@ def build_summary(
         sum_dte += trade.dte_at_open
 
     trade_count = len(trades)
+    # Break-even trades (net_pnl == 0) are excluded from the win/loss
+    # denominator so that win_rate reflects only decisive outcomes.
     decided = len(win_pnls) + len(loss_pnls)
     win_rate = (len(win_pnls) / decided * 100.0) if decided else 0.0
     max_drawdown_pct = max((point.drawdown_pct for point in equity_curve), default=0.0)
@@ -142,7 +144,10 @@ def _compute_cagr(
         return None
     ratio = ending_equity / starting_equity
     exponent = 252.0 / trading_days
-    return (ratio**exponent - 1.0) * 100.0
+    result = (ratio**exponent - 1.0) * 100.0
+    if not math.isfinite(result):
+        return None
+    return result
 
 
 def _compute_streaks(trades: list[TradeResult]) -> tuple[int, int]:

@@ -602,7 +602,8 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
             select(BacktestRun.id)
             .where(
                 BacktestRun.status == "running",
-                BacktestRun.created_at < cutoff,
+                BacktestRun.started_at.isnot(None),
+                BacktestRun.started_at < cutoff,
             )
             .limit(50)
         )
@@ -610,7 +611,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         if stale_running_ids:
             session.execute(
                 update(BacktestRun)
-                .where(BacktestRun.id.in_(stale_running_ids))
+                .where(BacktestRun.id.in_(stale_running_ids), BacktestRun.status == "running")
                 .values(
                     status="failed",
                     error_code="stale_running",
@@ -648,7 +649,8 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
             select(ExportJob.id)
             .where(
                 ExportJob.status == "running",
-                ExportJob.created_at < cutoff,
+                ExportJob.started_at.isnot(None),
+                ExportJob.started_at < cutoff,
             )
             .limit(50)
         )
@@ -656,7 +658,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         if stale_running_export_ids:
             session.execute(
                 update(ExportJob)
-                .where(ExportJob.id.in_(stale_running_export_ids))
+                .where(ExportJob.id.in_(stale_running_export_ids), ExportJob.status == "running")
                 .values(
                     status="failed",
                     error_code="stale_running",
@@ -694,7 +696,8 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
             select(ScannerJob.id)
             .where(
                 ScannerJob.status == "running",
-                ScannerJob.created_at < cutoff,
+                ScannerJob.started_at.isnot(None),
+                ScannerJob.started_at < cutoff,
             )
             .limit(50)
         )
@@ -748,7 +751,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         if stale_running_analysis_ids:
             session.execute(
                 update(SymbolAnalysis)
-                .where(SymbolAnalysis.id.in_(stale_running_analysis_ids))
+                .where(SymbolAnalysis.id.in_(stale_running_analysis_ids), SymbolAnalysis.status == "running")
                 .values(
                     status="failed",
                     error_message="Job was stuck in running state and was automatically failed (stale_running).",
@@ -770,7 +773,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         if stale_running_pipeline_ids:
             session.execute(
                 update(NightlyPipelineRun)
-                .where(NightlyPipelineRun.id.in_(stale_running_pipeline_ids))
+                .where(NightlyPipelineRun.id.in_(stale_running_pipeline_ids), NightlyPipelineRun.status == "running")
                 .values(
                     status="failed",
                     error_message="Pipeline was stuck in running state and was automatically failed (stale_running).",
