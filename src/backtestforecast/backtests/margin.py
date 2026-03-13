@@ -221,16 +221,17 @@ def ratio_backspread_margin(
     contract_type: str,
     underlying_price: float,
     short_strike: float,
+    long_strike: float,
     short_premium_per_share: float,
 ) -> float:
-    """Ratio backspread (1 short : 2 long): margin on the 1 naked short leg.
+    """Ratio backspread (1 short : 2 long): margin on the embedded vertical spread.
 
-    The extra long leg provides unlimited protection on the long side,
-    so margin is only on the single short contract.
+    One long covers the short (forming a spread); the extra long requires no
+    margin.  Margin = spread width x 100.
 
     Returns margin per contract unit.
     """
-    return naked_option_margin(contract_type, underlying_price, short_strike, short_premium_per_share)
+    return abs(long_strike - short_strike) * 100.0
 
 
 # ---------------------------------------------------------------------------

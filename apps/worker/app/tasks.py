@@ -112,6 +112,7 @@ def nightly_scan_pipeline(
                             session.commit()
                         except Exception:
                             session.rollback()
+                    CELERY_TASKS_TOTAL.labels(task_name="pipeline.nightly_scan", status="failed").inc()
                     raise
 
             effective_status = "succeeded" if run.status == "succeeded" else "failed"
@@ -135,7 +136,10 @@ def nightly_scan_pipeline(
 
 @celery_app.task(name="backtests.run", bind=True, max_retries=2, soft_time_limit=300, time_limit=330)
 def run_backtest(self, run_id: str) -> dict[str, str]:
-    publish_job_status("backtest", UUID(run_id), "running")
+    try:
+        publish_job_status("backtest", UUID(run_id), "running")
+    except Exception:
+        logger.warning("publish_job_status.failed", job_id=run_id, exc_info=True)
     with SessionLocal() as session:
         service = BacktestService(session)
         try:
@@ -220,7 +224,10 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
 
 @celery_app.task(name="exports.generate", bind=True, max_retries=2, soft_time_limit=120, time_limit=150)
 def generate_export(self, export_job_id: str) -> dict[str, str | int]:
-    publish_job_status("export", UUID(export_job_id), "running")
+    try:
+        publish_job_status("export", UUID(export_job_id), "running")
+    except Exception:
+        logger.warning("publish_job_status.failed", job_id=export_job_id, exc_info=True)
     with SessionLocal() as session:
         service = ExportService(session)
         try:
@@ -317,7 +324,10 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
     from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
     from backtestforecast.services.backtest_execution import BacktestExecutionService as _BES
 
-    publish_job_status("analysis", UUID(analysis_id), "running")
+    try:
+        publish_job_status("analysis", UUID(analysis_id), "running")
+    except Exception:
+        logger.warning("publish_job_status.failed", job_id=analysis_id, exc_info=True)
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
     shared_mds = MarketDataService(client)
@@ -420,7 +430,10 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
 
 @celery_app.task(name="scans.run_job", bind=True, max_retries=3, soft_time_limit=600, time_limit=660)
 def run_scan_job(self, job_id: str) -> dict[str, str | int]:
-    publish_job_status("scan", UUID(job_id), "running")
+    try:
+        publish_job_status("scan", UUID(job_id), "running")
+    except Exception:
+        logger.warning("publish_job_status.failed", job_id=job_id, exc_info=True)
     with SessionLocal() as session:
         service = ScanService(session)
         try:
@@ -542,8 +555,6 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
     counts: dict[str, int] = {}
 
     with SessionLocal() as session:
-        redispatched = 0
-
         stale_runs_stmt = (
             select(BacktestRun.id)
             .where(
@@ -583,9 +594,9 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 run_obj.error_code = "stale_running"
                 run_obj.error_message = "Job was stuck in running state and was automatically failed."
                 run_obj.completed_at = datetime.now(UTC)
-                redispatched += 1
         if stale_running_ids:
             session.commit()
+        counts["stale_running_backtests"] = len(stale_running_ids)
 
         stale_exports_stmt = (
             select(ExportJob.id)
@@ -626,9 +637,9 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 export_obj.error_code = "stale_running"
                 export_obj.error_message = "Job was stuck in running state and was automatically failed."
                 export_obj.completed_at = datetime.now(UTC)
-                redispatched += 1
         if stale_running_export_ids:
             session.commit()
+        counts["stale_running_exports"] = len(stale_running_export_ids)
 
         stale_scans_stmt = (
             select(ScannerJob.id)
@@ -669,9 +680,9 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 scan_obj.error_code = "stale_running"
                 scan_obj.error_message = "Job was stuck in running state and was automatically failed."
                 scan_obj.completed_at = datetime.now(UTC)
-                redispatched += 1
         if stale_running_scan_ids:
             session.commit()
+        counts["stale_running_scans"] = len(stale_running_scan_ids)
 
         stale_analyses_stmt = (
             select(SymbolAnalysis.id)
@@ -711,9 +722,9 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 analysis_obj.status = "failed"
                 analysis_obj.error_message = "Job was stuck in running state and was automatically failed (stale_running)."
                 analysis_obj.completed_at = datetime.now(UTC)
-                redispatched += 1
         if stale_running_analysis_ids:
             session.commit()
+        counts["stale_running_analyses"] = len(stale_running_analysis_ids)
 
         stale_running_pipeline_stmt = (
             select(NightlyPipelineRun.id)
@@ -730,10 +741,9 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 pipeline_obj.status = "failed"
                 pipeline_obj.error_message = "Pipeline was stuck in running state and was automatically failed (stale_running)."
                 pipeline_obj.completed_at = datetime.now(UTC)
-                redispatched += 1
         if stale_running_pipeline_ids:
             session.commit()
-        counts["pipeline_runs"] = len(stale_running_pipeline_ids)
+        counts["stale_running_pipelines"] = len(stale_running_pipeline_ids)
 
     total = sum(counts.values())
     if total > 0:

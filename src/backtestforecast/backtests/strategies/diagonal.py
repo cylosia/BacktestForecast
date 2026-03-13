@@ -214,6 +214,8 @@ class DoubleDiagonalStrategy(StrategyDefinition):
         lpq = option_gateway.get_quote(lp.ticker, bar.trade_date)
         if any(q is None for q in [scq, spq, lcq, lpq]):
             return None
+        if not valid_entry_mids(scq.mid_price, spq.mid_price, lcq.mid_price, lpq.mid_price):  # type: ignore[union-attr]
+            return None
 
         entry_value = (lcq.mid_price + lpq.mid_price - scq.mid_price - spq.mid_price) * 100.0  # type: ignore[union-attr]
         if entry_value >= 0:

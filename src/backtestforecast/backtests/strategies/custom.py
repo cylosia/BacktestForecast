@@ -13,6 +13,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     sorted_unique_strikes,
     synthetic_ticker,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -124,6 +125,8 @@ class CustomNLegStrategy(StrategyDefinition):
             quote = option_gateway.get_quote(contract.ticker, bar.trade_date)
             if quote is None:
                 return None
+            if not valid_entry_mids(quote.mid_price):
+                return None
 
             option_legs.append(
                 OpenOptionLeg(
@@ -201,33 +204,36 @@ class CustomNLegStrategy(StrategyDefinition):
     ) -> float:
         short_legs = [leg for leg in option_legs if leg.side == -1]
         long_legs = [leg for leg in option_legs if leg.side == 1]
-        paired_short_indices: set[int] = set()
-        paired_long_indices: set[int] = set()
-        spread_margin = 0.0
+        short_remaining = [leg.quantity_per_unit for leg in short_legs]
+        long_remaining = [leg.quantity_per_unit for leg in long_legs]
+        margin = 0.0
 
         for si, short in enumerate(short_legs):
+            if short_remaining[si] <= 0:
+                continue
             for li, long in enumerate(long_legs):
-                if li in paired_long_indices:
+                if long_remaining[li] <= 0:
                     continue
                 if (
                     long.contract_type == short.contract_type
                     and long.expiration_date == short.expiration_date
                 ):
                     width = abs(short.strike_price - long.strike_price)
-                    qty = min(short.quantity_per_unit, long.quantity_per_unit)
-                    spread_margin += credit_spread_margin(width) * qty
-                    paired_short_indices.add(si)
-                    paired_long_indices.add(li)
-                    break
+                    paired_qty = min(short_remaining[si], long_remaining[li])
+                    margin += credit_spread_margin(width) * paired_qty
+                    short_remaining[si] -= paired_qty
+                    long_remaining[li] -= paired_qty
+                    if short_remaining[si] <= 0:
+                        break
 
         for si, short in enumerate(short_legs):
-            if si in paired_short_indices:
+            if short_remaining[si] <= 0:
                 continue
-            spread_margin += naked_option_margin(
+            margin += naked_option_margin(
                 short.contract_type, underlying_price, short.strike_price, short.entry_mid,
-            ) * short.quantity_per_unit
+            ) * short_remaining[si]
 
-        return spread_margin
+        return margin
 
 
 CUSTOM_2_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_2_leg")

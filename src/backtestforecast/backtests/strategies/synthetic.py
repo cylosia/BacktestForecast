@@ -114,6 +114,8 @@ class ReverseConversionStrategy(StrategyDefinition):
         pq = option_gateway.get_quote(short_put.ticker, bar.trade_date)
         if cq is None or pq is None:
             return None
+        if not valid_entry_mids(cq.mid_price, pq.mid_price):
+            return None
 
         net_option = (cq.mid_price - pq.mid_price) * 100.0
         margin = short_stock_margin(bar.close_price)

@@ -27,6 +27,8 @@ class HistoricalAnalogForecaster:
         horizon_days: int,
         strategy_type: str | None = None,
     ) -> HistoricalAnalogForecastResponse:
+        if horizon_days < 1:
+            raise ValueError("horizon_days must be at least 1.")
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         calendar_horizon = horizon_days
         horizon_days = self._calendar_to_trading_days(horizon_days)

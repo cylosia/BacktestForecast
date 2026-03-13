@@ -66,7 +66,7 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
 
         # Sell 1 × short, buy 2 × long
         entry_cost = (2 * lq.mid_price - sq.mid_price) * 100.0
-        margin = ratio_backspread_margin("call", bar.close_price, short_strike, sq.mid_price)
+        margin = ratio_backspread_margin("call", bar.close_price, short_strike, long_strike, sq.mid_price)
         capital = max(margin, max(entry_cost, 0.0))
 
         return OpenMultiLegPosition(
@@ -134,7 +134,7 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
             return None
 
         entry_cost = (2 * lq.mid_price - sq.mid_price) * 100.0
-        margin = ratio_backspread_margin("put", bar.close_price, short_strike, sq.mid_price)
+        margin = ratio_backspread_margin("put", bar.close_price, short_strike, long_strike, sq.mid_price)
         capital = max(margin, max(entry_cost, 0.0))
 
         return OpenMultiLegPosition(

@@ -183,9 +183,11 @@ if settings.app_env != "test":
 
 @app.get("/")
 def root() -> dict[str, str]:
-    return {
+    payload: dict[str, str] = {
         "service": "backtestforecast-api",
         "status": "ok",
-        "docs": "/docs",
         "health": "/health/ready",
     }
+    if _is_dev:
+        payload["docs"] = "/docs"
+    return payload

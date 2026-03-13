@@ -54,7 +54,7 @@ def build_summary(
 
     recovery_factor: float | None = None
     if max_drawdown_pct > 0 and equity_curve:
-        running_peak = equity_curve[0].equity
+        running_peak = max(starting_equity, equity_curve[0].equity)
         max_drawdown_dollars = 0.0
         for point in equity_curve:
             if point.equity > running_peak:

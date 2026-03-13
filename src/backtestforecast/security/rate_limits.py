@@ -53,7 +53,12 @@ class RateLimiter:
         if time.time() < self._redis_retry_after:
             return None
         try:
-            self._redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
+            self._redis = Redis.from_url(
+                self.settings.redis_url,
+                decode_responses=True,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+            )
             self._redis.ping()
         except Exception:
             self._redis = None

@@ -6,7 +6,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from backtestforecast.observability import REQUEST_ID_HEADER
 
-EXEMPT_BODY_LIMIT_PATHS = frozenset({"/v1/billing/webhook"})
+BODY_LIMIT_OVERRIDES: dict[str, int] = {
+    "/v1/billing/webhook": 256_000,
+}
 
 
 class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
@@ -15,12 +17,11 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
         self.max_body_bytes = max(1, int(max_body_bytes))
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        if request.url.path in EXEMPT_BODY_LIMIT_PATHS:
-            return await call_next(request)
+        effective_limit = BODY_LIMIT_OVERRIDES.get(request.url.path, self.max_body_bytes)
         content_length = request.headers.get("content-length")
         if content_length is not None:
             try:
-                if int(content_length) > self.max_body_bytes:
+                if int(content_length) > effective_limit:
                     return self._payload_too_large(request)
             except ValueError:
                 return self._payload_too_large(request)

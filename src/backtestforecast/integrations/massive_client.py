@@ -189,18 +189,15 @@ class MassiveClient:
         Returns a list of snapshot records with greeks attached.
         """
         try:
-            payload = self._get_json(
+            rows = self._get_paginated_json(
                 f"/v3/snapshot/options/{quote(underlying, safe='')}",
                 params={"limit": 250},
             )
         except ExternalServiceError:
             logger.debug("massive_client.chain_snapshot_unavailable", underlying=underlying)
             return []
-        results = payload.get("results", [])
-        if not isinstance(results, list):
-            return []
         snapshots: list[OptionSnapshotRecord] = []
-        for item in results:
+        for item in rows:
             parsed = self._parse_snapshot_result(item)
             if parsed is not None:
                 snapshots.append(parsed)
@@ -306,7 +303,9 @@ class MassiveClient:
             if not isinstance(next_url, str) or not next_url:
                 break
             if next_url.startswith("http"):
-                if urlparse(next_url).netloc != self._base_netloc:
+                parsed_next = urlparse(next_url)
+                parsed_base = urlparse(self.base_url)
+                if parsed_next.netloc != self._base_netloc or parsed_next.scheme != parsed_base.scheme:
                     break
             elif not next_url.startswith("/"):
                 break
@@ -577,7 +576,9 @@ class AsyncMassiveClient:
             if not isinstance(next_url, str) or not next_url:
                 break
             if next_url.startswith("http"):
-                if urlparse(next_url).netloc != self._base_netloc:
+                parsed_next = urlparse(next_url)
+                parsed_base = urlparse(self.base_url)
+                if parsed_next.netloc != self._base_netloc or parsed_next.scheme != parsed_base.scheme:
                     break
             elif not next_url.startswith("/"):
                 break

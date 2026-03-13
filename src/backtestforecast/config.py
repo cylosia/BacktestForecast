@@ -273,6 +273,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments require METRICS_TOKEN to be set.")
             if not self.clerk_audience:
                 raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
+            if not self.clerk_authorized_parties:
+                raise ValueError("Production-like environments require at least one CLERK_AUTHORIZED_PARTIES entry.")
         return self
 
 

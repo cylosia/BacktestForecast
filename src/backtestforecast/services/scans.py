@@ -259,10 +259,13 @@ class ScanService:
                                 "request_snapshot": request.model_dump(mode="json"),
                                 "summary": self._serialize_summary(execution_result.summary),
                                 "warnings": execution_result.warnings,
-                                "trades": [self._serialize_trade(trade) for trade in execution_result.trades],
-                                "equity_curve": [
-                                    self._serialize_equity_point(point) for point in execution_result.equity_curve
+                                "trades": [
+                                    self._serialize_trade(trade)
+                                    for trade in execution_result.trades[:50]
                                 ],
+                                "equity_curve": self._downsample_equity_curve(
+                                    execution_result.equity_curve
+                                ),
                                 "historical": historical.model_dump(mode="json"),
                                 "forecast": forecast.model_dump(mode="json"),
                                 "ranking": ranking.model_dump(mode="json"),
@@ -709,6 +712,20 @@ class ScanService:
             "position_value": float(to_decimal(point.position_value)),
             "drawdown_pct": float(to_decimal(point.drawdown_pct)),
         }
+
+    _MAX_SCAN_EQUITY_POINTS = 500
+
+    @classmethod
+    def _downsample_equity_curve(cls, equity_curve: list) -> list[dict[str, Any]]:
+        n = len(equity_curve)
+        if n <= cls._MAX_SCAN_EQUITY_POINTS:
+            return [cls._serialize_equity_point(p) for p in equity_curve]
+        step = max(1, n // cls._MAX_SCAN_EQUITY_POINTS)
+        sampled: list[dict[str, Any]] = []
+        for i, point in enumerate(equity_curve):
+            if i % step == 0 or i == n - 1:
+                sampled.append(cls._serialize_equity_point(point))
+        return sampled
 
     @staticmethod
     def _ranking_response_model(payload: dict[str, Any]):

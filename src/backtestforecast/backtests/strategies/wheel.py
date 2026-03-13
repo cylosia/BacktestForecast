@@ -12,6 +12,7 @@ from backtestforecast.backtests.strategies.common import (
     choose_put_otm_strike,
     contracts_for_expiration,
     require_contract_for_strike,
+    valid_entry_mids,
 )
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import (
@@ -467,6 +468,14 @@ class WheelStrategyBacktestEngine:
                 "One or more entry dates were skipped because no valid same-day option quote was returned.",
             )
             return None
+        if not valid_entry_mids(quote.mid_price):
+            self._add_warning_once(
+                warnings,
+                warning_codes,
+                "invalid_entry_mid",
+                "Entry quote had invalid mid price and was skipped.",
+            )
+            return None
 
         capital_required_per_unit = contract.strike_price * 100.0
         max_loss_per_unit = max((contract.strike_price - quote.mid_price) * 100.0, 0.0)
@@ -536,6 +545,14 @@ class WheelStrategyBacktestEngine:
                 warning_codes,
                 "missing_entry_quote",
                 "One or more entry dates were skipped because no valid same-day option quote was returned.",
+            )
+            return None
+        if not valid_entry_mids(quote.mid_price):
+            self._add_warning_once(
+                warnings,
+                warning_codes,
+                "invalid_entry_mid",
+                "Entry quote had invalid mid price and was skipped.",
             )
             return None
         return OpenShortOptionPhase(
