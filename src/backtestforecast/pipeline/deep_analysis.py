@@ -309,10 +309,13 @@ class SymbolDeepAnalysisService:
 
             analysis.status = "succeeded"
             if not top_results:
-                analysis.error_message = (
-                    "Analysis completed but no profitable strategy configurations were found "
-                    "for this symbol and date range."
-                )
+                analysis.forecast_json = {
+                    **analysis.forecast_json,
+                    "no_results_message": (
+                        "Analysis completed but no profitable strategy configurations were found "
+                        "for this symbol and date range."
+                    ),
+                }
             analysis.completed_at = datetime.now(UTC)
             analysis.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
             self.session.commit()

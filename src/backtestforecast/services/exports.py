@@ -135,6 +135,7 @@ class ExportService:
             export_job.completed_at = datetime.now(UTC)
             self.session.commit()
         except AppError:
+            self.session.rollback()
             logger.exception("export.execution_failed", export_job_id=str(export_job.id))
             export_job.status = "failed"
             export_job.error_code = "export_generation_failed"
@@ -143,6 +144,7 @@ class ExportService:
             self.session.commit()
             raise
         except (ValueError, RuntimeError) as exc:
+            self.session.rollback()
             logger.exception("export.terminal_failure", export_job_id=str(export_job.id))
             export_job.status = "failed"
             export_job.error_code = "export_generation_failed"
@@ -151,6 +153,7 @@ class ExportService:
             self.session.commit()
             raise
         except Exception:
+            self.session.rollback()
             logger.exception("export.execution_failed", export_job_id=str(export_job.id))
             export_job.status = "failed"
             export_job.error_code = "export_generation_failed"

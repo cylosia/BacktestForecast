@@ -222,7 +222,7 @@ class HistoricalAnalogForecaster:
             "wheel_strategy",
         }:
             direction_hint = "bullish"
-        elif strategy_type in {"long_put", "bear_put_debit_spread", "bear_call_credit_spread"}:
+        elif strategy_type in {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put"}:
             direction_hint = "bearish"
 
         if direction_hint == "bullish":
