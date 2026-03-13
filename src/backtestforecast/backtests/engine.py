@@ -4,6 +4,8 @@ import math
 from datetime import date, timedelta
 from typing import Any
 
+import structlog
+
 from backtestforecast.backtests.rules import EntryRuleEvaluator
 from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
 from backtestforecast.backtests.strategies.wheel import WheelStrategyBacktestEngine
@@ -19,6 +21,8 @@ from backtestforecast.backtests.types import (
 )
 from backtestforecast.errors import DataUnavailableError, ValidationError
 from backtestforecast.market_data.types import DailyBar
+
+logger = structlog.get_logger(__name__)
 
 
 class OptionsBacktestEngine:
@@ -123,6 +127,7 @@ class OptionsBacktestEngine:
                 try:
                     entry_allowed = evaluator.is_entry_allowed(index)
                 except Exception:
+                    logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
                     self._add_warning_once(
                         warnings, warning_codes, "entry_rule_evaluation_error",
                         "One or more entry rule evaluations failed and were treated as not-allowed.",
@@ -364,6 +369,7 @@ class OptionsBacktestEngine:
     def _entry_underlying_close(position: OpenMultiLegPosition) -> float:
         if position.stock_legs:
             return position.stock_legs[0].entry_price
+        # `or 0.0` handles the case where the stored value is explicitly None.
         return position.detail_json.get("entry_underlying_close", 0.0) or 0.0
 
     @staticmethod
@@ -434,4 +440,5 @@ class OptionsBacktestEngine:
         warnings.append({"code": code, "message": message})
 
 
+#: Legacy alias retained for backward compatibility with external callers.
 LongOptionBacktestEngine = OptionsBacktestEngine

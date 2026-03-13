@@ -125,12 +125,12 @@ class RateLimiter:
             with self._memory_lock:
                 self._lua_sha = sha
         try:
-            count = redis.evalsha(sha, 1, bucket_key, window_seconds * 2)
+            count = redis.evalsha(sha, 1, bucket_key, window_seconds + 10)
         except RedisError:
             sha = redis.script_load(_RATE_LIMIT_LUA)
             with self._memory_lock:
                 self._lua_sha = sha
-            count = redis.evalsha(sha, 1, bucket_key, window_seconds * 2)
+            count = redis.evalsha(sha, 1, bucket_key, window_seconds + 10)
         return int(count), bucket
 
     def _check_memory(self, key: str, window_seconds: int) -> tuple[int, int]:

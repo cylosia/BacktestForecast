@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+import structlog
+
 from backtestforecast.backtests.rules import EntryRuleEvaluator
 from backtestforecast.backtests.strategies.common import (
     choose_call_otm_strike,
@@ -24,6 +26,8 @@ from backtestforecast.backtests.types import (
 )
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -296,6 +300,7 @@ class WheelStrategyBacktestEngine:
                 try:
                     entry_allowed = evaluator.is_entry_allowed(index)
                 except Exception:
+                    logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
                     self._add_warning_once(
                         warnings, warning_codes, "entry_rule_evaluation_error",
                         "One or more entry rule evaluations failed and were treated as not-allowed.",

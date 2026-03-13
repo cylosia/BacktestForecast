@@ -170,6 +170,7 @@ class Settings(BaseSettings):
     analysis_create_rate_limit: int = 10
     analysis_rate_limit_window_seconds: int = 3600
     forecast_rate_limit: int = 6
+    daily_picks_rate_limit: int = 30
     rate_limit_window_seconds: int = 60
 
     pipeline_max_workers: int = Field(default=20, ge=1, le=64)
@@ -210,7 +211,7 @@ class Settings(BaseSettings):
         "backtest_create_rate_limit", "scan_create_rate_limit",
         "export_create_rate_limit", "billing_create_rate_limit",
         "template_mutate_rate_limit", "analysis_create_rate_limit",
-        "forecast_rate_limit",
+        "forecast_rate_limit", "daily_picks_rate_limit",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:

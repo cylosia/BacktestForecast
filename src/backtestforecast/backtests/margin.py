@@ -240,10 +240,7 @@ def ratio_backspread_margin(
 
 
 def short_stock_margin(underlying_price: float) -> float:
-    """Reg T margin for short stock: 50% of market value + 100% of short sale proceeds.
-
-    Simplified: 150% of underlying × shares, but practically the initial
-    margin deposit is 50% of the short value.
+    """Reg T initial margin requirement for short stock: 50% of market value.
 
     Returns margin per 100 shares.
     """

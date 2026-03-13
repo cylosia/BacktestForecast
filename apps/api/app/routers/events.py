@@ -41,6 +41,8 @@ async def _get_async_redis():
             settings.redis_url,
             decode_responses=True,
             max_connections=50,
+            socket_timeout=10.0,
+            socket_connect_timeout=5.0,
         )
     return _async_redis_pool
 

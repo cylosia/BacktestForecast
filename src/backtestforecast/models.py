@@ -367,6 +367,7 @@ class NightlyPipelineRun(Base):
         Index("ix_nightly_pipeline_runs_trade_date", "trade_date"),
         Index("ix_nightly_pipeline_runs_status", "status"),
         Index("ix_nightly_pipeline_runs_date_status", "trade_date", "status"),
+        Index("ix_nightly_pipeline_runs_status_created", "status", "created_at"),
         CheckConstraint(
             "status IN ('running', 'succeeded', 'failed')",
             name="valid_pipeline_status",

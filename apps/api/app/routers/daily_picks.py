@@ -9,12 +9,14 @@ from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user
 from backtestforecast.billing.entitlements import ensure_forecasting_access
+from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun, User
 from backtestforecast.schemas.analysis import (
     DailyPicksResponse,
     PipelineHistoryResponse,
 )
+from backtestforecast.security import get_rate_limiter
 
 router = APIRouter(prefix="/daily-picks", tags=["daily-picks"])
 
@@ -31,6 +33,13 @@ def get_latest_daily_picks(
 
     Pro+ feature gated via ensure_forecasting_access.
     """
+    settings = get_settings()
+    get_rate_limiter().check(
+        bucket="daily_picks:get",
+        actor_key=str(user.id),
+        limit=settings.daily_picks_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     response.headers["Cache-Control"] = "private, max-age=300"
 
@@ -113,6 +122,13 @@ def get_pipeline_history(
     limit: int = Query(default=10, ge=1, le=30),
 ) -> dict[str, Any]:
     """Return recent pipeline run history (Pro+ gated)."""
+    settings = get_settings()
+    get_rate_limiter().check(
+        bucket="daily_picks:history",
+        actor_key=str(user.id),
+        limit=settings.daily_picks_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
 
     stmt = select(NightlyPipelineRun).order_by(desc(NightlyPipelineRun.created_at)).limit(limit)

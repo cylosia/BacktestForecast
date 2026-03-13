@@ -78,11 +78,17 @@ class CustomNLegStrategy(StrategyDefinition):
             side_sign = 1 if leg_def.side == "long" else -1
 
             if leg_def.asset_type == "stock":
+                share_qty = int(100 * leg_def.quantity_ratio)
+                if share_qty == 0:
+                    raise DataUnavailableError(
+                        f"Stock leg quantity_ratio {leg_def.quantity_ratio} is too small "
+                        f"(truncates to 0 shares)."
+                    )
                 stock_legs.append(
                     OpenStockLeg(
                         symbol=config.symbol,
                         side=side_sign,
-                        share_quantity_per_unit=int(100 * leg_def.quantity_ratio),
+                        share_quantity_per_unit=share_qty,
                         entry_price=bar.close_price,
                         last_price=bar.close_price,
                     )
@@ -128,6 +134,12 @@ class CustomNLegStrategy(StrategyDefinition):
             if not valid_entry_mids(quote.mid_price):
                 return None
 
+            option_qty = int(leg_def.quantity_ratio)
+            if option_qty == 0:
+                raise DataUnavailableError(
+                    f"Option leg quantity_ratio {leg_def.quantity_ratio} is too small "
+                    f"(truncates to 0 contracts)."
+                )
             option_legs.append(
                 OpenOptionLeg(
                     ticker=contract.ticker,
@@ -135,7 +147,7 @@ class CustomNLegStrategy(StrategyDefinition):
                     side=side_sign,
                     strike_price=strike,
                     expiration_date=exp,
-                    quantity_per_unit=int(leg_def.quantity_ratio),
+                    quantity_per_unit=option_qty,
                     entry_mid=quote.mid_price,
                     last_mid=quote.mid_price,
                 )

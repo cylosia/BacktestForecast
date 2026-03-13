@@ -29,6 +29,26 @@ def ping() -> dict[str, str]:
     }
 
 
+def _find_pipeline_run(session, model_cls, run, trade_date):
+    """Return the pipeline run object for failure marking.
+
+    When *run* was returned by ``run_pipeline`` we can look it up by ID.
+    When *run* is still ``None`` (pipeline raised before returning), fall
+    back to querying for the most recent running row for *trade_date*.
+    """
+    if run is not None:
+        return session.get(model_cls, run.id)
+    from sqlalchemy import select, desc
+
+    stmt = (
+        select(model_cls)
+        .where(model_cls.trade_date == trade_date, model_cls.status == "running")
+        .order_by(desc(model_cls.created_at))
+        .limit(1)
+    )
+    return session.scalar(stmt)
+
+
 @celery_app.task(name="pipeline.nightly_scan", bind=True, max_retries=1, soft_time_limit=1800, time_limit=1860)
 def nightly_scan_pipeline(
     self,
@@ -86,7 +106,7 @@ def nightly_scan_pipeline(
             except SoftTimeLimitExceeded:
                 session.rollback()
                 logger.warning("pipeline.time_limit_exceeded", trade_date=str(trade_date))
-                run_obj = session.get(NightlyPipelineRun, run.id) if run else None
+                run_obj = _find_pipeline_run(session, NightlyPipelineRun, run, trade_date)
                 if run_obj is not None and run_obj.status == "running":
                     run_obj.status = "failed"
                     run_obj.error_message = "Pipeline exceeded the time limit."
@@ -103,7 +123,7 @@ def nightly_scan_pipeline(
                 try:
                     raise self.retry(exc=exc, countdown=300)
                 except MaxRetriesExceededError:
-                    run_obj = session.get(NightlyPipelineRun, run.id) if run else None
+                    run_obj = _find_pipeline_run(session, NightlyPipelineRun, run, trade_date)
                     if run_obj is not None and run_obj.status == "running":
                         run_obj.status = "failed"
                         run_obj.error_message = "Pipeline failed after maximum retries (max_retries_exceeded)."
@@ -587,14 +607,17 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
             .limit(50)
         )
         stale_running_ids = list(session.scalars(stale_running_stmt))
-        for run_id_val in stale_running_ids:
-            run_obj = session.get(BacktestRun, run_id_val)
-            if run_obj is not None:
-                run_obj.status = "failed"
-                run_obj.error_code = "stale_running"
-                run_obj.error_message = "Job was stuck in running state and was automatically failed."
-                run_obj.completed_at = datetime.now(UTC)
         if stale_running_ids:
+            session.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id.in_(stale_running_ids))
+                .values(
+                    status="failed",
+                    error_code="stale_running",
+                    error_message="Job was stuck in running state and was automatically failed.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             session.commit()
         counts["stale_running_backtests"] = len(stale_running_ids)
 
@@ -630,14 +653,17 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
             .limit(50)
         )
         stale_running_export_ids = list(session.scalars(stale_running_exports_stmt))
-        for eid_val in stale_running_export_ids:
-            export_obj = session.get(ExportJob, eid_val)
-            if export_obj is not None:
-                export_obj.status = "failed"
-                export_obj.error_code = "stale_running"
-                export_obj.error_message = "Job was stuck in running state and was automatically failed."
-                export_obj.completed_at = datetime.now(UTC)
         if stale_running_export_ids:
+            session.execute(
+                update(ExportJob)
+                .where(ExportJob.id.in_(stale_running_export_ids))
+                .values(
+                    status="failed",
+                    error_code="stale_running",
+                    error_message="Job was stuck in running state and was automatically failed.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             session.commit()
         counts["stale_running_exports"] = len(stale_running_export_ids)
 
@@ -673,14 +699,17 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
             .limit(50)
         )
         stale_running_scan_ids = list(session.scalars(stale_running_scans_stmt))
-        for sid_val in stale_running_scan_ids:
-            scan_obj = session.get(ScannerJob, sid_val)
-            if scan_obj is not None:
-                scan_obj.status = "failed"
-                scan_obj.error_code = "stale_running"
-                scan_obj.error_message = "Job was stuck in running state and was automatically failed."
-                scan_obj.completed_at = datetime.now(UTC)
         if stale_running_scan_ids:
+            session.execute(
+                update(ScannerJob)
+                .where(ScannerJob.id.in_(stale_running_scan_ids))
+                .values(
+                    status="failed",
+                    error_code="stale_running",
+                    error_message="Job was stuck in running state and was automatically failed.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             session.commit()
         counts["stale_running_scans"] = len(stale_running_scan_ids)
 
@@ -716,13 +745,16 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
             .limit(50)
         )
         stale_running_analysis_ids = list(session.scalars(stale_running_analyses_stmt))
-        for aid_val in stale_running_analysis_ids:
-            analysis_obj = session.get(SymbolAnalysis, aid_val)
-            if analysis_obj is not None:
-                analysis_obj.status = "failed"
-                analysis_obj.error_message = "Job was stuck in running state and was automatically failed (stale_running)."
-                analysis_obj.completed_at = datetime.now(UTC)
         if stale_running_analysis_ids:
+            session.execute(
+                update(SymbolAnalysis)
+                .where(SymbolAnalysis.id.in_(stale_running_analysis_ids))
+                .values(
+                    status="failed",
+                    error_message="Job was stuck in running state and was automatically failed (stale_running).",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             session.commit()
         counts["stale_running_analyses"] = len(stale_running_analysis_ids)
 
@@ -735,13 +767,16 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
             .limit(50)
         )
         stale_running_pipeline_ids = list(session.scalars(stale_running_pipeline_stmt))
-        for pid_val in stale_running_pipeline_ids:
-            pipeline_obj = session.get(NightlyPipelineRun, pid_val)
-            if pipeline_obj is not None:
-                pipeline_obj.status = "failed"
-                pipeline_obj.error_message = "Pipeline was stuck in running state and was automatically failed (stale_running)."
-                pipeline_obj.completed_at = datetime.now(UTC)
         if stale_running_pipeline_ids:
+            session.execute(
+                update(NightlyPipelineRun)
+                .where(NightlyPipelineRun.id.in_(stale_running_pipeline_ids))
+                .values(
+                    status="failed",
+                    error_message="Pipeline was stuck in running state and was automatically failed (stale_running).",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             session.commit()
         counts["stale_running_pipelines"] = len(stale_running_pipeline_ids)
 

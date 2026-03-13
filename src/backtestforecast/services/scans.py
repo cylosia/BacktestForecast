@@ -397,7 +397,7 @@ class ScanService:
                     subscription_current_period_end=owner.subscription_current_period_end,
                 )
                 payload = CreateScannerJobRequest.model_validate(source.request_snapshot_json)
-                validate_strategy_access(policy, payload.strategy_types)
+                validate_strategy_access(policy, [s.value for s in payload.strategy_types])
             except AppError:
                 logger.info(
                     "refresh.skipped_entitlement",
