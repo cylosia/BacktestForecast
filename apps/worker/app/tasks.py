@@ -83,6 +83,20 @@ def nightly_scan_pipeline(
                     symbols=symbols,
                     max_recommendations=max_recommendations,
                 )
+            except SoftTimeLimitExceeded:
+                session.rollback()
+                logger.warning("pipeline.time_limit_exceeded", trade_date=str(trade_date))
+                run_obj = session.get(NightlyPipelineRun, run.id) if run else None
+                if run_obj is not None and run_obj.status == "running":
+                    run_obj.status = "failed"
+                    run_obj.error_message = "Pipeline exceeded the time limit."
+                    run_obj.completed_at = datetime.now(UTC)
+                    try:
+                        session.commit()
+                    except Exception:
+                        session.rollback()
+                CELERY_TASKS_TOTAL.labels(task_name="pipeline.nightly_scan", status="failed").inc()
+                raise
             except Exception as exc:
                 session.rollback()
                 logger.exception("pipeline.task_failed", trade_date=str(trade_date))
@@ -100,6 +114,8 @@ def nightly_scan_pipeline(
                             session.rollback()
                     raise
 
+            effective_status = "succeeded" if run.status == "succeeded" else "failed"
+            CELERY_TASKS_TOTAL.labels(task_name="pipeline.nightly_scan", status=effective_status).inc()
             return {
                 "status": run.status,
                 "run_id": str(run.id),
@@ -107,8 +123,14 @@ def nightly_scan_pipeline(
                 "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
             }
     finally:
-        executor.close()
-        client.close()
+        try:
+            executor.close()
+        except Exception:
+            logger.exception("executor.close_failed")
+        try:
+            client.close()
+        except Exception:
+            logger.exception("client.close_failed")
 
 
 @celery_app.task(name="backtests.run", bind=True, max_retries=2, soft_time_limit=300, time_limit=330)
@@ -187,7 +209,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 logger.exception("service.close_failed")
 
         BACKTEST_RUNS_TOTAL.labels(status=run.status).inc()
-        CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="succeeded").inc()
+        CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status=run.status).inc()
         publish_job_status("backtest", UUID(run_id), run.status)
         return {
             "status": run.status,
@@ -377,7 +399,8 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                         "error_code": "max_retries_exceeded",
                     }
 
-            CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="succeeded").inc()
+            effective_status = "succeeded" if result.status == "succeeded" else "failed"
+            CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status=effective_status).inc()
             publish_job_status("analysis", UUID(analysis_id), result.status)
             return {
                 "status": result.status,
@@ -385,8 +408,14 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 "top_results": result.top_results_count,
             }
     finally:
-        executor.close()
-        client.close()
+        try:
+            executor.close()
+        except Exception:
+            logger.exception("executor.close_failed")
+        try:
+            client.close()
+        except Exception:
+            logger.exception("client.close_failed")
 
 
 @celery_app.task(name="scans.run_job", bind=True, max_retries=3, soft_time_limit=600, time_limit=660)
@@ -461,7 +490,8 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             except Exception:
                 logger.exception("service.close_failed")
 
-        CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="succeeded").inc()
+        effective_status = "succeeded" if job.status == "succeeded" else "failed"
+        CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status=effective_status).inc()
         publish_job_status("scan", UUID(job_id), job.status)
         return {
             "status": job.status,
@@ -505,14 +535,13 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
 
     from sqlalchemy import select, update
 
-    from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SymbolAnalysis
+    from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SymbolAnalysis
     from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL
 
     cutoff = datetime.now(UTC) - timedelta(minutes=stale_minutes)
     counts: dict[str, int] = {}
 
     with SessionLocal() as session:
-        dirty = False
         redispatched = 0
 
         stale_runs_stmt = (
@@ -531,9 +560,10 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 session.execute(
                     update(BacktestRun).where(BacktestRun.id == run_id).values(celery_task_id=result.id)
                 )
-                dirty = True
+                session.commit()
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="BacktestRun").inc()
             except Exception:
+                session.rollback()
                 logger.exception("reaper.redispatch_failed", model="BacktestRun", id=str(run_id))
         counts["backtest_runs"] = len(stale_run_ids)
 
@@ -554,7 +584,8 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 run_obj.error_message = "Job was stuck in running state and was automatically failed."
                 run_obj.completed_at = datetime.now(UTC)
                 redispatched += 1
-                dirty = True
+        if stale_running_ids:
+            session.commit()
 
         stale_exports_stmt = (
             select(ExportJob.id)
@@ -572,9 +603,10 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 session.execute(
                     update(ExportJob).where(ExportJob.id == eid).values(celery_task_id=result.id)
                 )
-                dirty = True
+                session.commit()
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="ExportJob").inc()
             except Exception:
+                session.rollback()
                 logger.exception("reaper.redispatch_failed", model="ExportJob", id=str(eid))
         counts["export_jobs"] = len(stale_export_ids)
 
@@ -595,7 +627,8 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 export_obj.error_message = "Job was stuck in running state and was automatically failed."
                 export_obj.completed_at = datetime.now(UTC)
                 redispatched += 1
-                dirty = True
+        if stale_running_export_ids:
+            session.commit()
 
         stale_scans_stmt = (
             select(ScannerJob.id)
@@ -613,9 +646,10 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 session.execute(
                     update(ScannerJob).where(ScannerJob.id == sid).values(celery_task_id=result.id)
                 )
-                dirty = True
+                session.commit()
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="ScannerJob").inc()
             except Exception:
+                session.rollback()
                 logger.exception("reaper.redispatch_failed", model="ScannerJob", id=str(sid))
         counts["scanner_jobs"] = len(stale_scan_ids)
 
@@ -636,7 +670,8 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 scan_obj.error_message = "Job was stuck in running state and was automatically failed."
                 scan_obj.completed_at = datetime.now(UTC)
                 redispatched += 1
-                dirty = True
+        if stale_running_scan_ids:
+            session.commit()
 
         stale_analyses_stmt = (
             select(SymbolAnalysis.id)
@@ -654,9 +689,10 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 session.execute(
                     update(SymbolAnalysis).where(SymbolAnalysis.id == aid).values(celery_task_id=result.id)
                 )
-                dirty = True
+                session.commit()
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="SymbolAnalysis").inc()
             except Exception:
+                session.rollback()
                 logger.exception("reaper.redispatch_failed", model="SymbolAnalysis", id=str(aid))
         counts["symbol_analyses"] = len(stale_analysis_ids)
 
@@ -676,10 +712,28 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 analysis_obj.error_message = "Job was stuck in running state and was automatically failed (stale_running)."
                 analysis_obj.completed_at = datetime.now(UTC)
                 redispatched += 1
-                dirty = True
-
-        if dirty:
+        if stale_running_analysis_ids:
             session.commit()
+
+        stale_running_pipeline_stmt = (
+            select(NightlyPipelineRun.id)
+            .where(
+                NightlyPipelineRun.status == "running",
+                NightlyPipelineRun.created_at < cutoff,
+            )
+            .limit(50)
+        )
+        stale_running_pipeline_ids = list(session.scalars(stale_running_pipeline_stmt))
+        for pid_val in stale_running_pipeline_ids:
+            pipeline_obj = session.get(NightlyPipelineRun, pid_val)
+            if pipeline_obj is not None:
+                pipeline_obj.status = "failed"
+                pipeline_obj.error_message = "Pipeline was stuck in running state and was automatically failed (stale_running)."
+                pipeline_obj.completed_at = datetime.now(UTC)
+                redispatched += 1
+        if stale_running_pipeline_ids:
+            session.commit()
+        counts["pipeline_runs"] = len(stale_running_pipeline_ids)
 
     total = sum(counts.values())
     if total > 0:

@@ -29,9 +29,11 @@ logger = structlog.get_logger("pipeline.adapters")
 class PipelineMarketDataFetcher:
     """Fetches daily bars and earnings dates for the pipeline."""
 
+    _MAX_EARNINGS_CACHE_SIZE = 500
+
     def __init__(self, client: MassiveClient) -> None:
         self.client = client
-        self._earnings_cache: dict[tuple[str, date, date], set[date]] = {}
+        self._earnings_cache: OrderedDict[tuple[str, date, date], set[date]] = OrderedDict()
         self._earnings_cache_lock = threading.Lock()
 
     def get_daily_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
@@ -45,6 +47,7 @@ class PipelineMarketDataFetcher:
         with self._earnings_cache_lock:
             cached = self._earnings_cache.get(cache_key)
             if cached is not None:
+                self._earnings_cache.move_to_end(cache_key)
                 return cached
 
         try:
@@ -54,7 +57,11 @@ class PipelineMarketDataFetcher:
             dates = set()
 
         with self._earnings_cache_lock:
-            self._earnings_cache.setdefault(cache_key, dates)
+            if cache_key not in self._earnings_cache:
+                if len(self._earnings_cache) >= self._MAX_EARNINGS_CACHE_SIZE:
+                    self._earnings_cache.popitem(last=False)
+                self._earnings_cache[cache_key] = dates
+            self._earnings_cache.move_to_end(cache_key)
             return self._earnings_cache[cache_key]
 
 
@@ -276,6 +283,6 @@ class PipelineForecaster:
                 "analog_count": result.analog_count,
                 "horizon_days": result.horizon_days,
             }
-        except (DataUnavailableError, ExternalServiceError, ValidationError):
+        except (DataUnavailableError, ExternalServiceError, ValidationError, ValueError):
             logger.warning("pipeline.forecast_failed", symbol=symbol, exc_info=True)
             return None

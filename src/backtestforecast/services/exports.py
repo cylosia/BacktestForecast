@@ -113,7 +113,7 @@ class ExportService:
 
         export_job.status = "running"
         export_job.started_at = datetime.now(UTC)
-        self.session.flush()
+        self.session.commit()
 
         try:
             detail = self.backtest_service.get_run_for_owner(
@@ -207,7 +207,7 @@ class ExportService:
         request_id: str | None = None,
         ip_address: str | None = None,
     ) -> ExportJob:
-        export_job = self.exports.get_for_user(export_job_id, user.id)
+        export_job = self.exports.get_for_user(export_job_id, user.id, include_content=True)
         if export_job is None:
             raise NotFoundError("Export not found.")
         if export_job.status != "succeeded" or not export_job.content_bytes:

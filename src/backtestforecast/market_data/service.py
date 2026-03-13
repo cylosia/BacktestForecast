@@ -166,18 +166,22 @@ class MassiveOptionGateway:
         contracts. Strikes without available delta are omitted.
         """
         with self._lock:
-            if not self._chain_snapshot_loaded:
-                chain = self.client.get_option_chain_snapshot(self.symbol)
-                for snap in chain:
-                    if snap.ticker not in self._snapshot_cache:
-                        self._snapshot_cache[snap.ticker] = snap
-                while len(self._snapshot_cache) > _GATEWAY_SNAPSHOT_CACHE_MAX:
-                    self._snapshot_cache.popitem(last=False)
-                self._chain_snapshot_loaded = True
+            already_loaded = self._chain_snapshot_loaded
+        if not already_loaded:
+            chain = self.client.get_option_chain_snapshot(self.symbol)
+            with self._lock:
+                if not self._chain_snapshot_loaded:
+                    for snap in chain:
+                        if snap.ticker not in self._snapshot_cache:
+                            self._snapshot_cache[snap.ticker] = snap
+                    while len(self._snapshot_cache) > _GATEWAY_SNAPSHOT_CACHE_MAX:
+                        self._snapshot_cache.popitem(last=False)
+                    self._chain_snapshot_loaded = True
 
         lookup: dict[float, float] = {}
         for contract in contracts:
-            snap = self._snapshot_cache.get(contract.ticker)
+            with self._lock:
+                snap = self._snapshot_cache.get(contract.ticker)
             if snap is not None and snap.greeks is not None and snap.greeks.delta is not None:
                 lookup[contract.strike_price] = snap.greeks.delta
         return lookup

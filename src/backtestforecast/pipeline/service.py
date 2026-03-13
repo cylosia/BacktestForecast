@@ -239,9 +239,18 @@ class NightlyPipelineService:
 
         except Exception:
             failing_stage = run.stage
+            counters = {
+                "symbols_screened": run.symbols_screened,
+                "symbols_after_screen": run.symbols_after_screen,
+                "pairs_generated": run.pairs_generated,
+                "quick_backtests_run": run.quick_backtests_run,
+                "full_backtests_run": run.full_backtests_run,
+            }
             self.session.rollback()
             run = self.session.get(NightlyPipelineRun, run.id)
             run.stage = failing_stage
+            for attr, value in counters.items():
+                setattr(run, attr, value)
             run.status = "failed"
             run.error_message = "Pipeline execution failed. See logs for details."
             run.completed_at = datetime.now(UTC)
@@ -268,14 +277,14 @@ class NightlyPipelineService:
         """Fetch bars and classify regime for each symbol.
         Skip symbols with insufficient data."""
         lookback_start = trade_date - timedelta(days=400)
-
+        earnings_start = trade_date - timedelta(days=10)
         earnings_end = trade_date + timedelta(days=10)
 
         def _screen_one(symbol: str) -> RegimeSnapshot | None:
             try:
                 bars = self.market_data.get_daily_bars(symbol, lookback_start, trade_date)
                 earnings_dates = self.market_data.get_earnings_dates(
-                    symbol, lookback_start, earnings_end,
+                    symbol, earnings_start, earnings_end,
                 )
                 return classify_regime(symbol, bars, earnings_dates=earnings_dates)
             except Exception as exc:
@@ -504,11 +513,12 @@ class NightlyPipelineService:
                         median_return = forecast.get("expected_return_median_pct", 0)
                         positive_rate = forecast.get("positive_outcome_rate_pct", 50)
 
-                        backtest_positive = candidate.summary.get("total_roi_pct", 0) > 0
-                        forecast_positive = float(median_return) > 0
-
                         backtest_roi = candidate.summary.get("total_roi_pct", 0)
-                        if backtest_roi != 0 and float(median_return) != 0 and backtest_positive == forecast_positive:
+                        forecast_supports = float(median_return) > 0
+                        if candidate.strategy_type in _BEARISH:
+                            forecast_supports = float(median_return) < 0
+
+                        if backtest_roi > 0 and float(median_return) != 0 and forecast_supports:
                             candidate.score *= 1.2
 
                         effective_rate = float(positive_rate)

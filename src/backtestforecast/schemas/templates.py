@@ -25,9 +25,9 @@ class TemplateConfig(BaseModel):
     target_dte: int = Field(ge=7, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
-    account_size: Decimal = Field(gt=0)
+    account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
-    commission_per_contract: Decimal = Field(ge=0)
+    commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
 
     # Optional pre-fill hints — not required, but useful if the user always tests the same symbol/window

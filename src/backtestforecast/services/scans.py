@@ -381,9 +381,16 @@ class ScanService:
                 )
                 payload = CreateScannerJobRequest.model_validate(source.request_snapshot_json)
                 validate_strategy_access(policy, payload.strategy_types)
-            except (AppError, Exception):
+            except AppError:
                 logger.info(
                     "refresh.skipped_entitlement",
+                    user_id=str(source.user_id),
+                    mode=source.mode,
+                )
+                continue
+            except Exception:
+                logger.exception(
+                    "refresh.skipped_unexpected_error",
                     user_id=str(source.user_id),
                     mode=source.mode,
                 )

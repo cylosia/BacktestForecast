@@ -23,8 +23,17 @@ BULLISH_STRATEGIES = {
     "bull_call_debit_spread",
     "bull_put_credit_spread",
     "wheel_strategy",
+    "poor_mans_covered_call",
+    "collar",
+    "diagonal_spread",
 }
-BEARISH_STRATEGIES = {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put"}
+BEARISH_STRATEGIES = {
+    "long_put",
+    "bear_put_debit_spread",
+    "bear_call_credit_spread",
+    "synthetic_put",
+    "ratio_put_backspread",
+}
 NEUTRAL_STRATEGIES = {
     "iron_condor",
     "iron_butterfly",

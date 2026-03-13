@@ -23,8 +23,12 @@ class ExportJobRepository:
             stmt = stmt.with_for_update()
         return self.session.scalar(stmt)
 
-    def get_for_user(self, export_job_id: UUID, user_id: UUID) -> ExportJob | None:
+    def get_for_user(
+        self, export_job_id: UUID, user_id: UUID, *, include_content: bool = False,
+    ) -> ExportJob | None:
         stmt = select(ExportJob).where(ExportJob.id == export_job_id, ExportJob.user_id == user_id)
+        if not include_content:
+            stmt = stmt.options(defer(ExportJob.content_bytes))
         return self.session.scalar(stmt)
 
     def get_by_idempotency_key(self, user_id: UUID, idempotency_key: str) -> ExportJob | None:

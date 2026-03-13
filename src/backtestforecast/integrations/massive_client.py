@@ -308,6 +308,8 @@ class MassiveClient:
             if next_url.startswith("http"):
                 if urlparse(next_url).netloc != self._base_netloc:
                     break
+            elif not next_url.startswith("/"):
+                break
 
             next_path = next_url
             next_params = None
@@ -351,11 +353,12 @@ class MassiveClient:
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 400:
+                safe_url = urlparse(url)._replace(query="").geturl()
                 logger.warning(
                     "massive_client_error",
                     status=response.status_code,
                     detail=response.text[:500],
-                    url=url,
+                    url=safe_url,
                 )
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code}. The request could not be completed."
@@ -576,6 +579,8 @@ class AsyncMassiveClient:
             if next_url.startswith("http"):
                 if urlparse(next_url).netloc != self._base_netloc:
                     break
+            elif not next_url.startswith("/"):
+                break
             next_path = next_url
             next_params = None
             page += 1
@@ -614,11 +619,12 @@ class AsyncMassiveClient:
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 400:
+                safe_url = urlparse(url)._replace(query="").geturl()
                 logger.warning(
                     "massive_client_error",
                     status=response.status_code,
                     detail=response.text[:500],
-                    url=url,
+                    url=safe_url,
                 )
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code}. The request could not be completed."

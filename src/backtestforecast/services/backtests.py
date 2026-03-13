@@ -223,7 +223,15 @@ class BacktestService:
             ending_equity=to_decimal(request.account_size),
         )
         self.run_repository.add(run)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            if request.idempotency_key:
+                existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
+                if existing is not None:
+                    return existing
+            raise
 
         try:
             execution_result = self.execution_service.execute_request(request)

@@ -486,11 +486,20 @@ class SymbolDeepAnalysisService:
                         symbol=symbol,
                         strategy_type=cell.strategy_type,
                         horizon_days=cell.target_dte,
+                        as_of_date=trade_date,
                     )
                     if f:
                         forecast = f
                         median_return = f.get("expected_return_median_pct", 0)
-                        if roi != 0 and float(median_return) != 0 and (roi > 0) == (float(median_return) > 0):
+                        _BEARISH_STRATS = {
+                            "long_put", "bear_put_debit_spread",
+                            "bear_call_credit_spread", "synthetic_put",
+                            "ratio_put_backspread",
+                        }
+                        forecast_supports = float(median_return) > 0
+                        if cell.strategy_type in _BEARISH_STRATS:
+                            forecast_supports = float(median_return) < 0
+                        if roi > 0 and float(median_return) != 0 and forecast_supports:
                             score *= 1.2
                 except Exception:
                     logger.warning(

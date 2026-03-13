@@ -220,9 +220,18 @@ class HistoricalAnalogForecaster:
             "bull_call_debit_spread",
             "bull_put_credit_spread",
             "wheel_strategy",
+            "poor_mans_covered_call",
+            "collar",
+            "diagonal_spread",
         }:
             direction_hint = "bullish"
-        elif strategy_type in {"long_put", "bear_put_debit_spread", "bear_call_credit_spread", "synthetic_put"}:
+        elif strategy_type in {
+            "long_put",
+            "bear_put_debit_spread",
+            "bear_call_credit_spread",
+            "synthetic_put",
+            "ratio_put_backspread",
+        }:
             direction_hint = "bearish"
 
         if direction_hint == "bullish":

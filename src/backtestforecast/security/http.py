@@ -53,7 +53,7 @@ class ApiSecurityHeadersMiddleware(BaseHTTPMiddleware):
             from backtestforecast.config import get_settings
 
             app_env = get_settings().app_env
-        self._is_production = app_env == "production"
+        self._is_production = app_env in ("production", "staging")
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         response = await call_next(request)
