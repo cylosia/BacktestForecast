@@ -101,6 +101,28 @@ DEFAULT_PARAM_GRID: list[dict[str, object]] = [
 ]
 
 
+# Strategies with high exposure to earnings gap risk / IV crush.
+# Suppressed when EARNINGS_IMMINENT is active.
+_EARNINGS_SUPPRESS: frozenset[str] = frozenset({
+    "short_strangle",
+    "short_straddle",
+    "covered_strangle",
+    "jade_lizard",
+    "iron_condor",
+    "iron_butterfly",
+    "covered_call",
+    "cash_secured_put",
+    "naked_call",
+    "naked_put",
+})
+
+_EARNINGS_FALLBACK: list[str] = [
+    "long_straddle",
+    "long_strangle",
+    "iron_condor",
+]
+
+
 def strategies_for_regime(
     regimes: frozenset[Regime],
 ) -> list[str]:
@@ -123,4 +145,11 @@ def strategies_for_regime(
     if strategies is None:
         strategies = REGIME_STRATEGY_MAP.get((directional, None), [])
 
-    return list(strategies)
+    result = list(strategies)
+
+    if Regime.EARNINGS_IMMINENT in regimes:
+        result = [s for s in result if s not in _EARNINGS_SUPPRESS]
+        if not result:
+            result = list(_EARNINGS_FALLBACK)
+
+    return result

@@ -27,16 +27,34 @@ logger = structlog.get_logger("pipeline.adapters")
 
 
 class PipelineMarketDataFetcher:
-    """Fetches daily bars for the pipeline's universe screening stage."""
+    """Fetches daily bars and earnings dates for the pipeline."""
 
     def __init__(self, client: MassiveClient) -> None:
         self.client = client
+        self._earnings_cache: dict[str, set[date]] = {}
+        self._earnings_cache_lock = threading.Lock()
 
     def get_daily_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
         from backtestforecast.market_data.service import MarketDataService
 
         raw_bars = self.client.get_stock_daily_bars(symbol, start_date, end_date)
         return MarketDataService._validate_bars(raw_bars, symbol)
+
+    def get_earnings_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        with self._earnings_cache_lock:
+            cached = self._earnings_cache.get(symbol)
+            if cached is not None:
+                return cached
+
+        try:
+            dates = self.client.list_earnings_event_dates(symbol, start_date, end_date)
+        except ExternalServiceError:
+            logger.warning("pipeline.earnings_fetch_failed", symbol=symbol)
+            dates = set()
+
+        with self._earnings_cache_lock:
+            self._earnings_cache.setdefault(symbol, dates)
+            return self._earnings_cache[symbol]
 
 
 class PipelineBacktestExecutor:

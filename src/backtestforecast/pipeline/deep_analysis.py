@@ -205,7 +205,12 @@ class SymbolDeepAnalysisService:
                 trade_date - timedelta(days=400),
                 trade_date,
             )
-            regime = classify_regime(symbol, bars)
+            earnings_dates = self.market_data.get_earnings_dates(
+                symbol,
+                trade_date - timedelta(days=10),
+                trade_date + timedelta(days=10),
+            )
+            regime = classify_regime(symbol, bars, earnings_dates=earnings_dates)
             if regime is None:
                 raise DataUnavailableError(f"Insufficient data to classify regime for {symbol}.")
 

@@ -264,10 +264,15 @@ class NightlyPipelineService:
         Skip symbols with insufficient data."""
         lookback_start = trade_date - timedelta(days=400)
 
+        earnings_end = trade_date + timedelta(days=10)
+
         def _screen_one(symbol: str) -> RegimeSnapshot | None:
             try:
                 bars = self.market_data.get_daily_bars(symbol, lookback_start, trade_date)
-                return classify_regime(symbol, bars)
+                earnings_dates = self.market_data.get_earnings_dates(
+                    symbol, lookback_start, earnings_end,
+                )
+                return classify_regime(symbol, bars, earnings_dates=earnings_dates)
             except Exception as exc:
                 logger.debug("pipeline.stage1_skip", symbol=symbol, error=str(exc))
                 return None
