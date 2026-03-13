@@ -137,56 +137,18 @@ export type DailyPicksResponse = components["schemas"]["DailyPicksResponse"];
 // ---------------------------------------------------------------------------
 // Analysis types
 //
-// The generated AnalysisDetailResponse uses Record<string, unknown> for nested
-// objects (regime, landscape, top_results). The interfaces below provide
-// stronger typing for these structures based on the known API contract.
+// These types are now derived from the generated OpenAPI schema.  After
+// regenerating the client (e.g. via openapi-typescript), RegimeDetail,
+// LandscapeCell and AnalysisTopResult will be available as proper schemas
+// rather than Record<string, unknown>.
 // ---------------------------------------------------------------------------
 
 export type SymbolAnalysisSummary = components["schemas"]["AnalysisSummaryResponse"];
 export type AnalysisDetailResponse = components["schemas"]["AnalysisDetailResponse"];
 export type AnalysisListResponse = components["schemas"]["AnalysisListResponse"];
 
-export interface RegimeDetail {
-  regimes: string[];
-  rsi_14: number | null;
-  ema_8: number | null;
-  ema_21: number | null;
-  sma_50: number | null;
-  sma_200: number | null;
-  realized_vol_20: number | null;
-  iv_rank_proxy: number | null;
-  volume_ratio: number | null;
-  close_price: number;
-}
+export type RegimeDetail = components["schemas"]["RegimeDetail"];
+export type LandscapeCell = components["schemas"]["LandscapeCell"];
+export type AnalysisTopResult = components["schemas"]["AnalysisTopResult"];
 
-export interface LandscapeCell {
-  strategy_type: string;
-  strategy_label: string;
-  target_dte: number;
-  config: Record<string, unknown>;
-  trade_count: number;
-  win_rate: number;
-  total_roi_pct: number;
-  max_drawdown_pct: number;
-  score: number;
-}
-
-export interface AnalysisTopResult {
-  rank: number;
-  strategy_type: string;
-  strategy_label: string;
-  target_dte: number;
-  config: Record<string, unknown>;
-  summary: Record<string, unknown>;
-  trades: Record<string, unknown>[];
-  equity_curve: Record<string, unknown>[];
-  forecast: Record<string, unknown>;
-  score: number;
-}
-
-export interface SymbolAnalysisFullResponse extends SymbolAnalysisSummary {
-  regime: RegimeDetail;
-  landscape: LandscapeCell[];
-  top_results: AnalysisTopResult[];
-  forecast: Record<string, unknown>;
-}
+export type SymbolAnalysisFullResponse = AnalysisDetailResponse;

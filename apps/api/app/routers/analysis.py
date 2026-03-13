@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user
-from apps.worker.app.celery_app import celery_app
+from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
@@ -64,25 +64,15 @@ def create_analysis(
     )
     analysis = service.create_analysis(user, symbol, idempotency_key=idempotency_key)
 
-    if analysis.status == "queued":
-        try:
-            result = celery_app.send_task(
-                "analysis.deep_symbol",
-                kwargs={"analysis_id": str(analysis.id)},
-                queue="research",
-            )
-            analysis.celery_task_id = result.id
-            db.commit()
-            logger.info("analysis.enqueued", analysis_id=str(analysis.id), symbol=symbol)
-        except Exception:
-            logger.exception("analysis.enqueue_failed", analysis_id=str(analysis.id))
-            analysis.status = "failed"
-            analysis.error_message = "Unable to dispatch job. Please try again."
-            try:
-                db.commit()
-            except Exception:
-                logger.exception("analysis.enqueue_failed.commit_error", analysis_id=str(analysis.id))
-                db.rollback()
+    dispatch_celery_task(
+        db=db,
+        job=analysis,
+        task_name="analysis.deep_symbol",
+        task_kwargs={"analysis_id": str(analysis.id)},
+        queue="research",
+        log_event="analysis",
+        logger=logger,
+    )
 
     db.expire_all()
     return _to_summary(analysis)

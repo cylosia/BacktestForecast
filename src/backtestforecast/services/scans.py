@@ -15,6 +15,8 @@ from backtestforecast.billing.entitlements import (
     validate_strategy_access,
 )
 from backtestforecast.errors import AppError, NotFoundError, ValidationError
+from backtestforecast.schemas.json_shapes import validate_json_shape
+from backtestforecast.utils.dates import market_date_today
 from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import ScannerJob, ScannerRecommendation, User
@@ -332,6 +334,8 @@ class ScanService:
         selected = sorted_candidates[: payload.max_recommendations]
 
         for candidate in selected:
+            validate_json_shape(candidate["summary"], "ScannerRecommendation.summary_json")
+            validate_json_shape(candidate["forecast"], "ScannerRecommendation.forecast_json")
             rank = rank_lookup[(candidate["symbol"], candidate["strategy_type"], candidate["rule_set_name"])]
             job.recommendations.append(
                 ScannerRecommendation(
@@ -386,7 +390,7 @@ class ScanService:
             latest_sources.setdefault(key, source)
 
         user_cache: dict[UUID, User | None] = {}
-        refresh_day = datetime.now(UTC).date().isoformat()
+        refresh_day = market_date_today().isoformat()
         for source in list(latest_sources.values())[:limit]:
             if source.user_id not in user_cache:
                 user_cache[source.user_id] = self.session.get(User, source.user_id)
@@ -462,8 +466,8 @@ class ScanService:
         request = CreateBacktestRunRequest(
             symbol=symbol,
             strategy_type=(strategy_type or "long_call"),
-            start_date=datetime.now(UTC).date() - timedelta(days=365),
-            end_date=datetime.now(UTC).date() - timedelta(days=1),
+            start_date=market_date_today() - timedelta(days=365),
+            end_date=market_date_today() - timedelta(days=1),
             target_dte=max(horizon_days, 7),
             dte_tolerance_days=10,
             max_holding_days=horizon_days,
@@ -635,7 +639,7 @@ class ScanService:
                 strategy_type=strategy_type,
             )
         except ValueError:
-            fallback_date = bars[-1].trade_date if bars else datetime.now(UTC).date()
+            fallback_date = bars[-1].trade_date if bars else market_date_today()
             return HistoricalAnalogForecastResponse(
                 symbol=symbol,
                 strategy_type=strategy_type,

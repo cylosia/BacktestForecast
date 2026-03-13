@@ -23,8 +23,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
-from backtestforecast.errors import DataUnavailableError, NotFoundError
+from backtestforecast.errors import ConfigurationError, DataUnavailableError, NotFoundError
+from backtestforecast.schemas.json_shapes import (
+    _REGIME_REQUIRED_KEYS,
+    validate_json_shape,
+)
 from backtestforecast.models import SymbolAnalysis, User
+from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 from backtestforecast.pipeline.regime import classify_regime
 
 logger = structlog.get_logger("deep_analysis")
@@ -133,9 +138,22 @@ class SymbolDeepAnalysisService:
         forecaster: Any | None = None,
     ) -> None:
         self.session = session
-        self.market_data = market_data_fetcher
-        self.executor = backtest_executor
+        self._market_data = market_data_fetcher
+        self._executor = backtest_executor
         self.forecaster = forecaster
+        self._repo = SymbolAnalysisRepository(session)
+
+    @property
+    def market_data(self) -> Any:
+        if self._market_data is None:
+            raise ConfigurationError("market_data_fetcher is required for analysis execution")
+        return self._market_data
+
+    @property
+    def executor(self) -> Any:
+        if self._executor is None:
+            raise ConfigurationError("backtest_executor is required for analysis execution")
+        return self._executor
 
     def create_analysis(
         self,
@@ -146,12 +164,7 @@ class SymbolDeepAnalysisService:
     ) -> SymbolAnalysis:
         """Create a queued analysis record. Caller dispatches to Celery."""
         if idempotency_key:
-            existing = self.session.scalar(
-                select(SymbolAnalysis).where(
-                    SymbolAnalysis.user_id == user.id,
-                    SymbolAnalysis.idempotency_key == idempotency_key,
-                )
-            )
+            existing = self._repo.get_by_idempotency_key(user.id, idempotency_key)
             if existing is not None:
                 return existing
 
@@ -168,12 +181,7 @@ class SymbolDeepAnalysisService:
         except IntegrityError:
             self.session.rollback()
             if idempotency_key:
-                existing = self.session.scalar(
-                    select(SymbolAnalysis).where(
-                        SymbolAnalysis.user_id == user.id,
-                        SymbolAnalysis.idempotency_key == idempotency_key,
-                    )
-                )
+                existing = self._repo.get_by_idempotency_key(user.id, idempotency_key)
                 if existing is not None:
                     return existing
             raise
@@ -197,7 +205,8 @@ class SymbolDeepAnalysisService:
 
         try:
             symbol = analysis.symbol
-            trade_date = datetime.now(UTC).date()
+            from backtestforecast.utils.dates import market_date_today
+            trade_date = market_date_today()
 
             # --- Stage 1: Regime analysis ---
             bars = self.market_data.get_daily_bars(
@@ -215,7 +224,7 @@ class SymbolDeepAnalysisService:
                 raise DataUnavailableError(f"Insufficient data to classify regime for {symbol}.")
 
             analysis.close_price = Decimal(str(round(regime.close_price, 4)))
-            analysis.regime_json = {
+            regime_dict: dict[str, Any] = {
                 "regimes": sorted(r.value for r in regime.regimes),
                 "rsi_14": regime.rsi_14,
                 "ema_8": regime.ema_8,
@@ -227,6 +236,8 @@ class SymbolDeepAnalysisService:
                 "volume_ratio": regime.volume_ratio,
                 "close_price": regime.close_price,
             }
+            validate_json_shape(regime_dict, "SymbolAnalysis.regime_json", required_keys=_REGIME_REQUIRED_KEYS)
+            analysis.regime_json = regime_dict
             analysis.stage = "landscape"
             self.session.flush()
             logger.info("deep_analysis.regime_done", analysis_id=str(analysis_id), symbol=symbol)

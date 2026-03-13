@@ -85,49 +85,67 @@ def client(
         app.dependency_overrides.clear()
 
 
+class _FakeCeleryApp:
+    """Composable Celery stub: each fixture registers a handler by task name."""
+
+    def __init__(self) -> None:
+        self._handlers: dict[str, object] = {}
+
+    def register(self, task_name: str, handler: object) -> None:
+        self._handlers[task_name] = handler
+
+    def send_task(self, name: str, kwargs: dict[str, str], **extra: object):
+        import types
+
+        handler = self._handlers.get(name)
+        if handler is None:
+            return types.SimpleNamespace(id="noop-task-id")
+        handler(name, kwargs)  # type: ignore[operator]
+        return types.SimpleNamespace(id="fake-task-id")
+
+
+@pytest.fixture()
+def _fake_celery(monkeypatch: pytest.MonkeyPatch) -> _FakeCeleryApp:
+    import apps.api.app.dispatch as dispatch_mod
+
+    fake = _FakeCeleryApp()
+    monkeypatch.setattr(dispatch_mod, "celery_app", fake)
+    return fake
+
+
 @pytest.fixture()
 def immediate_backtest_execution(
-    monkeypatch: pytest.MonkeyPatch,
+    _fake_celery: _FakeCeleryApp,
     session_factory: sessionmaker[Session],
     stub_execution: None,
 ) -> None:
     """Patch Celery send_task so backtest runs execute inline during tests."""
     from uuid import UUID
 
-    import apps.api.app.routers.backtests as backtest_router
     from backtestforecast.services.backtests import BacktestService
 
-    class FakeCeleryApp:
-        def send_task(self, name: str, kwargs: dict[str, str], **extra):
-            assert name == "backtests.run"
-            with session_factory() as session:
-                BacktestService(session).execute_run_by_id(UUID(kwargs["run_id"]))
-            import types
+    def _run(name: str, kwargs: dict[str, str]) -> None:
+        assert name == "backtests.run"
+        with session_factory() as session:
+            BacktestService(session).execute_run_by_id(UUID(kwargs["run_id"]))
 
-            return types.SimpleNamespace(id="fake-task-id")
-
-    monkeypatch.setattr(backtest_router, "celery_app", FakeCeleryApp(), raising=False)
+    _fake_celery.register("backtests.run", _run)
 
 
 @pytest.fixture()
 def immediate_export_execution(
-    monkeypatch: pytest.MonkeyPatch,
+    _fake_celery: _FakeCeleryApp,
     session_factory: sessionmaker[Session],
     stub_execution: None,
 ) -> None:
     """Patch Celery send_task so exports generate inline during tests."""
     from uuid import UUID
 
-    import apps.api.app.routers.exports as export_router
     from backtestforecast.services.exports import ExportService
 
-    class FakeCeleryApp:
-        def send_task(self, name: str, kwargs: dict[str, str], **extra):
-            assert name == "exports.generate"
-            with session_factory() as session:
-                ExportService(session).execute_export_by_id(UUID(kwargs["export_job_id"]))
-            import types
+    def _run(name: str, kwargs: dict[str, str]) -> None:
+        assert name == "exports.generate"
+        with session_factory() as session:
+            ExportService(session).execute_export_by_id(UUID(kwargs["export_job_id"]))
 
-            return types.SimpleNamespace(id="fake-task-id")
-
-    monkeypatch.setattr(export_router, "celery_app", FakeCeleryApp(), raising=False)
+    _fake_celery.register("exports.generate", _run)

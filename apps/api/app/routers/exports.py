@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import io
 import re
+from typing import Generator
 from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from starlette.responses import StreamingResponse
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
-from apps.worker.app.celery_app import celery_app
+from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
@@ -43,30 +46,17 @@ def create_export(
         ip_address=metadata.ip_address,
     )
 
-    if job_response.status == "queued":
-        try:
-            result = celery_app.send_task(
-                "exports.generate",
-                kwargs={"export_job_id": str(job_response.id)},
-                queue="exports",
-            )
-            export_job = service.exports.get(job_response.id)
-            if export_job is not None:
-                export_job.celery_task_id = result.id
-                db.commit()
-            logger.info("export.enqueued", export_job_id=str(job_response.id))
-        except Exception:
-            logger.exception("export.enqueue_failed", export_job_id=str(job_response.id))
-            export_job = service.exports.get(job_response.id)
-            if export_job is not None:
-                export_job.status = "failed"
-                export_job.error_code = "enqueue_failed"
-                export_job.error_message = "Unable to dispatch job. Please try again."
-                try:
-                    db.commit()
-                except Exception:
-                    logger.exception("export.enqueue_failed.commit_error", export_job_id=str(job_response.id))
-                    db.rollback()
+    export_job = service.exports.get(job_response.id)
+    if export_job is not None:
+        dispatch_celery_task(
+            db=db,
+            job=export_job,
+            task_name="exports.generate",
+            task_kwargs={"export_job_id": str(job_response.id)},
+            queue="exports",
+            log_event="export",
+            logger=logger,
+        )
 
     db.expire_all()
     return service.get_export_status(user, job_response.id)
@@ -97,8 +87,13 @@ def download_export(
     safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", export_job.file_name)
     allowed_mime_types = {"text/csv", "application/pdf"}
     mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
-    return Response(
-        content=export_job.content_bytes,
+    def _chunk_bytes(data: bytes, chunk_size: int = 65536) -> Generator[bytes, None, None]:
+        stream = io.BytesIO(data)
+        while chunk := stream.read(chunk_size):
+            yield chunk
+
+    return StreamingResponse(
+        _chunk_bytes(export_job.content_bytes),
         media_type=mime_type,
         headers={
             "Content-Disposition": f'attachment; filename="{safe_name}"',

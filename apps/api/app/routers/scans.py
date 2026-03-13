@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user
-from apps.worker.app.celery_app import celery_app
+from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
@@ -50,21 +50,15 @@ def create_scan(
     )
     service = ScanService(db)
     job = service.create_job(user, payload)
-    if job.status == "queued":
-        try:
-            result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
-            job.celery_task_id = result.id
-            db.commit()
-        except Exception:
-            logger.exception("scan.enqueue_failed", job_id=str(job.id))
-            job.status = "failed"
-            job.error_code = "enqueue_failed"
-            job.error_message = "Unable to dispatch job. Please try again."
-            try:
-                db.commit()
-            except Exception:
-                logger.exception("scan.enqueue_failed.commit_error", job_id=str(job.id))
-                db.rollback()
+    dispatch_celery_task(
+        db=db,
+        job=job,
+        task_name="scans.run_job",
+        task_kwargs={"job_id": str(job.id)},
+        queue="research",
+        log_event="scan",
+        logger=logger,
+    )
     db.expire_all()
     return service.get_job(user, job.id)
 

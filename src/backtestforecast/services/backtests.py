@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.types import BacktestExecutionResult
+from backtestforecast.schemas.json_shapes import validate_json_shape
 from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.errors import (
     AppError,
@@ -432,6 +433,7 @@ class BacktestService:
         run.recovery_factor = to_decimal(summary.recovery_factor) if summary.recovery_factor is not None else None
 
         for trade in execution_result.trades:
+            validate_json_shape(trade.detail_json, "BacktestTrade.detail_json")
             run.trades.append(
                 BacktestTrade(
                     option_ticker=trade.option_ticker,

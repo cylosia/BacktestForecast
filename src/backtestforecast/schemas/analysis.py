@@ -20,10 +20,51 @@ class AnalysisSummaryResponse(BaseModel):
     completed_at: str | None = None
 
 
+class RegimeDetail(BaseModel):
+    model_config = {"extra": "allow"}
+    regimes: list[str] = Field(default_factory=list)
+    rsi_14: float | None = None
+    ema_8: float | None = None
+    ema_21: float | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    realized_vol_20: float | None = None
+    iv_rank_proxy: float | None = None
+    volume_ratio: float | None = None
+    close_price: float | None = None
+
+
+class LandscapeCell(BaseModel):
+    model_config = {"extra": "allow"}
+    strategy_type: str
+    strategy_label: str = ""
+    target_dte: int = 0
+    config: dict[str, Any] = Field(default_factory=dict)
+    trade_count: int = 0
+    win_rate: float = 0.0
+    total_roi_pct: float = 0.0
+    max_drawdown_pct: float = 0.0
+    score: float = 0.0
+
+
+class AnalysisTopResult(BaseModel):
+    model_config = {"extra": "allow"}
+    rank: int = 0
+    strategy_type: str = ""
+    strategy_label: str = ""
+    target_dte: int = 0
+    config: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    trades: list[dict[str, Any]] = Field(default_factory=list)
+    equity_curve: list[dict[str, Any]] = Field(default_factory=list)
+    forecast: dict[str, Any] = Field(default_factory=dict)
+    score: float = 0.0
+
+
 class AnalysisDetailResponse(AnalysisSummaryResponse):
-    regime: dict[str, Any] | None = None
-    landscape: list[dict[str, Any]] | None = None
-    top_results: list[dict[str, Any]] | None = None
+    regime: RegimeDetail | None = None
+    landscape: list[LandscapeCell] | None = None
+    top_results: list[AnalysisTopResult] | None = None
     forecast: dict[str, Any] | None = None
 
 

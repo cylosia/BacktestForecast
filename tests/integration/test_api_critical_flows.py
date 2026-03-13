@@ -167,18 +167,13 @@ def stub_execution(monkeypatch):
 
 
 @pytest.fixture()
-def immediate_scan_execution(monkeypatch, session_factory, stub_execution):
-    import types
-
-    import apps.api.app.routers.scans as scan_router
-
-    def send_task(name, kwargs):
+def immediate_scan_execution(_fake_celery, session_factory, stub_execution):
+    def _run(name: str, kwargs: dict[str, str]) -> None:
         assert name == "scans.run_job"
         with session_factory() as session:
             ScanService(session).run_job(UUID(kwargs["job_id"]))
-        return types.SimpleNamespace(id="fake-scan-task-id")
 
-    monkeypatch.setattr(scan_router.celery_app, "send_task", send_task)
+    _fake_celery.register("scans.run_job", _run)
 
 
 # ---------------------------------------------------------------------------
@@ -266,14 +261,11 @@ def test_async_backtest_full_lifecycle(client, auth_headers, immediate_backtest_
     assert len(history["items"]) == 1
 
 
-def test_backtest_fails_on_enqueue_error(client, auth_headers, stub_execution, monkeypatch):
-    import apps.api.app.routers.backtests as br
+def test_backtest_fails_on_enqueue_error(client, auth_headers, stub_execution, _fake_celery):
+    def _boom(name: str, kwargs: dict[str, str]) -> None:
+        raise ConnectionError("no redis")
 
-    class BrokenCelery:
-        def send_task(self, *a, **kw):
-            raise ConnectionError("no redis")
-
-    monkeypatch.setattr(br, "celery_app", BrokenCelery(), raising=False)
+    _fake_celery.register("backtests.run", _boom)
     created = _create_backtest(client, auth_headers)
     assert created["status"] == "failed"
     assert created["error_code"] == "enqueue_failed"
@@ -818,18 +810,9 @@ def test_me_features_and_usage(client, auth_headers, immediate_backtest_executio
 # ===========================================================================
 
 
-def test_create_analysis_returns_202(client, auth_headers, db_session, monkeypatch):
+def test_create_analysis_returns_202(client, auth_headers, db_session, _fake_celery):
     client.get("/v1/me", headers=auth_headers)
     _set_user_plan(db_session, tier="pro", subscription_status="active")
-
-    import apps.api.app.routers.analysis as analysis_router
-
-    class NoOpCelery:
-        def send_task(self, name, kwargs, **extra):
-            import types
-            return types.SimpleNamespace(id="fake-task-id")
-
-    monkeypatch.setattr(analysis_router, "celery_app", NoOpCelery(), raising=False)
 
     resp = client.post("/v1/analysis", json={"symbol": "AAPL"}, headers=auth_headers)
     assert resp.status_code == 202
@@ -858,18 +841,9 @@ def test_get_analysis_not_found(client, auth_headers):
     assert resp.status_code == 404
 
 
-def test_get_analysis_status(client, auth_headers, db_session, monkeypatch):
+def test_get_analysis_status(client, auth_headers, db_session, _fake_celery):
     client.get("/v1/me", headers=auth_headers)
     _set_user_plan(db_session, tier="pro", subscription_status="active")
-
-    import apps.api.app.routers.analysis as analysis_router
-
-    class NoOpCelery:
-        def send_task(self, name, kwargs, **extra):
-            import types
-            return types.SimpleNamespace(id="fake-task-id")
-
-    monkeypatch.setattr(analysis_router, "celery_app", NoOpCelery(), raising=False)
 
     create_resp = client.post("/v1/analysis", json={"symbol": "TSLA"}, headers=auth_headers)
     analysis_id = create_resp.json()["id"]
@@ -878,18 +852,9 @@ def test_get_analysis_status(client, auth_headers, db_session, monkeypatch):
     assert status_resp.json()["symbol"] == "TSLA"
 
 
-def test_list_analyses(client, auth_headers, db_session, monkeypatch):
+def test_list_analyses(client, auth_headers, db_session, _fake_celery):
     client.get("/v1/me", headers=auth_headers)
     _set_user_plan(db_session, tier="pro", subscription_status="active")
-
-    import apps.api.app.routers.analysis as analysis_router
-
-    class NoOpCelery:
-        def send_task(self, name, kwargs, **extra):
-            import types
-            return types.SimpleNamespace(id="fake-task-id")
-
-    monkeypatch.setattr(analysis_router, "celery_app", NoOpCelery(), raising=False)
 
     client.post("/v1/analysis", json={"symbol": "AAPL"}, headers=auth_headers)
     resp = client.get("/v1/analysis", headers=auth_headers)

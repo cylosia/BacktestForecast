@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
-from apps.worker.app.celery_app import celery_app
+from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
@@ -54,30 +54,15 @@ def create_backtest(
     service = BacktestService(db)
     run = service.enqueue(user, payload)
 
-    # Dispatch to Celery worker if run is newly created (queued)
-    if run.status == "queued" and run.celery_task_id is None:
-        try:
-            result = celery_app.send_task(
-                "backtests.run",
-                kwargs={"run_id": str(run.id)},
-                queue="research",
-            )
-            service.set_celery_task_id(run.id, result.id)
-            logger.info(
-                "backtest.enqueued",
-                run_id=str(run.id),
-                celery_task_id=result.id,
-            )
-        except Exception:
-            logger.exception("backtest.enqueue_failed", run_id=str(run.id))
-            run.status = "failed"
-            run.error_code = "enqueue_failed"
-            run.error_message = "Unable to dispatch job. Please try again."
-            try:
-                db.commit()
-            except Exception:
-                logger.exception("backtest.enqueue_failed.commit_error", run_id=str(run.id))
-                db.rollback()
+    dispatch_celery_task(
+        db=db,
+        job=run,
+        task_name="backtests.run",
+        task_kwargs={"run_id": str(run.id)},
+        queue="research",
+        log_event="backtest",
+        logger=logger,
+    )
 
     db.expire_all()
     return service.get_run(user, run.id)

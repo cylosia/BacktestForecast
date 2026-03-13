@@ -27,8 +27,19 @@ _async_redis_lock = asyncio.Lock()
 
 
 async def _get_async_redis():
-    """Return a lazily-initialised shared async Redis connection pool."""
+    """Return a lazily-initialised shared async Redis connection pool.
+
+    Validates pool health via ``ping()`` before reuse; recreates on failure.
+    """
+    from redis.exceptions import RedisError
+
     global _async_redis_pool
+    if _async_redis_pool is not None:
+        try:
+            await _async_redis_pool.ping()
+        except (RedisError, OSError):
+            logger.warning("sse.redis_pool_stale", action="recreating")
+            _async_redis_pool = None
     if _async_redis_pool is not None:
         return _async_redis_pool
     async with _async_redis_lock:
@@ -45,6 +56,18 @@ async def _get_async_redis():
             socket_connect_timeout=5.0,
         )
     return _async_redis_pool
+
+
+async def _invalidate_async_redis() -> None:
+    """Close and discard the shared pool so it is recreated on next request."""
+    global _async_redis_pool
+    async with _async_redis_lock:
+        if _async_redis_pool is not None:
+            try:
+                await _async_redis_pool.aclose()
+            except Exception:
+                pass
+            _async_redis_pool = None
 
 
 async def shutdown_async_redis() -> None:
@@ -106,6 +129,7 @@ async def _event_stream(
                 yield {"event": "status", "data": data}
     except (RedisError, OSError) as exc:
         logger.warning("sse.redis_error", channel=channel, error=str(exc))
+        await _invalidate_async_redis()
         yield {"event": "error", "data": "Event stream unavailable. Please poll for status instead."}
 
     yield {"event": "done", "data": "stream_ended"}

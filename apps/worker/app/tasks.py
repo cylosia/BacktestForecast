@@ -7,6 +7,7 @@ from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 
 from apps.worker.app.celery_app import celery_app
 from backtestforecast.db.session import SessionLocal
+from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.errors import AppError
 from backtestforecast.events import publish_job_status
 from backtestforecast.observability.metrics import (
@@ -161,6 +162,19 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
     except Exception:
         logger.warning("publish_job_status.failed", job_id=run_id, exc_info=True)
     with SessionLocal() as session:
+        from backtestforecast.models import BacktestRun, User
+        run_obj = session.get(BacktestRun, UUID(run_id))
+        if run_obj is not None:
+            user = session.get(User, run_obj.user_id)
+            if user is None or not resolve_feature_policy(
+                user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+            ).monthly_backtest_quota:
+                run_obj.status = "failed"
+                run_obj.error_code = "entitlement_revoked"
+                run_obj.error_message = "Your plan no longer supports this operation."
+                session.commit()
+                publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
         service = BacktestService(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
@@ -249,6 +263,25 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
     except Exception:
         logger.warning("publish_job_status.failed", job_id=export_job_id, exc_info=True)
     with SessionLocal() as session:
+        from backtestforecast.models import ExportJob as ExportJobModel, User
+        ej = session.get(ExportJobModel, UUID(export_job_id))
+        if ej is not None:
+            user = session.get(User, ej.user_id)
+            if user is None:
+                ej.status = "failed"
+                ej.error_code = "entitlement_revoked"
+                ej.error_message = "User account not found."
+                session.commit()
+                publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
+            policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+            if not policy.export_formats:
+                ej.status = "failed"
+                ej.error_code = "entitlement_revoked"
+                ej.error_message = "Your plan no longer supports this operation."
+                session.commit()
+                publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
         service = ExportService(session)
         try:
             job = service.execute_export_by_id(UUID(export_job_id))
@@ -358,6 +391,23 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
         forecaster = PipelineForecaster(HistoricalAnalogForecaster(), market_data)
 
         with SessionLocal() as session:
+            from backtestforecast.models import SymbolAnalysis, User
+            sa_obj = session.get(SymbolAnalysis, UUID(analysis_id))
+            if sa_obj is not None:
+                user = session.get(User, sa_obj.user_id)
+                if user is None:
+                    sa_obj.status = "failed"
+                    sa_obj.error_message = "User account not found."
+                    session.commit()
+                    publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                    return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
+                policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+                if not policy.forecasting_access:
+                    sa_obj.status = "failed"
+                    sa_obj.error_message = "Your plan no longer supports this operation."
+                    session.commit()
+                    publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                    return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
             service = SymbolDeepAnalysisService(
                 session,
                 market_data_fetcher=market_data,
@@ -455,6 +505,25 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
     except Exception:
         logger.warning("publish_job_status.failed", job_id=job_id, exc_info=True)
     with SessionLocal() as session:
+        from backtestforecast.models import ScannerJob as ScannerJobModel, User
+        sj = session.get(ScannerJobModel, UUID(job_id))
+        if sj is not None:
+            user = session.get(User, sj.user_id)
+            if user is None:
+                sj.status = "failed"
+                sj.error_code = "entitlement_revoked"
+                sj.error_message = "User account not found."
+                session.commit()
+                publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
+            policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+            if not policy.basic_scanner_access:
+                sj.status = "failed"
+                sj.error_code = "entitlement_revoked"
+                sj.error_message = "Your plan no longer supports this operation."
+                session.commit()
+                publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         service = ScanService(session)
         try:
             job = service.run_job(UUID(job_id))
@@ -550,6 +619,16 @@ def refresh_prioritized_scans() -> dict[str, int]:
                 except Exception:
                     logger.exception("refresh.dispatch_failed", job_id=str(job.id))
                     session.rollback()
+                    from backtestforecast.models import ScannerJob
+                    job_obj = session.get(ScannerJob, job.id)
+                    if job_obj is not None and job_obj.status == "queued":
+                        job_obj.status = "failed"
+                        job_obj.error_code = "enqueue_failed"
+                        job_obj.error_message = "Unable to dispatch scheduled refresh."
+                        try:
+                            session.commit()
+                        except Exception:
+                            session.rollback()
         finally:
             try:
                 service.close()
