@@ -28,6 +28,8 @@ def resolve_return_url(app_public_url: str, return_path: str | None) -> str:
     resolved = urljoin(base, return_path.lstrip("/"))
     parsed = urlparse(resolved)
     allowed = urlparse(base_app_url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValidationError("return_path must use http or https scheme.")
     if parsed.netloc != allowed.netloc:
         raise ValidationError("return_path resolved to a disallowed origin.")
     return resolved

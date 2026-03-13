@@ -582,13 +582,8 @@ export interface components {
             /** Id */
             id: string;
             /** Landscape */
-            landscape?: {
-                [key: string]: unknown;
-            }[] | null;
-            /** Regime */
-            regime?: {
-                [key: string]: unknown;
-            } | null;
+            landscape?: components["schemas"]["LandscapeCell"][] | null;
+            regime?: components["schemas"]["RegimeDetail"] | null;
             /** Stage */
             stage: string;
             /** Status */
@@ -598,9 +593,7 @@ export interface components {
             /** Symbol */
             symbol: string;
             /** Top Results */
-            top_results?: {
-                [key: string]: unknown;
-            }[] | null;
+            top_results?: components["schemas"]["AnalysisTopResult"][] | null;
             /** Top Results Count */
             top_results_count: number;
         };
@@ -635,6 +628,56 @@ export interface components {
             symbol: string;
             /** Top Results Count */
             top_results_count: number;
+        };
+        /** AnalysisTopResult */
+        AnalysisTopResult: {
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            };
+            /** Equity Curve */
+            equity_curve?: {
+                [key: string]: unknown;
+            }[];
+            /** Forecast */
+            forecast?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Rank
+             * @default 0
+             */
+            rank: number;
+            /**
+             * Score
+             * @default 0
+             */
+            score: number;
+            /**
+             * Strategy Label
+             * @default
+             */
+            strategy_label: string;
+            /**
+             * Strategy Type
+             * @default
+             */
+            strategy_type: string;
+            /** Summary */
+            summary?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Target Dte
+             * @default 0
+             */
+            target_dte: number;
+            /** Trades */
+            trades?: {
+                [key: string]: unknown;
+            }[];
+        } & {
+            [key: string]: unknown;
         };
         /** AvoidEarningsRule */
         AvoidEarningsRule: {
@@ -1249,6 +1292,8 @@ export interface components {
              * @default 0
              */
             size_bytes: number;
+            /** Started At */
+            started_at?: string | null;
             /** Status */
             status: string;
         };
@@ -1384,6 +1429,52 @@ export interface components {
              */
             type: "iv_rank";
         };
+        /** LandscapeCell */
+        LandscapeCell: {
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Max Drawdown Pct
+             * @default 0
+             */
+            max_drawdown_pct: number;
+            /**
+             * Score
+             * @default 0
+             */
+            score: number;
+            /**
+             * Strategy Label
+             * @default
+             */
+            strategy_label: string;
+            /** Strategy Type */
+            strategy_type: string;
+            /**
+             * Target Dte
+             * @default 0
+             */
+            target_dte: number;
+            /**
+             * Total Roi Pct
+             * @default 0
+             */
+            total_roi_pct: number;
+            /**
+             * Trade Count
+             * @default 0
+             */
+            trade_count: number;
+            /**
+             * Win Rate
+             * @default 0
+             */
+            win_rate: number;
+        } & {
+            [key: string]: unknown;
+        };
         /** MacdRule */
         MacdRule: {
             direction: components["schemas"]["CrossoverDirection"];
@@ -1481,6 +1572,31 @@ export interface components {
             historical_performance_score: string;
             /** Reasoning */
             reasoning?: string[];
+        };
+        /** RegimeDetail */
+        RegimeDetail: {
+            /** Close Price */
+            close_price?: number | null;
+            /** Ema 21 */
+            ema_21?: number | null;
+            /** Ema 8 */
+            ema_8?: number | null;
+            /** Iv Rank Proxy */
+            iv_rank_proxy?: number | null;
+            /** Realized Vol 20 */
+            realized_vol_20?: number | null;
+            /** Regimes */
+            regimes?: string[];
+            /** Rsi 14 */
+            rsi_14?: number | null;
+            /** Sma 200 */
+            sma_200?: number | null;
+            /** Sma 50 */
+            sma_50?: number | null;
+            /** Volume Ratio */
+            volume_ratio?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /** RsiRule */
         RsiRule: {
@@ -2312,7 +2428,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": string;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

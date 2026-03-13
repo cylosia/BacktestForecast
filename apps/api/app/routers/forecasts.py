@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user
+from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.errors import ValidationError
@@ -35,6 +36,7 @@ def get_forecast(
         limit=settings.forecast_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     if not _TICKER_RE.match(ticker):
         raise ValidationError("Ticker must be 1-10 alphabetic characters.")
     symbol = ticker.strip().upper()

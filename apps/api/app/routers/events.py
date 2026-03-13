@@ -15,6 +15,7 @@ from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.errors import NotFoundError
 from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SymbolAnalysis, User
+from backtestforecast.security import get_rate_limiter
 
 router = APIRouter(prefix="/events", tags=["events"])
 logger = structlog.get_logger("api.events")
@@ -159,6 +160,7 @@ async def scan_events(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> EventSourceResponse:
+    _check_sse_rate(user.id)
     _verify_ownership(db, ScannerJob, job_id, user.id)
     db.close()
     channel = f"job:scan:{job_id}:status"
@@ -176,6 +178,7 @@ async def export_events(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> EventSourceResponse:
+    _check_sse_rate(user.id)
     _verify_ownership(db, ExportJob, export_job_id, user.id)
     db.close()
     channel = f"job:export:{export_job_id}:status"
@@ -193,6 +196,7 @@ async def analysis_events(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> EventSourceResponse:
+    _check_sse_rate(user.id)
     _verify_ownership(db, SymbolAnalysis, analysis_id, user.id)
     db.close()
     channel = f"job:analysis:{analysis_id}:status"

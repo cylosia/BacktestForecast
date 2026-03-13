@@ -85,7 +85,7 @@ def download_export(
         ip_address=metadata.ip_address,
     )
     safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", export_job.file_name)
-    allowed_mime_types = {"text/csv", "application/pdf"}
+    allowed_mime_types = {"text/csv", "text/csv; charset=utf-8", "application/pdf"}
     mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
     def _chunk_bytes(data: bytes, chunk_size: int = 65536) -> Generator[bytes, None, None]:
         stream = io.BytesIO(data)

@@ -12,15 +12,21 @@ class AuditEventRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def add(self, event: AuditEvent) -> AuditEvent:
+    def add(self, event: AuditEvent) -> tuple[AuditEvent, bool]:
+        """Insert an audit event. Returns (event, was_inserted).
+
+        ``was_inserted`` is ``False`` when the row was deduplicated against the
+        unique constraint on (event_type, subject_type, subject_id).
+        """
         nested = self.session.begin_nested()
         self.session.add(event)
         try:
             nested.commit()
+            return event, True
         except IntegrityError:
             nested.rollback()
             AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
-        return event
+            return event, False
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:
         stmt = select(AuditEvent.id).where(

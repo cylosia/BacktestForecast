@@ -68,6 +68,7 @@ const METRIC_ROWS: Array<{
 ];
 
 function bestIndex(runs: BacktestRunDetailResponse[], key: keyof BacktestSummaryResponse, higherIsBetter: boolean): number {
+  if (runs.length === 0) return -1;
   let best = 0;
   let bestVal = toNumber(runs[0].summary[key]);
   for (let i = 1; i < runs.length; i++) {

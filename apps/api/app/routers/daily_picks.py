@@ -103,7 +103,7 @@ def get_latest_daily_picks(
                 "score": float(rec.score),
                 "symbol": rec.symbol,
                 "strategy_type": rec.strategy_type,
-                "regime_labels": (rec.regime_labels.split(",") if rec.regime_labels else []),
+                "regime_labels": [label for label in rec.regime_labels.split(",") if label] if rec.regime_labels else [],
                 "close_price": float(rec.close_price),
                 "target_dte": rec.target_dte,
                 "config_snapshot": rec.config_snapshot_json,
@@ -120,8 +120,16 @@ def get_pipeline_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(default=10, ge=1, le=30),
+    cursor: str | None = Query(default=None, description="created_at ISO cursor from previous page"),
 ) -> dict[str, Any]:
-    """Return recent pipeline run history (Pro+ gated)."""
+    """Return recent pipeline run history (Pro+ gated).
+
+    Supports optional cursor-based pagination via the ``cursor`` parameter
+    which should be the ``created_at`` ISO timestamp of the last item from
+    the previous page.
+    """
+    from datetime import datetime as _dt
+
     settings = get_settings()
     get_rate_limiter().check(
         bucket="daily_picks:history",
@@ -131,8 +139,17 @@ def get_pipeline_history(
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
 
-    stmt = select(NightlyPipelineRun).order_by(desc(NightlyPipelineRun.created_at)).limit(limit)
+    stmt = select(NightlyPipelineRun).order_by(desc(NightlyPipelineRun.created_at))
+    if cursor:
+        try:
+            cursor_dt = _dt.fromisoformat(cursor)
+            stmt = stmt.where(NightlyPipelineRun.created_at < cursor_dt)
+        except ValueError:
+            pass
+    stmt = stmt.limit(limit)
     runs = list(db.scalars(stmt))
+
+    next_cursor = runs[-1].created_at.isoformat() if runs else None
 
     return {
         "items": [
@@ -148,4 +165,5 @@ def get_pipeline_history(
             }
             for r in runs
         ],
+        "next_cursor": next_cursor,
     }

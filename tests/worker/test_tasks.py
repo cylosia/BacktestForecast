@@ -14,7 +14,13 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
 from backtestforecast.errors import AppError
-from backtestforecast.models import BacktestRun, User
+from backtestforecast.models import (
+    BacktestRun,
+    ExportJob,
+    ScannerJob,
+    SymbolAnalysis,
+    User,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -293,3 +299,146 @@ def test_reap_stale_jobs_skips_recent(db_session, db_session_factory, monkeypatc
 
     assert result["backtest_runs"] == 0
     assert len(dispatched_tasks) == 0
+
+
+# ---------------------------------------------------------------------------
+# Entitlement checks — verify all 4 tasks reject when user is missing
+# ---------------------------------------------------------------------------
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_backtest_fails_when_user_missing(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import run_backtest
+
+    run_id = uuid4()
+    mock_run = MagicMock()
+    mock_run.user_id = uuid4()
+    mock_run.status = "queued"
+
+    session = MagicMock()
+    session.get.side_effect = lambda model, uid: mock_run if model.__name__ == "BacktestRun" else None
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with patch("apps.worker.app.tasks.BacktestService"):
+        result = run_backtest(str(run_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "entitlement_revoked"
+    assert mock_run.status == "failed"
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_generate_export_fails_when_user_missing(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import generate_export
+
+    export_id = uuid4()
+    mock_export = MagicMock()
+    mock_export.user_id = uuid4()
+    mock_export.status = "queued"
+
+    session = MagicMock()
+    session.get.side_effect = lambda model, uid: mock_export if model.__name__ in ("ExportJob",) else None
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with patch("apps.worker.app.tasks.ExportService"):
+        result = generate_export(str(export_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "entitlement_revoked"
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_scan_job_fails_when_user_missing(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import run_scan_job
+
+    job_id = uuid4()
+    mock_job = MagicMock()
+    mock_job.user_id = uuid4()
+    mock_job.status = "queued"
+
+    session = MagicMock()
+    session.get.side_effect = lambda model, uid: mock_job if model.__name__ in ("ScannerJob",) else None
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with patch("apps.worker.app.tasks.ScanService"):
+        result = run_scan_job(str(job_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "entitlement_revoked"
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_deep_analysis_fails_when_user_missing(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import run_deep_analysis
+
+    analysis_id = uuid4()
+    mock_analysis = MagicMock()
+    mock_analysis.user_id = uuid4()
+    mock_analysis.status = "queued"
+
+    session = MagicMock()
+    session.get.side_effect = lambda model, uid: mock_analysis if model.__name__ == "SymbolAnalysis" else None
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    result = run_deep_analysis(str(analysis_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "entitlement_revoked"
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_backtest_fails_when_quota_zero(mock_session_local, mock_publish):
+    """Verifies the monthly_backtest_quota entitlement check."""
+    from apps.worker.app.tasks import run_backtest
+
+    run_id = uuid4()
+    user_id = uuid4()
+    mock_run = MagicMock()
+    mock_run.user_id = user_id
+    mock_run.status = "queued"
+    mock_user = MagicMock()
+    mock_user.plan_tier = "free"
+    mock_user.subscription_status = None
+    mock_user.subscription_current_period_end = None
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "BacktestRun":
+            return mock_run
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    zero_policy = SimpleNamespace(monthly_backtest_quota=0)
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=zero_policy),
+        patch("apps.worker.app.tasks.BacktestService"),
+    ):
+        result = run_backtest(str(run_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "entitlement_revoked"

@@ -328,7 +328,7 @@ class ExportJob(Base):
     sha256_hex: Mapped[str | None] = mapped_column(String(64), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    content_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    content_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -369,6 +369,12 @@ class NightlyPipelineRun(Base):
         Index("ix_nightly_pipeline_runs_status", "status"),
         Index("ix_nightly_pipeline_runs_date_status", "trade_date", "status"),
         Index("ix_nightly_pipeline_runs_status_created", "status", "created_at"),
+        Index(
+            "uq_pipeline_runs_succeeded_trade_date",
+            "trade_date",
+            unique=True,
+            postgresql_where=text("status = 'succeeded'"),
+        ),
         CheckConstraint(
             "status IN ('running', 'succeeded', 'failed')",
             name="valid_pipeline_status",
@@ -430,6 +436,7 @@ class SymbolAnalysis(Base):
     __table_args__ = (
         Index("ix_symbol_analyses_user_created", "user_id", "created_at"),
         Index("ix_symbol_analyses_symbol", "symbol"),
+        Index("ix_symbol_analyses_status_created", "status", "created_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_symbol_analyses_user_idempotency"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",

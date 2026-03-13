@@ -26,7 +26,9 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
             except ValueError:
                 return self._payload_too_large(request)
         if request.method in {"POST", "PUT", "PATCH"} and content_length is None:
-            pass  # Cannot validate chunked body without consuming it; rely on web server limits
+            body = await request.body()
+            if len(body) > effective_limit:
+                return self._payload_too_large(request)
         return await call_next(request)
 
     @staticmethod

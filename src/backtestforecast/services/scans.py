@@ -158,7 +158,8 @@ class ScanService:
         job = self.repository.get(job_id, for_update=True)
         if job is None:
             raise NotFoundError("Scanner job not found.")
-        if job.status == "succeeded" and job.recommendation_count > 0:
+        if job.status != "queued":
+            logger.info("scan.run_job_skipped", job_id=str(job_id), status=job.status)
             return job
 
         payload = CreateScannerJobRequest.model_validate(job.request_snapshot_json)
@@ -463,9 +464,15 @@ class ScanService:
         horizon_days: int,
     ) -> ForecastEnvelopeResponse:
         ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        from backtestforecast.schemas.backtests import StrategyType
+        effective_strategy = strategy_type or "long_call"
+        try:
+            StrategyType(effective_strategy)
+        except ValueError:
+            raise ValidationError(f"Unknown strategy_type: {effective_strategy}")
         request = CreateBacktestRunRequest(
             symbol=symbol,
-            strategy_type=(strategy_type or "long_call"),
+            strategy_type=effective_strategy,
             start_date=market_date_today() - timedelta(days=365),
             end_date=market_date_today() - timedelta(days=1),
             target_dte=max(horizon_days, 7),
@@ -490,6 +497,10 @@ class ScanService:
         return ForecastEnvelopeResponse(
             forecast=forecast,
             expected_move_abs_pct=expected_move_abs_pct,
+            probabilistic_note=(
+                "This range is probabilistic, derived from historical analog setups, "
+                "and is not financial advice or a certainty of future results."
+            ),
         )
 
     def _validate_limits(self, policy, payload: CreateScannerJobRequest) -> None:

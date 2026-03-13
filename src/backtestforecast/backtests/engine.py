@@ -83,42 +83,12 @@ class OptionsBacktestEngine:
                     last_bar_date=sorted_bars[-1].trade_date,
                 )
                 if should_exit:
-                    exit_value = snapshot.position_value
-                    exit_commission = self._option_commission_total(position, config.commission_per_contract)
-                    cash += exit_value - exit_commission
-                    entry_value_per_unit = self._entry_value_per_unit(position)
-                    exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0
-                    gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position.quantity
-                    total_commissions = exit_commission * 2.0
-                    net_pnl = gross_pnl - total_commissions
-                    expiration_date = position.scheduled_exit_date or (
-                        max(leg.expiration_date for leg in position.option_legs)
-                        if position.option_legs
-                        else bar.trade_date
+                    trade, cash_delta = self._close_position(
+                        position, config, snapshot.position_value, bar.trade_date, bar.close_price,
+                        exit_prices, exit_reason,
                     )
-                    trades.append(
-                        TradeResult(
-                            option_ticker=position.display_ticker,
-                            strategy_type=config.strategy_type,
-                            underlying_symbol=config.symbol,
-                            entry_date=position.entry_date,
-                            exit_date=bar.trade_date,
-                            expiration_date=expiration_date,
-                            quantity=position.quantity,
-                            dte_at_open=position.dte_at_open,
-                            holding_period_days=(bar.trade_date - position.entry_date).days,
-                            entry_underlying_close=self._entry_underlying_close(position),
-                            exit_underlying_close=bar.close_price,
-                            entry_mid=entry_value_per_unit / 100.0,
-                            exit_mid=exit_value_per_unit / 100.0,
-                            gross_pnl=gross_pnl,
-                            net_pnl=net_pnl,
-                            total_commissions=total_commissions,
-                            entry_reason=position.entry_reason,
-                            exit_reason=exit_reason,
-                            detail_json=self._build_trade_detail_json(position, exit_prices, exit_value_per_unit),
-                        )
-                    )
+                    cash += cash_delta
+                    trades.append(trade)
                     position = None
                     position_value = 0.0
 
@@ -185,7 +155,9 @@ class OptionsBacktestEngine:
                             candidate.quantity = quantity
                             candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
                             entry_commission = self._option_commission_total(candidate, config.commission_per_contract)
-                            cash -= (ev_per_unit * quantity) + entry_commission
+                            candidate.entry_commission_total = entry_commission
+                            slippage_cost = abs(ev_per_unit) * quantity * (config.slippage_pct / 100.0)
+                            cash -= (ev_per_unit * quantity) + entry_commission + slippage_cost
                             position = candidate
                             if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
                                 ev_per_unit
@@ -213,49 +185,15 @@ class OptionsBacktestEngine:
             if position is None and bar.trade_date > config.end_date:
                 break
 
-        # Force-close any position still open when data is exhausted
         if position is not None:
             snapshot = self._mark_position(position, sorted_bars[-1], option_gateway, warnings, warning_codes)
-            exit_value = snapshot.position_value
-            exit_commission = self._option_commission_total(position, config.commission_per_contract)
-            cash += exit_value - exit_commission
-            entry_value_per_unit = self._entry_value_per_unit(position)
-            exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0
-            gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position.quantity
-            total_commissions = exit_commission * 2.0
-            net_pnl = gross_pnl - total_commissions
-            expiration_date = position.scheduled_exit_date or (
-                max(leg.expiration_date for leg in position.option_legs)
-                if position.option_legs
-                else sorted_bars[-1].trade_date
+            exit_prices_fc = {leg.ticker: leg.last_mid for leg in position.option_legs}
+            trade, cash_delta = self._close_position(
+                position, config, snapshot.position_value, sorted_bars[-1].trade_date,
+                sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
             )
-            trades.append(
-                TradeResult(
-                    option_ticker=position.display_ticker,
-                    strategy_type=config.strategy_type,
-                    underlying_symbol=config.symbol,
-                    entry_date=position.entry_date,
-                    exit_date=sorted_bars[-1].trade_date,
-                    expiration_date=expiration_date,
-                    quantity=position.quantity,
-                    dte_at_open=position.dte_at_open,
-                    holding_period_days=(sorted_bars[-1].trade_date - position.entry_date).days,
-                    entry_underlying_close=self._entry_underlying_close(position),
-                    exit_underlying_close=sorted_bars[-1].close_price,
-                    entry_mid=entry_value_per_unit / 100.0,
-                    exit_mid=exit_value_per_unit / 100.0,
-                    gross_pnl=gross_pnl,
-                    net_pnl=net_pnl,
-                    total_commissions=total_commissions,
-                    entry_reason=position.entry_reason,
-                    exit_reason="data_exhausted",
-                    detail_json=self._build_trade_detail_json(
-                        position,
-                        {leg.ticker: leg.last_mid for leg in position.option_legs},
-                        exit_value_per_unit,
-                    ),
-                )
-            )
+            cash += cash_delta
+            trades.append(trade)
             position = None
             equity = cash
             peak_equity = max(peak_equity, equity)
@@ -359,6 +297,53 @@ class OptionsBacktestEngine:
         cash_per_unit = max(capital_required_per_unit, entry_cost_per_unit) + commission_per_unit
         by_cash = int(available_cash // cash_per_unit) if cash_per_unit > 0 else 0
         return max(0, min(by_risk, by_cash))
+
+    def _close_position(
+        self,
+        position: OpenMultiLegPosition,
+        config: BacktestConfig,
+        exit_value: float,
+        exit_date: date,
+        exit_underlying_close: float,
+        exit_prices: dict[str, float],
+        exit_reason: str,
+    ) -> tuple[TradeResult, float]:
+        """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
+        exit_commission = self._option_commission_total(position, config.commission_per_contract)
+        exit_slippage = abs(exit_value) * (config.slippage_pct / 100.0)
+        cash_delta = exit_value - exit_commission - exit_slippage
+        entry_value_per_unit = self._entry_value_per_unit(position)
+        exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0
+        gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position.quantity
+        total_commissions = position.entry_commission_total + exit_commission
+        net_pnl = gross_pnl - total_commissions
+        expiration_date = position.scheduled_exit_date or (
+            max(leg.expiration_date for leg in position.option_legs)
+            if position.option_legs
+            else exit_date
+        )
+        trade = TradeResult(
+            option_ticker=position.display_ticker,
+            strategy_type=config.strategy_type,
+            underlying_symbol=config.symbol,
+            entry_date=position.entry_date,
+            exit_date=exit_date,
+            expiration_date=expiration_date,
+            quantity=position.quantity,
+            dte_at_open=position.dte_at_open,
+            holding_period_days=(exit_date - position.entry_date).days,
+            entry_underlying_close=self._entry_underlying_close(position),
+            exit_underlying_close=exit_underlying_close,
+            entry_mid=entry_value_per_unit / 100.0,
+            exit_mid=exit_value_per_unit / 100.0,
+            gross_pnl=gross_pnl,
+            net_pnl=net_pnl,
+            total_commissions=total_commissions,
+            entry_reason=position.entry_reason,
+            exit_reason=exit_reason,
+            detail_json=self._build_trade_detail_json(position, exit_prices, exit_value_per_unit),
+        )
+        return trade, cash_delta
 
     @staticmethod
     def _entry_value_per_unit(position: OpenMultiLegPosition) -> float:

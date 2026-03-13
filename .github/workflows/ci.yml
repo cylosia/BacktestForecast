@@ -34,6 +34,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev]'
 
+      - name: Audit Python dependencies
+        run: |
+          python -m pip install pip-audit
+          python -m pip_audit --strict --desc
+
       - name: Lint Python (ruff)
         run: python -m ruff check .
 
@@ -126,6 +131,25 @@ jobs:
 
       - name: Check migration-model drift
         run: python scripts/check_migration_drift.py
+
+      - name: Verify no pending Alembic migrations
+        run: |
+          python -c "
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          from alembic.runtime.migration import MigrationContext
+          from sqlalchemy import create_engine
+          import os
+          cfg = Config('alembic.ini')
+          script = ScriptDirectory.from_config(cfg)
+          engine = create_engine(os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              context = MigrationContext.configure(conn)
+              current = context.get_current_revision()
+          head = script.get_current_head()
+          assert current == head, f'Migration drift: DB at {current}, head is {head}'
+          print(f'OK: DB and head both at {head}')
+          "
 
       - name: Run integration tests against Postgres
         run: pytest tests/integration/ -q

@@ -195,7 +195,8 @@ class SymbolDeepAnalysisService:
         )
         if analysis is None:
             raise NotFoundError("Symbol analysis not found.")
-        if analysis.status not in ("queued", "running"):
+        if analysis.status != "queued":
+            logger.info("deep_analysis.execute_skipped", analysis_id=str(analysis_id), status=analysis.status)
             return analysis
 
         started_at = time.monotonic()
@@ -307,7 +308,7 @@ class SymbolDeepAnalysisService:
             analysis.status = "succeeded"
             if not top_results:
                 analysis.forecast_json = {
-                    **analysis.forecast_json,
+                    **(analysis.forecast_json or {}),
                     "no_results_message": (
                         "Analysis completed but no profitable strategy configurations were found "
                         "for this symbol and date range."

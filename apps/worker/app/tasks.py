@@ -155,6 +155,19 @@ def nightly_scan_pipeline(
             logger.exception("client.close_failed")
 
 
+def _validate_task_ownership(session, model_cls, obj_id: UUID, expected_task_id: str | None) -> bool:
+    """Return True if this Celery delivery owns the job, False if it's a duplicate."""
+    if expected_task_id is None:
+        return True
+    obj = session.get(model_cls, obj_id)
+    if obj is None:
+        return True
+    stored = getattr(obj, "celery_task_id", None)
+    if stored is None:
+        return True
+    return stored == expected_task_id
+
+
 @celery_app.task(name="backtests.run", bind=True, max_retries=2, soft_time_limit=300, time_limit=330)
 def run_backtest(self, run_id: str) -> dict[str, str]:
     try:
@@ -163,18 +176,29 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         logger.warning("publish_job_status.failed", job_id=run_id, exc_info=True)
     with SessionLocal() as session:
         from backtestforecast.models import BacktestRun, User
+        if not _validate_task_ownership(session, BacktestRun, UUID(run_id), self.request.id):
+            logger.info("backtests.run.duplicate_delivery", run_id=run_id, task_id=self.request.id)
+            return {"status": "skipped", "run_id": run_id, "reason": "duplicate_delivery"}
         run_obj = session.get(BacktestRun, UUID(run_id))
-        if run_obj is not None:
-            user = session.get(User, run_obj.user_id)
-            if user is None or not resolve_feature_policy(
-                user.plan_tier, user.subscription_status, user.subscription_current_period_end,
-            ).monthly_backtest_quota:
-                run_obj.status = "failed"
-                run_obj.error_code = "entitlement_revoked"
-                run_obj.error_message = "Your plan no longer supports this operation."
-                session.commit()
-                publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
-                return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
+        if run_obj is None:
+            CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
+            return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
+        user = session.get(User, run_obj.user_id)
+        if user is None:
+            run_obj.status = "failed"
+            run_obj.error_code = "entitlement_revoked"
+            run_obj.error_message = "User account not found."
+            session.commit()
+            publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
+        policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        if policy.monthly_backtest_quota is not None and policy.monthly_backtest_quota <= 0:
+            run_obj.status = "failed"
+            run_obj.error_code = "entitlement_revoked"
+            run_obj.error_message = "Your plan no longer supports this operation."
+            session.commit()
+            publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
         service = BacktestService(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
@@ -264,6 +288,9 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
         logger.warning("publish_job_status.failed", job_id=export_job_id, exc_info=True)
     with SessionLocal() as session:
         from backtestforecast.models import ExportJob as ExportJobModel, User
+        if not _validate_task_ownership(session, ExportJobModel, UUID(export_job_id), self.request.id):
+            logger.info("exports.generate.duplicate_delivery", export_job_id=export_job_id, task_id=self.request.id)
+            return {"status": "skipped", "export_job_id": export_job_id, "reason": "duplicate_delivery"}
         ej = session.get(ExportJobModel, UUID(export_job_id))
         if ej is not None:
             user = session.get(User, ej.user_id)
@@ -274,11 +301,16 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                 session.commit()
                 publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
+            from backtestforecast.billing.entitlements import ExportFormat as _EF
             policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-            if not policy.export_formats:
+            try:
+                requested_format = _EF(ej.export_format)
+            except ValueError:
+                requested_format = None
+            if not policy.export_formats or (requested_format is not None and requested_format not in policy.export_formats):
                 ej.status = "failed"
                 ej.error_code = "entitlement_revoked"
-                ej.error_message = "Your plan no longer supports this operation."
+                ej.error_message = f"Your plan no longer supports {ej.export_format} export."
                 session.commit()
                 publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
@@ -392,6 +424,9 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
 
         with SessionLocal() as session:
             from backtestforecast.models import SymbolAnalysis, User
+            if not _validate_task_ownership(session, SymbolAnalysis, UUID(analysis_id), self.request.id):
+                logger.info("analysis.deep_symbol.duplicate_delivery", analysis_id=analysis_id, task_id=self.request.id)
+                return {"status": "skipped", "analysis_id": analysis_id, "reason": "duplicate_delivery"}
             sa_obj = session.get(SymbolAnalysis, UUID(analysis_id))
             if sa_obj is not None:
                 user = session.get(User, sa_obj.user_id)
@@ -506,6 +541,9 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         logger.warning("publish_job_status.failed", job_id=job_id, exc_info=True)
     with SessionLocal() as session:
         from backtestforecast.models import ScannerJob as ScannerJobModel, User
+        if not _validate_task_ownership(session, ScannerJobModel, UUID(job_id), self.request.id):
+            logger.info("scans.run_job.duplicate_delivery", job_id=job_id, task_id=self.request.id)
+            return {"status": "skipped", "job_id": job_id, "reason": "duplicate_delivery"}
         sj = session.get(ScannerJobModel, UUID(job_id))
         if sj is not None:
             user = session.get(User, sj.user_id)
@@ -517,10 +555,11 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                 publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
             policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-            if not policy.basic_scanner_access:
+            mode_requires_advanced = sj.mode == "advanced"
+            if not policy.basic_scanner_access or (mode_requires_advanced and not policy.advanced_scanner_access):
                 sj.status = "failed"
                 sj.error_code = "entitlement_revoked"
-                sj.error_message = "Your plan no longer supports this operation."
+                sj.error_message = f"Your plan no longer supports {sj.mode} scanner mode."
                 session.commit()
                 publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
@@ -643,6 +682,37 @@ def refresh_prioritized_scans() -> dict[str, int]:
 @celery_app.task(name="maintenance.reap_stale_jobs")
 def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
+    from datetime import UTC, datetime, timedelta
+
+    from redis import Redis
+    from sqlalchemy import select, update
+
+    from backtestforecast.config import get_settings
+    from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SymbolAnalysis
+    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL
+
+    settings = get_settings()
+    try:
+        redis = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=5.0)
+        lock = redis.lock("bff:reaper:lock", timeout=300, blocking_timeout=0)
+        if not lock.acquire(blocking=False):
+            logger.info("reaper.skipped_locked")
+            return {"skipped": 1}
+    except Exception:
+        logger.warning("reaper.lock_unavailable", exc_info=True)
+        lock = None
+
+    try:
+        return _reap_stale_jobs_inner(stale_minutes)
+    finally:
+        if lock is not None:
+            try:
+                lock.release()
+            except Exception:
+                pass
+
+
+def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import select, update
@@ -784,7 +854,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
         if stale_running_scan_ids:
             session.execute(
                 update(ScannerJob)
-                .where(ScannerJob.id.in_(stale_running_scan_ids))
+                .where(ScannerJob.id.in_(stale_running_scan_ids), ScannerJob.status == "running")
                 .values(
                     status="failed",
                     error_code="stale_running",
@@ -833,6 +903,7 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
                 .where(SymbolAnalysis.id.in_(stale_running_analysis_ids), SymbolAnalysis.status == "running")
                 .values(
                     status="failed",
+                    error_code="stale_running",
                     error_message="Job was stuck in running state and was automatically failed (stale_running).",
                     completed_at=datetime.now(UTC),
                 )

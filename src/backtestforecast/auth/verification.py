@@ -49,7 +49,7 @@ class ClerkTokenVerifier:
                 algorithms=["RS256"],
                 audience=audience,
                 issuer=issuer,
-                leeway=30,
+                leeway=15,
                 options=decode_options,
             )
         except InvalidTokenError as exc:

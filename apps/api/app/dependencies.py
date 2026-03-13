@@ -79,6 +79,11 @@ def get_current_user(
         token = candidate
     else:
         token = request.cookies.get("__session")
+        if token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            if not request.headers.get("x-requested-with"):
+                raise AuthenticationError(
+                    "Cookie-based authentication requires the X-Requested-With header for state-changing requests."
+                )
 
     if not token:
         raise AuthenticationError()

@@ -26,6 +26,34 @@ logger = structlog.get_logger("massive_client")
 MAX_PAGINATION_PAGES = 100
 
 
+class _CircuitBreaker:
+    """Simple circuit breaker: opens after ``threshold`` consecutive failures,
+    stays open for ``cooldown`` seconds, then transitions to half-open."""
+
+    def __init__(self, threshold: int = 5, cooldown: float = 60.0) -> None:
+        self._threshold = threshold
+        self._cooldown = cooldown
+        self._failure_count = 0
+        self._opened_at: float | None = None
+
+    def record_success(self) -> None:
+        self._failure_count = 0
+        self._opened_at = None
+
+    def record_failure(self) -> None:
+        self._failure_count += 1
+        if self._failure_count >= self._threshold:
+            self._opened_at = time.time()
+
+    @property
+    def is_open(self) -> bool:
+        if self._opened_at is None:
+            return False
+        if time.time() - self._opened_at > self._cooldown:
+            return False
+        return True
+
+
 class MassiveClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
         settings = get_settings()
@@ -38,6 +66,7 @@ class MassiveClient:
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.Client(timeout=self.timeout)
+        self._circuit = _CircuitBreaker(threshold=5, cooldown=60.0)
 
     def close(self) -> None:
         self._http.close()
@@ -317,6 +346,9 @@ class MassiveClient:
         return rows
 
     def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self._circuit.is_open:
+            raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
+
         url = path if path.startswith("http") else f"{self.base_url}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"}
         retryable_message: str | None = None
@@ -329,6 +361,7 @@ class MassiveClient:
                     headers=headers,
                 )
             except httpx.HTTPError as exc:
+                self._circuit.record_failure()
                 retryable_message = "Massive request failed due to a network error."
                 if attempt < self.max_retries:
                     self._sleep_before_retry(attempt, None)
@@ -340,12 +373,14 @@ class MassiveClient:
             if response.status_code == 404:
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
+                self._circuit.record_failure()
                 retryable_message = "Massive rate limit reached. Retry later."
                 if attempt < self.max_retries:
                     self._sleep_before_retry(attempt, response.headers.get("Retry-After"))
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 500:
+                self._circuit.record_failure()
                 retryable_message = "Massive is currently unavailable."
                 if attempt < self.max_retries:
                     self._sleep_before_retry(attempt, response.headers.get("Retry-After"))
@@ -363,6 +398,7 @@ class MassiveClient:
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )
 
+            self._circuit.record_success()
             data = response.json()
             if not isinstance(data, dict):
                 raise ExternalServiceError("Massive returned an unexpected response payload.")

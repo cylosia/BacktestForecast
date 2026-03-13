@@ -98,7 +98,9 @@ class BacktestTemplateService:
     def _enforce_template_limit(self, user: User) -> None:
         locked_user = self.session.execute(
             select(User).where(User.id == user.id).with_for_update()
-        ).scalar_one()
+        ).scalar_one_or_none()
+        if locked_user is None:
+            raise NotFoundError("User not found.")
 
         limit = _resolve_template_limit(
             locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,

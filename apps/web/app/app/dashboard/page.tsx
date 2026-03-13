@@ -12,16 +12,7 @@ import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { HistoryList } from "@/components/backtests/history-list";
-
-function planLabel(planTier: string) {
-  if (planTier === "premium") {
-    return "Premium";
-  }
-  if (planTier === "pro") {
-    return "Pro";
-  }
-  return "Free";
-}
+import { planLabel } from "@/lib/plan";
 
 export default async function DashboardPage() {
   const [userResult, historyResult] = await Promise.allSettled([getCurrentUser(), getBacktestHistory(10)]);
@@ -47,7 +38,7 @@ export default async function DashboardPage() {
   }
 
   const user = userResult.value;
-  const history = historyResult.value.items;
+  const history = historyResult.value?.items ?? [];
   const quota = buildBacktestQuota(user);
   const latestRun = history[0] ?? null;
 

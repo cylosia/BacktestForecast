@@ -165,11 +165,33 @@ class BillingService:
             logger.warning("billing.webhook.missing_event_id", event_type=event_type)
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ignored").inc()
             return {"status": "ignored", "reason": "missing_event_id"}
-        if self.audit_events.exists(
-            event_type=f"billing.webhook.{event_type}",
-            subject_type="stripe_event",
-            subject_id=event_id,
-        ):
+
+        # Atomically claim this event via audit insert BEFORE any side effects.
+        # If a concurrent delivery already claimed it, the unique constraint
+        # causes deduplication or IntegrityError; we return "duplicate".
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            recorded = self.audit.record(
+                event_type=f"billing.webhook.{event_type}",
+                subject_type="stripe_event",
+                subject_id=event_id,
+                user_id=None,
+                request_id=request_id,
+                ip_address=ip_address,
+                metadata={
+                    "event_type": event_type,
+                    "livemode": bool(event.get("livemode")),
+                    "duplicate": False,
+                },
+            )
+            if recorded is None:
+                logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
+                STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
+                return {"status": "duplicate", "event_type": event_type}
+            self.session.flush()
+        except IntegrityError:
+            self.session.rollback()
             logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
             return {"status": "duplicate", "event_type": event_type}
@@ -190,19 +212,6 @@ class BillingService:
         else:
             logger.info("billing.webhook.ignored", event_type=event_type)
 
-        self.audit.record(
-            event_type=f"billing.webhook.{event_type}",
-            subject_type="stripe_event",
-            subject_id=event_id,
-            user_id=user.id if user is not None else None,
-            request_id=request_id,
-            ip_address=ip_address,
-            metadata={
-                "event_type": event_type,
-                "livemode": bool(event.get("livemode")),
-                "duplicate": False,
-            },
-        )
         self.session.commit()
         STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ok").inc()
         return {"status": "ok", "event_type": event_type}

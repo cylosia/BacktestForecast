@@ -78,7 +78,7 @@ class PipelineBacktestExecutor:
     def __init__(self, execution_service: BacktestExecutionService | None = None) -> None:
         self._owns_service = execution_service is None
         self._execution_service = execution_service or BacktestExecutionService()
-        self._bundle_cache: OrderedDict[tuple[str, date, date], HistoricalDataBundle] = OrderedDict()
+        self._bundle_cache: OrderedDict[tuple, HistoricalDataBundle] = OrderedDict()
         self._bundle_cache_lock = threading.Lock()
 
     def close(self) -> None:
@@ -91,8 +91,27 @@ class PipelineBacktestExecutor:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    @staticmethod
+    def _bundle_cache_key(request: CreateBacktestRunRequest) -> tuple:
+        overrides_key: tuple = ()
+        if request.strategy_overrides:
+            d = request.strategy_overrides.model_dump(exclude_none=True)
+            overrides_key = tuple(sorted(
+                (k, str(v)) for k, v in d.items()
+            ))
+        return (
+            request.symbol,
+            request.start_date,
+            request.end_date,
+            request.strategy_type,
+            request.target_dte,
+            request.max_holding_days,
+            request.dte_tolerance_days,
+            overrides_key,
+        )
+
     def _get_bundle(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
-        key = (request.symbol, request.start_date, request.end_date)
+        key = self._bundle_cache_key(request)
         with self._bundle_cache_lock:
             bundle = self._bundle_cache.get(key)
             if bundle is not None:
@@ -238,6 +257,7 @@ class PipelineForecaster:
         self._market_data = market_data
         self._bar_cache: OrderedDict[tuple[str, date], list[DailyBar]] = OrderedDict()
         self._bar_cache_lock = threading.Lock()
+        self._bar_fetch_lock = threading.Lock()
 
     def get_forecast(
         self,
@@ -255,18 +275,24 @@ class PipelineForecaster:
                 if bars is not None:
                     self._bar_cache.move_to_end(cache_key)
             if bars is None:
-                bars = self._market_data.get_daily_bars(
-                    symbol,
-                    end_date - timedelta(days=400),
-                    end_date,
-                )
-                with self._bar_cache_lock:
-                    if cache_key not in self._bar_cache:
-                        if len(self._bar_cache) >= self._MAX_BAR_CACHE_SIZE:
-                            self._bar_cache.popitem(last=False)
-                        self._bar_cache[cache_key] = bars
-                    self._bar_cache.move_to_end(cache_key)
-                    bars = self._bar_cache[cache_key]
+                with self._bar_fetch_lock:
+                    with self._bar_cache_lock:
+                        bars = self._bar_cache.get(cache_key)
+                        if bars is not None:
+                            self._bar_cache.move_to_end(cache_key)
+                    if bars is None:
+                        bars = self._market_data.get_daily_bars(
+                            symbol,
+                            end_date - timedelta(days=400),
+                            end_date,
+                        )
+                        with self._bar_cache_lock:
+                            if cache_key not in self._bar_cache:
+                                if len(self._bar_cache) >= self._MAX_BAR_CACHE_SIZE:
+                                    self._bar_cache.popitem(last=False)
+                                self._bar_cache[cache_key] = bars
+                            self._bar_cache.move_to_end(cache_key)
+                            bars = self._bar_cache[cache_key]
             if len(bars) < 80:
                 return None
             result = self._forecaster.forecast(

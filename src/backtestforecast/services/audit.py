@@ -27,7 +27,8 @@ class AuditService:
         request_id: str | None = None,
         ip_address: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> AuditEvent:
+    ) -> AuditEvent | None:
+        """Record an audit event. Returns ``None`` when the event was deduplicated."""
         subject_value = None if subject_id is None else str(subject_id)
         payload = metadata or {}
         event = AuditEvent(
@@ -39,12 +40,20 @@ class AuditService:
             ip_hash=hash_ip(ip_address),
             metadata_json=payload,
         )
-        self.repository.add(event)
-        logger.info(
-            "audit.event.recorded",
+        event, was_inserted = self.repository.add(event)
+        if was_inserted:
+            logger.info(
+                "audit.event.recorded",
+                event_type=event_type,
+                subject_type=subject_type,
+                subject_id=subject_value,
+                user_id=str(user_id) if user_id is not None else None,
+            )
+            return event
+        logger.debug(
+            "audit.event.deduplicated",
             event_type=event_type,
             subject_type=subject_type,
             subject_id=subject_value,
-            user_id=str(user_id) if user_id is not None else None,
         )
-        return event
+        return None

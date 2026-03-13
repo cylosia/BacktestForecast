@@ -4,9 +4,9 @@ import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
-import { fetchBacktestRun } from "@/lib/api/client";
+import { fetchBacktestRunStatus } from "@/lib/api/client";
 import { isTerminalStatus, statusLabel } from "@/lib/backtests/format";
-import type { BacktestRunDetailResponse, RunStatus } from "@backtestforecast/api-client";
+import type { BacktestRunStatusResponse, RunStatus } from "@backtestforecast/api-client";
 import { usePolling } from "@/hooks/use-polling";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -27,10 +27,10 @@ export function BacktestRunPoller({
   const fetcher = useCallback(async () => {
     const token = await getToken();
     if (!token) throw new Error("No token");
-    return fetchBacktestRun(token, runId);
+    return fetchBacktestRunStatus(token, runId);
   }, [getToken, runId]);
 
-  const { status: pollStatus, attempts } = usePolling<BacktestRunDetailResponse>({
+  const { status: pollStatus, attempts } = usePolling<BacktestRunStatusResponse>({
     fetcher,
     onComplete: () => router.refresh(),
     onProgress: (run) => setStatus(run.status),

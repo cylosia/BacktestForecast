@@ -4,26 +4,7 @@ import { Activity, BarChart3, Bookmark, CreditCard, History, Microscope, PlusCir
 import { AppNavLink } from "@/components/app-nav-link";
 import { Badge } from "@/components/ui/badge";
 import { getCurrentUser } from "@/lib/api/server";
-
-function planBadgeVariant(planTier: string) {
-  if (planTier === "premium") {
-    return "success" as const;
-  }
-  if (planTier === "pro") {
-    return "default" as const;
-  }
-  return "secondary" as const;
-}
-
-function planLabel(planTier: string) {
-  if (planTier === "premium") {
-    return "Premium";
-  }
-  if (planTier === "pro") {
-    return "Pro";
-  }
-  return "Free";
-}
+import { planBadgeVariant, planLabel } from "@/lib/plan";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   let planTier = "free";

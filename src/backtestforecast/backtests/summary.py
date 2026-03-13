@@ -124,9 +124,10 @@ def _compute_sharpe_sortino(
 
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
-    downside_sq_sum = sum(x**2 for x in excess if x < 0)
-    if downside_sq_sum > 0:
-        down_dev = math.sqrt(downside_sq_sum / len(excess))
+    downside_returns = [x for x in excess if x < 0]
+    if downside_returns:
+        downside_sq_sum = sum(x**2 for x in downside_returns)
+        down_dev = math.sqrt(downside_sq_sum / len(downside_returns))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None
@@ -139,11 +140,16 @@ def _compute_cagr(
     ending_equity: float,
     equity_curve: list[EquityPointResult],
 ) -> float | None:
-    trading_days = len(equity_curve)
-    if starting_equity <= 0 or trading_days < _MIN_TRADING_DAYS_FOR_CAGR or ending_equity <= 0:
+    if not equity_curve or len(equity_curve) < _MIN_TRADING_DAYS_FOR_CAGR:
+        return None
+    if starting_equity <= 0 or ending_equity <= 0:
+        return None
+    calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
+    if calendar_days < 1:
         return None
     ratio = ending_equity / starting_equity
-    exponent = 252.0 / trading_days
+    years = calendar_days / 365.25
+    exponent = 1.0 / years
     result = (ratio**exponent - 1.0) * 100.0
     if not math.isfinite(result):
         return None

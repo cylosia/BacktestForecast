@@ -48,6 +48,7 @@ class BacktestConfig:
     commission_per_contract: float
     entry_rules: Sequence[EntryRule]
     risk_free_rate: float = 0.045
+    slippage_pct: float = 0.0
     strategy_overrides: StrategyOverrides | None = None
     custom_legs: Sequence[CustomLegDefinition] | None = None
 
@@ -155,6 +156,7 @@ class OpenMultiLegPosition:
     max_loss_per_unit: float | None = None
     max_profit_per_unit: float | None = None
     entry_reason: str = "entry_rules_met"
+    entry_commission_total: float = 0.0
     detail_json: dict[str, Any] = field(default_factory=dict)
 
 

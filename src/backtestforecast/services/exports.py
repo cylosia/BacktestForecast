@@ -108,7 +108,8 @@ class ExportService:
         if export_job is None:
             raise NotFoundError("Export job not found.")
 
-        if export_job.status not in ("queued", "running"):
+        if export_job.status != "queued":
+            logger.info("export.execute_skipped", export_job_id=str(export_job_id), status=export_job.status)
             return export_job
 
         export_job.status = "running"

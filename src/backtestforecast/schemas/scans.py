@@ -178,14 +178,14 @@ class ScannerJobResponse(BaseModel):
     recommendation_count: int
     refresh_daily: bool
     refresh_priority: int
-    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list, alias="warnings_json")
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class ScannerJobListResponse(BaseModel):

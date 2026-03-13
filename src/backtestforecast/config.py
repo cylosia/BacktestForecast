@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://backtestforecast:backtestforecast@localhost:5432/backtestforecast"
     redis_url: str = "redis://localhost:6379/0"
+    redis_password: str | None = None
 
     web_cors_origins_raw: str = "http://localhost:3000"
     api_allowed_hosts_raw: str = "localhost,127.0.0.1"
@@ -46,7 +47,8 @@ class Settings(BaseSettings):
     massive_retry_backoff_seconds: float = 0.5
     earnings_api_key: str | None = None
 
-    # Nightly pipeline
+    # Nightly pipeline — override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
+    pipeline_default_symbols_csv: str | None = None
     pipeline_default_symbols: list[str] = [
         "AAPL",
         "MSFT",
@@ -265,6 +267,14 @@ class Settings(BaseSettings):
         return bool(self.stripe_secret_key and self.stripe_webhook_secret and self.stripe_price_lookup)
 
     @model_validator(mode="after")
+    def apply_env_overrides(self) -> "Settings":
+        if self.pipeline_default_symbols_csv:
+            parsed = [s.strip() for s in self.pipeline_default_symbols_csv.split(",") if s.strip()]
+            if parsed:
+                self.pipeline_default_symbols = parsed
+        return self
+
+    @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if self.app_env in {"production", "staging"}:
             if not self.clerk_issuer:
@@ -281,6 +291,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments must use a custom IP_HASH_SALT.")
             if not self.metrics_token:
                 raise ValueError("Production-like environments require METRICS_TOKEN to be set.")
+            if not self.redis_password:
+                raise ValueError("Production-like environments require a non-empty REDIS_PASSWORD.")
             if not self.clerk_audience:
                 raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
             if not self.clerk_authorized_parties:

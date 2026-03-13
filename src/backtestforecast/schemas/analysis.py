@@ -16,7 +16,7 @@ class AnalysisSummaryResponse(BaseModel):
     top_results_count: int
     duration_seconds: float | None = None
     error_message: str | None = None
-    created_at: str | None = None
+    created_at: str
     completed_at: str | None = None
 
 

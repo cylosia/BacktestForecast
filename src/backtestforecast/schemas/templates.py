@@ -57,11 +57,11 @@ class TemplateResponse(BaseModel):
     name: str
     description: str | None
     strategy_type: str
-    config: dict[str, Any]
+    config: dict[str, Any] = Field(alias="config_json")
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class TemplateListResponse(BaseModel):

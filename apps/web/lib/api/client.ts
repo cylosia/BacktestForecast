@@ -1,6 +1,7 @@
 import { apiDownload, apiRequest } from "@/lib/api/shared";
 import type {
   BacktestRunDetailResponse,
+  BacktestRunStatusResponse,
   CheckoutSessionResponse,
   CompareBacktestsResponse,
   CreateBacktestRunRequest,
@@ -36,6 +37,13 @@ export async function fetchBacktestRun(
   runId: string,
 ): Promise<BacktestRunDetailResponse> {
   return apiRequest<BacktestRunDetailResponse>(`/v1/backtests/${runId}`, token);
+}
+
+export async function fetchBacktestRunStatus(
+  token: string,
+  runId: string,
+): Promise<BacktestRunStatusResponse> {
+  return apiRequest<BacktestRunStatusResponse>(`/v1/backtests/${runId}/status`, token);
 }
 
 export async function compareBacktests(

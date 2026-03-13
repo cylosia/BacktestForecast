@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
+from kombu.exceptions import KombuError, OperationalError as KombuOperationalError
 from sqlalchemy.orm import Session
 
 from apps.worker.app.celery_app import celery_app
@@ -37,7 +38,7 @@ def dispatch_celery_task(
         job.celery_task_id = result.id
         db.commit()
         logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)
-    except Exception:
+    except (OSError, ConnectionError, KombuError, KombuOperationalError):
         logger.exception(f"{log_event}.enqueue_failed", **task_kwargs)
         job.status = "failed"
         job.error_code = "enqueue_failed"

@@ -19,6 +19,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
@@ -144,7 +145,20 @@ class NightlyPipelineService:
             stage="universe_screen",
         )
         self.session.add(run)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            succeeded = self.session.scalar(
+                select(NightlyPipelineRun).where(
+                    NightlyPipelineRun.trade_date == trade_date,
+                    NightlyPipelineRun.status == "succeeded",
+                )
+            )
+            if succeeded is not None:
+                logger.info("pipeline.already_exists_on_conflict", run_id=str(succeeded.id))
+                return succeeded
+            raise
         self.session.refresh(run)
 
         try:
@@ -248,6 +262,9 @@ class NightlyPipelineService:
             }
             self.session.rollback()
             run = self.session.get(NightlyPipelineRun, run.id)
+            if run is None:
+                logger.error("pipeline.failure_handler_missing_run", run_id=str(run_id) if "run_id" in dir() else "unknown")
+                raise
             run.stage = failing_stage
             for attr, value in counters.items():
                 setattr(run, attr, value)

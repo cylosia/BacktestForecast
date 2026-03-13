@@ -6,16 +6,7 @@ import { CheckoutSuccessBanner } from "@/components/billing/checkout-success-ban
 import { PortalButton } from "@/components/billing/portal-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-
-function planLabel(planTier: string) {
-  if (planTier === "premium") {
-    return "Premium";
-  }
-  if (planTier === "pro") {
-    return "Pro";
-  }
-  return "Free";
-}
+import { planLabel } from "@/lib/plan";
 
 export default async function BillingSettingsPage() {
   let user;

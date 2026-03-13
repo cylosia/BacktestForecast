@@ -15,6 +15,7 @@ from decimal import Decimal
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import EquityPointResult, TradeResult
@@ -49,7 +50,15 @@ def backfill() -> int:
         for i in range(0, len(run_ids), BATCH_SIZE):
             batch = run_ids[i : i + BATCH_SIZE]
             for run_id in batch:
-                run = session.get(BacktestRun, run_id)
+                run = session.execute(
+                    select(BacktestRun)
+                    .where(BacktestRun.id == run_id)
+                    .options(
+                        selectinload(BacktestRun.trades),
+                        selectinload(BacktestRun.equity_points),
+                    )
+                    .with_for_update()
+                ).scalar_one_or_none()
                 if run is None or run.profit_factor is not None:
                     continue
 

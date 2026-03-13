@@ -17,7 +17,6 @@ from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.billing import BillingService
 
 router = APIRouter(prefix="/billing", tags=["billing"])
-settings = get_settings()
 
 
 @router.post("/checkout-session", response_model=CheckoutSessionResponse)
@@ -27,6 +26,7 @@ def create_checkout_session(
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> CheckoutSessionResponse:
+    settings = get_settings()
     get_rate_limiter().check(
         bucket="billing:checkout",
         actor_key=str(user.id),
@@ -48,6 +48,7 @@ def create_portal_session(
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> PortalSessionResponse:
+    settings = get_settings()
     get_rate_limiter().check(
         bucket="billing:portal",
         actor_key=str(user.id),
@@ -65,12 +66,19 @@ def create_portal_session(
 @router.post("/webhook", status_code=status.HTTP_200_OK)
 def stripe_webhook(
     request: Request,
-    payload: bytes = Body(..., media_type="application/json"),
+    payload: bytes = Body(..., media_type="application/json", max_length=65_536),
     signature: str = Header(alias="Stripe-Signature"),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     request_id = getattr(request.state, "request_id", None)
     ip_address = request.client.host if request.client is not None else None
+    settings = get_settings()
+    get_rate_limiter().check(
+        bucket="billing:webhook",
+        actor_key=ip_address or "unknown",
+        limit=60,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     return BillingService(db).handle_webhook(
         payload,
         signature,

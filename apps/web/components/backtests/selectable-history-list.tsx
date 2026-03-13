@@ -123,6 +123,7 @@ export function SelectableHistoryList({
                         checked={isSelected}
                         disabled={!isSelected && selected.size >= comparisonLimit}
                         className="h-4 w-4 rounded border-input"
+                        aria-label={`Select ${item.symbol} ${item.strategy_type} run for comparison`}
                         onChange={() => toggle(item.id)}
                       />
                     ) : null}

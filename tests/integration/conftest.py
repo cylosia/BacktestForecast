@@ -114,6 +114,18 @@ def _fake_celery(monkeypatch: pytest.MonkeyPatch) -> _FakeCeleryApp:
 
 
 @pytest.fixture()
+def stub_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_api_critical_flows import FakeExecutionService, FakeForecaster
+
+    import backtestforecast.services.backtests as bs
+    import backtestforecast.services.scans as ss
+
+    monkeypatch.setattr(bs, "BacktestExecutionService", FakeExecutionService)
+    monkeypatch.setattr(ss, "BacktestExecutionService", FakeExecutionService)
+    monkeypatch.setattr(ss, "HistoricalAnalogForecaster", FakeForecaster)
+
+
+@pytest.fixture()
 def immediate_backtest_execution(
     _fake_celery: _FakeCeleryApp,
     session_factory: sessionmaker[Session],

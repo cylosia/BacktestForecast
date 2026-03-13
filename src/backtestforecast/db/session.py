@@ -43,11 +43,22 @@ def _get_session_factory() -> sessionmaker[Session]:
     )
 
 
-def SessionLocal() -> Session:
+def create_session() -> Session:
     return _get_session_factory()()
 
 
+# Backward-compatible alias
+SessionLocal = create_session
+
+
 def get_db() -> Generator[Session, None, None]:
+    """Yield a SQLAlchemy session for request-scoped use.
+
+    The session is configured with ``autoflush=False`` and does NOT
+    auto-commit.  Callers must explicitly call ``db.commit()`` to
+    persist changes.  On unhandled exceptions the session is rolled back
+    automatically; it is always closed when the request finishes.
+    """
     db = SessionLocal()
     try:
         yield db

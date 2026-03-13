@@ -179,7 +179,7 @@ export function ForecastLookup() {
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Expected move</p>
                   <p className="text-xl font-semibold tracking-tight">
-                    ±{formatPercent(result!.expected_move_abs_pct)}
+                    ±{formatPercent(result?.expected_move_abs_pct ?? 0)}
                   </p>
                 </div>
               </div>
@@ -251,7 +251,7 @@ export function ForecastLookup() {
               <div className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground space-y-2">
                 <p>{forecast.summary}</p>
                 <p className="text-xs">{forecast.disclaimer}</p>
-                <p className="text-xs">{result!.probabilistic_note}</p>
+                <p className="text-xs">{result?.probabilistic_note}</p>
               </div>
             </CardContent>
           </Card>

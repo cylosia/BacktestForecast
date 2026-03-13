@@ -139,8 +139,8 @@ function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
 }
 
 function TopResultCard({ result }: { result: AnalysisTopResult }) {
-  const summary = result.summary as Record<string, number>;
-  const forecast = result.forecast as Record<string, number>;
+  const summary = (result.summary ?? {}) as Partial<Record<string, number | null>>;
+  const forecast = (result.forecast ?? {}) as Partial<Record<string, number | null>>;
 
   return (
     <Card>
@@ -180,7 +180,7 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
           </div>
         </div>
 
-        {forecast.expected_return_median_pct != null ? (
+        {forecast && forecast.expected_return_median_pct != null ? (
           <div className="rounded-lg border border-border/60 bg-muted/30 p-2 text-xs">
             <span className="text-muted-foreground">Forecast: </span>
             <span className="font-medium">
@@ -193,7 +193,7 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
           </div>
         ) : null}
 
-        {result.trades.length > 0 ? (
+        {result.trades && result.trades.length > 0 ? (
           <p className="text-xs text-muted-foreground">
             {result.trades.length} trade{result.trades.length !== 1 ? "s" : ""} in full backtest
           </p>
@@ -216,21 +216,24 @@ export function SymbolAnalysisLauncher() {
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      abortRef.current?.abort();
     };
   }, []);
 
+  const abortRef = useRef<AbortController | null>(null);
+
   const pollForCompletion = useCallback(
-    async (token: string, analysisId: string) => {
+    async (token: string, analysisId: string, signal: AbortSignal) => {
       for (let i = 0; i < MAX_POLLS; i++) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-        if (!mountedRef.current) return;
+        if (signal.aborted || !mountedRef.current) return;
         const status = await fetchAnalysisStatus(token, analysisId);
-        if (!mountedRef.current) return;
+        if (signal.aborted || !mountedRef.current) return;
         setStage(status.stage);
 
         if (status.status === "succeeded") {
           const full = await fetchAnalysisFull(token, analysisId);
-          if (!mountedRef.current) return;
+          if (signal.aborted || !mountedRef.current) return;
           setResult(full);
           setPhase("done");
           return;
@@ -249,6 +252,10 @@ export function SymbolAnalysisLauncher() {
     const sym = symbol.trim().toUpperCase();
     if (!sym) return;
 
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setPhase("polling");
     setStage("pending");
     setErrorMessage(null);
@@ -263,12 +270,14 @@ export function SymbolAnalysisLauncher() {
 
       if (created.status === "succeeded") {
         const full = await fetchAnalysisFull(token, created.id);
+        if (controller.signal.aborted) return;
         setResult(full);
         setPhase("done");
       } else {
-        await pollForCompletion(token, created.id);
+        await pollForCompletion(token, created.id, controller.signal);
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       const msg =
         error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Analysis failed.";
       const code = error instanceof ApiError ? error.code : undefined;
