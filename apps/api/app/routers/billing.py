@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Body, Depends, Header, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
@@ -63,12 +63,12 @@ def create_portal_session(
 
 
 @router.post("/webhook", status_code=status.HTTP_200_OK)
-async def stripe_webhook(
+def stripe_webhook(
     request: Request,
+    payload: bytes = Body(..., media_type="application/json"),
     signature: str = Header(alias="Stripe-Signature"),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    payload = await request.body()
     request_id = getattr(request.state, "request_id", None)
     ip_address = request.client.host if request.client is not None else None
     return BillingService(db).handle_webhook(

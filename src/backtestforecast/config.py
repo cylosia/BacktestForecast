@@ -155,6 +155,7 @@ class Settings(BaseSettings):
     ip_hash_salt: str = Field(default="backtestforecast-default-ip-salt-change-me")
 
     db_pool_size: int = 5
+    db_pool_max_overflow: int = 10
     db_pool_recycle: int = 1800
 
     trusted_proxy_cidrs: str = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"

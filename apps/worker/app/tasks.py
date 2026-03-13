@@ -29,7 +29,7 @@ def ping() -> dict[str, str]:
     }
 
 
-@celery_app.task(name="pipeline.nightly_scan", bind=True, max_retries=1)
+@celery_app.task(name="pipeline.nightly_scan", bind=True, max_retries=1, soft_time_limit=1800, time_limit=1860)
 def nightly_scan_pipeline(
     self,
     symbols: list[str] | None = None,
@@ -111,7 +111,7 @@ def nightly_scan_pipeline(
         client.close()
 
 
-@celery_app.task(name="backtests.run", bind=True, max_retries=2)
+@celery_app.task(name="backtests.run", bind=True, max_retries=2, soft_time_limit=300, time_limit=330)
 def run_backtest(self, run_id: str) -> dict[str, str]:
     publish_job_status("backtest", UUID(run_id), "running")
     with SessionLocal() as session:
@@ -196,7 +196,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         }
 
 
-@celery_app.task(name="exports.generate", bind=True, max_retries=2)
+@celery_app.task(name="exports.generate", bind=True, max_retries=2, soft_time_limit=120, time_limit=150)
 def generate_export(self, export_job_id: str) -> dict[str, str | int]:
     publish_job_status("export", UUID(export_job_id), "running")
     with SessionLocal() as session:
@@ -268,7 +268,10 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             except Exception:
                 logger.exception("service.close_failed")
 
-        CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="succeeded").inc()
+        if job.status == "succeeded":
+            CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="succeeded").inc()
+        else:
+            CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
         publish_job_status("export", UUID(export_job_id), job.status)
         return {
             "status": job.status,
@@ -277,7 +280,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
         }
 
 
-@celery_app.task(name="analysis.deep_symbol", bind=True, max_retries=1)
+@celery_app.task(name="analysis.deep_symbol", bind=True, max_retries=1, soft_time_limit=600, time_limit=660)
 def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
     """Execute a single-symbol deep analysis."""
     from backtestforecast.config import get_settings
@@ -386,7 +389,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
         client.close()
 
 
-@celery_app.task(name="scans.run_job", bind=True, max_retries=3)
+@celery_app.task(name="scans.run_job", bind=True, max_retries=3, soft_time_limit=600, time_limit=660)
 def run_scan_job(self, job_id: str) -> dict[str, str | int]:
     publish_job_status("scan", UUID(job_id), "running")
     with SessionLocal() as session:

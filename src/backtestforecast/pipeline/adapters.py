@@ -229,7 +229,7 @@ class PipelineForecaster:
     def __init__(self, forecaster: Any, market_data: PipelineMarketDataFetcher) -> None:
         self._forecaster = forecaster
         self._market_data = market_data
-        self._bar_cache: OrderedDict[str, list[DailyBar]] = OrderedDict()
+        self._bar_cache: OrderedDict[tuple[str, date], list[DailyBar]] = OrderedDict()
         self._bar_cache_lock = threading.Lock()
 
     def get_forecast(
@@ -241,24 +241,25 @@ class PipelineForecaster:
         as_of_date: date | None = None,
     ) -> dict[str, Any] | None:
         try:
+            end_date = as_of_date or datetime.now(ZoneInfo("America/New_York")).date()
+            cache_key = (symbol, end_date)
             with self._bar_cache_lock:
-                bars = self._bar_cache.get(symbol)
+                bars = self._bar_cache.get(cache_key)
                 if bars is not None:
-                    self._bar_cache.move_to_end(symbol)
+                    self._bar_cache.move_to_end(cache_key)
             if bars is None:
-                end_date = as_of_date or datetime.now(ZoneInfo("America/New_York")).date()
                 bars = self._market_data.get_daily_bars(
                     symbol,
                     end_date - timedelta(days=400),
                     end_date,
                 )
                 with self._bar_cache_lock:
-                    if symbol not in self._bar_cache:
+                    if cache_key not in self._bar_cache:
                         if len(self._bar_cache) >= self._MAX_BAR_CACHE_SIZE:
                             self._bar_cache.popitem(last=False)
-                        self._bar_cache[symbol] = bars
-                    self._bar_cache.move_to_end(symbol)
-                    bars = self._bar_cache[symbol]
+                        self._bar_cache[cache_key] = bars
+                    self._bar_cache.move_to_end(cache_key)
+                    bars = self._bar_cache[cache_key]
             if len(bars) < 80:
                 return None
             result = self._forecaster.forecast(

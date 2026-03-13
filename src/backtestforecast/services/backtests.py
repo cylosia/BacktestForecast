@@ -223,6 +223,7 @@ class BacktestService:
             ending_equity=to_decimal(request.account_size),
         )
         self.run_repository.add(run)
+        self.session.commit()
 
         try:
             execution_result = self.execution_service.execute_request(request)

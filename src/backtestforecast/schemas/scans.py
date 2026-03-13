@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -96,7 +96,7 @@ class CreateScannerJobRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self) -> "CreateScannerJobRequest":
-        if self.end_date > date.today():
+        if self.end_date > datetime.now(UTC).date():
             raise ValueError("end_date cannot be in the future")
         if self.start_date >= self.end_date:
             raise ValueError("start_date must be earlier than end_date")

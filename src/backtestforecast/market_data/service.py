@@ -165,12 +165,14 @@ class MassiveOptionGateway:
         and returns a mapping of strike_price to absolute delta for the given
         contracts. Strikes without available delta are omitted.
         """
-        if not self._chain_snapshot_loaded:
-            chain = self.client.get_option_chain_snapshot(self.symbol)
-            with self._lock:
+        with self._lock:
+            if not self._chain_snapshot_loaded:
+                chain = self.client.get_option_chain_snapshot(self.symbol)
                 for snap in chain:
                     if snap.ticker not in self._snapshot_cache:
                         self._snapshot_cache[snap.ticker] = snap
+                while len(self._snapshot_cache) > _GATEWAY_SNAPSHOT_CACHE_MAX:
+                    self._snapshot_cache.popitem(last=False)
                 self._chain_snapshot_loaded = True
 
         lookup: dict[float, float] = {}

@@ -86,6 +86,7 @@ def build_summary(
 
 
 _MIN_TRADES_FOR_RATIOS = 5
+_MIN_TRADING_DAYS_FOR_CAGR = 10
 
 
 def _compute_sharpe_sortino(
@@ -132,7 +133,7 @@ def _compute_cagr(
     equity_curve: list[EquityPointResult],
 ) -> float | None:
     trading_days = len(equity_curve)
-    if starting_equity <= 0 or trading_days <= 0 or ending_equity <= 0:
+    if starting_equity <= 0 or trading_days < _MIN_TRADING_DAYS_FOR_CAGR or ending_equity <= 0:
         return None
     ratio = ending_equity / starting_equity
     exponent = 252.0 / trading_days

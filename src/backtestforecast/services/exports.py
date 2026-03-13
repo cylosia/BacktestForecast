@@ -145,13 +145,12 @@ class ExportService:
             raise
         except (ValueError, RuntimeError) as exc:
             self.session.rollback()
-            logger.exception("export.terminal_failure", export_job_id=str(export_job.id))
+            logger.warning("export.terminal_failure", export_job_id=str(export_job.id), error=str(exc))
             export_job.status = "failed"
             export_job.error_code = "export_generation_failed"
             export_job.error_message = str(exc)
             export_job.completed_at = datetime.now(UTC)
             self.session.commit()
-            raise
         except Exception:
             self.session.rollback()
             logger.exception("export.execution_failed", export_job_id=str(export_job.id))

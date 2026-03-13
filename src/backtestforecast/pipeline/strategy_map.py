@@ -119,7 +119,6 @@ _EARNINGS_SUPPRESS: frozenset[str] = frozenset({
 _EARNINGS_FALLBACK: list[str] = [
     "long_straddle",
     "long_strangle",
-    "iron_condor",
 ]
 
 

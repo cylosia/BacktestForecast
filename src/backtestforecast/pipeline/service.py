@@ -238,13 +238,18 @@ class NightlyPipelineService:
             )
 
         except Exception:
+            failing_stage = run.stage
             self.session.rollback()
             run = self.session.get(NightlyPipelineRun, run.id)
+            run.stage = failing_stage
             run.status = "failed"
             run.error_message = "Pipeline execution failed. See logs for details."
             run.completed_at = datetime.now(UTC)
             run.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
-            self.session.commit()
+            try:
+                self.session.commit()
+            except Exception:
+                self.session.rollback()
             logger.exception("pipeline.failed", run_id=str(run.id))
             raise
 

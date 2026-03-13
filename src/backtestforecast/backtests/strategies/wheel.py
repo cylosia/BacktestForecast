@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -96,7 +97,17 @@ class WheelStrategyBacktestEngine:
                             " the engine carried forward the previous mid-price.",
                         )
                 else:
-                    current_mid = quote.mid_price
+                    if math.isfinite(quote.mid_price):
+                        current_mid = quote.mid_price
+                    else:
+                        current_mid = active_option.last_mid
+                        self._add_warning_once(
+                            warnings,
+                            warning_codes,
+                            "invalid_option_mid_price",
+                            "One or more option mid-prices were NaN or Inf;"
+                            " the engine carried forward the previous mid-price.",
+                        )
                 active_option.last_mid = current_mid
                 option_value = -current_mid * 100.0 * active_option.quantity
 
@@ -143,6 +154,7 @@ class WheelStrategyBacktestEngine:
                         and bar.close_price < active_option.strike_price
                     ):
                         exit_mid = 0.0
+                        option_detail["legs"][0]["exit_mid"] = exit_mid
                         option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
                         option_net_pnl = option_gross_pnl - (
                             (config.commission_per_contract * active_option.quantity) + exit_commission
@@ -184,6 +196,7 @@ class WheelStrategyBacktestEngine:
                         and held_shares is not None
                     ):
                         exit_mid = 0.0
+                        option_detail["legs"][0]["exit_mid"] = exit_mid
                         option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
                         option_net_pnl = option_gross_pnl - (
                             (config.commission_per_contract * active_option.quantity) + exit_commission

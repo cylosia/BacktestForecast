@@ -24,6 +24,7 @@ def build_engine(
         engine_kwargs["connect_args"] = {"check_same_thread": False}
     else:
         engine_kwargs["pool_size"] = cfg.db_pool_size
+        engine_kwargs["max_overflow"] = cfg.db_pool_max_overflow
         engine_kwargs["pool_recycle"] = cfg.db_pool_recycle
     return create_engine(url, **engine_kwargs)
 

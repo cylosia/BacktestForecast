@@ -219,8 +219,9 @@ class OptionsBacktestEngine:
             gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position.quantity
             total_commissions = exit_commission * 2.0
             net_pnl = gross_pnl - total_commissions
-            expiration_date = position.scheduled_exit_date or max(
-                leg.expiration_date for leg in position.option_legs
+            expiration_date = (
+                position.scheduled_exit_date
+                or max(leg.expiration_date for leg in position.option_legs)
             ) if position.option_legs else sorted_bars[-1].trade_date
             trades.append(
                 TradeResult(

@@ -297,6 +297,7 @@ class SymbolDeepAnalysisService:
                         symbol=symbol,
                         strategy_type=best.strategy_type,
                         horizon_days=best.target_dte,
+                        as_of_date=trade_date,
                     )
                     if forecast:
                         analysis.forecast_json = forecast

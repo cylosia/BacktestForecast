@@ -114,7 +114,7 @@ class IronCondorStrategy(StrategyDefinition):
             max_loss_per_unit = max(wider_spread - credit, 0.0)
             max_profit_per_unit = credit
         else:
-            max_loss_per_unit = entry_value_per_unit
+            max_loss_per_unit = wider_spread + entry_value_per_unit
             max_profit_per_unit = max(wider_spread - entry_value_per_unit, 0.0)
         margin = iron_condor_margin(
             long_call.strike_price - short_call.strike_price,

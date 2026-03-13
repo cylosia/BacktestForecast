@@ -93,7 +93,7 @@ function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
     .sort((a, b) => b[1].score - a[1].score)
     .slice(0, 20);
 
-  const maxScore = sorted.length > 0 ? sorted[0][1].score : 1;
+  const maxScore = sorted.length > 0 ? Math.max(sorted[0][1].score, 0.01) : 1;
 
   return (
     <Card>
