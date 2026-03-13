@@ -31,7 +31,7 @@ class PipelineMarketDataFetcher:
 
     def __init__(self, client: MassiveClient) -> None:
         self.client = client
-        self._earnings_cache: dict[str, set[date]] = {}
+        self._earnings_cache: dict[tuple[str, date, date], set[date]] = {}
         self._earnings_cache_lock = threading.Lock()
 
     def get_daily_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
@@ -41,8 +41,9 @@ class PipelineMarketDataFetcher:
         return MarketDataService._validate_bars(raw_bars, symbol)
 
     def get_earnings_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        cache_key = (symbol, start_date, end_date)
         with self._earnings_cache_lock:
-            cached = self._earnings_cache.get(symbol)
+            cached = self._earnings_cache.get(cache_key)
             if cached is not None:
                 return cached
 
@@ -53,8 +54,8 @@ class PipelineMarketDataFetcher:
             dates = set()
 
         with self._earnings_cache_lock:
-            self._earnings_cache.setdefault(symbol, dates)
-            return self._earnings_cache[symbol]
+            self._earnings_cache.setdefault(cache_key, dates)
+            return self._earnings_cache[cache_key]
 
 
 class PipelineBacktestExecutor:

@@ -61,7 +61,7 @@ export function TimeframeControls({
             value={values.targetDte}
             onChange={(event) => onChange({ targetDte: event.target.value })}
           />
-          <p className="text-xs text-muted-foreground">7 to 180 calendar days.</p>
+          <p className="text-xs text-muted-foreground">7 to 365 calendar days.</p>
           {errors.targetDte ? <p className="text-sm text-destructive">{errors.targetDte}</p> : null}
         </div>
 
@@ -73,7 +73,7 @@ export function TimeframeControls({
             value={values.dteToleranceDays}
             onChange={(event) => onChange({ dteToleranceDays: event.target.value })}
           />
-          <p className="text-xs text-muted-foreground">0 to 30 days around the target expiration.</p>
+          <p className="text-xs text-muted-foreground">0 to 60 days around the target expiration.</p>
           {errors.dteToleranceDays ? (
             <p className="text-sm text-destructive">{errors.dteToleranceDays}</p>
           ) : null}
@@ -87,7 +87,7 @@ export function TimeframeControls({
             value={values.maxHoldingDays}
             onChange={(event) => onChange({ maxHoldingDays: event.target.value })}
           />
-          <p className="text-xs text-muted-foreground">1 to 60 calendar days.</p>
+          <p className="text-xs text-muted-foreground">1 to 120 calendar days.</p>
           {errors.maxHoldingDays ? (
             <p className="text-sm text-destructive">{errors.maxHoldingDays}</p>
           ) : null}

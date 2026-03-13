@@ -356,6 +356,8 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     if analysis is not None and analysis.status in ("queued", "running"):
                         analysis.status = "failed"
                         analysis.error_message = "Analysis failed after exhausting retries."
+                        from datetime import UTC, datetime as _dt_mr
+                        analysis.completed_at = _dt_mr.now(UTC)
                         try:
                             session.commit()
                         except Exception:

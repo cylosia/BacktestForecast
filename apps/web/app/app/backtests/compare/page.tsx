@@ -32,7 +32,9 @@ function safeNum(v: unknown): string {
   return v != null ? formatNumber(v as number) : "—";
 }
 function safeRatio(v: unknown): string {
-  return v != null ? Number(v).toFixed(2) : "—";
+  if (v == null) return "—";
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toFixed(2) : "—";
 }
 
 const METRIC_ROWS: Array<{

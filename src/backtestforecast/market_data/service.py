@@ -196,9 +196,12 @@ class MassiveOptionGateway:
 
 
 class MarketDataService:
+    _MAX_BARS_CACHE_SIZE = 500
+
     def __init__(self, client: MassiveClient) -> None:
         self.client = client
-        self._bars_cache: dict[tuple[str, date, date], list[DailyBar]] = {}
+        self._bars_cache: OrderedDict[tuple[str, date, date], list[DailyBar]] = OrderedDict()
+        self._bars_cache_lock = threading.Lock()
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
 
@@ -209,11 +212,22 @@ class MarketDataService:
         )
 
         cache_key = (request.symbol, extended_start, extended_end)
-        if cache_key in self._bars_cache:
-            raw_bars = self._bars_cache[cache_key]
-        else:
+        with self._bars_cache_lock:
+            cached = self._bars_cache.get(cache_key)
+            if cached is not None:
+                self._bars_cache.move_to_end(cache_key)
+                raw_bars = cached
+            else:
+                cached = None
+        if cached is None:
             raw_bars = self.client.get_stock_daily_bars(request.symbol, extended_start, extended_end)
-            self._bars_cache[cache_key] = raw_bars
+            with self._bars_cache_lock:
+                if cache_key not in self._bars_cache:
+                    if len(self._bars_cache) >= self._MAX_BARS_CACHE_SIZE:
+                        self._bars_cache.popitem(last=False)
+                    self._bars_cache[cache_key] = raw_bars
+                self._bars_cache.move_to_end(cache_key)
+                raw_bars = self._bars_cache[cache_key]
         bars = self._validate_bars(raw_bars, request.symbol)
 
         if not bars:

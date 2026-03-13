@@ -152,8 +152,10 @@ class ExportService:
             raise
         except Exception:
             logger.exception("export.execution_failed", export_job_id=str(export_job.id))
-            export_job.status = "queued"
-            export_job.started_at = None
+            export_job.status = "failed"
+            export_job.error_code = "export_generation_failed"
+            export_job.error_message = "Export generation failed due to an unexpected error."
+            export_job.completed_at = datetime.now(UTC)
             self.session.commit()
             raise
 

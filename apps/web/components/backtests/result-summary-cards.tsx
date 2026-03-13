@@ -5,7 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 type NumericValue = BacktestSummaryResponse[keyof BacktestSummaryResponse];
 
 function safeRatio(value: NumericValue): string {
-  return value != null ? Number(value).toFixed(2) : "—";
+  if (value == null) return "—";
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : "—";
 }
 
 const primaryCards: Array<{
