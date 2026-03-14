@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GitCompareArrows } from "lucide-react";
@@ -27,6 +27,14 @@ export function SelectableHistoryList({
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const validIds = new Set(items.map((item) => item.id));
+    setSelected((prev) => {
+      const pruned = new Set([...prev].filter((id) => validIds.has(id)));
+      return pruned.size === prev.size ? prev : pruned;
+    });
+  }, [items]);
 
   const canCompare = selected.size >= 2 && selected.size <= comparisonLimit;
 

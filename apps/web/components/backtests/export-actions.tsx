@@ -142,7 +142,7 @@ export function ExportActions({
       const exportJob = await createExport(token, {
         run_id: runId,
         format,
-        idempotency_key: `${runId}:${format}`,
+        idempotency_key: `${runId}:${format}:${Date.now()}`,
       });
 
       if (controller.signal.aborted) return;

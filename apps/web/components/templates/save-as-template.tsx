@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Bookmark, Loader2 } from "lucide-react";
@@ -56,20 +56,25 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [isError, setIsError] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function handleSave() {
     if (!name.trim()) {
+      setIsError(true);
       setMessage("Template name is required.");
       return;
     }
 
     if (!values.strategyType) {
+      setIsError(true);
       setMessage("Strategy type is required to save a template.");
       return;
     }
 
     const dte = Number(values.targetDte);
     if (!Number.isFinite(dte) || dte <= 0) {
+      setIsError(true);
       setMessage("Target DTE must be a positive number.");
       return;
     }
@@ -80,6 +85,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
     try {
       const token = await getToken();
       if (!token) {
+        setIsError(true);
         setMessage("Session expired. Please sign in again.");
         setSaving(false);
         return;
@@ -91,15 +97,20 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
         config: formValuesToTemplateConfig(values),
       });
 
+      setIsError(false);
       setMessage("Template saved.");
       setSaving(false);
-      setOpen(false);
       setName("");
       setDescription("");
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = setTimeout(() => {
+        setOpen(false);
+      }, 1500);
       router.refresh();
     } catch (error) {
       const msg =
         error instanceof ApiError ? error.message : "Could not save template.";
+      setIsError(true);
       setMessage(msg);
       setSaving(false);
     }
@@ -141,7 +152,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
       </div>
 
       {message ? (
-        <p className="text-sm text-muted-foreground">{message}</p>
+        <p className={`text-sm ${isError ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>{message}</p>
       ) : null}
 
       <div className="flex items-center gap-2">

@@ -36,6 +36,17 @@ class JobStatus(str, Enum):
     EXPIRED = "expired"
 
 
+class ExportJobStatus(str, Enum):
+    """Export-specific statuses. Includes ``expired`` for download links
+    that have passed their TTL, distinct from general job failure."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
 class PlanTier(str, Enum):
     FREE = "free"
     PRO = "pro"

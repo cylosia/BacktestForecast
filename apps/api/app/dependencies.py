@@ -106,6 +106,9 @@ def get_current_user(
             raise AuthenticationError("Bearer token is required.")
         token = candidate
     else:
+        # The __session cookie is set by Clerk with SameSite=Lax by default.
+        # If Clerk configuration changes, verify SameSite is at least Lax
+        # to prevent cross-site cookie attachment in sub-requests.
         token = request.cookies.get("__session")
         if token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             xrw = request.headers.get("x-requested-with")
@@ -113,6 +116,14 @@ def get_current_user(
                 raise AuthenticationError(
                     "Cookie-based authentication requires the X-Requested-With: XMLHttpRequest header for state-changing requests."
                 )
+        if token:
+            origin = request.headers.get("origin")
+            if origin:
+                allowed_origins = [o.strip() for o in get_settings().web_cors_origins_raw.split(",") if o.strip()]
+                if origin not in allowed_origins:
+                    raise AuthenticationError(
+                        "Cookie-based request origin not in allowed list."
+                    )
 
     if not token:
         raise AuthenticationError()

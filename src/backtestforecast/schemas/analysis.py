@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from backtestforecast.schemas.common import sanitize_error_message
 
 
 class AnalysisSummaryResponse(BaseModel):
@@ -14,14 +17,17 @@ class AnalysisSummaryResponse(BaseModel):
     symbol: str
     status: str
     stage: str
-    close_price: float | None = None
+    close_price: Decimal | None = None
     strategies_tested: int
     configs_tested: int
     top_results_count: int
-    duration_seconds: float | None = None
+    duration_seconds: Decimal | None = None
     error_message: str | None = None
-    created_at: datetime | None = None
+    error_code: str | None = None
+    created_at: datetime
     completed_at: datetime | None = None
+
+    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
 class RegimeDetail(BaseModel):
@@ -123,11 +129,11 @@ class DailyPickForecast(BaseModel):
 
 class DailyPickItemResponse(BaseModel):
     rank: int
-    score: float
+    score: Decimal
     symbol: str
     strategy_type: str
     regime_labels: list[str] = Field(default_factory=list)
-    close_price: float
+    close_price: Decimal
     target_dte: int
     config_snapshot: dict[str, Any] = Field(default_factory=dict)
     summary: DailyPickSummary = Field(default_factory=DailyPickSummary)
@@ -143,14 +149,16 @@ class DailyPicksResponse(BaseModel):
 
 
 class PipelineHistoryItemResponse(BaseModel):
-    id: str
+    id: UUID
     trade_date: str
     status: str
     symbols_screened: int
     recommendations_produced: int
     duration_seconds: float | None = None
-    completed_at: str | None = None
+    completed_at: datetime | None = None
     error_message: str | None = None
+
+    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
 class PipelineHistoryResponse(BaseModel):

@@ -61,9 +61,11 @@ export function CheckoutButton({
       setStatus("error");
       setMessage(nextMessage);
     } finally {
-      if (document.visibilityState !== "hidden") {
-        setStatus((prev) => (prev === "loading" ? "idle" : prev));
-      }
+      setTimeout(() => {
+        if (document.visibilityState !== "hidden") {
+          setStatus((prev) => (prev === "loading" ? "idle" : prev));
+        }
+      }, 2000);
     }
   }
 

@@ -67,6 +67,7 @@ def publish_job_status(
     status: str,
     *,
     metadata: dict | None = None,
+    skip_db_fallback: bool = False,
 ) -> None:
     """Publish a job status change to Redis Pub/Sub for SSE consumers.
 
@@ -97,7 +98,8 @@ def publish_job_status(
                     job_id=str(job_id),
                     exc_info=True,
                 )
-                _fallback_persist_status(job_type, job_id, status)
+                if not skip_db_fallback:
+                    _fallback_persist_status(job_type, job_id, status)
     except Exception:  # Intentional last-resort handler: event publishing is best-effort
         # and must never crash the calling task (which has its own error handling).
         logger.error(

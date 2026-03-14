@@ -56,7 +56,7 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
 
 function daysAgo(days: number): string {
   const date = new Date();
-  date.setDate(date.getDate() - days);
+  date.setUTCDate(date.getUTCDate() - days);
   return date.toISOString().slice(0, 10);
 }
 
@@ -205,6 +205,10 @@ export function validateBacktestForm(values: BacktestFormValues): {
         direction: values.crossoverDirection,
       });
     }
+  }
+
+  if (entryRules.length === 0) {
+    errors.form = "At least one entry rule (RSI or moving average) must be enabled.";
   }
 
   if (Object.keys(errors).length > 0) {

@@ -580,6 +580,8 @@ class BacktestRunDetailResponse(BaseModel):
     trades: list[BacktestTradeResponse]
     equity_curve: list[EquityCurvePointResponse]
 
+    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
+
 
 class BacktestRunStatusResponse(BaseModel):
     id: UUID

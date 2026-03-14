@@ -24,7 +24,7 @@ def test_add_always_with_same_subject_does_not_raise(db_session: Session) -> Non
         user_id=None,
         metadata_json={},
     )
-    result1 = repo.add_always(event1)
+    result1, _ = repo.add_always(event1)
     db_session.flush()
 
     event2 = AuditEvent(
@@ -34,7 +34,7 @@ def test_add_always_with_same_subject_does_not_raise(db_session: Session) -> Non
         user_id=None,
         metadata_json={},
     )
-    result2 = repo.add_always(event2)
+    result2, _ = repo.add_always(event2)
     db_session.flush()
 
     assert result1.id is not None
@@ -66,7 +66,7 @@ def test_add_always_null_subject_id_does_not_crash(db_session: Session) -> None:
         user_id=None,
         metadata_json={},
     )
-    result1 = repo.add_always(event1)
+    result1, _ = repo.add_always(event1)
     db_session.flush()
     assert result1.id is not None
 
@@ -77,7 +77,7 @@ def test_add_always_null_subject_id_does_not_crash(db_session: Session) -> None:
         user_id=None,
         metadata_json={},
     )
-    result2 = repo.add_always(event2)
+    result2, _ = repo.add_always(event2)
     db_session.flush()
 
     assert result2.id is not None

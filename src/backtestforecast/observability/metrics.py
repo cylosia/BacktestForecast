@@ -96,6 +96,7 @@ JOBS_STUCK_RUNNING = Gauge(
 )
 
 DB_POOL_SIZE = Gauge("db_pool_size", "Database connection pool size")
+DB_POOL_CHECKED_IN = Gauge("db_pool_checked_in", "Database connections available in the pool")
 DB_POOL_CHECKED_OUT = Gauge("db_pool_checked_out", "Database connections currently in use")
 DB_POOL_OVERFLOW = Gauge("db_pool_overflow", "Database connections in overflow")
 
@@ -245,7 +246,21 @@ class PrometheusMiddleware:
             HTTP_REQUEST_DURATION_SECONDS.labels(method=method, path=path).observe(duration)
 
 
+def _refresh_pool_gauges() -> None:
+    """Update DB pool gauges from the engine's live pool statistics."""
+    try:
+        from backtestforecast.db.session import get_pool_stats
+        stats = get_pool_stats()
+        DB_POOL_SIZE.set(stats["pool_size"])
+        DB_POOL_CHECKED_IN.set(stats["checked_in"])
+        DB_POOL_CHECKED_OUT.set(stats["checked_out"])
+        DB_POOL_OVERFLOW.set(stats["overflow"])
+    except Exception:
+        pass
+
+
 def metrics_response() -> Response:
+    _refresh_pool_gauges()
     return Response(
         content=generate_latest(),
         media_type="text/plain; version=0.0.4; charset=utf-8",

@@ -372,6 +372,11 @@ class Settings(BaseSettings):
 
 _settings_cache: Settings | None = None
 _settings_lock = threading.Lock()
+_invalidation_callbacks: list[callable] = []
+
+
+def register_invalidation_callback(callback: callable) -> None:
+    _invalidation_callbacks.append(callback)
 
 
 def get_settings() -> Settings:
@@ -396,3 +401,8 @@ def invalidate_settings() -> None:
     global _settings_cache
     with _settings_lock:
         _settings_cache = None
+    for cb in _invalidation_callbacks:
+        try:
+            cb()
+        except Exception:
+            pass

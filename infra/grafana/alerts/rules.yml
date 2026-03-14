@@ -77,6 +77,15 @@ groups:
             Queue {{ $labels.queue }} has {{ $value }} pending messages.
             Workers may be under-provisioned or stuck.
 
+      - alert: DeadLetterQueueDepth
+        expr: bff_dlq_depth > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead letter queue has {{ $value }} items"
+          description: "The DLQ has had items for >15 minutes. Check /admin/dlq for details."
+
       - alert: DLQDepthHigh
         expr: |
           dlq_depth > 10

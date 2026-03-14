@@ -398,12 +398,13 @@ class BacktestService:
             )
 
         ordered = [run_map[rid] for rid in request.run_ids]
+        trade_limit = 10_000
         return CompareBacktestsResponse(
             items=[
                 self._to_detail_response(
                     run,
-                    trades=run.trades,
-                    equity_points=run.equity_points,
+                    trades=self.run_repository.get_trades_for_run(run.id, limit=trade_limit),
+                    equity_points=self.run_repository.get_equity_points_for_run(run.id, limit=EQUITY_CURVE_LIMIT),
                 )
                 for run in ordered
             ],

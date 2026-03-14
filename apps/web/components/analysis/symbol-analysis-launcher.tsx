@@ -230,22 +230,25 @@ export function SymbolAnalysisLauncher() {
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [result, setResult] = useState<SymbolAnalysisFullResponse | null>(null);
   const analysisIdRef = useRef<string | null>(null);
-  const tokenRef = useRef<string | null>(null);
+  const getTokenRef = useRef(getToken);
+  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
   const abortRef = useRef<AbortController | null>(null);
+  const lifecycleAbortRef = useRef<AbortController>(new AbortController());
 
   const { status: pollingStatus, start: startPolling, cancel: cancelPolling } = usePolling<SymbolAnalysisSummary>({
     fetcher: async (signal) => {
-      const token = tokenRef.current;
+      const token = await getTokenRef.current();
       const id = analysisIdRef.current;
       if (!token || !id) throw new Error("Missing context for poll.");
       return fetchAnalysisStatus(token, id, signal);
     },
     onComplete: async (summary) => {
-      const token = tokenRef.current;
+      if (summary.status !== "succeeded") return;
+      const token = await getTokenRef.current();
       const id = analysisIdRef.current;
       if (!token || !id) return;
       try {
-        const full = await fetchAnalysisFull(token, id);
+        const full = await fetchAnalysisFull(token, id, lifecycleAbortRef.current.signal);
         setResult(full);
         setPhase("done");
       } catch {
@@ -268,7 +271,7 @@ export function SymbolAnalysisLauncher() {
   useEffect(() => {
     if (pollingStatus === "timeout") {
       setPhase("error");
-      setErrorMessage("Analysis is still running. Check back later.");
+      setErrorMessage("Analysis is still running but taking longer than expected. You can close this page and check your analysis history later.");
     } else if (pollingStatus === "error" && phase === "polling") {
       setPhase("error");
       setErrorMessage((prev) => prev || "Status check failed. Please try again.");
@@ -276,7 +279,10 @@ export function SymbolAnalysisLauncher() {
   }, [pollingStatus, phase]);
 
   useEffect(() => {
-    return () => { abortRef.current?.abort(); };
+    return () => {
+      abortRef.current?.abort();
+      lifecycleAbortRef.current.abort();
+    };
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -304,7 +310,6 @@ export function SymbolAnalysisLauncher() {
       const token = await getToken();
       if (!token) throw new Error("Session expired.");
 
-      tokenRef.current = token;
       const created = await createSymbolAnalysis(token, sym, `deep-${sym}-${crypto.randomUUID()}`, controller.signal);
 
       if (created.status === "succeeded") {
@@ -395,7 +400,22 @@ export function SymbolAnalysisLauncher() {
         <UpgradePrompt message={errorMessage} />
       ) : errorMessage ? (
         <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          {errorMessage}
+          <p>{errorMessage}</p>
+          {errorMessage.includes("still running") && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={(e) => {
+                setPhase("polling");
+                setErrorMessage(null);
+                startPolling();
+              }}
+            >
+              Check Status
+            </Button>
+          )}
         </div>
       ) : null}
 

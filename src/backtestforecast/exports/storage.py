@@ -145,6 +145,10 @@ class S3Storage:
         logger.info("s3.put", bucket=self._bucket, key=key, size=len(content))
         return key
 
+    def get_object(self, storage_key: str):
+        """Return the raw S3 GetObject response (for streaming)."""
+        return _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
+
     def get(self, storage_key: str) -> bytes:
         resp = _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
         content_length = resp.get("ContentLength", 0)
@@ -190,3 +194,21 @@ def get_export_storage(settings: Settings) -> ExportStorage:
         return S3Storage(settings)
     logger.info("export_storage.using_database")
     return DatabaseStorage()
+
+
+import threading as _threading
+
+_storage_instance: ExportStorage | None = None
+_storage_lock = _threading.Lock()
+
+
+def get_storage(settings: Settings) -> ExportStorage:
+    """Return a shared storage instance, creating it once on first call."""
+    global _storage_instance
+    if _storage_instance is not None:
+        return _storage_instance
+    with _storage_lock:
+        if _storage_instance is not None:
+            return _storage_instance
+        _storage_instance = get_export_storage(settings)
+        return _storage_instance

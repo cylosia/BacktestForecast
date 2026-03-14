@@ -24,8 +24,12 @@ def get_meta(request: Request) -> dict[str, Any]:
     result: dict[str, Any] = {
         "service": "backtestforecast-api",
         "version": API_VERSION,
-        "billing_enabled": settings.stripe_billing_enabled,
-        "features": {
+    }
+    auth_header = request.headers.get("authorization")
+    session_cookie = request.cookies.get("__session")
+    if auth_header or session_cookie:
+        result["billing_enabled"] = settings.stripe_billing_enabled
+        result["features"] = {
             "backtests": settings.feature_backtests_enabled,
             "scanner": settings.feature_scanner_enabled,
             "exports": settings.feature_exports_enabled,
@@ -33,8 +37,7 @@ def get_meta(request: Request) -> dict[str, Any]:
             "analysis": settings.feature_analysis_enabled,
             "daily_picks": settings.feature_daily_picks_enabled,
             "billing": settings.feature_billing_enabled,
-        },
-    }
+        }
     if settings.app_env not in ("production", "staging"):
         result["environment"] = settings.app_env
     return result

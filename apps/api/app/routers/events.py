@@ -133,14 +133,11 @@ def _verify_ownership(model: type, resource_id: UUID, user_id: UUID) -> bool:
     """
     from backtestforecast.db.session import SessionLocal
 
-    db = SessionLocal()
-    try:
+    with SessionLocal() as db:
         stmt = select(model.id).where(model.id == resource_id, model.user_id == user_id)
         if db.execute(stmt).first() is None:
             raise NotFoundError("Resource not found.")
         return True
-    finally:
-        db.close()
 
 
 async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGenerator[str | None, None]:
@@ -150,6 +147,10 @@ async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGen
     callers can check deadlines / disconnections during quiet periods.
     Automatically retries subscription up to *max_reconnects* times on
     transient Redis errors.
+
+    Future optimization: multiple SSE clients watching the same resource
+    could share a single Redis subscription via a local fan-out pattern
+    instead of each client creating its own SUBSCRIBE.
     """
     from redis.exceptions import RedisError
 
@@ -212,7 +213,7 @@ async def _acquire_sse_slot(user_id: UUID) -> bool:
         return int(result) == 1
     except Exception:
         logger.warning("sse.acquire_slot_redis_error", user_id=str(user_id), exc_info=True)
-        return True
+        return False
 
 
 async def _release_sse_slot(user_id: UUID) -> None:

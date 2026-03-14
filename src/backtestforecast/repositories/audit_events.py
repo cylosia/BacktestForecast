@@ -33,7 +33,7 @@ class AuditEventRepository:
             AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
             return event, False
 
-    def add_always(self, event: AuditEvent) -> AuditEvent:
+    def add_always(self, event: AuditEvent) -> tuple[AuditEvent, bool]:
         """Insert an audit event unconditionally (no dedup). Appends a UUID suffix to subject_id.
 
         WARNING: Events created via this method bypass the dedup unique constraint
@@ -48,6 +48,7 @@ class AuditEventRepository:
         self.session.add(event)
         try:
             nested.commit()
+            return event, True
         except IntegrityError:
             nested.rollback()
             AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
@@ -57,7 +58,7 @@ class AuditEventRepository:
                 subject_type=event.subject_type,
                 subject_id=event.subject_id,
             )
-        return event
+            return event, False
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:
         stmt = select(AuditEvent.id).where(

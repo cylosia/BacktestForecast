@@ -82,7 +82,11 @@ class ScannerJobRepository:
         return self.session.scalar(stmt)
 
     def delete_recommendations(self, job_id: UUID) -> None:
-        self.session.execute(delete(ScannerRecommendation).where(ScannerRecommendation.scanner_job_id == job_id))
+        self.session.execute(
+            delete(ScannerRecommendation)
+            .where(ScannerRecommendation.scanner_job_id == job_id)
+            .execution_options(synchronize_session="fetch")
+        )
 
     def list_refresh_sources(self, limit: int = 100) -> list[ScannerJob]:
         stmt = (

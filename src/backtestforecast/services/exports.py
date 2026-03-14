@@ -242,35 +242,34 @@ class ExportService:
                 break
 
             for job in jobs:
-                storage_deleted = True
-                if job.storage_key:
-                    try:
-                        self._storage.delete(job.storage_key)
-                    except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
-                        storage_deleted = False
-                        logger.warning(
-                            "cleanup.delete_failed",
-                            export_job_id=str(job.id),
-                            storage_key=job.storage_key,
-                            error=str(exc),
-                            exc_info=True,
-                        )
-                if not storage_deleted:
-                    continue
+                old_storage_key = job.storage_key
                 job.content_bytes = None
                 job.storage_key = None
                 job.status = "expired"
                 job.size_bytes = 0
                 job.sha256_hex = None
+                try:
+                    self.session.commit()
+                except Exception:
+                    self.session.rollback()
+                    logger.warning("cleanup.commit_failed", export_job_id=str(job.id), exc_info=True)
+                    continue
                 cleaned += 1
+                if old_storage_key:
+                    try:
+                        self._storage.delete(old_storage_key)
+                    except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
+                        logger.warning(
+                            "cleanup.storage_delete_after_commit",
+                            export_job_id=str(job.id),
+                            storage_key=old_storage_key,
+                            error=str(exc),
+                        )
                 logger.info(
                     "cleanup.expired",
                     export_job_id=str(job.id),
                     expires_at=str(job.expires_at) if job.expires_at else None,
                 )
-
-            self.session.commit()
-            logger.info("cleanup.batch_committed", batch_size=len(jobs), cleaned_so_far=cleaned)
 
             if len(jobs) < batch_size:
                 break

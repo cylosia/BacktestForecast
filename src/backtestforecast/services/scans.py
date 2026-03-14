@@ -605,7 +605,8 @@ class ScanService:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         max_workers = min(len(payload.symbols), 8)
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             futures = {pool.submit(_fetch_one, sym): sym for sym in payload.symbols}
             for future in as_completed(futures):
                 sym, bundle, warning = future.result()
@@ -613,6 +614,8 @@ class ScanService:
                     bundles[sym] = bundle
                 if warning is not None:
                     warnings.append(warning)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         return bundles
 
     def _batch_historical_performance(
@@ -789,7 +792,7 @@ class ScanService:
         n = len(equity_curve)
         if n <= cls._MAX_SCAN_EQUITY_POINTS:
             return [cls._serialize_equity_point(p) for p in equity_curve]
-        step = max(1, n // cls._MAX_SCAN_EQUITY_POINTS)
+        step = max(1, -(-n // cls._MAX_SCAN_EQUITY_POINTS))
         sampled: list[dict[str, Any]] = []
         for i, point in enumerate(equity_curve):
             if i % step == 0 or i == n - 1:

@@ -186,7 +186,11 @@ def nightly_scan_pipeline(
         from redis import Redis
         lock_key = f"bff:pipeline:{trade_date.isoformat()}"
         redis_client = Redis.from_url(settings.redis_url, socket_timeout=5)
-        lock = redis_client.lock(lock_key, timeout=1750, blocking=False)
+        try:
+            lock = redis_client.lock(lock_key, timeout=1750, blocking=False)
+        except Exception:
+            redis_client.close()
+            raise
         if not lock.acquire():
             logger.info("pipeline.already_locked", trade_date=str(trade_date))
             redis_client.close()

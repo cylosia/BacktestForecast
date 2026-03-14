@@ -28,7 +28,8 @@ from apps.api.app.routers import (
     scans,
     templates,
 )
-from backtestforecast.config import get_settings
+from apps.api.app.dependencies import _extract_client_ip, reset_trusted_networks
+from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.errors import AppError, FeatureLockedError, QuotaExceededError, RateLimitError
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
@@ -70,6 +71,8 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
             "startup.clerk_audience_missing",
             hint="CLERK_AUDIENCE is not set; JWT audience verification is disabled in development.",
         )
+
+    register_invalidation_callback(reset_trusted_networks)
 
     logger.info("lifespan.startup_complete")
     yield
@@ -289,7 +292,7 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
 
 @app.get("/metrics", include_in_schema=False)
 def prometheus_metrics(request: Request) -> Response:
-    ip_address = request.client.host if request.client else None
+    ip_address = _extract_client_ip(request)
     get_rate_limiter().check(bucket="admin", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
     if settings.app_env in ("production", "staging"):
         import hmac as _hmac
@@ -305,17 +308,16 @@ def prometheus_metrics(request: Request) -> Response:
 def dlq_status(request: Request) -> Response:
     """Inspect the dead-letter queue depth and recent items.
 
-    Protected by the same metrics token as /metrics in production.
+    Always requires the metrics token regardless of environment.
     """
-    ip_address = request.client.host if request.client else None
+    ip_address = _extract_client_ip(request)
     get_rate_limiter().check(bucket="admin", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
-    if settings.app_env in ("production", "staging"):
-        import hmac as _hmac
+    import hmac as _hmac
 
-        auth = request.headers.get("Authorization", "")
-        token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-        if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
-            return JSONResponse(status_code=403, content={"error": "forbidden"})
+    auth = request.headers.get("Authorization", "")
+    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
+        return JSONResponse(status_code=403, content={"error": "forbidden"})
     try:
         import json
 

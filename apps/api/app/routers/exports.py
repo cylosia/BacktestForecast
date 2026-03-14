@@ -133,11 +133,19 @@ def download_export(
 
     if storage_key and content is None:
         try:
-            from backtestforecast.exports.storage import S3Storage
+            from backtestforecast.exports.storage import get_storage
 
-            s3_storage = S3Storage(settings)
-            s3_obj = s3_storage._client.get_object(Bucket=s3_storage._bucket, Key=storage_key)
+            s3_storage = get_storage(settings)
+            s3_obj = s3_storage.get_object(storage_key)
             content_length = s3_obj.get("ContentLength")
+
+            if content_length is not None and export_job.size_bytes > 0 and content_length != export_job.size_bytes:
+                logger.warning(
+                    "export.s3_size_mismatch",
+                    export_job_id=str(export_job_id),
+                    expected=export_job.size_bytes,
+                    actual=content_length,
+                )
 
             headers = {
                 "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',

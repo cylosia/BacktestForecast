@@ -37,6 +37,19 @@ def ready(request: Request) -> JSONResponse:
         _health_window.append(now)
     settings = get_settings()
     redis_up = ping_redis()
+
+    redis_conn_ok = False
+    try:
+        from redis import Redis
+        r = Redis.from_url(settings.redis_url, socket_timeout=2)
+        redis_conn_ok = r.ping()
+        r.close()
+    except Exception:
+        redis_conn_ok = False
+
+    if redis_conn_ok and not redis_up:
+        redis_up = True
+
     db_up = True
     try:
         ping_database()
@@ -49,6 +62,7 @@ def ready(request: Request) -> JSONResponse:
             content["environment"] = settings.app_env
             content["database"] = "down"
             content["redis"] = "up" if redis_up else "degraded"
+            content["redis_connectivity"] = "ok" if redis_conn_ok else "failed"
         return JSONResponse(status_code=503, content=content)
 
     if redis_up:
@@ -66,5 +80,6 @@ def ready(request: Request) -> JSONResponse:
         payload["environment"] = settings.app_env
         payload["database"] = "up"
         payload["redis"] = "up" if redis_up else "degraded"
+        payload["redis_connectivity"] = "ok" if redis_conn_ok else "failed"
         payload["rate_limit_mode"] = rl_mode
     return JSONResponse(status_code=200, content=payload)

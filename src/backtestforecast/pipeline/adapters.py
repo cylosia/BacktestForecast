@@ -314,7 +314,7 @@ class PipelineForecaster:
                 "expected_return_low_pct": float(result.expected_return_low_pct),
                 "expected_return_median_pct": float(result.expected_return_median_pct),
                 "expected_return_high_pct": float(result.expected_return_high_pct),
-                "positive_outcome_rate_pct": float(result.positive_outcome_rate_pct),
+                "positive_outcome_rate_pct": float(result.positive_outcome_rate_pct) if result.positive_outcome_rate_pct is not None else None,
                 "analog_count": result.analog_count,
                 "horizon_days": result.horizon_days,
             }

@@ -55,6 +55,9 @@ def create_portal_session(
     db: Session = Depends(get_db),
 ) -> PortalSessionResponse:
     settings = get_settings()
+    if not settings.feature_billing_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Billing is temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="billing:portal",
         actor_key=str(user.id),
@@ -89,6 +92,21 @@ def stripe_webhook(
         limit=60,
         window_seconds=settings.rate_limit_window_seconds,
     )
+
+    known_stripe_cidrs = [
+        "54.187.174.169/32", "54.187.205.235/32", "54.187.216.72/32",
+        "54.241.31.99/32", "54.241.31.102/32", "54.241.34.107/32",
+    ]
+    if ip_address:
+        import ipaddress as _ipaddress
+        try:
+            client_addr = _ipaddress.ip_address(ip_address)
+            is_known = any(client_addr in _ipaddress.ip_network(cidr) for cidr in known_stripe_cidrs)
+            if not is_known:
+                _webhook_logger.info("billing.webhook.unknown_source_ip", ip=ip_address)
+        except ValueError:
+            pass
+
     try:
         return BillingService(db).handle_webhook(
             payload,

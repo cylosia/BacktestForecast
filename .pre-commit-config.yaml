@@ -36,3 +36,12 @@ repos:
           - "prometheus-client>=0.21"
         args: ["--config-file=pyproject.toml"]
         pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: schema-model-check
+        name: Schema-model consistency check
+        entry: python -m pytest tests/contract/test_schema_model_consistency.py tests/unit/test_check_constraint_naming.py -x -q
+        language: system
+        pass_filenames: false
+        files: '(models|schemas|db/base)\.py$'

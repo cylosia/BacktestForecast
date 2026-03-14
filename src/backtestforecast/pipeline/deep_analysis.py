@@ -260,7 +260,7 @@ class SymbolDeepAnalysisService:
             validate_json_shape(regime_dict, "SymbolAnalysis.regime_json", required_keys=_REGIME_REQUIRED_KEYS)
             analysis.regime_json = regime_dict
             analysis.stage = "landscape"
-            self.session.flush()
+            self.session.commit()
             logger.info("deep_analysis.regime_done", analysis_id=str(analysis_id), symbol=symbol)
 
             # --- Stage 2: Strategy landscape ---
@@ -282,7 +282,7 @@ class SymbolDeepAnalysisService:
             analysis.strategies_tested = len({c.strategy_type for c in landscape})
             analysis.configs_tested = len(landscape)
             analysis.stage = "deep_dive"
-            self.session.flush()
+            self.session.commit()
             logger.info(
                 "deep_analysis.landscape_done",
                 analysis_id=str(analysis_id),
@@ -319,7 +319,7 @@ class SymbolDeepAnalysisService:
             ]
             analysis.top_results_count = len(top_results)
             analysis.stage = "forecast"
-            self.session.flush()
+            self.session.commit()
 
             # --- Stage 4: Forecast on best result ---
             if top_results and top_results[0].forecast:
@@ -419,6 +419,10 @@ class SymbolDeepAnalysisService:
 
         def _run_cell(item: tuple[str, str, dict[str, Any]]) -> LandscapeCell | None:
             strategy_type, label, param_config = item
+            structlog.contextvars.bind_contextvars(
+                symbol=symbol,
+                stage="landscape",
+            )
             try:
                 target_dte = param_config["target_dte"]
                 overrides = param_config.get("strategy_overrides")
@@ -460,7 +464,8 @@ class SymbolDeepAnalysisService:
                 return None
 
         max_workers = max(1, min(4, len(work_items)))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             futures = {pool.submit(_run_cell, item): item for item in work_items}
             for future in as_completed(futures, timeout=300):
                 try:
@@ -470,6 +475,10 @@ class SymbolDeepAnalysisService:
                     continue
                 if cell is not None:
                     cells.append(cell)
+        except TimeoutError:
+            logger.warning("deep_analysis.landscape_timeout", total_items=len(work_items))
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         return cells
 
@@ -483,6 +492,10 @@ class SymbolDeepAnalysisService:
         lookback_start = trade_date - timedelta(days=365)
 
         def _run_candidate(cell: LandscapeCell) -> tuple[LandscapeCell, dict[str, Any] | None]:
+            structlog.contextvars.bind_contextvars(
+                symbol=symbol,
+                stage="deep_dive",
+            )
             try:
                 return cell, self.executor.run_full_backtest(
                     symbol=symbol,
@@ -502,13 +515,18 @@ class SymbolDeepAnalysisService:
 
         max_workers = max(1, min(4, len(candidates)))
         backtest_results: list[tuple[LandscapeCell, dict[str, Any] | None]] = []
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             futures = {pool.submit(_run_candidate, c): c for c in candidates}
             for future in as_completed(futures, timeout=300):
                 try:
                     backtest_results.append(future.result(timeout=300))
                 except Exception:
                     logger.warning("deep_analysis.deep_dive_future_failed", exc_info=True)
+        except TimeoutError:
+            logger.warning("deep_analysis.deep_dive_timeout", total_candidates=len(candidates))
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         cell_order = {id(c): idx for idx, c in enumerate(candidates)}
         backtest_results.sort(key=lambda pair: cell_order.get(id(pair[0]), 0))
@@ -542,7 +560,7 @@ class SymbolDeepAnalysisService:
                             forecast_supports = float(median_return) < 0
                         if roi > 0 and float(median_return) != 0 and forecast_supports:
                             score *= 1.2
-                        positive_rate = f.get("positive_outcome_rate_pct", 50)
+                        positive_rate = f.get("positive_outcome_rate_pct") or 50
                         effective_rate = float(positive_rate)
                         if cell.strategy_type in BEARISH_STRATEGIES:
                             effective_rate = 100.0 - effective_rate

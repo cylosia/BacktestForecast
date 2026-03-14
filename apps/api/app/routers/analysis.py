@@ -5,8 +5,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func as sa_func, select
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
@@ -15,7 +14,7 @@ from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.errors import ValidationError
-from backtestforecast.models import SymbolAnalysis, User
+from backtestforecast.models import User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import (
     AnalysisDetailResponse,
@@ -51,14 +50,6 @@ def create_analysis(
         limit=settings.analysis_create_rate_limit,
         window_seconds=settings.analysis_rate_limit_window_seconds,
     )
-
-    active_count = db.scalar(
-        select(sa_func.count())
-        .where(SymbolAnalysis.user_id == user.id)
-        .where(SymbolAnalysis.status.in_(("queued", "running")))
-    ) or 0
-    if active_count >= 5:
-        raise HTTPException(status_code=429, detail="Too many concurrent analyses")
 
     symbol = payload.symbol.strip().upper()
     if not _SYMBOL_RE.match(symbol):
@@ -111,13 +102,16 @@ def get_analysis(
     )
     analysis = service.get_analysis(user, analysis_id)
 
-    result: dict[str, Any] = _to_summary(analysis)
+    summary = _to_summary(analysis)
     if analysis.status == "succeeded":
-        result["regime"] = analysis.regime_json
-        result["landscape"] = analysis.landscape_json
-        result["top_results"] = analysis.top_results_json
-        result["forecast"] = analysis.forecast_json
-    return result
+        return AnalysisDetailResponse(
+            **summary.model_dump(),
+            regime=analysis.regime_json,
+            landscape=analysis.landscape_json,
+            top_results=analysis.top_results_json,
+            forecast=analysis.forecast_json,
+        )
+    return AnalysisDetailResponse(**summary.model_dump())
 
 
 @router.get("/{analysis_id}/status", response_model=AnalysisSummaryResponse)
@@ -175,19 +169,5 @@ def list_analyses(
     }
 
 
-def _to_summary(analysis: Any) -> dict[str, Any]:
-    a = analysis
-    return {
-        "id": str(a.id),
-        "symbol": a.symbol,
-        "status": a.status,
-        "stage": a.stage,
-        "close_price": float(a.close_price) if a.close_price is not None else None,
-        "strategies_tested": a.strategies_tested,
-        "configs_tested": a.configs_tested,
-        "top_results_count": a.top_results_count,
-        "duration_seconds": float(a.duration_seconds) if a.duration_seconds is not None else None,
-        "error_message": a.error_message,
-        "created_at": (a.created_at.isoformat() if a.created_at else None),
-        "completed_at": (a.completed_at.isoformat() if a.completed_at else None),
-    }
+def _to_summary(analysis: Any) -> AnalysisSummaryResponse:
+    return AnalysisSummaryResponse.model_validate(analysis)

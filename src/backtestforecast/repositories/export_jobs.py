@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session, defer
 
 from backtestforecast.models import ExportJob
@@ -57,7 +57,7 @@ class ExportJobRepository:
             .where(
                 ExportJob.expires_at < before,
                 ExportJob.status.in_(("succeeded", "failed", "expired")),
-                ExportJob.storage_key.isnot(None),
+                or_(ExportJob.storage_key.isnot(None), ExportJob.content_bytes.isnot(None)),
             )
             .options(defer(ExportJob.content_bytes))
             .order_by(asc(ExportJob.created_at))

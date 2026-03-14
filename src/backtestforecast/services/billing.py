@@ -306,6 +306,21 @@ class BillingService:
             effective_tier = PlanTier.FREE.value
 
         if (
+            subscription_id is not None
+            and user.stripe_subscription_id is not None
+            and subscription_id != user.stripe_subscription_id
+            and user.subscription_status in ("active", "trialing", "past_due")
+        ):
+            logger.info(
+                "billing.subscription.stale_subscription_event_skipped",
+                user_id=str(user.id),
+                incoming_subscription_id=subscription_id,
+                current_subscription_id=user.stripe_subscription_id,
+                current_status=user.subscription_status,
+            )
+            return
+
+        if (
             current_period_end is not None
             and user.subscription_current_period_end is not None
             and current_period_end < user.subscription_current_period_end

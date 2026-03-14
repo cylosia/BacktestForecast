@@ -81,7 +81,7 @@ class AuditService:
             ip_hash=hash_ip(ip_address),
             metadata_json=payload,
         )
-        event = self.repository.add_always(event)
+        event, _ = self.repository.add_always(event)
         logger.info(
             "audit.event.recorded_always",
             event_type=event_type,

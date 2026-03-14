@@ -32,7 +32,7 @@ class User(Base):
     __table_args__ = (
         CheckConstraint(
             "plan_tier IN ('free', 'pro', 'premium')",
-            name="ck_users_valid_plan_tier",
+            name="valid_plan_tier",
         ),
     )
 
@@ -61,7 +61,7 @@ class User(Base):
     scanner_jobs: Mapped[list["ScannerJob"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     export_jobs: Mapped[list["ExportJob"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     templates: Mapped[list["BacktestTemplate"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="user")
+    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="user", passive_deletes=True)
     symbol_analyses: Mapped[list["SymbolAnalysis"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
@@ -73,10 +73,11 @@ class BacktestRun(Base):
         Index("ix_backtest_runs_user_status", "user_id", "status"),
         Index("ix_backtest_runs_started_at", "started_at"),
         Index("ix_backtest_runs_celery_task_id", "celery_task_id"),
+        Index("ix_backtest_runs_status_celery_created", "status", "celery_task_id", "created_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_backtest_runs_user_idempotency_key"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
-            name="ck_backtest_runs_valid_run_status",
+            name="valid_run_status",
         ),
     )
 
@@ -140,7 +141,7 @@ class BacktestRun(Base):
         cascade="all, delete-orphan",
         order_by="BacktestEquityPoint.trade_date",
     )
-    exports: Mapped[list["ExportJob"]] = relationship(back_populates="backtest_run")
+    exports: Mapped[list["ExportJob"]] = relationship(back_populates="backtest_run", passive_deletes=True)
 
 
 class BacktestTrade(Base):
@@ -226,6 +227,7 @@ class ScannerJob(Base):
         Index("ix_scanner_jobs_user_status", "user_id", "status"),
         Index("ix_scanner_jobs_request_hash", "request_hash"),
         Index("ix_scanner_jobs_celery_task_id", "celery_task_id"),
+        Index("ix_scanner_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         Index("ix_scanner_jobs_dedup_lookup", "user_id", "request_hash", "mode", "created_at"),
         Index("ix_scanner_jobs_refresh_sources", "refresh_daily", "status"),
         Index(
@@ -236,11 +238,19 @@ class ScannerJob(Base):
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
-            name="ck_scanner_jobs_valid_job_status",
+            name="valid_job_status",
         ),
         CheckConstraint(
             "plan_tier_snapshot IN ('free', 'pro', 'premium')",
-            name="ck_scanner_jobs_valid_plan_tier",
+            name="valid_plan_tier",
+        ),
+        CheckConstraint(
+            "mode IN ('basic', 'advanced', 'pro')",
+            name="valid_mode",
+        ),
+        CheckConstraint(
+            "job_kind IN ('manual', 'refresh', 'nightly')",
+            name="valid_job_kind",
         ),
     )
 
@@ -289,7 +299,6 @@ class ScannerRecommendation(Base):
     __tablename__ = "scanner_recommendations"
     __table_args__ = (
         UniqueConstraint("scanner_job_id", "rank", name="uq_scanner_recommendations_job_rank"),
-        Index("ix_scanner_recommendations_job_rank", "scanner_job_id", "rank"),
         Index("ix_scanner_recommendations_lookup", "symbol", "strategy_type", "rule_set_hash"),
     )
 
@@ -325,9 +334,11 @@ class ExportJob(Base):
         Index("ix_export_jobs_user_status", "user_id", "status"),
         Index("ix_export_jobs_celery_task_id", "celery_task_id"),
         Index("ix_export_jobs_backtest_run_id", "backtest_run_id"),
+        Index("ix_export_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
+        Index("ix_export_jobs_status_expires_at", "status", "expires_at"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')",
-            name="ck_export_jobs_valid_export_status",
+            name="valid_export_status",
         ),
     )
 
@@ -398,6 +409,7 @@ class NightlyPipelineRun(Base):
         Index("ix_nightly_pipeline_runs_status", "status"),
         Index("ix_nightly_pipeline_runs_date_status", "trade_date", "status"),
         Index("ix_nightly_pipeline_runs_status_created", "status", "created_at"),
+        Index("ix_nightly_pipeline_runs_cursor", "created_at"),
         Index(
             "uq_pipeline_runs_succeeded_trade_date",
             "trade_date",
@@ -406,7 +418,7 @@ class NightlyPipelineRun(Base):
         ),
         CheckConstraint(
             "status IN ('running', 'succeeded', 'failed')",
-            name="ck_nightly_pipeline_runs_valid_pipeline_status",
+            name="valid_pipeline_status",
         ),
     )
 
@@ -472,10 +484,11 @@ class SymbolAnalysis(Base):
         Index("ix_symbol_analyses_symbol", "symbol"),
         Index("ix_symbol_analyses_status_created", "status", "created_at"),
         Index("ix_symbol_analyses_celery_task_id", "celery_task_id"),
+        Index("ix_symbol_analyses_status_celery_created", "status", "celery_task_id", "created_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_symbol_analyses_user_idempotency"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
-            name="ck_symbol_analyses_valid_analysis_status",
+            name="valid_analysis_status",
         ),
     )
 

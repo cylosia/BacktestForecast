@@ -48,6 +48,7 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
   year: "numeric",
+  timeZone: "UTC",
 });
 
 const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
@@ -56,6 +57,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   hour: "numeric",
   minute: "2-digit",
+  timeZone: "UTC",
 });
 
 export function formatDate(value: string | null | undefined): string {

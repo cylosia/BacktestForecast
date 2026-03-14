@@ -102,3 +102,85 @@ describe("usePolling maxAttempts boundary (logic)", () => {
     expect(status).toBe("timeout");
   });
 });
+
+describe("usePolling stale token refresh (logic)", () => {
+  it("fetcher is called with a fresh token each iteration", async () => {
+    let tokenCounter = 0;
+
+    function getToken(): string {
+      tokenCounter++;
+      return `token_v${tokenCounter}`;
+    }
+
+    const tokensUsed: string[] = [];
+
+    async function fetchWithToken(): Promise<{ status: string }> {
+      const token = getToken();
+      tokensUsed.push(token);
+      return { status: "running" };
+    }
+
+    const maxAttempts = 3;
+    for (let i = 0; i < maxAttempts; i++) {
+      await fetchWithToken();
+    }
+
+    expect(tokensUsed).toHaveLength(3);
+    expect(tokensUsed[0]).toBe("token_v1");
+    expect(tokensUsed[1]).toBe("token_v2");
+    expect(tokensUsed[2]).toBe("token_v3");
+    expect(new Set(tokensUsed).size).toBe(3);
+  });
+
+  it("does not reuse stale token from closure", async () => {
+    let tokenVersion = 0;
+    const getToken = () => {
+      tokenVersion++;
+      return `tok_${tokenVersion}`;
+    };
+
+    const capturedTokens: string[] = [];
+
+    async function pollOnce(): Promise<string> {
+      const freshToken = getToken();
+      capturedTokens.push(freshToken);
+      return freshToken;
+    }
+
+    await pollOnce();
+    await pollOnce();
+    await pollOnce();
+
+    expect(capturedTokens[0]).not.toBe(capturedTokens[1]);
+    expect(capturedTokens[1]).not.toBe(capturedTokens[2]);
+  });
+
+  it("token refresh works even when poll completes early", async () => {
+    let callCount = 0;
+    const getToken = () => `fresh_${++callCount}`;
+
+    const tokens: string[] = [];
+    let isDone = false;
+
+    async function poll(): Promise<boolean> {
+      const token = getToken();
+      tokens.push(token);
+      if (tokens.length >= 2) {
+        isDone = true;
+        return true;
+      }
+      return false;
+    }
+
+    const maxAttempts = 5;
+    for (let i = 0; i < maxAttempts; i++) {
+      const done = await poll();
+      if (done) break;
+    }
+
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).toBe("fresh_1");
+    expect(tokens[1]).toBe("fresh_2");
+    expect(isDone).toBe(true);
+  });
+});

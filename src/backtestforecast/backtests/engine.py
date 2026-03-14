@@ -163,7 +163,7 @@ class OptionsBacktestEngine:
                             candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
                             entry_commission = self._option_commission_total(candidate, config.commission_per_contract)
                             candidate.entry_commission_total = entry_commission
-                            gross_notional_per_unit = sum(abs(leg.entry_mid * 100.0) for leg in candidate.option_legs)
+                            gross_notional_per_unit = sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in candidate.option_legs)
                             slippage_cost = gross_notional_per_unit * quantity * (config.slippage_pct / 100.0)
                             cash -= (ev_per_unit * quantity) + entry_commission + slippage_cost
                             position = candidate
@@ -323,10 +323,10 @@ class OptionsBacktestEngine:
     ) -> tuple[TradeResult, float]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
         exit_commission = self._option_commission_total(position, config.commission_per_contract)
-        exit_gross_notional = sum(abs(leg.last_mid * 100.0) for leg in position.option_legs) * position.quantity
+        exit_gross_notional = sum(abs(leg.last_mid * 100.0) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
         exit_slippage = exit_gross_notional * (config.slippage_pct / 100.0)
         entry_value_per_unit = self._entry_value_per_unit(position)
-        entry_gross_notional = sum(abs(leg.entry_mid * 100.0) for leg in position.option_legs) * position.quantity
+        entry_gross_notional = sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
         entry_slippage = entry_gross_notional * (config.slippage_pct / 100.0)
         cash_delta = exit_value - exit_commission - exit_slippage
         exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0
