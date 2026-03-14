@@ -14,6 +14,8 @@ router = APIRouter(tags=["health"])
 
 _health_window: deque[float] = deque()
 _health_lock = Lock()
+# Per-worker (in-process) limit — not a global cluster-wide rate limit.
+# Each Uvicorn/Gunicorn worker enforces this independently.
 _HEALTH_MAX_RPM = 120
 
 HEALTH_VERSION = "0.1.0"
@@ -35,15 +37,19 @@ def ready(request: Request) -> JSONResponse:
         _health_window.append(now)
     settings = get_settings()
     redis_up = ping_redis()
+    db_up = True
     try:
         ping_database()
     except SQLAlchemyError:
+        db_up = False
+
+    if not db_up:
         content: dict[str, str] = {"status": "degraded", "version": HEALTH_VERSION}
-    if settings.app_env not in ("production", "staging"):
-        content["environment"] = settings.app_env
-        content["database"] = "down"
-        content["redis"] = "up" if redis_up else "degraded"
-    return JSONResponse(status_code=503, content=content)
+        if settings.app_env not in ("production", "staging"):
+            content["environment"] = settings.app_env
+            content["database"] = "down"
+            content["redis"] = "up" if redis_up else "degraded"
+        return JSONResponse(status_code=503, content=content)
 
     if redis_up:
         rl_mode = "redis"
@@ -61,5 +67,4 @@ def ready(request: Request) -> JSONResponse:
         payload["database"] = "up"
         payload["redis"] = "up" if redis_up else "degraded"
         payload["rate_limit_mode"] = rl_mode
-    status_code = 200
-    return JSONResponse(status_code=status_code, content=payload)
+    return JSONResponse(status_code=200, content=payload)

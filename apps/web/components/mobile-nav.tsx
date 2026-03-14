@@ -29,7 +29,29 @@ export function MobileNav({ items }: { items: NavItem[] }) {
     if (open) {
       document.body.style.overflow = "hidden";
       const handleKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") close();
+        if (e.key === "Escape") {
+          close();
+          return;
+        }
+        if (e.key === "Tab" && navRef.current) {
+          const focusable = navRef.current.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          );
+          if (focusable.length === 0) return;
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (e.shiftKey) {
+            if (document.activeElement === first) {
+              e.preventDefault();
+              last.focus();
+            }
+          } else {
+            if (document.activeElement === last) {
+              e.preventDefault();
+              first.focus();
+            }
+          }
+        }
       };
       document.addEventListener("keydown", handleKey);
       navRef.current?.querySelector<HTMLElement>("button, a")?.focus();
@@ -60,6 +82,8 @@ export function MobileNav({ items }: { items: NavItem[] }) {
           />
           <nav
             ref={navRef}
+            role="dialog"
+            aria-modal="true"
             className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col gap-1 overflow-y-auto bg-background p-4 shadow-lg animate-in slide-in-from-left duration-200"
             aria-label="Mobile navigation"
           >

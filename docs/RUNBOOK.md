@@ -71,6 +71,52 @@ To trigger manually:
 celery -A apps.worker.app.celery_app.celery_app call maintenance.reap_stale_jobs
 ```
 
+## Reaper NameError Recovery
+
+### Symptoms
+
+- Celery task failures for `maintenance.reap_stale_jobs`
+- Stuck jobs (running/queued) not being recovered
+- ReaperTaskFailed alert firing
+
+### Diagnosis
+
+Check Celery worker logs for `NameError` referencing `stale_running_ids` (or similar variable name). This indicates a code bug where the reaper references an undefined variable.
+
+### Fix
+
+Deploy the latest code with the variable name fix.
+
+### Recovery
+
+Manually fail stuck jobs via SQL:
+
+```sql
+UPDATE backtest_runs SET status='failed' WHERE status='running' AND started_at < NOW() - INTERVAL '2 hours';
+```
+
+Adjust the table name and status column if your schema differs (e.g., `scanner_jobs`). Run for each affected job type.
+
+## S3 Stream Leak Diagnosis
+
+### Symptoms
+
+- Slow export downloads
+- boto3 connection pool warnings in logs
+- S3ConnectionPoolExhausted alert firing
+
+### Diagnosis
+
+Check for `_stream_s3()` (or similar S3 streaming helpers) that do not call `body.close()` in a `finally` block. Unclosed response bodies hold connections in the pool until they are garbage-collected.
+
+### Fix
+
+Deploy the latest code with proper `finally: body.close()` (or context manager usage) around S3 stream reads.
+
+### Recovery
+
+Restart API workers to reset the connection pool. This releases leaked connections immediately.
+
 ## Redis Operations
 
 ### Check rate limiter health
@@ -82,6 +128,52 @@ redis-cli ping
 ```bash
 redis-cli KEYS "bff:rate-limit:*" | xargs redis-cli DEL
 ```
+
+## Redis Failover Impact on Rate Limiting
+
+### What happens
+
+When Redis is unavailable, the rate limiter falls back to in-memory counters
+(tracked by the `redis_rate_limit_fallback_total` metric). This means:
+
+- Each API process maintains its own independent counters, so the effective
+  rate limit is multiplied by the number of running processes.
+- Counters are lost on process restart, allowing burst traffic immediately
+  after a restart during an outage.
+- The `bff_rate_limit_memory_counter_size` gauge tracks the number of entries
+  in the in-memory fallback. If this grows unbounded, it can increase memory
+  pressure on API pods.
+
+### How to handle
+
+1. **Monitor** `redis_rate_limit_fallback_total` — any non-zero rate means
+   Redis is unreachable from at least one process.
+2. **Check Redis** connectivity: `redis-cli -u $REDIS_URL ping`
+3. **If Redis is permanently down**, consider scaling down API replicas to
+   reduce the rate-limit multiplication effect until Redis is restored.
+4. **After Redis recovery**, in-memory counters are automatically abandoned
+   in favour of Redis on the next request. No manual action is needed.
+
+## Database Pool Timeout Errors
+
+### Symptoms
+
+- `TimeoutError` or `QueuePool limit … reached` in API or worker logs during
+  traffic spikes.
+- Elevated `db_pool_checked_out` gauge approaching `db_pool_size`.
+
+### Diagnosis
+
+1. Check `pool_timeout` and `pool_pre_ping` in `src/backtestforecast/db/session.py`.
+2. Review `db_pool_checked_out` and `db_pool_overflow` metrics.
+3. Look for long-running transactions that hold connections open.
+
+### Fix
+
+- Increase `pool_timeout` (default 10 seconds) if spikes are transient.
+- Increase `pool_size` or `max_overflow` for sustained load.
+- Add more worker processes to spread connections across pools.
+- Ensure all sessions are properly closed (context managers / `finally` blocks).
 
 ## Environment Variables
 

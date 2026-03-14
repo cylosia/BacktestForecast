@@ -6,8 +6,8 @@ import { ApiError } from "@/lib/api/shared";
 export type PollingStatus = "idle" | "polling" | "done" | "timeout" | "error";
 
 export interface UsePollingOptions<T> {
-  /** Async function that fetches the latest state. */
-  fetcher: () => Promise<T>;
+  /** Async function that fetches the latest state. Receives an AbortSignal. */
+  fetcher: (signal: AbortSignal) => Promise<T>;
   /** Called once when `isComplete` returns true. */
   onComplete: (result: T) => void;
   /** Return true when the resource has reached a terminal state. */
@@ -54,6 +54,8 @@ export function usePolling<T>({
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    abortRef.current?.abort();
+    abortRef.current = null;
   }, []);
 
   const fetcherRef = useRef(fetcher);
@@ -66,14 +68,21 @@ export function usePolling<T>({
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
 
   const attemptsRef = useRef(0);
+  const consecutiveErrorsRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const poll = useCallback(async () => {
     if (!mountedRef.current) return;
 
-    try {
-      const result = await fetcherRef.current();
-      if (!mountedRef.current) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
+    try {
+      const result = await fetcherRef.current(controller.signal);
+      if (!mountedRef.current || controller.signal.aborted) return;
+
+      consecutiveErrorsRef.current = 0;
       onProgressRef.current?.(result);
 
       if (isCompleteRef.current(result)) {
@@ -91,18 +100,20 @@ export function usePolling<T>({
         timerRef.current = setTimeout(poll, interval);
       }
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || controller.signal.aborted) return;
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         setStatus("error");
         return;
       }
+      consecutiveErrorsRef.current += 1;
       const next = attemptsRef.current + 1;
       attemptsRef.current = next;
       setAttempts(next);
       if (next >= maxAttempts) {
         setStatus("error");
       } else {
-        timerRef.current = setTimeout(poll, interval * 2);
+        const backoff = interval * Math.min(2 ** consecutiveErrorsRef.current, 16);
+        timerRef.current = setTimeout(poll, backoff);
       }
     }
   }, [interval, maxAttempts]);
@@ -112,21 +123,23 @@ export function usePolling<T>({
     attemptsRef.current = 0;
     setAttempts(0);
     setStatus("polling");
-    timerRef.current = setTimeout(poll, interval);
-  }, [cancel, poll, interval]);
+    timerRef.current = setTimeout(poll, 0);
+  }, [cancel, poll]);
+
+  const startedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
-    if (autoStart) {
+    if (autoStart && !startedRef.current) {
+      startedRef.current = true;
       start();
     }
     return () => {
       mountedRef.current = false;
+      startedRef.current = false;
       cancel();
     };
-    // Only run on mount/unmount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [autoStart, start, cancel]);
 
   return { status, start, attempts };
 }

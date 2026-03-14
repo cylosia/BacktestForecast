@@ -117,7 +117,6 @@ class WheelStrategyBacktestEngine:
                 option_value = -current_mid * 100.0 * active_option.quantity
 
                 should_exit, exit_reason = self._resolve_exit(
-                    bar_index=index,
                     bar=bar,
                     position=active_option,
                     max_holding_days=config.max_holding_days,
@@ -127,10 +126,11 @@ class WheelStrategyBacktestEngine:
                 if should_exit:
                     exit_mid = current_mid
                     exit_commission = config.commission_per_contract * active_option.quantity
+                    entry_commission = config.commission_per_contract * active_option.quantity
                     option_gross_pnl = (active_option.entry_mid - exit_mid) * 100.0 * active_option.quantity
-                    option_net_pnl = option_gross_pnl - (
-                        (config.commission_per_contract * active_option.quantity) + exit_commission
-                    )
+                    entry_slippage = active_option.entry_mid * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
+                    exit_slippage = abs(exit_mid) * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
+                    option_net_pnl = option_gross_pnl - (entry_commission + exit_commission) - (entry_slippage + exit_slippage)
                     option_detail = {
                         "phase": active_option.phase,
                         "legs": [
@@ -161,10 +161,8 @@ class WheelStrategyBacktestEngine:
                         exit_mid = 0.0
                         option_detail["legs"][0]["exit_mid"] = exit_mid
                         option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
-                        option_net_pnl = option_gross_pnl - (
-                            (config.commission_per_contract * active_option.quantity) + exit_commission
-                        )
-                        cash -= (active_option.strike_price * 100.0 * active_option.quantity) + exit_commission
+                        option_net_pnl = option_gross_pnl - entry_commission - entry_slippage
+                        cash -= active_option.strike_price * 100.0 * active_option.quantity
                         held_shares = HeldShares(
                             quantity=active_option.quantity,
                             entry_date=bar.trade_date,
@@ -187,11 +185,10 @@ class WheelStrategyBacktestEngine:
                                 exit_mid=exit_mid,
                                 gross_pnl=option_gross_pnl,
                                 net_pnl=option_net_pnl,
-                                total_commissions=(config.commission_per_contract * active_option.quantity)
-                                + exit_commission,
+                                total_commissions=config.commission_per_contract * active_option.quantity,
                                 entry_reason="entry_rules_met",
                                 exit_reason="assignment",
-                                detail_json={**option_detail, "assignment": True},
+                                detail_json={**option_detail, "assignment": True, "unit_convention": "per_share_option_premium"},
                             )
                         )
                     elif (
@@ -203,10 +200,8 @@ class WheelStrategyBacktestEngine:
                         exit_mid = 0.0
                         option_detail["legs"][0]["exit_mid"] = exit_mid
                         option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
-                        option_net_pnl = option_gross_pnl - (
-                            (config.commission_per_contract * active_option.quantity) + exit_commission
-                        )
-                        cash += (active_option.strike_price * 100.0 * active_option.quantity) - exit_commission
+                        option_net_pnl = option_gross_pnl - entry_commission - entry_slippage
+                        cash += active_option.strike_price * 100.0 * active_option.quantity
                         trades.append(
                             TradeResult(
                                 option_ticker=active_option.ticker,
@@ -224,11 +219,10 @@ class WheelStrategyBacktestEngine:
                                 exit_mid=exit_mid,
                                 gross_pnl=option_gross_pnl,
                                 net_pnl=option_net_pnl,
-                                total_commissions=(config.commission_per_contract * active_option.quantity)
-                                + exit_commission,
+                                total_commissions=config.commission_per_contract * active_option.quantity,
                                 entry_reason="entry_rules_met",
                                 exit_reason="call_assignment",
-                                detail_json={**option_detail, "assignment": True},
+                                detail_json={**option_detail, "assignment": True, "unit_convention": "per_share_option_premium"},
                             )
                         )
                         called_away_price = active_option.strike_price
@@ -256,6 +250,7 @@ class WheelStrategyBacktestEngine:
                                 detail_json={
                                     "phase": "stock_inventory",
                                     "share_quantity": held_shares.quantity * 100,
+                                    "unit_convention": "per_share_option_premium",
                                     "assumptions": [
                                         "Share P&L is realized separately from short-call"
                                         " premium in the wheel strategy."
@@ -265,7 +260,7 @@ class WheelStrategyBacktestEngine:
                         )
                         held_shares = None
                     else:
-                        cash += (-exit_mid * 100.0 * active_option.quantity) - exit_commission
+                        cash += (-exit_mid * 100.0 * active_option.quantity) - exit_commission - exit_slippage
                         trades.append(
                             TradeResult(
                                 option_ticker=active_option.ticker,
@@ -287,7 +282,7 @@ class WheelStrategyBacktestEngine:
                                 + exit_commission,
                                 entry_reason="entry_rules_met",
                                 exit_reason=exit_reason,
-                                detail_json={**option_detail, "assignment": False},
+                                detail_json={**option_detail, "assignment": False, "unit_convention": "per_share_option_premium"},
                             )
                         )
                     active_option = None
@@ -310,18 +305,20 @@ class WheelStrategyBacktestEngine:
                     position = self._open_short_put(config, bar, index, option_gateway, cash, warnings, warning_codes)
                     if position is not None:
                         active_option = position
+                        entry_slip = position.entry_mid * 100.0 * position.quantity * (config.slippage_pct / 100.0)
                         cash += (position.entry_mid * 100.0 * position.quantity) - (
                             config.commission_per_contract * position.quantity
-                        )
+                        ) - entry_slip
                 else:
                     position = self._open_covered_call(
                         config, bar, index, option_gateway, held_shares.quantity, warnings, warning_codes
                     )
                     if position is not None:
                         active_option = position
+                        entry_slip = position.entry_mid * 100.0 * position.quantity * (config.slippage_pct / 100.0)
                         cash += (position.entry_mid * 100.0 * position.quantity) - (
                             config.commission_per_contract * position.quantity
-                        )
+                        ) - entry_slip
 
             option_value = 0.0
             if active_option is not None:
@@ -347,12 +344,13 @@ class WheelStrategyBacktestEngine:
         if active_option is not None:
             final_bar = sorted_bars[-1]
             exit_mid = active_option.last_mid
+            entry_commission = config.commission_per_contract * active_option.quantity
             exit_commission = config.commission_per_contract * active_option.quantity
             option_gross = (active_option.entry_mid - exit_mid) * 100.0 * active_option.quantity
-            option_net = option_gross - (
-                (config.commission_per_contract * active_option.quantity) + exit_commission
-            )
-            cash += (-exit_mid * 100.0 * active_option.quantity) - exit_commission
+            liq_entry_slip = active_option.entry_mid * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
+            liq_exit_slip = abs(exit_mid) * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
+            option_net = option_gross - (entry_commission + exit_commission) - (liq_entry_slip + liq_exit_slip)
+            cash += (-exit_mid * 100.0 * active_option.quantity) - exit_commission - liq_exit_slip
             trades.append(
                 TradeResult(
                     option_ticker=active_option.ticker,
@@ -370,11 +368,12 @@ class WheelStrategyBacktestEngine:
                     exit_mid=exit_mid,
                     gross_pnl=option_gross,
                     net_pnl=option_net,
-                    total_commissions=(config.commission_per_contract * active_option.quantity) + exit_commission,
+                    total_commissions=entry_commission + exit_commission,
                     entry_reason="entry_rules_met",
                     exit_reason="backtest_end_option_liquidation",
                     detail_json={
                         "phase": active_option.phase,
+                        "unit_convention": "per_share_option_premium",
                         "assumptions": [
                             "Open short option is liquidated at last available mid-price on the final bar."
                         ],
@@ -410,6 +409,7 @@ class WheelStrategyBacktestEngine:
                     detail_json={
                         "phase": "stock_inventory",
                         "share_quantity": held_shares.quantity * 100,
+                        "unit_convention": "per_share_option_premium",
                         "assumptions": ["Remaining wheel share inventory is liquidated on the final available bar."],
                     },
                 )
@@ -435,6 +435,7 @@ class WheelStrategyBacktestEngine:
             trades=trades,
             equity_curve=equity_curve,
             risk_free_rate=config.risk_free_rate,
+            warnings=warnings,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
 
@@ -484,7 +485,7 @@ class WheelStrategyBacktestEngine:
 
         capital_required_per_unit = contract.strike_price * 100.0
         commission_per_unit = config.commission_per_contract * 2
-        total_cost_per_unit = capital_required_per_unit + commission_per_unit
+        total_cost_per_unit = capital_required_per_unit + commission_per_unit - (quote.mid_price * 100.0)
         max_loss_per_unit = max((contract.strike_price - quote.mid_price) * 100.0, 0.0)
         risk_budget = config.account_size * (config.risk_per_trade_pct / 100.0)
         by_risk = int(risk_budget // max_loss_per_unit) if max_loss_per_unit > 0 else 0
@@ -577,7 +578,6 @@ class WheelStrategyBacktestEngine:
 
     @staticmethod
     def _resolve_exit(
-        bar_index: int,
         bar: DailyBar,
         position: OpenShortOptionPhase,
         max_holding_days: int,

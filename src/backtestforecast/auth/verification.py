@@ -4,11 +4,14 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
 import jwt
 from jwt import InvalidTokenError, PyJWKClient
 
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.errors import AuthenticationError, ConfigurationError
+
+_logger = structlog.get_logger("auth.verification")
 
 
 @dataclass(slots=True)
@@ -33,6 +36,15 @@ class ClerkTokenVerifier:
         }
         audience = self.settings.clerk_audience or None
         issuer = self.settings.clerk_issuer or None
+        is_prod = self.settings.app_env in ("production", "staging")
+        if self.settings.clerk_audience is not None and self.settings.clerk_audience == "":
+            if is_prod:
+                raise ConfigurationError("CLERK_AUDIENCE must not be empty in production/staging; set a valid audience or remove the variable.")
+            _logger.warning("auth.empty_clerk_audience", hint="CLERK_AUDIENCE is set to an empty string; audience verification is disabled")
+        if self.settings.clerk_issuer is not None and self.settings.clerk_issuer == "":
+            if is_prod:
+                raise ConfigurationError("CLERK_ISSUER must not be empty in production/staging; set a valid issuer or remove the variable.")
+            _logger.warning("auth.empty_clerk_issuer", hint="CLERK_ISSUER is set to an empty string; issuer verification is disabled")
         if audience:
             decode_options["verify_aud"] = True
         else:
@@ -107,6 +119,6 @@ class ClerkTokenVerifier:
                 else:
                     raise ConfigurationError("Set CLERK_JWT_KEY or CLERK_JWKS_URL (or CLERK_ISSUER) to enable auth.")
 
-            self._jwks_client = PyJWKClient(jwks_url)
+            self._jwks_client = PyJWKClient(jwks_url, timeout=10)
             return self._jwks_client
 

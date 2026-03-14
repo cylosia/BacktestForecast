@@ -17,18 +17,21 @@ class BacktestTemplateRepository:
         self.session.flush()
         return template
 
-    def get_for_user(self, template_id: UUID, user_id: UUID) -> BacktestTemplate | None:
+    def get_for_user(self, template_id: UUID, user_id: UUID, *, for_update: bool = False) -> BacktestTemplate | None:
         stmt = select(BacktestTemplate).where(
             BacktestTemplate.id == template_id,
             BacktestTemplate.user_id == user_id,
         )
+        if for_update:
+            stmt = stmt.with_for_update()
         return self.session.scalar(stmt)
 
-    def list_for_user(self, user_id: UUID, *, limit: int = 100) -> list[BacktestTemplate]:
+    def list_for_user(self, user_id: UUID, *, limit: int = 100, offset: int = 0) -> list[BacktestTemplate]:
         stmt = (
             select(BacktestTemplate)
             .where(BacktestTemplate.user_id == user_id)
             .order_by(desc(BacktestTemplate.updated_at))
+            .offset(offset)
             .limit(limit)
         )
         return list(self.session.scalars(stmt))

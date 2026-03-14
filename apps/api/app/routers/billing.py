@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Body, Depends, Header, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
@@ -70,9 +69,12 @@ def create_portal_session(
 def stripe_webhook(
     request: Request,
     payload: bytes = Body(..., media_type="application/json", max_length=256_000),
-    signature: str | None = Header(default=None, alias="Stripe-Signature"),
+    signature: str | None = Header(alias="Stripe-Signature"),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
+    if signature is None:
+        raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
+
     from apps.api.app.dependencies import get_request_metadata
 
     request_id = getattr(request.state, "request_id", None)
@@ -99,14 +101,20 @@ def stripe_webhook(
             ExternalServiceError as _ExtErr,
         )
         if isinstance(exc, _AuthErr):
-            raise
+            _webhook_logger.warning(
+                "webhook.signature_verification_failed", ip=ip_address, request_id=request_id,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "signature_verification_failed", "message": "Invalid webhook signature."},
+            )
         if isinstance(exc, _ExtErr):
             _webhook_logger.exception(
                 "webhook.transient_error", code=exc.code, ip=ip_address, request_id=request_id,
             )
-            return JSONResponse(  # type: ignore[return-value]
+            raise HTTPException(
                 status_code=500,
-                content={"error": {"code": exc.code, "message": "Transient error; Stripe should retry."}},
+                detail={"code": exc.code, "message": "Transient error; Stripe should retry."},
             )
         if isinstance(exc, _AppErr):
             _webhook_logger.warning(
@@ -114,7 +122,7 @@ def stripe_webhook(
             )
             return {"status": "error", "code": exc.code}
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
-        return JSONResponse(  # type: ignore[return-value]
+        raise HTTPException(
             status_code=500,
-            content={"error": {"code": "webhook_processing_failed", "message": "Webhook could not be processed."}},
+            detail={"code": "webhook_processing_failed", "message": "Webhook could not be processed."},
         )

@@ -102,6 +102,9 @@ class NakedOptionStrategy(StrategyDefinition):
                     "Margin per Reg T: max(20% underlying − OTM amount + premium, 10% × underlying/strike + premium).",
                     "Theoretically unlimited loss on calls; loss to zero on puts.",
                 ],
+                "warnings": [
+                    "Naked option: theoretical loss is unlimited. Position sized by margin requirement only.",
+                ],
                 "margin_per_contract": margin,
             },
         )

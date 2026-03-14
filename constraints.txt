@@ -1,0 +1,11 @@
+# Pin dependency versions for reproducible builds.
+#
+# Usage:
+#   pip install --constraint constraints.txt ".[s3]"
+#
+# Generate / update this file from a known-good environment:
+#   pip freeze --exclude-editable > constraints.txt
+#
+# This file is intentionally empty as a starting point.
+# Run `pip freeze` in your CI or production environment and paste the output
+# here to lock all transitive dependencies.

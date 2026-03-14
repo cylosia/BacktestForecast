@@ -35,10 +35,11 @@ export async function getCurrentUser(): Promise<CurrentUserResponse> {
   return apiRequest<CurrentUserResponse>("/v1/me", token, { cache: "no-store" });
 }
 
-export async function getBacktestHistory(limit = 50): Promise<BacktestRunListResponse> {
+export async function getBacktestHistory(limit = 50, offset = 0): Promise<BacktestRunListResponse> {
   const token = await getServerToken();
   const safeLimit = Math.max(1, Math.min(limit, 100));
-  return apiRequest<BacktestRunListResponse>(`/v1/backtests?limit=${safeLimit}`, token, { cache: "no-store" });
+  const safeOffset = Math.max(0, offset);
+  return apiRequest<BacktestRunListResponse>(`/v1/backtests?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
 }
 
 export async function getBacktestRun(runId: string): Promise<BacktestRunDetailResponse> {
@@ -60,9 +61,11 @@ export async function compareBacktests(runIds: string[]): Promise<CompareBacktes
   });
 }
 
-export async function getScannerJobs(limit = 50): Promise<ScannerJobListResponse> {
+export async function getScannerJobs(limit = 50, offset = 0): Promise<ScannerJobListResponse> {
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const safeOffset = Math.max(0, offset);
   const token = await getServerToken();
-  return apiRequest<ScannerJobListResponse>(`/v1/scans?limit=${limit}`, token, { cache: "no-store" });
+  return apiRequest<ScannerJobListResponse>(`/v1/scans?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
 }
 
 export async function getScannerJob(jobId: string): Promise<ScannerJobResponse> {

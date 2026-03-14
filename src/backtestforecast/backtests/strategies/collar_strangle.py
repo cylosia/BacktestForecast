@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from backtestforecast.backtests.margin import collar_margin, covered_strangle_margin
+from backtestforecast.backtests.margin import collar_margin, covered_strangle_margin, naked_put_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_primary_expiration,
@@ -65,7 +65,7 @@ class CollarStrategy(StrategyDefinition):
 
         net_option_cost = (pq.mid_price - cq.mid_price) * 100.0
         capital = collar_margin(bar.close_price) + max(net_option_cost, 0.0)
-        max_loss = (bar.close_price - put_strike) * 100.0 + net_option_cost
+        max_loss = max((bar.close_price - put_strike) * 100.0 + net_option_cost, 0.0)
 
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([config.symbol, short_call.ticker, long_put.ticker]),
@@ -159,6 +159,7 @@ class CoveredStrangleStrategy(StrategyDefinition):
 
         credit = (cq.mid_price + pq.mid_price) * 100.0
         capital = covered_strangle_margin(bar.close_price, put_strike, pq.mid_price)
+        max_loss = (bar.close_price * 100.0) + (put_strike * 100.0) - credit
 
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([config.symbol, short_call.ticker, short_put.ticker]),
@@ -175,7 +176,7 @@ class CoveredStrangleStrategy(StrategyDefinition):
             stock_legs=[OpenStockLeg(config.symbol, 1, 100, bar.close_price, bar.close_price)],
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
-            max_loss_per_unit=None,
+            max_loss_per_unit=max_loss,
             max_profit_per_unit=max((call_strike - bar.close_price) * 100.0, 0.0) + credit,
             detail_json={
                 "legs": [

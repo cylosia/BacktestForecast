@@ -11,24 +11,24 @@ export interface ApiErrorPayload {
 const API_BASE = env.apiBaseUrl.replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSignal): AbortSignal {
+function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
   if (typeof AbortSignal.any === "function") {
-    return AbortSignal.any([userSignal, timeoutSignal]);
+    return { signal: AbortSignal.any([userSignal, timeoutSignal]), cleanup: () => {} };
   }
   const controller = new AbortController();
-  const onAbort = () => {
-    controller.abort();
-    cleanup();
-  };
-  const cleanup = () => {
+  const detach = () => {
     userSignal.removeEventListener("abort", onAbort);
     timeoutSignal.removeEventListener("abort", onAbort);
   };
+  const onAbort = () => {
+    controller.abort();
+    detach();
+  };
   for (const sig of [userSignal, timeoutSignal]) {
-    if (sig.aborted) { controller.abort(); return controller.signal; }
+    if (sig.aborted) { controller.abort(); detach(); return { signal: controller.signal, cleanup: () => {} }; }
     sig.addEventListener("abort", onAbort, { once: true });
   }
-  return controller.signal;
+  return { signal: controller.signal, cleanup: detach };
 }
 
 export class ApiError extends Error {
@@ -69,9 +69,33 @@ async function handleKnownStatus(response: Response): Promise<void> {
   );
 }
 
+function headersToRecord(headers: HeadersInit | undefined): Record<string, string> {
+  if (!headers) return {};
+  if (headers instanceof Headers) {
+    const record: Record<string, string> = {};
+    headers.forEach((value, key) => { record[key] = value; });
+    return record;
+  }
+  if (Array.isArray(headers)) {
+    const record: Record<string, string> = {};
+    for (const [key, value] of headers) {
+      record[key] = value;
+    }
+    return record;
+  }
+  return { ...headers };
+}
+
+const STRIPPED_HEADERS = new Set(["authorization", "content-type"]);
+
 function buildHeaders(token: string, init?: RequestInit): HeadersInit {
-  const custom = (init?.headers ?? {}) as Record<string, string>;
-  const { Authorization: _a, "Content-Type": _ct, ...safe } = custom;
+  const custom = headersToRecord(init?.headers);
+  const safe: Record<string, string> = {};
+  for (const [key, value] of Object.entries(custom)) {
+    if (!STRIPPED_HEADERS.has(key.toLowerCase())) {
+      safe[key] = value;
+    }
+  }
   return {
     ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     Authorization: `Bearer ${token}`,
@@ -100,37 +124,20 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DEFAULT_TIMEOUT_MS);
+  const combined = init?.signal
+    ? combinedSignal(init.signal, controller.signal)
+    : null;
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers: buildHeaders(token, init),
       cache: init?.cache ?? "no-store",
-      signal: init?.signal
-        ? combinedSignal(init.signal, controller.signal)
-        : controller.signal,
+      signal: combined?.signal ?? controller.signal,
     });
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 429) {
-        let payload: ApiErrorPayload | undefined;
-        try {
-          payload = (await response.json()) as ApiErrorPayload;
-        } catch {
-          payload = undefined;
-        }
-        const defaults: Record<number, { message: string; code: string }> = {
-          401: { message: "Your session has expired. Please sign in again.", code: "authentication_error" },
-          403: { message: "You don't have permission to access this resource.", code: "authorization_error" },
-          404: { message: "The requested resource was not found.", code: "not_found" },
-          429: { message: "Too many requests. Please try again later.", code: "rate_limited" },
-        };
-        const fallback = defaults[response.status]!;
-        throw new ApiError(
-          payload?.error?.message ?? fallback.message,
-          response.status,
-          payload?.error?.code ?? fallback.code,
-          payload?.error?.request_id,
-        );
+      if (response.status in KNOWN_STATUS_DEFAULTS) {
+        await handleKnownStatus(response);
       }
       await parseApiError(response);
     }
@@ -154,6 +161,7 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
     throw err;
   } finally {
     clearTimeout(timeout);
+    combined?.cleanup();
   }
 }
 
@@ -161,14 +169,15 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DEFAULT_TIMEOUT_MS);
+  const combined = init?.signal
+    ? combinedSignal(init.signal, controller.signal)
+    : null;
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers: buildHeaders(token, init),
       cache: "no-store",
-      signal: init?.signal
-        ? combinedSignal(init.signal, controller.signal)
-        : controller.signal,
+      signal: combined?.signal ?? controller.signal,
     });
 
     if (!response.ok) {
@@ -199,5 +208,6 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
     throw err;
   } finally {
     clearTimeout(timeout);
+    combined?.cleanup();
   }
 }

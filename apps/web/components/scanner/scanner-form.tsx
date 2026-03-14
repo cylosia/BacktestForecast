@@ -187,7 +187,7 @@ export function ScannerForm({
       errors.push("At least one strategy type is required.");
     }
 
-    const maxSymbols = mode === "advanced" ? 25 : 10;
+    const maxSymbols = mode === "advanced" ? 25 : 5;
     const maxStrategies = mode === "advanced" ? 14 : 6;
     if (symbols.length > maxSymbols) {
       errors.push(`${mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxSymbols} symbols.`);
@@ -200,18 +200,20 @@ export function ScannerForm({
       errors.push("Start date must be before end date.");
     }
 
-    const numericChecks = [
-      { label: "Target DTE", value: Number(targetDte), min: 7, max: 365 },
-      { label: "DTE tolerance", value: Number(dteTolerance), min: 0, max: 60 },
-      { label: "Max holding days", value: Number(maxHolding), min: 1, max: 120 },
+    const numericChecks: Array<{ label: string; value: number; min: number; max?: number; integer?: boolean }> = [
+      { label: "Target DTE", value: Number(targetDte), min: 7, max: 365, integer: true },
+      { label: "DTE tolerance", value: Number(dteTolerance), min: 0, max: 60, integer: true },
+      { label: "Max holding days", value: Number(maxHolding), min: 1, max: 120, integer: true },
       { label: "Account size", value: Number(accountSize), min: 100 },
       { label: "Risk %", value: Number(riskPct), min: 0.1, max: 100 },
       { label: "Commission", value: Number(commission), min: 0 },
-      { label: "Max recommendations", value: Number(maxRecs), min: 1, max: 30 },
+      { label: "Max recommendations", value: Number(maxRecs), min: 1, max: 30, integer: true },
     ];
     for (const check of numericChecks) {
       if (!Number.isFinite(check.value) || check.value < check.min || (check.max !== undefined && check.value > check.max)) {
         errors.push(`${check.label} must be a number between ${check.min} and ${check.max ?? "∞"}.`);
+      } else if (check.integer && !Number.isInteger(check.value)) {
+        errors.push(`${check.label} must be a whole number.`);
       }
     }
 
@@ -277,10 +279,10 @@ export function ScannerForm({
       const token = await getToken();
       if (!token) throw new Error("Session expired.");
 
+      submitAbortRef.current?.abort();
       submitAbortRef.current = new AbortController();
       const job = await createScannerJob(token, payload, submitAbortRef.current.signal);
       router.push(`/app/scanner/${job.id}`);
-      router.refresh();
     } catch (error) {
       const msg = error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Scan could not be created.";
       const code = error instanceof ApiError ? error.code : undefined;
@@ -295,7 +297,7 @@ export function ScannerForm({
       {errorMessage && isPlanLimitError(errorCode) ? (
         <UpgradePrompt message={errorMessage} />
       ) : errorMessage ? (
-        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive whitespace-pre-line">
+        <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive whitespace-pre-line">
           {errorMessage}
         </div>
       ) : null}

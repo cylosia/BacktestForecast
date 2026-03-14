@@ -27,10 +27,10 @@ export function ScannerJobPoller({
   const [status, setStatus] = useState<ScannerJobStatus | string>(initialStatus);
   const [evaluated, setEvaluated] = useState(0);
 
-  const fetcher = useCallback(async () => {
+  const fetcher = useCallback(async (signal: AbortSignal) => {
     const token = await getToken();
     if (!token) throw new Error("No token");
-    return fetchScannerJob(token, jobId);
+    return fetchScannerJob(token, jobId, signal);
   }, [getToken, jobId]);
 
   const { status: pollStatus, attempts } = usePolling<ScannerJobResponse>({

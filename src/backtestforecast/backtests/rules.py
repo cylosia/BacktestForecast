@@ -62,7 +62,10 @@ class EntryRuleEvaluator:
         self.volumes = [bar.volume for bar in self.bars]
 
     def is_entry_allowed(self, index: int) -> bool:
-        if index <= 0:
+        if index <= 0 and self._has_crossover_rule(self.config.entry_rules):
+            return False
+
+        if index < 0:
             return False
 
         for rule in self.config.entry_rules:
@@ -178,7 +181,7 @@ class EntryRuleEvaluator:
             else:
                 metric = ((current_value - window_min) / (window_max - window_min)) * 100.0
         else:
-            below_count = sum(1 for value in lookback_values if value <= current_value)
+            below_count = sum(1 for value in lookback_values if value < current_value)
             metric = (below_count / len(lookback_values)) * 100.0
 
         return compare(metric, float(rule.threshold), rule.operator)
@@ -224,9 +227,23 @@ class EntryRuleEvaluator:
         return previous_close >= prior_support and current_close < (prior_support * (1.0 - tolerance_ratio))
 
     def _evaluate_avoid_earnings_rule(self, rule: AvoidEarningsRule, index: int) -> bool:
-        window_start = self.bars[index].trade_date - timedelta(days=rule.days_after)
-        window_end = self.bars[index].trade_date + timedelta(days=rule.days_before)
-        return not any(window_start <= earnings_date <= window_end for earnings_date in self.earnings_dates)
+        bar_date = self.bars[index].trade_date
+        # Blackout window: avoid entry if earnings fell within [bar_date - days_after, bar_date + days_before].
+        # days_after = how many days AFTER an earnings date we still avoid (look backward),
+        # days_before = how many days BEFORE an upcoming earnings date we avoid (look forward).
+        blackout_start = bar_date - timedelta(days=rule.days_after)
+        blackout_end = bar_date + timedelta(days=rule.days_before)
+        return not any(blackout_start <= earnings_date <= blackout_end for earnings_date in self.earnings_dates)
+
+    @staticmethod
+    def _has_crossover_rule(rules: list) -> bool:
+        """Check if any rule requires the previous bar (index-1) for crossover detection."""
+        for rule in rules:
+            if isinstance(rule, (MovingAverageCrossoverRule, MacdRule)):
+                return True
+            if hasattr(rule, "type") and isinstance(rule, dict) and rule.get("type") in ("sma_crossover", "ema_crossover", "macd"):
+                return True
+        return False
 
     def _get_iv_series(self) -> list[float | None]:
         if self.iv_series_cache is None:

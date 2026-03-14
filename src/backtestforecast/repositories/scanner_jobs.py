@@ -18,9 +18,13 @@ class ScannerJobRepository:
         self.session.flush()
         return job
 
-    def list_for_user(self, user_id: UUID, limit: int = 50) -> list[ScannerJob]:
+    def list_for_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[ScannerJob]:
         stmt = (
-            select(ScannerJob).where(ScannerJob.user_id == user_id).order_by(desc(ScannerJob.created_at)).limit(limit)
+            select(ScannerJob)
+            .where(ScannerJob.user_id == user_id)
+            .order_by(desc(ScannerJob.created_at))
+            .offset(offset)
+            .limit(limit)
         )
         return list(self.session.scalars(stmt))
 

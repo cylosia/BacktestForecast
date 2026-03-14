@@ -69,6 +69,16 @@ class PMCCStrategy(StrategyDefinition):
         if not valid_entry_mids(sq.mid_price, lq.mid_price):
             return None
 
+        # PMCC (Poor Man's Covered Call) payoff math:
+        # Structure: long deep-ITM far-dated call + short OTM near-dated call.
+        # If opened for a debit (typical): max loss = debit paid (far-dated
+        # call expires worthless while short call decays). Max profit is
+        # theoretically large but path-dependent (the far-dated call retains
+        # time value), so it is not capped here (set to None by the framework).
+        # If opened for a credit (unusual, aggressive strikes): capital =
+        # naked call margin on the short leg, max loss = None (uncapped if
+        # underlying rises sharply beyond the short strike and the long call
+        # cannot fully offset due to different expirations).
         entry_value = (lq.mid_price - sq.mid_price) * 100.0
         if entry_value >= 0:
             capital = entry_value
@@ -134,6 +144,15 @@ class DiagonalSpreadStrategy(StrategyDefinition):
         if not valid_entry_mids(sq.mid_price, lq.mid_price):
             return None
 
+        # Diagonal spread payoff math:
+        # Structure: long far-dated call (lower strike) + short near-dated call
+        # (higher strike, closer expiration). If opened for a debit: max loss =
+        # debit paid (both options expire worthless). Max profit is path-
+        # dependent because the legs have different expirations, so it cannot
+        # be precisely capped at entry — set to None. If opened for a credit:
+        # capital = naked call margin, max loss = None (uncapped risk if the
+        # underlying moves sharply and the near-dated short call loses more
+        # than the far-dated long call gains due to different time decay).
         entry_value = (lq.mid_price - sq.mid_price) * 100.0
         if entry_value >= 0:
             capital = entry_value

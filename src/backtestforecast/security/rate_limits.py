@@ -42,6 +42,7 @@ class RateLimiter:
         self.settings = settings or get_settings()
         self._fail_closed = self.settings.rate_limit_fail_closed
         self._memory_lock = Lock()
+        self._redis_lock = Lock()
         self._memory_counters: dict[str, tuple[int, int]] = {}
         self._redis: Redis | None = None
         self._redis_retry_after: float = 0.0
@@ -52,17 +53,22 @@ class RateLimiter:
             return self._redis
         if time.time() < self._redis_retry_after:
             return None
-        try:
-            self._redis = Redis.from_url(
-                self.settings.redis_url,
-                decode_responses=True,
-                socket_timeout=2.0,
-                socket_connect_timeout=2.0,
-            )
-            self._redis.ping()
-        except Exception:
-            self._redis = None
-            self._redis_retry_after = time.time() + 30.0
+        with self._redis_lock:
+            if self._redis is not None:
+                return self._redis
+            if time.time() < self._redis_retry_after:
+                return None
+            try:
+                self._redis = Redis.from_url(
+                    self.settings.redis_cache_url,
+                    decode_responses=True,
+                    socket_timeout=2.0,
+                    socket_connect_timeout=2.0,
+                )
+                self._redis.ping()
+            except Exception:
+                self._redis = None
+                self._redis_retry_after = time.time() + 30.0
         return self._redis
 
     def check(self, *, bucket: str, actor_key: str, limit: int, window_seconds: int) -> RateLimitInfo:
@@ -147,12 +153,18 @@ class RateLimiter:
     def _check_memory(self, key: str, window_seconds: int) -> tuple[int, int]:
         bucket = int(time.time() // window_seconds)
         namespaced = f"{key}:{bucket}"
+        max_keys = self.settings.rate_limit_memory_max_keys
         with self._memory_lock:
-            if len(self._memory_counters) > self.settings.rate_limit_memory_max_keys:
+            if len(self._memory_counters) > max_keys:
                 cutoff = bucket - 2
                 stale = [k for k, (b, _) in self._memory_counters.items() if b < cutoff]
                 for k in stale:
                     del self._memory_counters[k]
+            if len(self._memory_counters) > max_keys * 2:
+                logger.warning("rate_limiter.memory_hard_cap", size=len(self._memory_counters), max_keys=max_keys)
+                sorted_entries = sorted(self._memory_counters.items(), key=lambda item: item[1][0])
+                keep = sorted_entries[len(sorted_entries) // 2:]
+                self._memory_counters = dict(keep)
             counter_bucket, counter_value = self._memory_counters.get(namespaced, (bucket, 0))
             if counter_bucket != bucket:
                 counter_value = 0

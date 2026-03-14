@@ -20,25 +20,28 @@ const percentFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 0,
 });
 
-export function toNumber(value: NumericValue): number {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+export function toNumber(value: NumericValue | null | undefined): number {
+  if (value == null) return NaN;
+  if (typeof value === "number") return value;
+  return Number(value);
 }
 
-export function formatCurrency(value: NumericValue): string {
-  return currencyFormatter.format(toNumber(value));
+export function formatCurrency(value: NumericValue | null | undefined): string {
+  const n = toNumber(value);
+  if (Number.isNaN(n)) return "—";
+  return currencyFormatter.format(n);
 }
 
-export function formatPercent(value: NumericValue): string {
-  return `${percentFormatter.format(toNumber(value))}%`;
+export function formatPercent(value: NumericValue | null | undefined): string {
+  const n = toNumber(value);
+  if (Number.isNaN(n)) return "—";
+  return `${percentFormatter.format(n)}%`;
 }
 
-export function formatNumber(value: NumericValue): string {
-  return numberFormatter.format(toNumber(value));
+export function formatNumber(value: NumericValue | null | undefined): string {
+  const n = toNumber(value);
+  if (Number.isNaN(n)) return "—";
+  return numberFormatter.format(n);
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -162,11 +165,19 @@ export function statusLabel(status: RunStatus | string): string {
       return "Failed";
     case "cancelled":
       return "Cancelled";
+    case "expired":
+      return "Expired";
     default:
       return status;
   }
 }
 
+const KNOWN_STATUSES = new Set<string>(["queued", "running", "succeeded", "failed", "cancelled", "expired"]);
+const TERMINAL_STATUSES = new Set<string>(["succeeded", "failed", "cancelled", "expired"]);
+
 export function isTerminalStatus(status: RunStatus | string): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
+  if (!KNOWN_STATUSES.has(status)) {
+    console.warn(`[isTerminalStatus] Unknown status: "${status}". Treating as non-terminal.`);
+  }
+  return TERMINAL_STATUSES.has(status);
 }

@@ -101,3 +101,76 @@ class TestExpiredAndMalformedTokens:
         verifier = _make_verifier(public_pem, authorized_parties="")
         with pytest.raises(AuthenticationError):
             verifier.verify_bearer_token("this-is-not-a-jwt")
+
+
+class TestEmptyClerkAudienceBehavior:
+    """Item 75: Test that empty CLERK_AUDIENCE is rejected in production
+    (by Settings model validation) and that ClerkTokenVerifier raises
+    ConfigurationError for empty audience in production-like environments,
+    but only warns in development."""
+
+    def test_empty_audience_rejected_by_settings_in_production(self, rsa_keys):
+        """Settings model_validator rejects empty CLERK_AUDIENCE in production."""
+        _private_pem, public_pem = rsa_keys
+        from pydantic import ValidationError as PydanticValidationError
+
+        with pytest.raises(PydanticValidationError, match="CLERK_AUDIENCE"):
+            Settings(
+                app_env="production",
+                clerk_jwt_key=public_pem.decode(),
+                clerk_authorized_parties_raw="http://localhost:3000",
+                clerk_audience="",
+                clerk_issuer="https://clerk.example.com",
+                log_json=True,
+                ip_hash_salt="a-secure-salt-for-testing-1234567890",
+                metrics_token="test-metrics-token",
+                redis_password="test-redis-password",
+            )
+
+    def test_verifier_raises_for_empty_audience_in_production(self, rsa_keys):
+        """Defense-in-depth: the verifier itself raises ConfigurationError
+        when clerk_audience is empty in production. Simulate by constructing
+        a Settings with app_env='staging' workaround bypassed."""
+        private_pem, public_pem = rsa_keys
+        from backtestforecast.errors import ConfigurationError
+        from unittest.mock import patch
+
+        settings = Settings(
+            app_env="test",
+            clerk_jwt_key=public_pem.decode(),
+            clerk_authorized_parties_raw="",
+            clerk_audience="",
+        )
+        settings.app_env = "production"
+
+        verifier = ClerkTokenVerifier(settings)
+        token = _make_token(private_pem, {"aud": "something"})
+        with pytest.raises(ConfigurationError, match="CLERK_AUDIENCE must not be empty"):
+            verifier.verify_bearer_token(token)
+
+    def test_empty_audience_warns_in_development(self, rsa_keys):
+        private_pem, public_pem = rsa_keys
+        settings = Settings(
+            app_env="development",
+            clerk_jwt_key=public_pem.decode(),
+            clerk_authorized_parties_raw="",
+            clerk_audience="",
+        )
+        verifier = ClerkTokenVerifier(settings)
+        token = _make_token(private_pem, {})
+        principal = verifier.verify_bearer_token(token)
+        assert principal.clerk_user_id is not None
+
+    def test_none_audience_skips_check(self, rsa_keys):
+        """When clerk_audience is None (not set at all), no error or warning."""
+        private_pem, public_pem = rsa_keys
+        settings = Settings(
+            app_env="development",
+            clerk_jwt_key=public_pem.decode(),
+            clerk_authorized_parties_raw="",
+            clerk_audience=None,
+        )
+        verifier = ClerkTokenVerifier(settings)
+        token = _make_token(private_pem, {})
+        principal = verifier.verify_bearer_token(token)
+        assert principal.clerk_user_id is not None

@@ -51,9 +51,9 @@ def upgrade() -> None:
         batch_op.alter_column(
             "regime_labels",
             existing_type=sa.Text(),
-            type_=sa.JSON(),
+            type_=sa.dialects.postgresql.JSONB(),
             existing_nullable=False,
-            server_default=sa.text("'[]'"),
+            server_default=sa.text("'[]'::jsonb"),
             postgresql_using="to_jsonb(string_to_array(regime_labels, ','))",
         )
 

@@ -116,6 +116,11 @@ def get_current_user(
     if not token:
         raise AuthenticationError()
 
+    # NOTE: verify_bearer_token may perform an HTTP fetch to the Clerk JWKS
+    # endpoint via PyJWKClient. That client does not expose a request-level
+    # timeout knob; its default urllib timeout applies.  If latency becomes a
+    # concern, configure PyJWKClient with a custom ``urllib.request.Request``
+    # or switch to an httpx-based JWKS fetcher with explicit timeouts.
     principal = token_verifier.verify_bearer_token(token)
     repository = UserRepository(db)
     user = repository.get_or_create(principal.clerk_user_id, principal.email)

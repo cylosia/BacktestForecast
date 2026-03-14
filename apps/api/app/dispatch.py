@@ -5,9 +5,15 @@ from typing import Any
 
 import structlog
 from kombu.exceptions import KombuError, OperationalError as KombuOperationalError
+from prometheus_client import Counter
 from sqlalchemy.orm import Session
 
 from apps.worker.app.celery_app import celery_app
+
+DISPATCH_REVOKE_FAILED = Counter(
+    "dispatch_revoke_failed_total",
+    "Times celery task revocation failed after a commit error during dispatch",
+)
 
 
 def dispatch_celery_task(
@@ -62,10 +68,11 @@ def dispatch_celery_task(
             try:
                 celery_app.control.revoke(result.id)
             except Exception:
+                DISPATCH_REVOKE_FAILED.inc()
                 logger.warning(f"{log_event}.revoke_failed", celery_task_id=result.id)
             raise
         logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)
-    except (OSError, ConnectionError, KombuError, KombuOperationalError, TimeoutError):
+    except (OSError, KombuError, KombuOperationalError, TimeoutError):
         logger.exception(f"{log_event}.enqueue_failed", **task_kwargs)
         job.status = "failed"
         job.error_code = "enqueue_failed"

@@ -104,12 +104,13 @@ export function validateBacktestForm(values: BacktestFormValues): {
     min?: number;
     max?: number;
     exclusiveMin?: boolean;
+    integer?: boolean;
     label: string;
   }> = [
-    { key: "targetDte", min: 7, max: 365, label: "Target DTE" },
-    { key: "dteToleranceDays", min: 0, max: 60, label: "DTE tolerance" },
-    { key: "maxHoldingDays", min: 1, max: 120, label: "Max holding days" },
-    { key: "accountSize", min: 0, exclusiveMin: true, label: "Account size" },
+    { key: "targetDte", min: 7, max: 365, integer: true, label: "Target DTE" },
+    { key: "dteToleranceDays", min: 0, max: 60, integer: true, label: "DTE tolerance" },
+    { key: "maxHoldingDays", min: 1, max: 120, integer: true, label: "Max holding days" },
+    { key: "accountSize", min: 100, label: "Account size" },
     { key: "riskPerTradePct", min: 0, max: 100, exclusiveMin: true, label: "Risk per trade" },
     { key: "commissionPerContract", min: 0, label: "Commission per contract" },
   ];
@@ -122,6 +123,10 @@ export function validateBacktestForm(values: BacktestFormValues): {
     }
 
     const parsed = parseNumber(rawValue);
+    if (check.integer && !Number.isInteger(parsed)) {
+      errors[check.key] = `${check.label} must be a whole number.`;
+      continue;
+    }
     if (typeof check.min === "number") {
       const tooLow = check.exclusiveMin ? parsed <= check.min : parsed < check.min;
       if (tooLow) {
@@ -152,7 +157,9 @@ export function validateBacktestForm(values: BacktestFormValues): {
       errors.rsiThreshold = "RSI threshold must be between 0 and 100.";
     }
 
-    if (Number.isFinite(period) && (period < 2 || period > 100)) {
+    if (Number.isFinite(period) && !Number.isInteger(period)) {
+      errors.rsiPeriod = "RSI period must be a whole number.";
+    } else if (Number.isFinite(period) && (period < 2 || period > 100)) {
       errors.rsiPeriod = "RSI period must be between 2 and 100.";
     }
 

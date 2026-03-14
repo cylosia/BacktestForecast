@@ -103,8 +103,16 @@ class S3Storage:
             ),
         )
 
+    @staticmethod
+    def _sanitize_file_name(file_name: str) -> str:
+        import posixpath
+        name = posixpath.basename(file_name.replace("\\", "/"))
+        name = name.lstrip(".")
+        return name or "export"
+
     def _object_key(self, export_job_id: UUID, file_name: str) -> str:
-        return f"{self._prefix}{export_job_id}/{file_name}"
+        safe_name = self._sanitize_file_name(file_name)
+        return f"{self._prefix}{export_job_id}/{safe_name}"
 
     def _guess_content_type(self, file_name: str) -> str:
         ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
@@ -124,7 +132,11 @@ class S3Storage:
 
     def get(self, storage_key: str) -> bytes:
         resp = _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
-        data: bytes = resp["Body"].read()
+        body = resp["Body"]
+        try:
+            data: bytes = body.read()
+        finally:
+            body.close()
         logger.info("s3.get", bucket=self._bucket, key=storage_key, size=len(data))
         return data
 

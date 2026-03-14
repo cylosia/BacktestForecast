@@ -49,7 +49,8 @@ def _reset_redis() -> None:
     if client is not None:
         try:
             client.close()
-        except Exception:
+        except Exception:  # Intentional: best-effort cleanup; failure to close an old
+            # connection must not prevent reconnection on the next call.
             pass
 
 
@@ -71,7 +72,9 @@ def publish_job_status(
     from redis.exceptions import RedisError
 
     channel = f"job:{job_type}:{job_id}:status"
-    payload = json.dumps({"status": status, "job_id": str(job_id), **(metadata or {})})
+    _RESERVED_KEYS = {"status", "job_id"}
+    safe_meta = {k: v for k, v in (metadata or {}).items() if k not in _RESERVED_KEYS}
+    payload = json.dumps({"status": status, "job_id": str(job_id), **safe_meta})
 
     try:
         for attempt in range(2):
@@ -92,7 +95,8 @@ def publish_job_status(
                     exc_info=True,
                 )
                 _fallback_persist_status(job_type, job_id, status)
-    except Exception:
+    except Exception:  # Intentional last-resort handler: event publishing is best-effort
+        # and must never crash the calling task (which has its own error handling).
         logger.error(
             "events.publish_unexpected_failure",
             channel=channel,
@@ -110,10 +114,23 @@ _JOB_TYPE_MODEL_MAP: dict[str, str] = {
     "analysis": "SymbolAnalysis",
 }
 
+_VALID_TARGET_STATUSES = frozenset({"succeeded", "failed", "cancelled", "expired"})
 
-def _fallback_persist_status(job_type: str, job_id: UUID, status: str) -> None:
-    """Write status directly to the job row so polling consumers can pick it up."""
+
+def _fallback_persist_status(
+    job_type: str, job_id: UUID, status: str,
+) -> None:
+    """Write status directly to the job row so polling consumers can pick it up.
+
+    Uses an atomic UPDATE … WHERE to avoid a TOCTOU race between the
+    read-check and the write that could clobber a terminal status set
+    by another worker in the meantime.
+    """
+    if status not in _VALID_TARGET_STATUSES:
+        return
     try:
+        from sqlalchemy import update
+
         from backtestforecast import models
         from backtestforecast.db.session import SessionLocal
 
@@ -128,26 +145,31 @@ def _fallback_persist_status(job_type: str, job_id: UUID, status: str) -> None:
 
         _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
         with SessionLocal() as session:
-            obj = session.get(model_cls, job_id)
-            if obj is not None and hasattr(obj, "status"):
-                if obj.status in _TERMINAL_STATUSES:
-                    logger.info(
-                        "events.fallback_skipped_terminal",
-                        job_type=job_type,
-                        job_id=str(job_id),
-                        current_status=obj.status,
-                        requested_status=status,
-                    )
-                    return
-                obj.status = status
-                session.commit()
+            result = session.execute(
+                update(model_cls)
+                .where(
+                    model_cls.id == job_id,
+                    model_cls.status.notin_(_TERMINAL_STATUSES),
+                )
+                .values(status=status)
+            )
+            session.commit()
+            if result.rowcount == 0:
+                logger.info(
+                    "events.fallback_skipped_terminal",
+                    job_type=job_type,
+                    job_id=str(job_id),
+                    requested_status=status,
+                )
+            else:
                 logger.info(
                     "events.fallback_persisted",
                     job_type=job_type,
                     job_id=str(job_id),
                     status=status,
                 )
-    except Exception:
+    except Exception:  # Intentional: this is the last-chance fallback path. If even the
+        # direct DB write fails, we can only log — there is nothing left to try.
         logger.error(
             "events.fallback_persist_failed",
             job_type=job_type,

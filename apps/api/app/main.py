@@ -30,6 +30,7 @@ from apps.api.app.routers import (
 )
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError, RateLimitError
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
 from backtestforecast.observability.logging import RequestContextMiddleware
 from backtestforecast.observability.metrics import PrometheusMiddleware, metrics_response
@@ -44,6 +45,17 @@ _is_dev = settings.app_env in ("development", "test")
 
 @asynccontextmanager
 async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
+    if settings.app_env in ("production", "staging"):
+        if not settings.clerk_audience or not settings.clerk_audience.strip():
+            raise RuntimeError(
+                "CLERK_AUDIENCE must be set to a non-empty value in production/staging. "
+                "JWT audience verification will not work without it."
+            )
+    elif not settings.clerk_audience:
+        logger.warning(
+            "startup.clerk_audience_missing",
+            hint="CLERK_AUDIENCE is not set; JWT audience verification is disabled in development.",
+        )
     yield
     from apps.api.app.routers.events import shutdown_async_redis
 
@@ -124,7 +136,6 @@ def _custom_openapi():
 
 app.openapi = _custom_openapi
 
-app.add_middleware(PrometheusMiddleware)
 app.add_middleware(ApiSecurityHeadersMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
 app.add_middleware(
@@ -136,6 +147,7 @@ app.add_middleware(
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(PrometheusMiddleware)
 
 app.include_router(health.router)
 app.include_router(meta.router, prefix="/v1")
@@ -237,6 +249,8 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
 
 @app.get("/metrics", include_in_schema=False)
 def prometheus_metrics(request: Request) -> Response:
+    ip_address = request.client.host if request.client else None
+    get_rate_limiter().check(bucket="admin", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
     if settings.app_env in ("production", "staging"):
         import hmac as _hmac
 
@@ -253,6 +267,8 @@ def dlq_status(request: Request) -> Response:
 
     Protected by the same metrics token as /metrics in production.
     """
+    ip_address = request.client.host if request.client else None
+    get_rate_limiter().check(bucket="admin", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
     if settings.app_env in ("production", "staging"):
         import hmac as _hmac
 
@@ -262,22 +278,27 @@ def dlq_status(request: Request) -> Response:
             return JSONResponse(status_code=403, content={"error": "forbidden"})
     try:
         import json
-        from redis import Redis
 
-        r = Redis.from_url(settings.redis_url, socket_timeout=5)
+        fallback_redis = None
+        r = get_rate_limiter()._get_redis()
+        if r is None:
+            from redis import Redis
+            r = Redis.from_url(settings.redis_url, socket_timeout=5, decode_responses=False)
+            fallback_redis = r
         try:
             depth = r.llen("bff:dead_letter_queue")
             recent_raw = r.lrange("bff:dead_letter_queue", 0, 9)
-        finally:
-            r.close()
 
-        recent = []
-        for raw in recent_raw:
-            try:
-                recent.append(json.loads(raw))
-            except Exception:
-                recent.append({"raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)})
-        return JSONResponse(content={"depth": depth, "recent": recent})
+            recent = []
+            for raw in recent_raw:
+                try:
+                    recent.append(json.loads(raw))
+                except Exception:
+                    recent.append({"raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)})
+            return JSONResponse(content={"depth": depth, "recent": recent})
+        finally:
+            if fallback_redis is not None:
+                fallback_redis.close()
     except Exception:
         logger.exception("admin.dlq_unavailable")
         return JSONResponse(status_code=503, content={"error": "dlq_unavailable"})

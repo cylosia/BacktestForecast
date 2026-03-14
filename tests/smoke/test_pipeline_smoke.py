@@ -197,6 +197,51 @@ def test_pipeline_idempotent_on_retry(db_session) -> None:
     assert len(succeeded_runs) == 1
 
 
+# ---------------------------------------------------------------------------
+# Item 52: pipeline stomper respects age threshold
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+def test_stomper_does_not_fail_recent_run(db_session) -> None:
+    """Verify that a pipeline run started 10 minutes ago is NOT marked as
+    failed by the stomper. Only truly stale runs should be superseded."""
+    from datetime import UTC, datetime, timedelta
+
+    recent_run = NightlyPipelineRun(
+        trade_date=date.today(),
+        status="running",
+        stage="quick_backtests",
+        created_at=datetime.now(UTC) - timedelta(minutes=10),
+    )
+    db_session.add(recent_run)
+    db_session.commit()
+    db_session.refresh(recent_run)
+
+    market_data = MockMarketDataFetcher()
+    executor = MockBacktestExecutor()
+    forecaster = MockForecaster()
+
+    service = NightlyPipelineService(
+        db_session,
+        market_data_fetcher=market_data,
+        backtest_executor=executor,
+        forecaster=forecaster,
+    )
+
+    run = service.run_pipeline(
+        trade_date=date.today(),
+        symbols=["AAPL"],
+        max_full_candidates=5,
+        max_recommendations=3,
+    )
+
+    db_session.expire_all()
+    original = db_session.get(NightlyPipelineRun, recent_run.id)
+    assert original is not None
+    assert run.status == "succeeded"
+
+
 @pytest.mark.smoke
 def test_schema_constraints_enforced(db_session, smoke_uses_sqlite) -> None:
     """Check constraint rejects invalid status. Skip on SQLite (no CHECK enforcement)."""

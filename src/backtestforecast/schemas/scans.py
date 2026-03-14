@@ -91,8 +91,11 @@ class CreateScannerJobRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self) -> "CreateScannerJobRequest":
-        if self.end_date > datetime.now(UTC).date() + timedelta(days=1):
+        today = datetime.now(UTC).date()
+        if self.end_date > today:
             raise ValueError("end_date cannot be in the future")
+        if self.start_date > today:
+            raise ValueError("start_date cannot be in the future")
         if self.start_date >= self.end_date:
             raise ValueError("start_date must be earlier than end_date")
         if (self.end_date - self.start_date).days > get_settings().max_scanner_window_days:
@@ -122,11 +125,13 @@ class HistoricalAnalogForecastResponse(BaseModel):
     strategy_type: str | None = None
     as_of_date: date
     horizon_days: int
+    trading_days_used: int | None = None
     analog_count: int
+    analogs_used: int | None = None
     expected_return_low_pct: Decimal
     expected_return_median_pct: Decimal
     expected_return_high_pct: Decimal
-    positive_outcome_rate_pct: Decimal
+    positive_outcome_rate_pct: Decimal | None = None
     summary: str
     disclaimer: str
     analog_dates: list[date] = Field(default_factory=list)

@@ -128,10 +128,17 @@ class NightlyPipelineService:
             logger.info("pipeline.already_exists", run_id=str(succeeded.id), status=succeeded.status)
             return succeeded
 
+        from sqlalchemy import or_
+
+        stale_cutoff = datetime.now(UTC) - timedelta(hours=1)
         stale = list(self.session.scalars(
             select(NightlyPipelineRun).where(
                 NightlyPipelineRun.trade_date == trade_date,
                 NightlyPipelineRun.status.in_(["running", "queued"]),
+                or_(
+                    NightlyPipelineRun.started_at.is_(None),
+                    NightlyPipelineRun.started_at < stale_cutoff,
+                ),
             ).with_for_update()
         ))
         for s in stale:
@@ -197,6 +204,15 @@ class NightlyPipelineService:
             quick_results = self._stage3_quick_backtest(pairs, trade_date)
             run.quick_backtests_run = len(quick_results)
 
+            if not quick_results and pairs:
+                logger.warning(
+                    "pipeline.survivorship_bias_all_filtered",
+                    run_id=str(run.id),
+                    pairs_evaluated=len(pairs),
+                    msg="All quick-backtest candidates scored <= 0 and were filtered. "
+                        "Results may reflect survivorship bias.",
+                )
+
             quick_results.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))
             top_candidates = quick_results[:max_full_candidates]
             logger.info(
@@ -255,7 +271,9 @@ class NightlyPipelineService:
                 duration_seconds=float(run.duration_seconds),
             )
 
-        except Exception:
+        except Exception:  # Intentional broad catch: the pipeline must mark its DB row as
+            # "failed" regardless of what went wrong, so that the scheduler doesn't
+            # re-attempt and operators can see the failure in the dashboard.
             failing_stage = run.stage
             counters = {
                 "symbols_screened": run.symbols_screened,
@@ -279,7 +297,8 @@ class NightlyPipelineService:
             run.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
             try:
                 self.session.commit()
-            except Exception:
+            except Exception:  # Intentional: if the failure-recording commit itself fails,
+                # we still want to log and re-raise the original exception.
                 self.session.rollback()
             logger.exception("pipeline.failed", run_id=str(run.id))
             raise
@@ -309,7 +328,8 @@ class NightlyPipelineService:
                     symbol, earnings_start, earnings_end,
                 )
                 return classify_regime(symbol, bars, earnings_dates=earnings_dates)
-            except Exception as exc:
+            except Exception as exc:  # Intentional: individual symbol screening failures
+                # (API timeouts, bad data) must not abort the entire universe screen.
                 logger.debug("pipeline.stage1_skip", symbol=symbol, error=str(exc))
                 return None
 
@@ -317,9 +337,9 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(symbols)) if symbols else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_screen_one, s): s for s in symbols}
-            for future in as_completed(futures):
+            for future in as_completed(futures, timeout=300):
                 try:
-                    snapshot = future.result()
+                    snapshot = future.result(timeout=300)
                 except Exception:
                     logger.warning("pipeline.screen_task_failed", exc_info=True)
                     continue
@@ -390,11 +410,15 @@ class NightlyPipelineService:
                 roi = summary.get("total_roi_pct", 0.0)
                 win_rate = summary.get("win_rate", 0.0) / 100.0
                 drawdown = min(summary.get("max_drawdown_pct", 50.0), 99.0)
-                # Composite score: positive only when ROI > 0 AND win_rate > 0.
-                # Strategies with negative ROI are intentionally filtered out
-                # (score <= 0) because the pipeline recommends only profitable configs.
-                score = roi * win_rate * (1.0 - drawdown / 100.0)
+                trade_count = summary.get("trade_count", 1)
+                sample_factor = min(trade_count / 10.0, 1.0)
+                score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
 
+                # NOTE: Survivorship bias — candidates with score <= 0 are filtered
+                # out entirely. This means the pipeline only surfaces historically
+                # profitable configurations, which may overstate expected future
+                # performance. This is a known limitation documented in
+                # docs/known-limitations.md.
                 if score <= 0:
                     return None
 
@@ -416,7 +440,8 @@ class NightlyPipelineService:
                     score=score,
                 )
 
-            except Exception as exc:
+            except Exception as exc:  # Intentional: individual quick-backtest failures must
+                # not prevent other candidates from being evaluated.
                 logger.warning(
                     "pipeline.stage3_skip",
                     symbol=pair.symbol,
@@ -429,9 +454,9 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(work_items)) if work_items else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, item): item for item in work_items}
-            for future in as_completed(futures):
+            for future in as_completed(futures, timeout=300):
                 try:
-                    result = future.result()
+                    result = future.result(timeout=300)
                 except Exception:
                     logger.warning("pipeline.quick_backtest_task_failed", exc_info=True)
                     continue
@@ -486,7 +511,8 @@ class NightlyPipelineService:
                     score=score,
                 )
 
-            except Exception as exc:
+            except Exception as exc:  # Intentional: individual full-backtest failures must
+                # not prevent other candidates from being refined.
                 logger.warning(
                     "pipeline.stage4_skip",
                     symbol=candidate.symbol,
@@ -499,9 +525,9 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, c): c for c in candidates}
-            for future in as_completed(futures):
+            for future in as_completed(futures, timeout=300):
                 try:
-                    result = future.result()
+                    result = future.result(timeout=300)
                 except Exception:
                     logger.warning("pipeline.full_backtest_task_failed", exc_info=True)
                     continue
@@ -541,9 +567,9 @@ class NightlyPipelineService:
             max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = [pool.submit(_fetch_forecast, c) for c in candidates]
-                for future in as_completed(futures):
+                for future in as_completed(futures, timeout=300):
                     try:
-                        candidate, forecast = future.result()
+                        candidate, forecast = future.result(timeout=300)
                     except Exception:
                         logger.warning("pipeline.forecast_task_failed", exc_info=True)
                         continue
@@ -558,14 +584,17 @@ class NightlyPipelineService:
                         if candidate.strategy_type in BEARISH_STRATEGIES:
                             forecast_supports = float(median_return) < 0
 
+                        adjusted_score = candidate.score
                         if backtest_roi > 0 and float(median_return) != 0 and forecast_supports:
-                            candidate.score *= 1.2
+                            adjusted_score *= 1.2
 
                         effective_rate = float(positive_rate)
                         if candidate.strategy_type in BEARISH_STRATEGIES:
                             effective_rate = 100.0 - effective_rate
                         if effective_rate > 60:
-                            candidate.score *= 1.0 + (effective_rate - 60) / 200.0
+                            adjusted_score *= 1.0 + (effective_rate - 60) / 200.0
+
+                        candidate.score = adjusted_score
 
         # Final sort
         candidates.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))

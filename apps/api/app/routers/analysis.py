@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func as sa_func, select
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
-from backtestforecast.config import get_settings
+from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.errors import ValidationError
-from backtestforecast.models import User
+from backtestforecast.models import SymbolAnalysis, User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import (
     AnalysisDetailResponse,
@@ -24,10 +25,9 @@ from backtestforecast.schemas.analysis import (
 )
 from backtestforecast.security import get_rate_limiter
 
-_SYMBOL_RE = re.compile(r"^[A-Za-z]{1,10}$")
+_SYMBOL_RE = re.compile(r"^[A-Za-z0-9./^]{1,16}$")
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
-settings = get_settings()
 logger = structlog.get_logger("api.analysis")
 
 
@@ -38,7 +38,8 @@ def create_analysis(
     user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+    settings: Settings = Depends(get_settings),
+) -> AnalysisSummaryResponse:
     """Create and enqueue a single-symbol deep analysis (Pro+ gated)."""
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     get_rate_limiter().check(
@@ -47,6 +48,14 @@ def create_analysis(
         limit=settings.analysis_create_rate_limit,
         window_seconds=settings.analysis_rate_limit_window_seconds,
     )
+
+    active_count = db.scalar(
+        select(sa_func.count())
+        .where(SymbolAnalysis.user_id == user.id)
+        .where(SymbolAnalysis.status.in_(("queued", "running")))
+    ) or 0
+    if active_count >= 5:
+        raise HTTPException(status_code=429, detail="Too many concurrent analyses")
 
     symbol = payload.symbol.strip().upper()
     if not _SYMBOL_RE.match(symbol):
@@ -82,8 +91,15 @@ def get_analysis(
     analysis_id: UUID,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+    settings: Settings = Depends(get_settings),
+) -> AnalysisDetailResponse:
     """Get full analysis results (for polling and display)."""
+    get_rate_limiter().check(
+        bucket="analysis:read",
+        actor_key=str(user.id),
+        limit=settings.analysis_create_rate_limit * 5,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     service = SymbolDeepAnalysisService(
         db,
@@ -106,8 +122,15 @@ def get_analysis_status(
     analysis_id: UUID,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+    settings: Settings = Depends(get_settings),
+) -> AnalysisSummaryResponse:
     """Lightweight status endpoint for polling."""
+    get_rate_limiter().check(
+        bucket="analysis:read",
+        actor_key=str(user.id),
+        limit=settings.analysis_create_rate_limit * 5,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     service = SymbolDeepAnalysisService(
         db,
@@ -123,15 +146,23 @@ def list_analyses(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(default=10, ge=1, le=50),
-) -> dict[str, Any]:
+    offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+    settings: Settings = Depends(get_settings),
+) -> AnalysisListResponse:
     """List recent analyses for the current user."""
+    get_rate_limiter().check(
+        bucket="analysis:read",
+        actor_key=str(user.id),
+        limit=settings.analysis_create_rate_limit * 5,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     service = SymbolDeepAnalysisService(
         db,
         market_data_fetcher=None,
         backtest_executor=None,
     )
-    analyses = service.list_for_user(user, limit=limit)
+    analyses = service.list_for_user(user, limit=limit, offset=offset)
     return {
         "items": [_to_summary(a) for a in analyses],
     }

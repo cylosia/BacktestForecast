@@ -3,11 +3,11 @@ const isDev = process.env.NODE_ENV !== "production";
 function requireValue(
   value: string | undefined,
   fallback: string,
-  name?: string,
+  name: string,
 ): string {
   const trimmed = value?.trim();
   const result = trimmed && trimmed.length > 0 ? trimmed : fallback;
-  if (!result && name) {
+  if (!result) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return result;

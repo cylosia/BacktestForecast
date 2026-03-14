@@ -48,6 +48,15 @@ class SyntheticPutStrategy(StrategyDefinition):
         if cq is None or not valid_entry_mids(cq.mid_price):
             return None
 
+        # Synthetic put payoff math:
+        # Structure: short 100 shares + long 1 ATM call.
+        # Behaves like a long put: profits when underlying falls, capped loss
+        # when underlying rises (call offsets stock loss above the strike).
+        # Max loss = call premium + (strike - entry_price)*100 if strike > entry
+        # (stock loss up to the strike minus call intrinsic value at that point),
+        # or just the premium if strike <= entry (call is OTM, stock shorts
+        # profitably to the strike). Max profit = theoretically unlimited
+        # (stock can fall to zero), set to None.
         premium = cq.mid_price * 100.0
         margin = short_stock_margin(bar.close_price)
         capital = margin + premium
@@ -117,6 +126,12 @@ class ReverseConversionStrategy(StrategyDefinition):
         if not valid_entry_mids(cq.mid_price, pq.mid_price):
             return None
 
+        # Reverse conversion payoff math:
+        # Structure: short 100 shares + long 1 ATM call + short 1 ATM put
+        # (same strike). Arbitrage-style: P/L is the net option cost vs the
+        # stock-to-strike carry. Max loss = net option cost - (entry - strike)
+        # * 100 if that quantity is positive; otherwise zero. Max profit is
+        # not explicitly tracked (set to None by the framework).
         net_option = (cq.mid_price - pq.mid_price) * 100.0
         margin = short_stock_margin(bar.close_price)
         capital = margin + max(net_option, 0.0)
@@ -136,7 +151,7 @@ class ReverseConversionStrategy(StrategyDefinition):
             stock_legs=[OpenStockLeg(config.symbol, -1, 100, bar.close_price, bar.close_price)],
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
-            max_loss_per_unit=abs(net_option) + abs(bar.close_price - strike) * 100.0,
+            max_loss_per_unit=max(net_option - (bar.close_price - strike) * 100.0, 0.0),
             detail_json={"strike": strike, "net_option_cost": net_option},
         )
 

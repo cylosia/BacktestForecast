@@ -51,3 +51,40 @@ def test_export_job_response_expires_at_defaults_to_none():
         created_at=datetime.now(UTC),
     )
     assert resp.expires_at is None
+
+
+# ---------------------------------------------------------------------------
+# Item 75: validate_json_shape handles wheel force-close (no legs)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_json_shape_wheel_force_close_no_legs():
+    """A dict with 'phase' key but no 'legs' should NOT log missing-key warnings.
+    The validator has a special-case: if 'phase' in data and 'legs' not in data → True."""
+    from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
+
+    wheel_force_close = {
+        "phase": "stock_inventory",
+        "entry_mid": 100.0,
+        "exit_mid": 105.0,
+    }
+    result = validate_json_shape(
+        wheel_force_close,
+        "BacktestTrade.detail_json",
+        required_keys=_TRADE_DETAIL_REQUIRED_KEYS,
+    )
+    assert result is True, "Wheel force-close trade with phase but no legs should be valid"
+
+
+def test_validate_json_shape_wheel_force_close_missing_entry_mid():
+    """Even without legs, a 'phase' dict missing required keys should still
+    pass because the phase-without-legs short-circuit returns True."""
+    from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
+
+    data = {"phase": "covered_call"}
+    result = validate_json_shape(
+        data,
+        "BacktestTrade.detail_json",
+        required_keys=_TRADE_DETAIL_REQUIRED_KEYS,
+    )
+    assert result is True, "phase-only dict should short-circuit to True"

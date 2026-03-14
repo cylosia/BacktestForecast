@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from backtestforecast.models import BacktestRun
+from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade
 
 
 class BacktestRunRepository:
@@ -41,12 +41,13 @@ class BacktestRunRepository:
         user_id: UUID,
         *,
         limit: int = 50,
+        offset: int = 0,
         created_since: datetime | None = None,
     ) -> list[BacktestRun]:
         stmt = select(BacktestRun).where(BacktestRun.user_id == user_id)
         if created_since is not None:
             stmt = stmt.where(BacktestRun.created_at >= created_since)
-        stmt = stmt.order_by(desc(BacktestRun.created_at)).limit(limit)
+        stmt = stmt.order_by(desc(BacktestRun.created_at)).offset(offset).limit(limit)
         return list(self.session.scalars(stmt))
 
     def count_for_user_created_between(
@@ -60,7 +61,7 @@ class BacktestRunRepository:
             BacktestRun.user_id == user_id,
             BacktestRun.created_at >= start_inclusive,
             BacktestRun.created_at < end_exclusive,
-            BacktestRun.status.notin_(("failed", "cancelled", "queued", "running")),
+            BacktestRun.status.notin_(("failed", "cancelled")),
         )
         return int(self.session.scalar(stmt) or 0)
 
@@ -95,5 +96,23 @@ class BacktestRunRepository:
                 selectinload(BacktestRun.trades),
                 selectinload(BacktestRun.equity_points),
             )
+        )
+        return list(self.session.scalars(stmt))
+
+    def get_trades_for_run(self, run_id: UUID, *, limit: int = 10_000) -> list[BacktestTrade]:
+        stmt = (
+            select(BacktestTrade)
+            .where(BacktestTrade.run_id == run_id)
+            .order_by(BacktestTrade.entry_date)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
+    def get_equity_points_for_run(self, run_id: UUID, *, limit: int = 10_000) -> list[BacktestEquityPoint]:
+        stmt = (
+            select(BacktestEquityPoint)
+            .where(BacktestEquityPoint.run_id == run_id)
+            .order_by(BacktestEquityPoint.trade_date)
+            .limit(limit)
         )
         return list(self.session.scalars(stmt))

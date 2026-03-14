@@ -7,6 +7,7 @@ MarketDataService, BacktestExecutionService, and HistoricalAnalogForecaster.
 
 from __future__ import annotations
 
+import json
 import threading
 from collections import OrderedDict
 from datetime import date, datetime, timedelta
@@ -97,7 +98,8 @@ class PipelineBacktestExecutor:
         if request.strategy_overrides:
             d = request.strategy_overrides.model_dump(exclude_none=True)
             overrides_key = tuple(sorted(
-                (k, str(v)) for k, v in d.items()
+                (k, json.dumps(v, sort_keys=True) if isinstance(v, (dict, list)) else str(v))
+                for k, v in d.items()
             ))
         return (
             request.symbol,
@@ -221,7 +223,7 @@ class PipelineBacktestExecutor:
             "end_date": end_date,
             "target_dte": target_dte,
             "dte_tolerance_days": 5,
-            "max_holding_days": target_dte,
+            "max_holding_days": min(target_dte, 120),
             "account_size": Decimal("10000"),
             "risk_per_trade_pct": Decimal("5"),
             "commission_per_contract": Decimal("0.65"),
@@ -257,7 +259,8 @@ class PipelineForecaster:
         self._market_data = market_data
         self._bar_cache: OrderedDict[tuple[str, date], list[DailyBar]] = OrderedDict()
         self._bar_cache_lock = threading.Lock()
-        self._bar_fetch_lock = threading.Lock()
+        self._bar_fetch_locks: dict[tuple[str, date], threading.Lock] = {}
+        self._bar_fetch_locks_lock = threading.Lock()
 
     def get_forecast(
         self,
@@ -275,7 +278,13 @@ class PipelineForecaster:
                 if bars is not None:
                     self._bar_cache.move_to_end(cache_key)
             if bars is None:
-                with self._bar_fetch_lock:
+                with self._bar_fetch_locks_lock:
+                    fetch_lock = self._bar_fetch_locks.setdefault(cache_key, threading.Lock())
+                    if len(self._bar_fetch_locks) > 500:
+                        keys_to_remove = list(self._bar_fetch_locks.keys())[:len(self._bar_fetch_locks) - 500]
+                        for k in keys_to_remove:
+                            self._bar_fetch_locks.pop(k, None)
+                with fetch_lock:
                     with self._bar_cache_lock:
                         bars = self._bar_cache.get(cache_key)
                         if bars is not None:

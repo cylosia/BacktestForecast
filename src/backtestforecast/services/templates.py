@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PlanTier, normalize_plan_tier
-from backtestforecast.errors import ConflictError, NotFoundError, QuotaExceededError, ValidationError
+from backtestforecast.errors import ConfigurationError, ConflictError, NotFoundError, QuotaExceededError, ValidationError
 from backtestforecast.models import BacktestTemplate, User
 from backtestforecast.repositories.templates import BacktestTemplateRepository
 from backtestforecast.schemas.templates import (
@@ -29,9 +29,12 @@ def _resolve_template_limit(
     plan_tier: str | None,
     subscription_status: str | None,
     subscription_current_period_end: datetime | None = None,
-) -> int | None:
+) -> int:
     tier = normalize_plan_tier(plan_tier, subscription_status, subscription_current_period_end)
-    return TEMPLATE_LIMITS.get(tier, 3)
+    limit = TEMPLATE_LIMITS.get(tier)
+    if limit is None:
+        raise ConfigurationError(f"Unknown plan tier for template limit: {tier}")
+    return limit
 
 
 class BacktestTemplateService:
@@ -61,8 +64,8 @@ class BacktestTemplateService:
         self.session.refresh(template)
         return self._to_response(template)
 
-    def list_templates(self, user: User, *, limit: int = 100) -> TemplateListResponse:
-        templates = self.repository.list_for_user(user.id, limit=limit)
+    def list_templates(self, user: User, *, limit: int = 100, offset: int = 0) -> TemplateListResponse:
+        templates = self.repository.list_for_user(user.id, limit=limit, offset=offset)
         total = self.repository.count_for_user(user.id)
         template_limit = _resolve_template_limit(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
         return TemplateListResponse(
@@ -88,7 +91,7 @@ class BacktestTemplateService:
             raise NotFoundError("Template not found.")
 
         if request.expected_updated_at is not None:
-            if template.updated_at != request.expected_updated_at:
+            if abs((template.updated_at - request.expected_updated_at).total_seconds()) > 0.002:
                 raise ConflictError(
                     "Template was modified by another request. Please refresh and try again."
                 )
@@ -114,7 +117,7 @@ class BacktestTemplateService:
         return self._to_response(template)
 
     def delete(self, user: User, template_id: UUID) -> None:
-        template = self.repository.get_for_user(template_id, user.id)
+        template = self.repository.get_for_user(template_id, user.id, for_update=True)
         if template is None:
             raise NotFoundError("Template not found.")
         self.repository.delete(template)
@@ -130,8 +133,6 @@ class BacktestTemplateService:
         limit = _resolve_template_limit(
             locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,
         )
-        if limit is None:
-            return
         count = self.repository.count_for_user(user.id)
         if count >= limit:
             tier = normalize_plan_tier(

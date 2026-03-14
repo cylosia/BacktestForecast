@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from functools import lru_cache
 
 from pydantic import Field, field_validator, model_validator
@@ -21,6 +22,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://backtestforecast:backtestforecast@localhost:5432/backtestforecast"
     redis_url: str = "redis://localhost:6379/0"
     redis_password: str | None = None
+    # Separate Redis URL for non-broker usage (rate limiting, SSE pub/sub, caching).
+    # Defaults to redis_url when not set.  In production, point this at a dedicated
+    # Redis instance or database number to isolate cache/SSE traffic from Celery broker traffic.
+    redis_cache_url: str | None = None
 
     web_cors_origins_raw: str = "http://localhost:3000"
     api_allowed_hosts_raw: str = "localhost,127.0.0.1"
@@ -182,6 +187,8 @@ class Settings(BaseSettings):
 
     pipeline_max_workers: int = Field(default=20, ge=1, le=64)
 
+    scan_timeout_seconds: int = 540
+
     risk_free_rate: float = 0.045
 
     max_backtest_window_days: int = 1_825
@@ -244,6 +251,17 @@ class Settings(BaseSettings):
     def validate_retry_backoff(cls, value: float) -> float:
         return max(float(value), 0.0)
 
+    @field_validator("ip_hash_salt")
+    @classmethod
+    def validate_ip_hash_salt_length(cls, value: str) -> str:
+        if len(value) < 16:
+            warnings.warn(
+                f"IP_HASH_SALT is only {len(value)} characters; "
+                "use at least 16 characters for adequate entropy.",
+                stacklevel=2,
+            )
+        return value
+
     @property
     def web_cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.web_cors_origins_raw.split(",") if origin.strip()]
@@ -280,6 +298,12 @@ class Settings(BaseSettings):
             parsed = [s.strip() for s in self.pipeline_default_symbols_csv.split(",") if s.strip()]
             if parsed:
                 self.pipeline_default_symbols = parsed
+        return self
+
+    @model_validator(mode="after")
+    def default_redis_cache_url(self) -> "Settings":
+        if not self.redis_cache_url:
+            self.redis_cache_url = self.redis_url
         return self
 
     @model_validator(mode="after")

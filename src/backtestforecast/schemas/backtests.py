@@ -396,6 +396,7 @@ class CreateBacktestRunRequest(BaseModel):
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
     idempotency_key: str | None = Field(default=None, max_length=80)
     custom_legs: list[CustomLegDefinition] | None = Field(default=None, max_length=8)
+    slippage_pct: float = Field(default=0.0, ge=0.0, le=5.0, description="Slippage percentage applied to entry and exit prices.")
     strategy_overrides: StrategyOverrides | None = Field(
         default=None, description="Optional overrides for strike placement and spread width"
     )
@@ -413,10 +414,12 @@ class CreateBacktestRunRequest(BaseModel):
     @model_validator(mode="after")
     def validate_request(self) -> "CreateBacktestRunRequest":
         from datetime import UTC, datetime as _dt, timedelta as _td
-        if self.end_date > _dt.now(UTC).date() + _td(days=1):
+        if self.end_date > _dt.now(UTC).date():
             raise ValueError("end_date cannot be in the future.")
         if self.start_date >= self.end_date:
             raise ValueError("start_date must be earlier than end_date")
+        if self.dte_tolerance_days >= self.target_dte:
+            raise ValueError("dte_tolerance_days must be less than target_dte")
         if (self.end_date - self.start_date).days > get_settings().max_backtest_window_days:
             raise ValueError(
                 f"backtest window exceeds the configured maximum of {get_settings().max_backtest_window_days} days"

@@ -143,18 +143,53 @@ def get_pipeline_history(
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
 
-    stmt = select(NightlyPipelineRun).order_by(desc(NightlyPipelineRun.created_at))
+    from uuid import UUID as _UUID
+
+    stmt = select(NightlyPipelineRun).order_by(
+        desc(NightlyPipelineRun.created_at), desc(NightlyPipelineRun.id),
+    )
     if cursor:
-        try:
-            cursor_dt = _dt.fromisoformat(cursor)
-        except ValueError:
-            from backtestforecast.errors import ValidationError as _VE
-            raise _VE("Invalid pagination cursor format. Expected an ISO 8601 timestamp.")
-        stmt = stmt.where(NightlyPipelineRun.created_at < cursor_dt)
+        from datetime import timezone
+        from sqlalchemy import or_, and_
+        from backtestforecast.errors import ValidationError as _VE
+
+        if "|" in cursor:
+            parts = cursor.split("|", 1)
+            try:
+                cursor_dt = _dt.fromisoformat(parts[0])
+                cursor_id = _UUID(parts[1])
+            except (ValueError, IndexError):
+                raise _VE("Invalid pagination cursor format. Expected 'ISO_timestamp|UUID'.")
+        else:
+            try:
+                cursor_dt = _dt.fromisoformat(cursor)
+            except ValueError:
+                raise _VE("Invalid pagination cursor format. Expected an ISO 8601 timestamp.")
+            cursor_id = None
+
+        if cursor_dt.tzinfo is None:
+            cursor_dt = cursor_dt.replace(tzinfo=timezone.utc)
+
+        if cursor_id is not None:
+            stmt = stmt.where(
+                or_(
+                    NightlyPipelineRun.created_at < cursor_dt,
+                    and_(
+                        NightlyPipelineRun.created_at == cursor_dt,
+                        NightlyPipelineRun.id < cursor_id,
+                    ),
+                )
+            )
+        else:
+            stmt = stmt.where(NightlyPipelineRun.created_at < cursor_dt)
     stmt = stmt.limit(limit)
     runs = list(db.scalars(stmt))
 
-    next_cursor = runs[-1].created_at.isoformat() if len(runs) == limit else None
+    if len(runs) == limit:
+        last = runs[-1]
+        next_cursor = f"{last.created_at.isoformat()}|{last.id}"
+    else:
+        next_cursor = None
 
     return {
         "items": [

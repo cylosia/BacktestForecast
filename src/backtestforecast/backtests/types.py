@@ -74,6 +74,7 @@ class TradeResult:
     entry_reason: str
     exit_reason: str
     detail_json: dict[str, Any] = field(default_factory=dict)
+    slippage_per_leg: list[float] | None = None
 
 
 @dataclass(frozen=True, slots=True)

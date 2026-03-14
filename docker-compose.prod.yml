@@ -1,4 +1,8 @@
 services:
+  # NOTE: Production deployments should configure sslmode=require in the
+  # DATABASE_URL connection string (e.g. ?sslmode=require) to encrypt
+  # Postgres traffic in transit. The local compose setup does not enforce
+  # SSL for development convenience.
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -8,6 +12,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -21,9 +27,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "200mb", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_data:/data
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -43,16 +51,19 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     env_file: .env.prod
     environment:
       REQUEST_MAX_BODY_BYTES: ${REQUEST_MAX_BODY_BYTES:-1048576}
+    networks:
+      - frontend
+      - backend
     deploy:
       resources:
         limits:
           memory: 512m
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/health/live'); exit(0 if r.getcode()==200 else 1)\""]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -67,11 +78,19 @@ services:
       redis:
         condition: service_healthy
     env_file: .env.prod
+    networks:
+      - backend
     deploy:
       replicas: ${WORKER_REPLICAS:-2}
       resources:
         limits:
           memory: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A apps.worker.app.celery_app.celery_app status --timeout 5"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   beat:
     image: ${WORKER_IMAGE:-ghcr.io/backtestforecast/worker:latest}
@@ -80,18 +99,22 @@ services:
       redis:
         condition: service_healthy
     env_file: .env.prod
+    networks:
+      - backend
     command: >-
       celery -A apps.worker.app.celery_app.celery_app beat
       --scheduler=redbeat.RedBeatScheduler
       --loglevel=INFO
+      --pidfile=/tmp/celerybeat.pid
     deploy:
+      replicas: 1
       resources:
         limits:
           memory: 256m
     healthcheck:
-      test: ["CMD-SHELL", "celery -A apps.worker.app.celery_app.celery_app inspect ping --timeout 10 || exit 0"]
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat.pid && kill -0 $(cat /tmp/celerybeat.pid)"]
       interval: 60s
-      timeout: 15s
+      timeout: 5s
       retries: 3
       start_period: 30s
 
@@ -102,12 +125,24 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
     env_file: .env.prod
+    networks:
+      - frontend
     deploy:
       resources:
         limits:
           memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  frontend:
+  backend:
 
 volumes:
   postgres_data:

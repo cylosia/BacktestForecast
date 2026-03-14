@@ -64,6 +64,40 @@ def test_sse_redis_connect_timeout_validated_to_minimum() -> None:
     assert s.sse_redis_connect_timeout >= 0.1
 
 
+def test_to_decimal_raises_on_nan() -> None:
+    """Item 89: to_decimal must raise ValueError for float('nan')."""
+    from decimal import Decimal
+
+    from backtestforecast.services.backtests import to_decimal
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(float("nan"))
+
+
+def test_to_decimal_raises_on_inf() -> None:
+    """to_decimal must also raise ValueError for float('inf')."""
+    from backtestforecast.services.backtests import to_decimal
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(float("inf"))
+
+
+def test_to_decimal_raises_on_decimal_nan() -> None:
+    """to_decimal must raise ValueError for Decimal('NaN')."""
+    from decimal import Decimal
+
+    from backtestforecast.services.backtests import to_decimal
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(Decimal("NaN"))
+
+
 def test_db_pool_max_overflow_validated_to_minimum_one() -> None:
     from backtestforecast.config import Settings
 

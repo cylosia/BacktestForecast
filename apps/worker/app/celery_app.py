@@ -53,6 +53,7 @@ celery_app.conf.task_queues = (
 celery_app.conf.task_routes = {
     "maintenance.ping": {"queue": "maintenance"},
     "maintenance.reap_stale_jobs": {"queue": "maintenance"},
+    "maintenance.reconcile_s3_orphans": {"queue": "maintenance"},
     "backtests.run": {"queue": "research"},
     "scans.run_job": {"queue": "research"},
     "scans.refresh_prioritized": {"queue": "maintenance"},
@@ -61,6 +62,9 @@ celery_app.conf.task_routes = {
     "analysis.deep_symbol": {"queue": "research"},
 }
 
+# RedBeat loads these entries on first run and stores them in Redis.
+# If RedBeat's Redis is flushed, these entries will be re-created from
+# this config on the next beat startup.  This is expected behavior.
 celery_app.conf.beat_schedule = {
     "refresh-prioritized-scans-daily": {
         "task": "scans.refresh_prioritized",
@@ -74,6 +78,10 @@ celery_app.conf.beat_schedule = {
     "reap-stale-jobs": {
         "task": "maintenance.reap_stale_jobs",
         "schedule": crontab(minute="*/10"),
+    },
+    "reconcile-s3-orphans-daily": {
+        "task": "maintenance.reconcile_s3_orphans",
+        "schedule": crontab(hour=3, minute=30),
     },
 }
 

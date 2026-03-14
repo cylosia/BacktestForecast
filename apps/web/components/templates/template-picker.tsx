@@ -9,20 +9,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
   if (!obj || typeof obj !== "object") return false;
   const record = obj as Record<string, unknown>;
-  const requiredFields = [
-    "strategy_type",
-    "target_dte",
-    "dte_tolerance_days",
-    "max_holding_days",
-    "account_size",
-    "risk_per_trade_pct",
-    "commission_per_contract",
-  ];
-  return requiredFields.every((field) => field in record);
+  return (
+    typeof record.strategy_type === "string" &&
+    typeof record.target_dte === "number" &&
+    typeof record.dte_tolerance_days === "number" &&
+    typeof record.max_holding_days === "number" &&
+    (typeof record.account_size === "number" || typeof record.account_size === "string") &&
+    (typeof record.risk_per_trade_pct === "number" || typeof record.risk_per_trade_pct === "string") &&
+    (typeof record.commission_per_contract === "number" || typeof record.commission_per_contract === "string")
+  );
 }
 
 export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> | null {
-  const config = template.config;
+  const config = template.config_json;
   if (!isValidTemplateConfig(config)) return null;
   const typed = config;
   const patch: Partial<BacktestFormValues> = {

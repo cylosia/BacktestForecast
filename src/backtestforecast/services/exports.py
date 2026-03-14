@@ -8,12 +8,13 @@ from typing import Self
 from uuid import UUID
 
 import structlog
+from sqlalchemy import update as sa_update_top
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat, ensure_export_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.errors import AppError, NotFoundError
+from backtestforecast.errors import AppError, NotFoundError, ValidationError
 from backtestforecast.exports.storage import DatabaseStorage, ExportStorage, get_export_storage
 from backtestforecast.models import ExportJob, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
@@ -76,6 +77,11 @@ class ExportService:
         run = self.backtests.get_lightweight_for_user(payload.run_id, user.id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
+        if run.status != "succeeded":
+            raise ValidationError(
+                f"Cannot export a backtest run with status \"{run.status}\". "
+                "Only succeeded runs can be exported."
+            )
 
         export_job = ExportJob(
             user_id=user.id,
@@ -148,6 +154,11 @@ class ExportService:
                 raise ValueError(
                     f"Generated export exceeds the {_MAX_EXPORT_BYTES // (1024 * 1024)} MB size limit."
                 )
+            # ORPHAN RISK: The storage write below happens outside the DB
+            # transaction.  If the subsequent commit fails, the uploaded object
+            # will remain in storage with no matching DB record pointing to it.
+            # A periodic cleanup job should reconcile storage keys against the
+            # export_jobs table and remove orphans.
             storage_key = self._storage.put(export_job.id, content, export_job.file_name)
             if isinstance(self._storage, DatabaseStorage):
                 export_job.content_bytes = content
@@ -156,31 +167,59 @@ class ExportService:
             export_job.sha256_hex = hashlib.sha256(content).hexdigest()
             export_job.status = "succeeded"
             export_job.completed_at = datetime.now(UTC)
-            self.session.commit()
+            try:
+                self.session.commit()
+            except Exception:
+                logger.warning(
+                    "export.commit_failed_after_storage_write",
+                    export_job_id=str(export_job.id),
+                    storage_key=storage_key,
+                    exc_info=True,
+                )
+                raise
         except AppError:
             self.session.rollback()
             logger.exception("export.execution_failed", export_job_id=str(export_job.id))
-            export_job.status = "failed"
-            export_job.error_code = "export_generation_failed"
-            export_job.error_message = "Export generation failed. Please try again."
-            export_job.completed_at = datetime.now(UTC)
+            self.session.execute(
+                sa_update_top(ExportJob)
+                .where(ExportJob.id == export_job.id, ExportJob.status != "succeeded")
+                .values(
+                    status="failed",
+                    error_code="export_generation_failed",
+                    error_message="Export generation failed. Please try again.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             self.session.commit()
             raise
         except (ValueError, RuntimeError) as exc:
             self.session.rollback()
-            logger.warning("export.terminal_failure", export_job_id=str(export_job.id), error=str(exc))
-            export_job.status = "failed"
-            export_job.error_code = "export_generation_failed"
-            export_job.error_message = "Export generation failed due to a data or configuration error."
-            export_job.completed_at = datetime.now(UTC)
+            logger.exception("export.terminal_failure", export_job_id=str(export_job.id), error=str(exc))
+            self.session.execute(
+                sa_update_top(ExportJob)
+                .where(ExportJob.id == export_job.id, ExportJob.status != "succeeded")
+                .values(
+                    status="failed",
+                    error_code="export_generation_failed",
+                    error_message="Export generation failed due to a data or configuration error.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             self.session.commit()
+            raise
         except Exception:
             self.session.rollback()
             logger.exception("export.execution_failed", export_job_id=str(export_job.id))
-            export_job.status = "failed"
-            export_job.error_code = "export_generation_failed"
-            export_job.error_message = "Export generation failed due to an unexpected error."
-            export_job.completed_at = datetime.now(UTC)
+            self.session.execute(
+                sa_update_top(ExportJob)
+                .where(ExportJob.id == export_job.id, ExportJob.status != "succeeded")
+                .values(
+                    status="failed",
+                    error_code="export_generation_failed",
+                    error_message="Export generation failed due to an unexpected error.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             self.session.commit()
             raise
 
@@ -217,6 +256,8 @@ class ExportService:
                 job.content_bytes = None
                 job.storage_key = None
                 job.status = "expired"
+                job.size_bytes = 0
+                job.sha256_hex = None
                 cleaned += 1
                 logger.info(
                     "cleanup.expired",
@@ -287,7 +328,7 @@ class ExportService:
             raise NotFoundError("Export content is not available.")
         if not use_db_content and export_job.storage_key:
             try:
-                export_job.content_bytes = self._storage.get(export_job.storage_key)
+                content = self._storage.get(export_job.storage_key)
             except Exception:
                 logger.exception(
                     "export.download_storage_error",
@@ -298,6 +339,8 @@ class ExportService:
                     code="storage_unavailable",
                     message="Export file is temporarily unavailable.",
                 )
+            self.session.expunge(export_job)
+            export_job.content_bytes = content
         if not export_job.content_bytes:
             raise NotFoundError("Export content is not available.")
         self.audit.record_always(
@@ -500,7 +543,8 @@ class ExportService:
         if not isinstance(value, str):
             return value
         sanitized = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
-        if sanitized[:1] in {"=", "+", "-", "@"}:
+        stripped = sanitized.strip()
+        if stripped[:1] in {"=", "+", "-", "@", "|"}:
             return "'" + sanitized
         return sanitized
 

@@ -36,3 +36,48 @@ groups:
         annotations:
           summary: "Duplicate task executions detected"
           description: "Task {{ $labels.task_name }} is being delivered multiple times."
+
+      - alert: ValidateJsonShapeWarningRateHigh
+        expr: rate(bff_validate_json_shape_warnings_total[10m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High validate_json_shape warning rate"
+          description: "More than 1 warning/sec from validate_json_shape over the last 10 minutes. Check for schema drift or malformed payloads."
+
+      - alert: RateLimiterMemoryCounterHigh
+        expr: bff_rate_limit_memory_counter_size > 50000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rate limiter in-memory counter size is high"
+          description: "The in-memory rate-limit fallback counter has {{ $value }} entries. This may indicate Redis is down and the fallback is accumulating unbounded state. See docs/RUNBOOK.md for remediation."
+
+      - alert: ReaperTaskFailed
+        expr: increase(celery_task_failed_total{task="maintenance.reap_stale_jobs"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Reaper task is failing"
+          description: "The stale job reaper has failed in the last 15 minutes. Stuck jobs will not auto-recover."
+
+      - alert: ForecastValidationErrorSpike
+        expr: increase(http_requests_total{handler="/v1/forecasts", status="422"}[10m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Forecast validation errors spiking"
+          description: "More than 10 forecast 422 errors in 10 minutes. Check dte_tolerance_days or ticker validation."
+
+      - alert: S3ConnectionPoolExhausted
+        expr: s3_connection_pool_available < 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "S3 connection pool nearly exhausted"
+          description: "Fewer than 5 S3 connections available. Check for stream leaks in export downloads."

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.models import AuditEvent
 from backtestforecast.observability.metrics import AUDIT_DEDUPE_CONFLICTS_TOTAL
+
+logger = structlog.get_logger("audit_events")
 
 
 class AuditEventRepository:
@@ -35,8 +38,19 @@ class AuditEventRepository:
         if event.subject_id is not None:
             combined = f"{event.subject_id}:{uuid4()}"
             event.subject_id = combined[:255]
+        nested = self.session.begin_nested()
         self.session.add(event)
-        self.session.flush()
+        try:
+            nested.commit()
+        except IntegrityError:
+            nested.rollback()
+            AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
+            logger.warning(
+                "audit.add_always_conflict",
+                event_type=event.event_type,
+                subject_type=event.subject_type,
+                subject_id=event.subject_id,
+            )
         return event
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:

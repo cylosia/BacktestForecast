@@ -5,13 +5,13 @@ import type { components } from "./schema";
 // ---------------------------------------------------------------------------
 
 export type StrategyType = components["schemas"]["StrategyType"];
-export type RunStatus = components["schemas"]["RunStatus"];
+export type RunStatus = components["schemas"]["JobStatus"];
 export type ComparisonOperator = components["schemas"]["ComparisonOperator"];
 export type CrossoverDirection = components["schemas"]["CrossoverDirection"];
 export type BillingInterval = components["schemas"]["BillingInterval"];
 export type ExportFormat = components["schemas"]["ExportFormat"];
 export type ScannerMode = components["schemas"]["ScannerMode"];
-export type ScannerJobStatus = components["schemas"]["ScannerJobStatus"];
+export type ScannerJobStatus = components["schemas"]["JobStatus"];
 export type StrikeSelectionMode = components["schemas"]["StrikeSelectionMode"];
 export type SpreadWidthMode = components["schemas"]["SpreadWidthMode"];
 export type SupportResistanceMode = components["schemas"]["SupportResistanceMode"];
@@ -24,14 +24,14 @@ export type PlanTier = "free" | "pro" | "premium";
 // Entry rule types
 // ---------------------------------------------------------------------------
 
-export type RsiRule = components["schemas"]["RsiRule"];
+export type RsiRule = components["schemas"]["RsiRule-Output"];
 export type MovingAverageCrossoverRule = components["schemas"]["MovingAverageCrossoverRule"];
 export type MacdRule = components["schemas"]["MacdRule"];
-export type BollingerBandsRule = components["schemas"]["BollingerBandsRule"];
-export type IvRankRule = components["schemas"]["IvRankRule"];
-export type IvPercentileRule = components["schemas"]["IvPercentileRule"];
-export type VolumeSpikeRule = components["schemas"]["VolumeSpikeRule"];
-export type SupportResistanceRule = components["schemas"]["SupportResistanceRule"];
+export type BollingerBandsRule = components["schemas"]["BollingerBandsRule-Output"];
+export type IvRankRule = components["schemas"]["IvRankRule-Output"];
+export type IvPercentileRule = components["schemas"]["IvPercentileRule-Output"];
+export type VolumeSpikeRule = components["schemas"]["VolumeSpikeRule-Output"];
+export type SupportResistanceRule = components["schemas"]["SupportResistanceRule-Output"];
 export type AvoidEarningsRule = components["schemas"]["AvoidEarningsRule"];
 
 export type EntryRule =
@@ -92,7 +92,7 @@ export type ExportJobResponse = components["schemas"]["ExportJobResponse"];
 // Template types
 // ---------------------------------------------------------------------------
 
-export type TemplateConfig = components["schemas"]["TemplateConfig"];
+export type TemplateConfig = components["schemas"]["TemplateConfig-Output"];
 export type CreateTemplateRequest = components["schemas"]["CreateTemplateRequest"];
 export type UpdateTemplateRequest = components["schemas"]["UpdateTemplateRequest"];
 export type TemplateResponse = components["schemas"]["TemplateResponse"];

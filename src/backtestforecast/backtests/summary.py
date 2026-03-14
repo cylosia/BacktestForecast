@@ -13,6 +13,7 @@ def build_summary(
     equity_curve: list[EquityPointResult],
     *,
     risk_free_rate: float = 0.045,
+    warnings: list[dict[str, str]] | None = None,
 ) -> BacktestSummary:
     win_pnls: list[float] = []
     loss_pnls: list[float] = []
@@ -48,6 +49,14 @@ def build_summary(
     sharpe_ratio, sortino_ratio = _compute_sharpe_sortino(equity_curve, risk_free_rate, trade_count)
     cagr_pct = _compute_cagr(starting_equity, ending_equity, equity_curve)
 
+    if cagr_pct is None and warnings is not None and equity_curve:
+        calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
+        if calendar_days < 60:
+            warnings.append({
+                "code": "cagr_insufficient_duration",
+                "message": f"CAGR is not reported because the backtest spans only {calendar_days} calendar days (minimum 60 required).",
+            })
+
     calmar_ratio: float | None = None
     if cagr_pct is not None and max_drawdown_pct > 0:
         calmar_ratio = cagr_pct / max_drawdown_pct
@@ -55,10 +64,19 @@ def build_summary(
     max_consecutive_wins, max_consecutive_losses = _compute_streaks(trades)
 
     recovery_factor: float | None = None
-    if max_drawdown_pct > 0 and starting_equity > 0:
-        max_drawdown_dollars = max_drawdown_pct / 100.0 * starting_equity
+    if max_drawdown_pct > 0 and equity_curve:
+        running_peak = equity_curve[0].equity
+        max_drawdown_dollars = 0.0
+        for pt in equity_curve:
+            if pt.equity > running_peak:
+                running_peak = pt.equity
+            dd = running_peak - pt.equity
+            if dd > max_drawdown_dollars:
+                max_drawdown_dollars = dd
         if max_drawdown_dollars > 0:
             recovery_factor = total_net_pnl / max_drawdown_dollars
+            if total_net_pnl < 0:
+                recovery_factor = None
 
     return BacktestSummary(
         trade_count=trade_count,
@@ -117,10 +135,9 @@ def _compute_sharpe_sortino(
 
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
-    downside_returns = [x for x in excess if x < 0]
-    if downside_returns:
-        downside_sq_sum = sum(x**2 for x in downside_returns)
-        down_dev = math.sqrt(downside_sq_sum / len(downside_returns))
+    downside_sq_sum = sum(x**2 for x in excess if x < 0)
+    if downside_sq_sum > 0:
+        down_dev = math.sqrt(downside_sq_sum / len(excess))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None
@@ -138,7 +155,7 @@ def _compute_cagr(
     if starting_equity <= 0 or ending_equity <= 0:
         return None
     calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
-    if calendar_days < 1:
+    if calendar_days < 60:
         return None
     ratio = ending_equity / starting_equity
     years = calendar_days / 365.25

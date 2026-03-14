@@ -20,7 +20,11 @@ export function RecommendationList({
     );
   }
 
-  const maxScore = Math.max(...items.map((r) => toNumber(r.score)), 1);
+  const scores = items.map((r) => toNumber(r.score)).filter(Number.isFinite);
+  const rawMax = scores.length === 0 ? 0 : Math.max(...scores);
+  const rawMin = scores.length === 0 ? 0 : Math.min(...scores);
+  const allNegative = rawMax <= 0;
+  const maxScore = allNegative ? Math.max(Math.abs(rawMin), 1) : Math.max(rawMax, 1);
 
   return (
     <Card>
@@ -56,7 +60,7 @@ export function RecommendationList({
                 </p>
                 <p className="text-xs text-muted-foreground">Composite score</p>
                 <div className="mt-1 w-24">
-                  <ScoreBar score={toNumber(rec.score)} max={maxScore} />
+                  <ScoreBar score={allNegative ? 0 : Math.max(toNumber(rec.score), 0)} max={maxScore} />
                 </div>
               </div>
             </div>
@@ -127,10 +131,15 @@ export function RecommendationList({
             </div>
 
             {(rec.warnings ?? []).length > 0 ? (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-1">
                 <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
                   {(rec.warnings ?? []).length} warning(s)
                 </p>
+                <ul className="list-disc list-inside text-xs text-amber-700 dark:text-amber-400">
+                  {(rec.warnings ?? []).map((w, i) => (
+                    <li key={i}>{typeof w === "string" ? w : String((w as Record<string, unknown>).message ?? JSON.stringify(w))}</li>
+                  ))}
+                </ul>
               </div>
             ) : null}
           </div>

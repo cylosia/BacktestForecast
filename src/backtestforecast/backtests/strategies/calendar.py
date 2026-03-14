@@ -60,12 +60,16 @@ class CalendarSpreadStrategy(StrategyDefinition):
             return None
 
         entry_value_per_unit = (long_quote.mid_price - short_quote.mid_price) * 100.0
+        net_debit = max(entry_value_per_unit, 0.0)
+        full_margin = naked_call_margin(bar.close_price, short_near.strike_price, short_quote.mid_price)
+        long_leg_value = long_quote.mid_price * 100.0
+        reduced_margin = max(full_margin - long_leg_value, net_debit)
         if entry_value_per_unit >= 0:
-            capital = max(entry_value_per_unit, 50.0)
-            max_loss: float | None = entry_value_per_unit
+            capital = max(entry_value_per_unit, 1.0)
+            max_loss: float | None = max(entry_value_per_unit, 1.0)
         else:
-            capital = naked_call_margin(bar.close_price, short_near.strike_price, short_quote.mid_price)
-            max_loss = None
+            capital = reduced_margin
+            max_loss = reduced_margin
 
         detail_json = {
             "legs": [

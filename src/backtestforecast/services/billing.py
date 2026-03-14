@@ -224,6 +224,11 @@ class BillingService:
             self.session.rollback()
             self._trip_stripe_circuit()
             raise
+        except Exception:
+            self.session.rollback()
+            logger.exception("billing.webhook.processing_error", event_id=event_id, event_type=event_type)
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
+            raise
 
         self.session.commit()
         STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ok").inc()
@@ -300,6 +305,20 @@ class BillingService:
             effective_tier = PlanTier.FREE.value
         if status not in PAID_STATUSES:
             effective_tier = PlanTier.FREE.value
+
+        if (
+            current_period_end is not None
+            and user.subscription_current_period_end is not None
+            and current_period_end < user.subscription_current_period_end
+            and subscription_id == user.stripe_subscription_id
+        ):
+            logger.info(
+                "billing.subscription.out_of_order_webhook_skipped",
+                user_id=str(user.id),
+                incoming_period_end=current_period_end.isoformat(),
+                existing_period_end=user.subscription_current_period_end.isoformat(),
+            )
+            return
 
         if subscription_id is not None:
             user.stripe_subscription_id = subscription_id
@@ -434,12 +453,10 @@ class BillingService:
 
     def _get_stripe_client(self):
         try:
-            from redis import Redis
-            r = Redis.from_url(self.settings.redis_url, socket_timeout=2)
-            if r.exists(_STRIPE_CIRCUIT_KEY):
-                r.close()
+            from backtestforecast.security import get_rate_limiter
+            r = get_rate_limiter()._get_redis()
+            if r is not None and r.exists(_STRIPE_CIRCUIT_KEY):
                 raise ExternalServiceError("Stripe is temporarily unavailable. Please try again shortly.")
-            r.close()
         except ExternalServiceError:
             raise
         except Exception:
@@ -457,10 +474,10 @@ class BillingService:
 
     def _trip_stripe_circuit(self) -> None:
         try:
-            from redis import Redis
-            r = Redis.from_url(self.settings.redis_url, socket_timeout=2)
-            r.setex(_STRIPE_CIRCUIT_KEY, _STRIPE_CIRCUIT_COOLDOWN, "1")
-            r.close()
+            from backtestforecast.security import get_rate_limiter
+            r = get_rate_limiter()._get_redis()
+            if r is not None:
+                r.setex(_STRIPE_CIRCUIT_KEY, _STRIPE_CIRCUIT_COOLDOWN, "1")
         except Exception:
             pass
         logger.warning("billing.stripe_circuit_opened", cooldown_seconds=_STRIPE_CIRCUIT_COOLDOWN)

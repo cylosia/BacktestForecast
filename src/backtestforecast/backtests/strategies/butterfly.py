@@ -62,14 +62,22 @@ class ButterflyStrategy(StrategyDefinition):
         left_width = (center_call.strike_price - lower_call.strike_price) * 100.0
         right_width = (upper_call.strike_price - center_call.strike_price) * 100.0
         wing_width = min(left_width, right_width)
+        # Long call butterfly payoff math:
+        # Structure: +1 lower call, -2 center calls, +1 upper call.
+        # If opened for a debit (typical): max loss = debit paid (underlying
+        # moves far away from center strike). Max profit = narrower wing width
+        # minus debit paid (underlying pins exactly at center strike at
+        # expiration). If opened for a credit (unusual, asymmetric strikes):
+        # max loss = 0 (credit covers any adverse outcome within the wings),
+        # max profit = wing width + credit received.
         if entry_value_per_unit >= 0:
             capital_per_unit = entry_value_per_unit
             max_loss_per_unit = entry_value_per_unit
             max_profit_per_unit = max(wing_width - entry_value_per_unit, 0.0)
         else:
             capital_per_unit = max(wing_width + entry_value_per_unit, 0.0)
-            max_loss_per_unit = capital_per_unit
-            max_profit_per_unit = abs(entry_value_per_unit)
+            max_loss_per_unit = 0.0
+            max_profit_per_unit = wing_width + abs(entry_value_per_unit)
 
         detail_json = {
             "legs": [

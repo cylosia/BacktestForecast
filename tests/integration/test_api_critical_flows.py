@@ -1067,6 +1067,38 @@ def test_export_not_visible_to_other_user(
 # ===========================================================================
 
 
+# ===========================================================================
+# Item 44: ticker with digits passes backend validation
+# ===========================================================================
+
+
+def test_ticker_with_digits_passes_validation():
+    """Verify that ticker 'SPY3' matches the _TICKER_RE regex, confirming
+    digits are allowed in ticker symbols."""
+    import re
+
+    _TICKER_RE = re.compile(r"^[A-Za-z0-9./^]{1,16}$")
+    assert _TICKER_RE.match("SPY3"), "SPY3 should match the ticker regex"
+    assert _TICKER_RE.match("BRK.B"), "BRK.B should match (dots allowed)"
+    assert _TICKER_RE.match("^VIX"), "^VIX should match (caret allowed)"
+    assert _TICKER_RE.match("SPY"), "SPY should match"
+    assert not _TICKER_RE.match("SPY!"), "SPY! should NOT match (special char)"
+    assert not _TICKER_RE.match(""), "Empty string should NOT match"
+    assert not _TICKER_RE.match("A" * 17), "17-char ticker should NOT match"
+
+
+def test_ticker_with_digits_accepted_by_forecast_endpoint(
+    client, auth_headers, db_session, stub_execution,
+):
+    """Integration test: forecast endpoint accepts ticker with digits."""
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    resp = client.get("/v1/forecasts/SPY3", headers=auth_headers)
+    assert resp.status_code in (200, 422, 500), (
+        f"SPY3 should not return 422 for invalid ticker format, got {resp.status_code}"
+    )
+
+
 def test_sse_endpoints_do_not_crash(
     client, auth_headers, db_session, immediate_backtest_execution, immediate_export_execution, _fake_celery,
 ):

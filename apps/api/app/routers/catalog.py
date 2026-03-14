@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, Response
 
 from apps.api.app.dependencies import get_current_user
 from backtestforecast.billing.entitlements import normalize_plan_tier
+from backtestforecast.config import get_settings
 from backtestforecast.models import User
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.schemas.catalog import (
     StrategyCatalogGroupResponse,
     StrategyCatalogItemResponse,
@@ -22,6 +24,13 @@ def get_strategy_catalog(
     response: Response,
     user: User = Depends(get_current_user),
 ) -> StrategyCatalogResponse:
+    settings = get_settings()
+    get_rate_limiter().check(
+        bucket="catalog:read",
+        actor_key=str(user.id),
+        limit=120,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     response.headers["Cache-Control"] = "private, max-age=3600"
     grouped = get_catalog_entries_grouped()
     groups = []

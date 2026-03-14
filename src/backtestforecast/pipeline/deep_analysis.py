@@ -359,6 +359,7 @@ class SymbolDeepAnalysisService:
                 analysis.stage = failing_stage
                 for attr, value in counters.items():
                     setattr(analysis, attr, value)
+                analysis.error_code = "analysis_execution_failed"
                 analysis.status = "failed"
                 analysis.error_message = "Analysis failed. Please try again."
                 analysis.completed_at = datetime.now(UTC)
@@ -374,16 +375,22 @@ class SymbolDeepAnalysisService:
         return analysis
 
     def get_analysis(self, user: User, analysis_id: UUID) -> SymbolAnalysis:
-        analysis = self.session.get(SymbolAnalysis, analysis_id)
-        if analysis is None or analysis.user_id != user.id:
+        analysis = self.session.scalar(
+            select(SymbolAnalysis).where(
+                SymbolAnalysis.id == analysis_id,
+                SymbolAnalysis.user_id == user.id,
+            )
+        )
+        if analysis is None:
             raise NotFoundError("Symbol analysis not found.")
         return analysis
 
-    def list_for_user(self, user: User, limit: int = 20) -> list[SymbolAnalysis]:
+    def list_for_user(self, user: User, limit: int = 20, offset: int = 0) -> list[SymbolAnalysis]:
         stmt = (
             select(SymbolAnalysis)
             .where(SymbolAnalysis.user_id == user.id)
             .order_by(SymbolAnalysis.created_at.desc())
+            .offset(offset)
             .limit(limit)
         )
         return list(self.session.scalars(stmt))
@@ -426,7 +433,8 @@ class SymbolDeepAnalysisService:
                 drawdown = min(summary.get("max_drawdown_pct", 50.0), 99.0)
                 score = 0.0
                 if trade_count > 0:
-                    score = roi * (win_rate / 100.0) * (1.0 - drawdown / 100.0)
+                    sample_factor = min(trade_count / 10.0, 1.0)
+                    score = roi * (win_rate / 100.0) * (1.0 - drawdown / 100.0) * sample_factor
                 return LandscapeCell(
                     strategy_type=strategy_type,
                     strategy_label=label,
@@ -449,9 +457,9 @@ class SymbolDeepAnalysisService:
         max_workers = max(1, min(4, len(work_items)))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_cell, item): item for item in work_items}
-            for future in as_completed(futures):
+            for future in as_completed(futures, timeout=300):
                 try:
-                    cell = future.result()
+                    cell = future.result(timeout=300)
                 except Exception:
                     logger.warning("deep_analysis.landscape_future_failed", exc_info=True)
                     continue
@@ -491,9 +499,9 @@ class SymbolDeepAnalysisService:
         backtest_results: list[tuple[LandscapeCell, dict[str, Any] | None]] = []
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_candidate, c): c for c in candidates}
-            for future in as_completed(futures):
+            for future in as_completed(futures, timeout=300):
                 try:
-                    backtest_results.append(future.result())
+                    backtest_results.append(future.result(timeout=300))
                 except Exception:
                     logger.warning("deep_analysis.deep_dive_future_failed", exc_info=True)
 

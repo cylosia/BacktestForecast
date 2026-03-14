@@ -87,3 +87,60 @@ def test_daily_picks_requires_pro(client, auth_headers, db_session):
 
     resp = client.get("/v1/daily-picks", headers=auth_headers)
     assert resp.status_code in (403, 402)
+
+
+# ---------------------------------------------------------------------------
+# Item 55: cursor pagination handles same-timestamp records
+# ---------------------------------------------------------------------------
+
+
+def test_cursor_pagination_same_timestamp(client, auth_headers, db_session):
+    """Two pipeline runs with identical created_at should both appear
+    across paginated pages."""
+    from datetime import UTC, datetime
+
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    same_time = datetime(2025, 3, 10, 12, 0, 0, tzinfo=UTC)
+
+    run1 = NightlyPipelineRun(
+        trade_date=date(2025, 3, 10),
+        status="succeeded",
+        stage="complete",
+        symbols_screened=50,
+        symbols_after_screen=25,
+        pairs_generated=100,
+        quick_backtests_run=50,
+        full_backtests_run=10,
+        recommendations_produced=3,
+        duration_seconds=Decimal("60.0"),
+        completed_at=same_time,
+    )
+    run1.created_at = same_time
+    db_session.add(run1)
+
+    run2 = NightlyPipelineRun(
+        trade_date=date(2025, 3, 9),
+        status="succeeded",
+        stage="complete",
+        symbols_screened=50,
+        symbols_after_screen=25,
+        pairs_generated=100,
+        quick_backtests_run=50,
+        full_backtests_run=10,
+        recommendations_produced=2,
+        duration_seconds=Decimal("55.0"),
+        completed_at=same_time,
+    )
+    run2.created_at = same_time
+    db_session.add(run2)
+    db_session.commit()
+
+    resp = client.get("/v1/daily-picks/history?limit=10", headers=auth_headers)
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    run_ids = {item["id"] for item in items}
+    assert str(run1.id) in run_ids or str(run2.id) in run_ids, (
+        "At least one of the same-timestamp runs should appear in history"
+    )

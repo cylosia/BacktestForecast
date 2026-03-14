@@ -21,9 +21,9 @@ function formValuesToTemplateConfig(
     entryRules.push({
       type: "rsi",
       operator: values.rsiOperator,
-      threshold: Number(values.rsiThreshold),
+      threshold: values.rsiThreshold,
       period: Number(values.rsiPeriod),
-    });
+    } as EntryRule);
   }
 
   if (values.movingAverageEnabled) {

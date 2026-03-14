@@ -48,6 +48,8 @@ def configure_logging(settings: Settings | None = None) -> None:
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
+    """TODO: Convert to pure ASGI middleware to avoid SSE buffering issues
+    caused by BaseHTTPMiddleware wrapping the response body iterator."""
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         raw_id = request.headers.get(REQUEST_ID_HEADER)
         request_id = raw_id if (raw_id and _SAFE_REQUEST_ID.match(raw_id)) else str(uuid.uuid4())

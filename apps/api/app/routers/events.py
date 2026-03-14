@@ -7,12 +7,10 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from apps.api.app.dependencies import get_current_user
 from backtestforecast.config import get_settings
-from backtestforecast.db.session import get_db
 from backtestforecast.errors import NotFoundError
 from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SymbolAnalysis, User
 from backtestforecast.security import get_rate_limiter
@@ -29,6 +27,10 @@ _SSE_RESPONSES = {
 
 SSE_TIMEOUT_SECONDS = 300
 SSE_HEARTBEAT_SECONDS = 15
+SSE_MAX_CONNECTIONS_PER_USER = 10
+
+_SSE_CONN_KEY_PREFIX = "sse:connections:"
+_SSE_CONN_TTL = 600
 
 _async_redis_pool = None
 _async_redis_lock = asyncio.Lock()
@@ -50,6 +52,10 @@ async def _get_async_redis():
 
     global _async_redis_pool, _async_redis_last_ping
     now = _time.monotonic()
+    # Fast-path read outside the lock is safe here because asyncio's event loop
+    # is single-threaded: no concurrent mutation can occur between the check and
+    # the return.  If this code were used with threads, a proper memory barrier
+    # or lock would be required for the double-checked read.
     if _async_redis_pool is not None and (now - _async_redis_last_ping) < _REDIS_PING_INTERVAL:
         return _async_redis_pool
     async with _async_redis_lock:
@@ -72,7 +78,7 @@ async def _get_async_redis():
 
         settings = get_settings()
         _async_redis_pool = aioredis.from_url(
-            settings.redis_url,
+            settings.redis_cache_url,
             decode_responses=True,
             max_connections=settings.sse_redis_max_connections,
             socket_timeout=settings.sse_redis_socket_timeout,
@@ -117,11 +123,23 @@ def _check_sse_rate(user_id: UUID) -> None:
     )
 
 
-def _verify_ownership(db: Session, model: type, resource_id: UUID, user_id: UUID) -> None:
-    """Raise NotFoundError unless the resource belongs to the user."""
-    stmt = select(model.id).where(model.id == resource_id, model.user_id == user_id)
-    if db.execute(stmt).first() is None:
-        raise NotFoundError("Resource not found.")
+def _verify_ownership(model: type, resource_id: UUID, user_id: UUID) -> bool:
+    """Return True if the resource belongs to the user, raise NotFoundError otherwise.
+
+    Called *before* entering the SSE stream so the ownership check completes
+    during the HTTP request phase, not inside the async generator. Creates its
+    own session to avoid sharing the request-scoped session across threads.
+    """
+    from backtestforecast.db.session import create_session
+
+    db = create_session()
+    try:
+        stmt = select(model.id).where(model.id == resource_id, model.user_id == user_id)
+        if db.execute(stmt).first() is None:
+            raise NotFoundError("Resource not found.")
+        return True
+    finally:
+        db.close()
 
 
 async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGenerator[str | None, None]:
@@ -161,15 +179,49 @@ async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGen
                 await pubsub.close()
             except Exception:
                 pass
-        break
+
+
+async def _acquire_sse_slot(user_id: UUID) -> bool:
+    """Try to acquire a per-user SSE connection slot using Redis INCR."""
+    try:
+        pool = await _get_async_redis()
+        key = f"{_SSE_CONN_KEY_PREFIX}{user_id}"
+        count = await pool.incr(key)
+        await pool.expire(key, _SSE_CONN_TTL)
+        if count > SSE_MAX_CONNECTIONS_PER_USER:
+            await pool.decr(key)
+            return False
+        return True
+    except Exception:
+        logger.warning("sse.acquire_slot_redis_error", user_id=str(user_id), exc_info=True)
+        return True
+
+
+async def _release_sse_slot(user_id: UUID) -> None:
+    """Release a per-user SSE connection slot using Redis DECR."""
+    try:
+        pool = await _get_async_redis()
+        key = f"{_SSE_CONN_KEY_PREFIX}{user_id}"
+        count = await pool.decr(key)
+        if count <= 0:
+            await pool.delete(key)
+    except Exception:
+        logger.warning("sse.release_slot_redis_error", user_id=str(user_id), exc_info=True)
 
 
 async def _event_stream(
     channel: str,
     request: Request,
+    user_id: UUID,
 ) -> AsyncGenerator[dict[str, str], None]:
     """Wrap Redis subscription in SSE event format with heartbeats and timeout."""
     from redis.exceptions import RedisError
+
+    acquired = await _acquire_sse_slot(user_id)
+    if not acquired:
+        yield {"event": "error", "data": "Too many active event streams. Close other tabs and retry."}
+        yield {"event": "done", "data": "stream_ended"}
+        return
 
     deadline = asyncio.get_running_loop().time() + SSE_TIMEOUT_SECONDS
 
@@ -184,8 +236,9 @@ async def _event_stream(
                 yield {"event": "status", "data": data}
     except (RedisError, OSError) as exc:
         logger.warning("sse.redis_error", channel=channel, error=str(exc))
-        await _invalidate_async_redis()
         yield {"event": "error", "data": "Event stream unavailable. Please poll for status instead."}
+    finally:
+        await _release_sse_slot(user_id)
 
     yield {"event": "done", "data": "stream_ended"}
 
@@ -195,17 +248,15 @@ async def backtest_events(
     run_id: UUID,
     request: Request,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> EventSourceResponse:
-    _check_sse_rate(user.id)
-    _verify_ownership(db, BacktestRun, run_id, user.id)
-    db.close()
+    await asyncio.to_thread(_check_sse_rate, user.id)
+    await asyncio.to_thread(_verify_ownership, BacktestRun, run_id, user.id)
     channel = f"job:backtest:{run_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
-        _event_stream(channel, request),
+        _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -214,17 +265,15 @@ async def scan_events(
     job_id: UUID,
     request: Request,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> EventSourceResponse:
-    _check_sse_rate(user.id)
-    _verify_ownership(db, ScannerJob, job_id, user.id)
-    db.close()
+    await asyncio.to_thread(_check_sse_rate, user.id)
+    await asyncio.to_thread(_verify_ownership, ScannerJob, job_id, user.id)
     channel = f"job:scan:{job_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
-        _event_stream(channel, request),
+        _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -233,17 +282,15 @@ async def export_events(
     export_job_id: UUID,
     request: Request,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> EventSourceResponse:
-    _check_sse_rate(user.id)
-    _verify_ownership(db, ExportJob, export_job_id, user.id)
-    db.close()
+    await asyncio.to_thread(_check_sse_rate, user.id)
+    await asyncio.to_thread(_verify_ownership, ExportJob, export_job_id, user.id)
     channel = f"job:export:{export_job_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
-        _event_stream(channel, request),
+        _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -252,15 +299,13 @@ async def analysis_events(
     analysis_id: UUID,
     request: Request,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> EventSourceResponse:
-    _check_sse_rate(user.id)
-    _verify_ownership(db, SymbolAnalysis, analysis_id, user.id)
-    db.close()
+    await asyncio.to_thread(_check_sse_rate, user.id)
+    await asyncio.to_thread(_verify_ownership, SymbolAnalysis, analysis_id, user.id)
     channel = f"job:analysis:{analysis_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
-        _event_stream(channel, request),
+        _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

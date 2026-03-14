@@ -153,6 +153,14 @@ export default async function BacktestDetailPage({
                   {formatNumber(run.summary.average_dte_at_open)} days
                 </p>
               </div>
+              {run.summary.profit_factor != null ? (
+              <div className="rounded-xl border border-border/70 p-4">
+                <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Profit factor</p>
+                <p className="mt-2 text-xl font-semibold tracking-tight">
+                  {formatNumber(run.summary.profit_factor)}
+                </p>
+              </div>
+              ) : null}
               <div className="rounded-xl border border-border/70 p-4 sm:col-span-2">
                 <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Ending equity</p>
                 <p className="mt-2 text-2xl font-semibold tracking-tight">

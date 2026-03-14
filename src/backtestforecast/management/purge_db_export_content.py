@@ -89,7 +89,7 @@ def purge_db_export_content(
             session.commit()
             logger.info("purge.batch_committed", batch_size=len(jobs), purged_so_far=purged)
 
-        if len(jobs) < batch_size:
+        if dry_run or len(jobs) < batch_size:
             break
 
     return purged

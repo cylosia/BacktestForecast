@@ -45,9 +45,6 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    op.execute(
-        sa.text("UPDATE backtest_runs SET updated_at = created_at WHERE updated_at IS NULL")
-    )
 
     op.drop_index("ix_daily_recs_pipeline_run_id", table_name="daily_recommendations")
 

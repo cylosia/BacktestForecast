@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import re
 from typing import Generator
 from uuid import UUID
@@ -13,7 +12,7 @@ from starlette.responses import StreamingResponse
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
-from backtestforecast.config import get_settings
+from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
@@ -21,7 +20,6 @@ from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.exports import ExportService
 
 router = APIRouter(prefix="/exports", tags=["exports"])
-settings = get_settings()
 logger = structlog.get_logger("api.exports")
 
 
@@ -32,6 +30,7 @@ def create_export(
     user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ExportJobResponse:
     get_rate_limiter().check(
         bucket="exports:create",
@@ -72,7 +71,14 @@ def get_export_status(
     export_job_id: UUID,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ExportJobResponse:
+    get_rate_limiter().check(
+        bucket="exports:read",
+        actor_key=str(user.id),
+        limit=settings.export_create_rate_limit * 5,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     return ExportService(db).get_export_status(user, export_job_id)
 
 
@@ -101,6 +107,7 @@ def download_export(
     user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     get_rate_limiter().check(
         bucket="exports:download",
@@ -118,17 +125,58 @@ def download_export(
     allowed_mime_types = {"text/csv", "text/csv; charset=utf-8", "application/pdf"}
     mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
 
+    s3_key = getattr(export_job, "s3_key", None)
     content = export_job.content_bytes
+
+    if s3_key and content is None:
+        try:
+            from backtestforecast.exports.storage import get_s3_client
+
+            s3 = get_s3_client()
+            bucket = settings.s3_export_bucket
+            s3_obj = s3.get_object(Bucket=bucket, Key=s3_key)
+            content_length = s3_obj.get("ContentLength")
+
+            headers = {
+                "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
+            }
+            if content_length is not None:
+                headers["Content-Length"] = str(content_length)
+
+            _CHUNK_SIZE = 32_768  # 32 KB
+
+            def _stream_s3() -> Generator[bytes, None, None]:
+                body = s3_obj["Body"]
+                try:
+                    while True:
+                        chunk = body.read(_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    body.close()
+
+            return StreamingResponse(
+                _stream_s3(),
+                media_type=mime_type,
+                headers=headers,
+            )
+        except Exception:
+            logger.warning("export.s3_stream_fallback", export_job_id=str(export_job_id), exc_info=True)
+            content = export_job.content_bytes
+
     if content is None:
         from backtestforecast.errors import NotFoundError
         raise NotFoundError("Export file is not available.")
 
     headers = {
-        "Content-Disposition": f'attachment; filename="{safe_name}"',
+        "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
         "Content-Length": str(len(content)),
     }
 
-    def _chunk_bytes(data: bytes, chunk_size: int = 65536) -> Generator[bytes, None, None]:
+    _FALLBACK_CHUNK_SIZE = 32_768  # 32 KB
+
+    def _chunk_bytes(data: bytes, chunk_size: int = _FALLBACK_CHUNK_SIZE) -> Generator[bytes, None, None]:
         offset = 0
         while offset < len(data):
             yield data[offset:offset + chunk_size]

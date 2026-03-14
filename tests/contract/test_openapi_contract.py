@@ -83,6 +83,59 @@ def test_sse_endpoints_describe_event_stream(openapi_schema: dict) -> None:
         )
 
 
+def test_template_config_schema_exists(openapi_schema: dict) -> None:
+    """Assert that the TemplateConfig-Output schema is present in the OpenAPI components."""
+    schemas = openapi_schema.get("components", {}).get("schemas", {})
+    matching = [name for name in schemas if name.startswith("TemplateConfig")]
+    assert matching, (
+        "TemplateConfig schema must exist in OpenAPI components (expected "
+        "'TemplateConfig-Output' or similar). Found schemas: "
+        + ", ".join(sorted(schemas.keys())[:20])
+    )
+
+
+def test_scanner_job_response_has_warnings_json_field() -> None:
+    """Item 86: ScannerJobResponse must use ``warnings_json`` as the alias so
+    the DB column ``warnings_json`` maps to the ``warnings`` Pydantic field."""
+    from backtestforecast.schemas.scans import ScannerJobResponse
+
+    fields = ScannerJobResponse.model_fields
+    assert "warnings" in fields, "ScannerJobResponse must have a 'warnings' field"
+    alias = fields["warnings"].alias
+    assert alias == "warnings_json", (
+        f"Expected alias 'warnings_json' for the warnings field, got '{alias}'"
+    )
+
+    schema = ScannerJobResponse.model_json_schema(by_alias=True)
+    assert "warnings_json" in schema.get("properties", {}), (
+        "By-alias JSON schema must expose 'warnings_json' as the property name"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Item 45: scanner maxSymbols matches backend policy
+# ---------------------------------------------------------------------------
+
+
+def test_scanner_max_symbols_matches_backend_policy() -> None:
+    """Verify the PRO basic max_symbols from ScannerAccessPolicy matches the
+    frontend constant used in scanner-form.tsx (mode=basic → 5)."""
+    from backtestforecast.billing.entitlements import (
+        POLICIES,
+        PlanTier,
+        ScannerAccessPolicy,
+        ScannerMode,
+    )
+
+    pro_basic_policy = POLICIES[(PlanTier.PRO, ScannerMode.BASIC)]
+    assert isinstance(pro_basic_policy, ScannerAccessPolicy)
+    frontend_basic_max_symbols = 5
+    assert pro_basic_policy.max_symbols == frontend_basic_max_symbols, (
+        f"PRO basic max_symbols ({pro_basic_policy.max_symbols}) must match "
+        f"frontend constant ({frontend_basic_max_symbols})"
+    )
+
+
 def test_error_envelope_schema_shape(openapi_schema: dict) -> None:
     """Assert the ErrorEnvelope schema has error.code and error.message as required fields."""
     schemas = openapi_schema.get("components", {}).get("schemas", {})
@@ -94,3 +147,31 @@ def test_error_envelope_schema_shape(openapi_schema: dict) -> None:
     error_required = error_props.get("required", [])
     assert "code" in error_required, "error.code must be required"
     assert "message" in error_required, "error.message must be required"
+
+
+# ---------------------------------------------------------------------------
+# Item 74: forecast response includes trading_days_used
+# ---------------------------------------------------------------------------
+
+
+def test_forecast_response_includes_trading_days_used() -> None:
+    """HistoricalAnalogForecastResponse schema must include trading_days_used and analogs_used."""
+    from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
+
+    fields = HistoricalAnalogForecastResponse.model_fields
+    assert "trading_days_used" in fields
+    assert "analogs_used" in fields
+
+
+# ---------------------------------------------------------------------------
+# Item 75: export cleanup response has size_bytes=0
+# ---------------------------------------------------------------------------
+
+
+def test_export_job_has_cleanup_fields() -> None:
+    """ExportJob model must have size_bytes and sha256_hex for cleanup response."""
+    from backtestforecast.models import ExportJob
+
+    cols = {c.name for c in ExportJob.__table__.columns}
+    assert "size_bytes" in cols
+    assert "sha256_hex" in cols

@@ -24,10 +24,10 @@ export function BacktestRunPoller({
   const { getToken } = useAuth();
   const [status, setStatus] = useState<RunStatus | string>(initialStatus);
 
-  const fetcher = useCallback(async () => {
+  const fetcher = useCallback(async (signal: AbortSignal) => {
     const token = await getToken();
     if (!token) throw new Error("No token");
-    return fetchBacktestRunStatus(token, runId);
+    return fetchBacktestRunStatus(token, runId, signal);
   }, [getToken, runId]);
 
   const { status: pollStatus, attempts } = usePolling<BacktestRunStatusResponse>({

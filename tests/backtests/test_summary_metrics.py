@@ -272,3 +272,162 @@ class TestEdgeCases:
         assert s_zero.sharpe_ratio is not None
         assert s_high.sharpe_ratio is not None
         assert s_zero.sharpe_ratio > s_high.sharpe_ratio
+
+
+# ---------------------------------------------------------------------------
+# Item 79: Recovery factor with multi-peak equity curve
+# ---------------------------------------------------------------------------
+
+
+class TestRecoveryFactorMultiPeak:
+    """Verify recovery factor calculation with an equity curve containing
+    multiple peaks and valleys. Max drawdown dollars should be computed
+    from the correct running peak (the global peak that precedes the
+    deepest valley)."""
+
+    def test_multi_peak_valley_curve(self):
+        equities = [
+            10000.0,  # start
+            10500.0,  # peak 1
+            10100.0,  # valley 1 (dd = 400 from peak 10500)
+            10800.0,  # peak 2
+            10200.0,  # valley 2 (dd = 600 from peak 10800)
+            11000.0,  # peak 3 (new high)
+            10300.0,  # valley 3 (dd = 700 from peak 11000) ← deepest
+            10900.0,  # recovery
+            11200.0,  # new peak 4
+            11000.0,  # minor dip
+        ]
+        curve = _equity_curve(equities)
+        total_net_pnl = equities[-1] - equities[0]  # 1000
+        trades = [_trade(total_net_pnl)]
+        s = build_summary(10000.0, 11000.0, trades, curve)
+
+        assert s.recovery_factor is not None
+        # Max drawdown dollars should be 700 (11000 - 10300)
+        expected_max_dd_dollars = 700.0
+        expected_rf = total_net_pnl / expected_max_dd_dollars
+        assert abs(s.recovery_factor - expected_rf) < 0.01
+
+    def test_single_peak_valley(self):
+        equities = [10000.0, 11000.0, 9500.0, 10500.0]
+        curve = _equity_curve(equities)
+        trades = [_trade(500.0)]
+        s = build_summary(10000.0, 10500.0, trades, curve)
+        assert s.recovery_factor is not None
+        # Max drawdown: 11000 - 9500 = 1500
+        assert abs(s.recovery_factor - 500.0 / 1500.0) < 0.01
+
+    def test_multiple_equal_peaks(self):
+        equities = [10000.0, 11000.0, 10200.0, 11000.0, 10400.0, 11200.0]
+        curve = _equity_curve(equities)
+        total_pnl = 1200.0
+        trades = [_trade(total_pnl)]
+        s = build_summary(10000.0, 11200.0, trades, curve)
+        assert s.recovery_factor is not None
+        # Max drawdown: 11000 - 10200 = 800
+        expected_rf = total_pnl / 800.0
+        assert abs(s.recovery_factor - expected_rf) < 0.01
+
+    def test_ever_increasing_curve_no_recovery_factor(self):
+        equities = [10000.0, 10100.0, 10200.0, 10300.0]
+        curve = _equity_curve(equities)
+        s = build_summary(10000.0, 10300.0, [], curve)
+        assert s.recovery_factor is None
+
+
+# ---------------------------------------------------------------------------
+# Item 72: CAGR returns None for < 60 calendar days
+# ---------------------------------------------------------------------------
+
+
+class TestCagrShortDuration:
+    """Verify CAGR is None when the equity curve spans fewer than 60 calendar days."""
+
+    def test_30_day_curve_returns_none(self):
+        equities = [10000.0 + i * 10.0 for i in range(31)]
+        curve = _equity_curve(equities)
+        s = build_summary(10000.0, equities[-1], [], curve)
+        assert s.cagr_pct is None, (
+            f"CAGR should be None for a 30-day equity curve, got {s.cagr_pct}"
+        )
+
+    def test_59_day_curve_returns_none(self):
+        equities = [10000.0 + i * 5.0 for i in range(60)]
+        curve = _equity_curve(equities)
+        s = build_summary(10000.0, equities[-1], [], curve)
+        assert s.cagr_pct is None, "59 calendar days should still return None"
+
+    def test_61_day_curve_returns_value(self):
+        equities = [10000.0 + i * 5.0 for i in range(62)]
+        curve = _equity_curve(equities)
+        s = build_summary(10000.0, equities[-1], [], curve)
+        assert s.cagr_pct is not None, "61 calendar days should compute a CAGR"
+
+
+# ---------------------------------------------------------------------------
+# Item 95: Recovery factor is None when net PnL is negative
+# ---------------------------------------------------------------------------
+
+
+class TestRecoveryFactorNegativePnl:
+    """Verify that recovery factor is explicitly set to None when total net
+    PnL is negative, even if there was a meaningful drawdown."""
+
+    def test_negative_pnl_returns_none(self):
+        trades = [_trade(-300.0), _trade(-200.0)]
+        equities = [10000.0, 9700.0, 9500.0]
+        curve = _equity_curve(equities)
+        s = build_summary(10000.0, 9500.0, trades, curve)
+
+        assert s.total_net_pnl < 0
+        assert s.max_drawdown_pct > 0
+        assert s.recovery_factor is None, (
+            "Recovery factor must be None when total_net_pnl < 0"
+        )
+
+    def test_barely_negative_pnl_returns_none(self):
+        trades = [_trade(500.0), _trade(-501.0)]
+        equities = [10000.0, 10500.0, 9999.0]
+        curve = _equity_curve(equities)
+        s = build_summary(10000.0, 9999.0, trades, curve)
+
+        assert s.total_net_pnl < 0
+        assert s.recovery_factor is None, (
+            "Even slightly negative net PnL should yield None recovery factor"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Item 46: CAGR warning emitted for short backtests
+# ---------------------------------------------------------------------------
+
+
+class TestCagrWarningEmitted:
+    """Verify build_summary appends a CAGR warning when the equity curve is
+    shorter than 60 calendar days."""
+
+    def test_short_curve_emits_cagr_warning(self):
+        equities = [10000.0 + i * 10.0 for i in range(30)]
+        curve = _equity_curve(equities)
+        warnings: list[dict[str, str]] = []
+        build_summary(10000.0, equities[-1], [], curve, warnings=warnings)
+
+        assert len(warnings) == 1, f"Expected 1 warning, got {len(warnings)}"
+        assert warnings[0]["code"] == "cagr_insufficient_duration"
+        assert "60" in warnings[0]["message"]
+
+    def test_long_curve_does_not_emit_warning(self):
+        equities = [10000.0 + i * 5.0 for i in range(100)]
+        curve = _equity_curve(equities)
+        warnings: list[dict[str, str]] = []
+        build_summary(10000.0, equities[-1], [], curve, warnings=warnings)
+
+        cagr_warnings = [w for w in warnings if w["code"] == "cagr_insufficient_duration"]
+        assert len(cagr_warnings) == 0, "No CAGR warning expected for 100-day curve"
+
+    def test_no_warnings_list_does_not_crash(self):
+        equities = [10000.0 + i * 10.0 for i in range(30)]
+        curve = _equity_curve(equities)
+        s = build_summary(10000.0, equities[-1], [], curve)
+        assert s.cagr_pct is None

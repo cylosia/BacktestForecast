@@ -112,13 +112,23 @@ class IronCondorStrategy(StrategyDefinition):
         put_width = abs(short_put.strike_price - long_put.strike_price) * 100.0
         call_width = abs(long_call.strike_price - short_call.strike_price) * 100.0
         wider_spread = max(put_width, call_width)
+        # Iron condor payoff math:
+        # Net credit = (short_call + short_put) - (long_call + long_put) premiums.
+        # If opened for a credit (typical): max profit = net credit received,
+        # max loss = wider wing width - credit (worst case: underlying breaches
+        # one side, the other side expires worthless, net loss is the spread
+        # width minus the credit collected). If opened for a debit (unusual):
+        # max profit is zero (structure is mispriced), max loss is the spread
+        # width plus the debit paid.
         if entry_value_per_unit <= 0:
             credit = abs(entry_value_per_unit)
             max_loss_per_unit = max(wider_spread - credit, 0.0)
             max_profit_per_unit = credit
         else:
             max_loss_per_unit = wider_spread + entry_value_per_unit
-            max_profit_per_unit = max(wider_spread - entry_value_per_unit, 0.0)
+            max_profit_per_unit = 0.0
+        if max_profit_per_unit < 0:
+            return None
         margin = iron_condor_margin(
             long_call.strike_price - short_call.strike_price,
             short_put.strike_price - long_put.strike_price,

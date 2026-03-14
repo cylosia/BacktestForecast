@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Play, Trash2 } from "lucide-react";
@@ -20,12 +20,21 @@ export function TemplateActions({
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
 
   async function handleDelete() {
     if (!confirming) {
       setConfirming(true);
       return;
     }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setDeleting(true);
     setError(null);
@@ -37,10 +46,12 @@ export function TemplateActions({
         setDeleting(false);
         return;
       }
-      await deleteTemplate(token, templateId);
+      await deleteTemplate(token, templateId, controller.signal);
+      if (controller.signal.aborted) return;
       setDeleting(false);
       router.refresh();
     } catch {
+      if (controller.signal.aborted) return;
       setError("Failed to delete template. Please try again.");
       setDeleting(false);
     }
@@ -75,6 +86,7 @@ export function TemplateActions({
         </>
       ) : (
         <Button
+          aria-label="Delete template"
           disabled={deleting}
           size="sm"
           variant="ghost"

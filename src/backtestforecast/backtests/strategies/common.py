@@ -104,13 +104,21 @@ def choose_put_otm_strike(strikes: list[float], underlying_close: float) -> floa
 def offset_strike(strikes: list[float], base_strike: float, steps: int) -> float | None:
     ordered = sorted(strikes)
     insert_pos = bisect.bisect_left(ordered, base_strike)
+    # WARNING: If base_strike is not in the listed strikes, we temporarily
+    # insert it as a phantom to find the correct offset position. The
+    # returned strike is always validated against the original strikes list.
+    phantom_inserted = False
     if insert_pos >= len(ordered) or ordered[insert_pos] != base_strike:
         bisect.insort(ordered, base_strike)
+        phantom_inserted = True
     index = bisect.bisect_left(ordered, base_strike)
     target_index = index + steps
     if target_index < 0 or target_index >= len(ordered):
         return None
-    return ordered[target_index]
+    result = ordered[target_index]
+    if phantom_inserted and result == base_strike:
+        return None
+    return result
 
 
 def require_contract_for_strike(contracts: Iterable[OptionContractRecord], strike: float) -> OptionContractRecord:
@@ -174,6 +182,8 @@ def _approx_bsm_delta(
     significantly better accuracy.
     """
     if dte_days <= 0:
+        if spot == strike:
+            return 0.5 if contract_type == "call" else -0.5
         if contract_type == "call":
             return 1.0 if spot > strike else 0.0
         return -1.0 if spot < strike else 0.0
@@ -208,7 +218,7 @@ def _estimate_iv_for_strike(
 
     contract = None
     for c in contracts:
-        if c.strike_price == strike and c.contract_type == contract_type:
+        if abs(c.strike_price - strike) < 0.005 and c.contract_type == contract_type:
             contract = c
             break
     if contract is None:

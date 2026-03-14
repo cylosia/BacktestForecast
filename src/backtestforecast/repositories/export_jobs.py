@@ -56,7 +56,7 @@ class ExportJobRepository:
             select(ExportJob)
             .where(
                 ExportJob.expires_at < before,
-                ExportJob.status == "succeeded",
+                ExportJob.status.in_(("succeeded", "failed", "expired")),
                 ExportJob.storage_key.isnot(None),
             )
             .options(defer(ExportJob.content_bytes))

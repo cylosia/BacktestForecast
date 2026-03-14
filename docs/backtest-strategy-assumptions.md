@@ -119,3 +119,32 @@ This document describes the default modeling assumptions used by the current mul
 
 ### Avoid earnings
 - Uses the existing Massive corporate-events integration when available.
+
+## Unit conventions for `entry_mid` / `exit_mid`
+
+The `entry_mid` and `exit_mid` values stored in `detail_json` use different unit
+conventions depending on the engine:
+
+| Engine          | Convention                                   |
+|-----------------|----------------------------------------------|
+| Generic engine  | Per-unit / per-100-share option multiplier   |
+| Wheel engine    | Per-share option premium (not multiplied)    |
+
+Check the `unit_convention` field in the run's `detail_json` to determine which
+convention applies. Downstream consumers that compare P&L across strategies must
+normalise to a common unit before aggregation.
+
+## Covered strangle margin conservatism
+
+The covered strangle margin calculation uses the sum of the individual leg margin
+requirements. This is more conservative than typical broker margin, which
+recognises the natural offset between legs and applies a lower combined
+requirement. Backtest results may therefore overstate capital requirements
+relative to live broker accounts.
+
+## CAGR short-period limitation
+
+CAGR (Compound Annual Growth Rate) is not computed for backtests shorter than
+60 calendar days. For runs under this threshold the `cagr` field in the summary
+is returned as `null`. Short-period CAGR values are highly sensitive to start/end
+timing and are misleading when annualised.

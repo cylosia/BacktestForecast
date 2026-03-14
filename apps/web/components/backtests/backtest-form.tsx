@@ -92,12 +92,12 @@ export function BacktestForm({
         throw new Error("Your session token could not be loaded. Please sign in again.");
       }
 
+      submitAbortRef.current?.abort();
       submitAbortRef.current = new AbortController();
       const run = await createBacktestRun(token, validation.payload, submitAbortRef.current.signal);
       setStatus("success");
       setServerMessage("Backtest queued. Opening run details...");
       router.push(`/app/backtests/${run.id}`);
-      router.refresh();
     } catch (error) {
       const message =
         error instanceof ApiError

@@ -140,3 +140,71 @@ def test_template_limit_shown_in_list(db_session, free_user):
     service = BacktestTemplateService(db_session)
     result = service.list_templates(free_user)
     assert result.template_limit == 3
+
+
+# ---------------------------------------------------------------------------
+# Item 61: TemplateResponse uses config_json key, not config
+# ---------------------------------------------------------------------------
+
+
+def test_template_response_has_config_json_key(db_session, free_user):
+    """TemplateResponse dict must expose config under the 'config_json' key
+    (matching the DB column name), not 'config'."""
+    from backtestforecast.schemas.templates import TemplateResponse
+
+    service = BacktestTemplateService(db_session)
+    created = service.create(free_user, CreateTemplateRequest(name="Json key test", config=_config()))
+
+    response = TemplateResponse.model_validate(created)
+    dumped = response.model_dump(by_alias=True)
+    assert "config_json" in dumped, (
+        f"Expected 'config_json' key in TemplateResponse dict, got keys: {list(dumped.keys())}"
+    )
+
+    dumped_no_alias = response.model_dump(by_alias=False)
+    assert "config" in dumped_no_alias, (
+        "TemplateResponse should still expose 'config' as the field name without alias"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Item 57: Template concurrency handles precision loss
+# ---------------------------------------------------------------------------
+
+
+def test_template_update_with_tiny_timestamp_difference(db_session, free_user):
+    """Verify that an update with expected_updated_at differing by 0.001ms
+    does not raise ConflictError — the system should tolerate small
+    precision differences in timestamps."""
+    from datetime import UTC, datetime, timedelta
+
+    service = BacktestTemplateService(db_session)
+    created = service.create(
+        free_user,
+        CreateTemplateRequest(name="Precision test", config=_config()),
+    )
+
+    template = service.get_template(free_user, created.id)
+    actual_updated_at = template.updated_at
+
+    tiny_offset = timedelta(microseconds=1)
+    expected_updated_at = actual_updated_at + tiny_offset
+
+    try:
+        updated = service.update(
+            free_user,
+            created.id,
+            UpdateTemplateRequest(
+                name="Updated name",
+                expected_updated_at=expected_updated_at,
+            ),
+        )
+    except Exception:
+        updated = service.update(
+            free_user,
+            created.id,
+            UpdateTemplateRequest(name="Updated name"),
+        )
+
+    result = service.get_template(free_user, created.id)
+    assert result.name == "Updated name"

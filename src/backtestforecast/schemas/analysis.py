@@ -73,7 +73,7 @@ class AnalysisDetailResponse(AnalysisSummaryResponse):
 
 
 class CreateAnalysisRequest(BaseModel):
-    symbol: str = Field(min_length=1, max_length=10)
+    symbol: str = Field(min_length=1, max_length=16)
     idempotency_key: str | None = Field(default=None, max_length=80)
 
 

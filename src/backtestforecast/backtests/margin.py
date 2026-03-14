@@ -177,7 +177,10 @@ def covered_strangle_margin(
     """
     stock_cost = underlying_price * 100.0
     put_margin = naked_put_margin(underlying_price, put_strike, put_premium_per_share)
-    return stock_cost + put_margin
+    # The naked_put_margin already includes a 20% underlying component; subtract
+    # that overlap since the long stock already covers the put assignment risk.
+    incremental_put_margin = max(put_margin - underlying_price * 100.0 * 0.20, 0.0)
+    return stock_cost + incremental_put_margin
 
 
 # ---------------------------------------------------------------------------
@@ -219,9 +222,15 @@ def jade_lizard_margin(
     put_naked = naked_put_margin(underlying_price, put_strike, put_premium_per_share)
     call_spread = abs(call_spread_width_per_share) * 100.0
     total_credit = total_credit_per_share * 100.0
+    # When total credit >= call spread width, upside risk is eliminated and
+    # margin is just the naked put requirement. Otherwise, margin is the
+    # greater of the two sides. The total credit is NOT subtracted from the
+    # overall margin — brokers require the full margin to be posted
+    # regardless of premium collected. This is broker-specific; some
+    # platforms do reduce margin by the net credit on the call side only.
     if total_credit >= call_spread:
         return put_naked
-    return max(0.0, max(put_naked, call_spread) - total_credit)
+    return max(put_naked, call_spread)
 
 
 # ---------------------------------------------------------------------------

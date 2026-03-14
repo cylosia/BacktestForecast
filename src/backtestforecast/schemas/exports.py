@@ -33,7 +33,8 @@ class ExportJobResponse(BaseModel):
     error_message: str | None = None
     created_at: datetime
 
-    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
     started_at: datetime | None = None
     completed_at: datetime | None = None
     expires_at: datetime | None = None
+
+    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)

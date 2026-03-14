@@ -366,6 +366,31 @@ def test_generate_export_success(mock_session_local, mock_publish):
 
 @patch("apps.worker.app.tasks.publish_job_status")
 @patch("apps.worker.app.tasks.SessionLocal")
+def test_generate_export_value_error_propagates(mock_session_local, mock_publish):
+    """Item 81: ValueError from execute_export_by_id must propagate to Celery
+    (caught by the generic Exception handler for retry), not be swallowed."""
+    from apps.worker.app.tasks import generate_export
+
+    mock_service = MagicMock()
+    mock_service.execute_export_by_id.side_effect = ValueError("bad value in export data")
+    mock_service.close = MagicMock()
+
+    session = MagicMock()
+    session.get.return_value = None
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service):
+        with pytest.raises(ValueError, match="bad value in export data"):
+            generate_export(str(uuid4()))
+
+    mock_service.close.assert_called_once()
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
 def test_generate_export_app_error(mock_session_local, mock_publish):
     from apps.worker.app.tasks import generate_export
 
@@ -941,6 +966,196 @@ def test_validate_task_ownership_rejects_mismatch(db_session, db_session_factory
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Item 64: Worker quota off-by-one — 5th backtest is allowed
+# ---------------------------------------------------------------------------
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_backtest_quota_allows_5th_when_limit_is_5(mock_session_local, mock_publish):
+    """A user with monthly_backtest_quota=5 who already has 4 completed backtests
+    (plus the current queued one = 5 total rows) should be allowed, not rejected.
+    The worker subtracts 1 from the count (``used = max(used - 1, 0)``) to
+    exclude the current queued row from the count."""
+    from apps.worker.app.tasks import run_backtest
+
+    run_id = uuid4()
+    mock_run = MagicMock()
+    mock_run.user_id = uuid4()
+    mock_run.status = "queued"
+    mock_user = MagicMock()
+    mock_user.plan_tier = "free"
+    mock_user.subscription_status = None
+    mock_user.subscription_current_period_end = None
+
+    mock_service = MagicMock()
+    mock_service.execute_run_by_id.return_value = SimpleNamespace(status="succeeded", trade_count=1)
+    mock_service.close = MagicMock()
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "BacktestRun":
+            return mock_run
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    policy = SimpleNamespace(monthly_backtest_quota=5)
+    mock_repo = MagicMock()
+    mock_repo.count_for_user_created_between.return_value = 5
+
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=policy),
+        patch("apps.worker.app.tasks.BacktestRunRepository", return_value=mock_repo),
+        patch("apps.worker.app.tasks.BacktestService", return_value=mock_service),
+    ):
+        result = run_backtest(str(run_id))
+
+    assert result["status"] == "succeeded", (
+        "5th backtest should proceed: used = max(5 - 1, 0) = 4 < 5 quota"
+    )
+    mock_service.close.assert_called_once()
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_backtest_quota_rejects_6th_when_limit_is_5(mock_session_local, mock_publish):
+    """A user with monthly_backtest_quota=5 who already has 5 completed + 1 queued
+    (6 total rows) should be rejected."""
+    from apps.worker.app.tasks import run_backtest
+
+    run_id = uuid4()
+    mock_run = MagicMock()
+    mock_run.user_id = uuid4()
+    mock_run.status = "queued"
+    mock_user = MagicMock()
+    mock_user.plan_tier = "free"
+    mock_user.subscription_status = None
+    mock_user.subscription_current_period_end = None
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "BacktestRun":
+            return mock_run
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    policy = SimpleNamespace(monthly_backtest_quota=5)
+    mock_repo = MagicMock()
+    mock_repo.count_for_user_created_between.return_value = 6
+
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=policy),
+        patch("apps.worker.app.tasks.BacktestRunRepository", return_value=mock_repo),
+    ):
+        result = run_backtest(str(run_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "quota_exceeded"
+
+
+# ---------------------------------------------------------------------------
+# Item 65: Task re-delivery ownership validation
+# ---------------------------------------------------------------------------
+
+
+def test_validate_task_ownership_redelivery_claims_non_terminal(db_session, db_session_factory):
+    """When a task is re-delivered with a new celery_task_id and the old one
+    is in a non-terminal status (e.g. 'running'), the new delivery should
+    successfully claim ownership."""
+    import apps.worker.app.tasks as tasks_module
+
+    user = _create_user(db_session)
+
+    run = BacktestRun(
+        user_id=user.id,
+        symbol="TSLA",
+        strategy_type="long_call",
+        status="running",
+        celery_task_id="old-task-id",
+        date_from=date(2024, 1, 1),
+        date_to=date(2024, 3, 31),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        input_snapshot_json={},
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+    run_id = run.id
+
+    claimed = tasks_module._validate_task_ownership(
+        db_session, BacktestRun, run_id, "new-task-id"
+    )
+    assert claimed is True
+
+    db_session.expire_all()
+    refreshed = db_session.get(BacktestRun, run_id)
+    assert refreshed.celery_task_id == "new-task-id"
+
+
+def test_validate_task_ownership_redelivery_rejected_for_terminal(db_session, db_session_factory):
+    """When a task is in a terminal status ('succeeded'), re-delivery should
+    be rejected — we don't want to re-run a completed job."""
+    import apps.worker.app.tasks as tasks_module
+
+    user = _create_user(db_session)
+
+    run = BacktestRun(
+        user_id=user.id,
+        symbol="TSLA",
+        strategy_type="long_call",
+        status="succeeded",
+        celery_task_id="old-task-id",
+        date_from=date(2024, 1, 1),
+        date_to=date(2024, 3, 31),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        input_snapshot_json={},
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+
+    result = tasks_module._validate_task_ownership(
+        db_session, BacktestRun, run.id, "new-task-id"
+    )
+    assert result is False
+
+    db_session.expire_all()
+    refreshed = db_session.get(BacktestRun, run.id)
+    assert refreshed.celery_task_id == "old-task-id", "Terminal job task_id must not change"
+
+
+# ---------------------------------------------------------------------------
+# SoftTimeLimitExceeded handling
+# ---------------------------------------------------------------------------
+
+
 @patch("apps.worker.app.tasks.publish_job_status")
 @patch("apps.worker.app.tasks.SessionLocal")
 def test_run_backtest_soft_time_limit(mock_session_local, mock_publish):
@@ -983,3 +1198,76 @@ def test_run_backtest_soft_time_limit(mock_session_local, mock_publish):
     assert result["status"] == "failed"
     assert result["error_code"] == "time_limit_exceeded"
     mock_service.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Item 98: Reaper uses row-level locking (skip_locked)
+# ---------------------------------------------------------------------------
+
+
+def test_reaper_stale_running_queries_use_skip_locked():
+    """Verify that the reaper's stale-running queries use
+    `with_for_update(skip_locked=True)` to avoid blocking on rows already
+    locked by other workers. We inspect the source code of
+    _reap_stale_jobs_inner to confirm."""
+    import inspect
+    import apps.worker.app.tasks as tasks_module
+
+    source = inspect.getsource(tasks_module._reap_stale_jobs_inner)
+    assert "with_for_update(skip_locked=True)" in source, (
+        "_reap_stale_jobs_inner must use .with_for_update(skip_locked=True) "
+        "for row-level locking to prevent the reaper from blocking on rows "
+        "already locked by other workers"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Item 40: Reaper with stale running BacktestRun uses stale_running_rows
+# ---------------------------------------------------------------------------
+
+
+def test_reaper_stale_running_sets_gauge_without_crash(db_session, db_session_factory, monkeypatch):
+    """Verify the JOBS_STUCK_RUNNING gauge is set using the stale_running_rows
+    list (not stale_running_ids), and that the reaper doesn't crash when
+    processing stale running BacktestRun records."""
+    from backtestforecast.observability.metrics import JOBS_STUCK_RUNNING
+
+    user = _create_user(db_session)
+
+    stale_time = datetime.now(UTC) - timedelta(minutes=60)
+    run = BacktestRun(
+        user_id=user.id,
+        symbol="TSLA",
+        strategy_type="long_call",
+        status="running",
+        celery_task_id="stale-task-123",
+        date_from=date(2024, 1, 1),
+        date_to=date(2024, 3, 31),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        input_snapshot_json={},
+    )
+    run.created_at = stale_time
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+    run_id = run.id
+
+    import apps.worker.app.tasks as tasks_module
+
+    monkeypatch.setattr(tasks_module, "SessionLocal", db_session_factory)
+    monkeypatch.setattr(tasks_module.celery_app, "send_task", lambda *a, **kw: SimpleNamespace(id="x"))
+
+    result = tasks_module.reap_stale_jobs(stale_minutes=30)
+
+    assert result is not None
+    gauge_value = JOBS_STUCK_RUNNING.labels(model="BacktestRun")._value.get()
+    assert gauge_value >= 0
+
+    db_session.expire_all()
+    refreshed = db_session.get(BacktestRun, run_id)
+    assert refreshed.status == "failed"

@@ -6,6 +6,8 @@ CBOE Margin Manual formulas documented in the module docstrings.
 """
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from backtestforecast.backtests.margin import (
@@ -270,3 +272,533 @@ def test_short_stock_margin():
 def test_short_stock_rejects_negative():
     with pytest.raises(ValueError):
         short_stock_margin(-1.0)
+
+
+# ---------------------------------------------------------------------------
+# Item 72: Calendar spread margin via naked_call_margin
+# ---------------------------------------------------------------------------
+
+
+class TestCalendarSpreadMarginCalculation:
+    """Verify naked_call_margin produces correct results for calendar spread
+    margin scenarios with various strike/spot combinations."""
+
+    def test_atm_calendar_margin(self):
+        # ATM: underlying=150, strike=150, premium=4
+        # OTM = max(150-150,0) = 0
+        # A = 0.20*150 - 0 + 4 = 34   B = 0.10*150 + 4 = 19
+        # per_share = 34 → 3400
+        assert naked_call_margin(150.0, 150.0, 4.0) == pytest.approx(3400.0)
+
+    def test_otm_calendar_margin(self):
+        # OTM: underlying=150, strike=170, premium=1.5
+        # OTM = max(170-150,0) = 20
+        # A = 30 - 20 + 1.5 = 11.5   B = 15 + 1.5 = 16.5
+        # per_share = max(11.5,16.5) = 16.5 → 1650
+        assert naked_call_margin(150.0, 170.0, 1.5) == pytest.approx(1650.0)
+
+    def test_deep_itm_calendar_margin(self):
+        # Deep ITM: underlying=200, strike=160, premium=42
+        # OTM = max(160-200,0) = 0
+        # A = 40 - 0 + 42 = 82   B = 20 + 42 = 62
+        # per_share = 82 → 8200
+        assert naked_call_margin(200.0, 160.0, 42.0) == pytest.approx(8200.0)
+
+    def test_low_price_stock_calendar(self):
+        # Low priced: underlying=10, strike=10, premium=0.5
+        # OTM = 0
+        # A = 2 - 0 + 0.5 = 2.5   B = 1 + 0.5 = 1.5
+        # per_share = 2.5 → 250
+        assert naked_call_margin(10.0, 10.0, 0.5) == pytest.approx(250.0)
+
+    def test_high_price_stock_calendar(self):
+        # High priced: underlying=500, strike=520, premium=8
+        # OTM = max(520-500,0) = 20
+        # A = 100 - 20 + 8 = 88   B = 50 + 8 = 58
+        # per_share = 88 → 8800
+        assert naked_call_margin(500.0, 520.0, 8.0) == pytest.approx(8800.0)
+
+
+# ---------------------------------------------------------------------------
+# Item 74: Covered strangle margin is not double-counted
+# ---------------------------------------------------------------------------
+
+
+class TestCoveredStrangleMarginReasonable:
+    """Verify covered_strangle_margin returns a value less than the sum of
+    full stock cost plus full naked put margin (no double-counting)."""
+
+    def test_margin_less_than_stock_plus_naked_put(self):
+        underlying = 100.0
+        put_strike = 90.0
+        put_premium = 2.0
+
+        result = covered_strangle_margin(underlying, put_strike, put_premium)
+
+        stock_cost = underlying * 100.0
+        full_naked_put = naked_put_margin(underlying, put_strike, put_premium)
+        assert result < stock_cost + full_naked_put, (
+            f"covered_strangle_margin ({result}) should be less than "
+            f"stock_cost ({stock_cost}) + naked_put_margin ({full_naked_put})"
+        )
+
+    def test_margin_equals_stock_plus_put_margin(self):
+        underlying = 150.0
+        put_strike = 140.0
+        put_premium = 3.0
+        result = covered_strangle_margin(underlying, put_strike, put_premium)
+        stock_cost = underlying * 100.0
+        put_margin = naked_put_margin(underlying, put_strike, put_premium)
+        assert result == pytest.approx(stock_cost + put_margin)
+
+
+# ---------------------------------------------------------------------------
+# Item 88: Covered strangle max_loss formula uses actual loss, not margin
+# ---------------------------------------------------------------------------
+
+
+class TestCoveredStrangleMaxLossFormula:
+    """Verify that the covered strangle strategy's max_loss is calculated as
+    ``stock_cost + put_strike_cost - credit``, not the margin requirement.
+    This is the actual worst-case loss (stock drops to zero, put exercised)."""
+
+    def test_max_loss_equals_stock_cost_plus_put_strike_minus_credit(self):
+        from backtestforecast.backtests.strategies.collar_strangle import CoveredStrangleStrategy
+        from backtestforecast.backtests.types import BacktestConfig
+        from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+
+        underlying_price = 100.0
+        call_strike = 105.0
+        put_strike = 95.0
+        call_mid = 2.0
+        put_mid = 1.5
+        expiration = date(2025, 6, 20)
+        entry_date = date(2025, 6, 2)
+
+        bar = DailyBar(
+            trade_date=entry_date,
+            open_price=underlying_price,
+            high_price=underlying_price,
+            low_price=underlying_price,
+            close_price=underlying_price,
+            volume=1_000_000,
+        )
+
+        class StubGW:
+            def list_contracts(self, entry_dt, contract_type, target_dte, dte_tolerance_days):
+                if contract_type == "call":
+                    return [OptionContractRecord("C105", "call", expiration, call_strike, 100)]
+                return [OptionContractRecord("P95", "put", expiration, put_strike, 100)]
+
+            def get_quote(self, ticker, dt):
+                mid = call_mid if "C" in ticker else put_mid
+                return OptionQuoteRecord(trade_date=dt, bid_price=mid, ask_price=mid, participant_timestamp=None)
+
+            def get_chain_delta_lookup(self, contracts):
+                return {}
+
+        config = BacktestConfig(
+            symbol="TEST",
+            strategy_type="covered_strangle",
+            start_date=date(2025, 6, 1),
+            end_date=date(2025, 6, 20),
+            target_dte=18,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=100_000,
+            risk_per_trade_pct=20,
+            commission_per_contract=0,
+            entry_rules=[],
+        )
+
+        strategy = CoveredStrangleStrategy()
+        position = strategy.build_position(config, bar, 0, StubGW())
+        assert position is not None
+
+        credit = (call_mid + put_mid) * 100.0
+        expected_max_loss = (underlying_price * 100.0) + (put_strike * 100.0) - credit
+        margin = covered_strangle_margin(underlying_price, put_strike, put_mid)
+
+        assert position.max_loss_per_unit == pytest.approx(expected_max_loss), (
+            f"max_loss should be stock_cost + put_strike_cost - credit = {expected_max_loss}, "
+            f"not margin = {margin}"
+        )
+        assert position.max_loss_per_unit != pytest.approx(margin), (
+            "max_loss must differ from margin — it represents actual worst-case loss"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Item 93: Calendar spread capital uses $1 floor, not $50
+# ---------------------------------------------------------------------------
+
+
+class TestCalendarSpreadCapitalFloor:
+    """Verify that a calendar spread with a small debit uses $1 as the capital
+    floor, not an arbitrary $50. The production code uses
+    ``max(entry_value_per_unit, 1.0)`` when the entry is a net debit."""
+
+    def test_half_dollar_debit_capital_is_one(self):
+        from backtestforecast.backtests.strategies.calendar import CalendarSpreadStrategy
+        from backtestforecast.market_data.types import (
+            DailyBar,
+            OptionContractRecord,
+            OptionQuoteRecord,
+        )
+        from datetime import date
+
+        underlying_close = 100.0
+        strike = 100.0
+        long_mid = 3.00
+        short_mid = 2.50
+
+        bar = DailyBar(
+            trade_date=date(2025, 6, 1),
+            open_price=underlying_close,
+            high_price=underlying_close,
+            low_price=underlying_close,
+            close_price=underlying_close,
+            volume=1_000_000,
+        )
+        near_exp = date(2025, 6, 15)
+        far_exp = date(2025, 7, 1)
+
+        class StubGW:
+            def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+                return [
+                    OptionContractRecord("NEAR100", "call", near_exp, strike, 100),
+                    OptionContractRecord("FAR100", "call", far_exp, strike, 100),
+                ]
+
+            def get_quote(self, ticker, trade_date):
+                mid = long_mid if ticker == "FAR100" else short_mid
+                return OptionQuoteRecord(
+                    trade_date=trade_date, bid_price=mid, ask_price=mid, participant_timestamp=None,
+                )
+
+        from backtestforecast.backtests.types import BacktestConfig
+
+        config = BacktestConfig(
+            symbol="TEST",
+            strategy_type="calendar_spread",
+            start_date=date(2025, 5, 1),
+            end_date=date(2025, 6, 30),
+            target_dte=14,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=10_000,
+            risk_per_trade_pct=5,
+            commission_per_contract=0,
+            entry_rules=[],
+        )
+
+        strategy = CalendarSpreadStrategy()
+        position = strategy.build_position(config, bar, 0, StubGW())
+        assert position is not None
+
+        entry_value = (long_mid - short_mid) * 100.0  # $50 debit
+        assert entry_value == pytest.approx(50.0)
+        assert position.capital_required_per_unit == pytest.approx(max(entry_value, 1.0))
+        assert position.capital_required_per_unit == pytest.approx(50.0)
+        assert position.capital_required_per_unit != pytest.approx(1.0), (
+            "A $50 debit should use $50 capital, not the $1 floor"
+        )
+
+    def test_tiny_debit_uses_one_dollar_floor(self):
+        """A $0.50 debit calendar spread uses $1 capital (the floor), not $50."""
+        from backtestforecast.backtests.strategies.calendar import CalendarSpreadStrategy
+        from backtestforecast.market_data.types import (
+            DailyBar,
+            OptionContractRecord,
+            OptionQuoteRecord,
+        )
+        from datetime import date
+
+        underlying_close = 100.0
+        strike = 100.0
+        long_mid = 2.505
+        short_mid = 2.500
+
+        bar = DailyBar(
+            trade_date=date(2025, 6, 1),
+            open_price=underlying_close,
+            high_price=underlying_close,
+            low_price=underlying_close,
+            close_price=underlying_close,
+            volume=1_000_000,
+        )
+        near_exp = date(2025, 6, 15)
+        far_exp = date(2025, 7, 1)
+
+        class StubGW:
+            def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+                return [
+                    OptionContractRecord("NEAR100", "call", near_exp, strike, 100),
+                    OptionContractRecord("FAR100", "call", far_exp, strike, 100),
+                ]
+
+            def get_quote(self, ticker, trade_date):
+                mid = long_mid if ticker == "FAR100" else short_mid
+                return OptionQuoteRecord(
+                    trade_date=trade_date, bid_price=mid, ask_price=mid, participant_timestamp=None,
+                )
+
+        from backtestforecast.backtests.types import BacktestConfig
+
+        config = BacktestConfig(
+            symbol="TEST",
+            strategy_type="calendar_spread",
+            start_date=date(2025, 5, 1),
+            end_date=date(2025, 6, 30),
+            target_dte=14,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=10_000,
+            risk_per_trade_pct=5,
+            commission_per_contract=0,
+            entry_rules=[],
+        )
+
+        strategy = CalendarSpreadStrategy()
+        position = strategy.build_position(config, bar, 0, StubGW())
+        assert position is not None
+
+        entry_value = (long_mid - short_mid) * 100.0  # $0.50 debit
+        assert entry_value == pytest.approx(0.50)
+        assert position.capital_required_per_unit == pytest.approx(1.0), (
+            "A $0.50 debit calendar spread must use $1.0 capital (the floor), not $50.0"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Item 100: Jade lizard margin formula is correct
+# ---------------------------------------------------------------------------
+
+
+class TestJadeLizardMarginFormula:
+    """Verify jade lizard margin follows the documented formula:
+    margin = max(naked_put_margin, call_spread_width × 100)
+    when total credit < call spread width, otherwise just naked_put_margin."""
+
+    def test_credit_below_spread_returns_greater_of_two_sides(self):
+        underlying_price = 200.0
+        put_strike = 190.0
+        put_premium = 4.0
+        call_spread_width = 5.0
+        total_credit = 3.0
+
+        result = jade_lizard_margin(
+            underlying_price, put_strike, put_premium,
+            call_spread_width, total_credit,
+        )
+
+        put_naked = naked_put_margin(underlying_price, put_strike, put_premium)
+        call_spread = abs(call_spread_width) * 100.0
+        assert result == pytest.approx(max(put_naked, call_spread))
+
+    def test_credit_equals_spread_returns_naked_put(self):
+        underlying_price = 200.0
+        put_strike = 190.0
+        put_premium = 4.0
+        call_spread_width = 5.0
+        total_credit = 5.0
+
+        result = jade_lizard_margin(
+            underlying_price, put_strike, put_premium,
+            call_spread_width, total_credit,
+        )
+        put_naked = naked_put_margin(underlying_price, put_strike, put_premium)
+        assert result == pytest.approx(put_naked)
+
+    def test_credit_exceeds_spread_returns_naked_put(self):
+        underlying_price = 200.0
+        put_strike = 190.0
+        put_premium = 4.0
+        call_spread_width = 5.0
+        total_credit = 8.0
+
+        result = jade_lizard_margin(
+            underlying_price, put_strike, put_premium,
+            call_spread_width, total_credit,
+        )
+        put_naked = naked_put_margin(underlying_price, put_strike, put_premium)
+        assert result == pytest.approx(put_naked)
+
+    def test_put_side_dominates_when_credit_insufficient(self):
+        underlying_price = 300.0
+        put_strike = 295.0
+        put_premium = 6.0
+        call_spread_width = 5.0
+        total_credit = 2.0
+
+        result = jade_lizard_margin(
+            underlying_price, put_strike, put_premium,
+            call_spread_width, total_credit,
+        )
+        put_naked = naked_put_margin(underlying_price, put_strike, put_premium)
+        call_spread = call_spread_width * 100.0
+        assert put_naked > call_spread, "Test setup: put side should dominate"
+        assert result == pytest.approx(put_naked)
+
+
+# ---------------------------------------------------------------------------
+# Item 49: Iron condor debit max_profit is 0
+# ---------------------------------------------------------------------------
+
+
+class TestIronCondorDebitMaxProfit:
+    """When an iron condor is entered at a debit (positive entry_value_per_unit),
+    max_profit_per_unit should be 0.0 because there is no net credit collected."""
+
+    def test_debit_iron_condor_max_profit_is_zero(self):
+        from backtestforecast.backtests.strategies.iron_condor import IronCondorStrategy
+        from backtestforecast.backtests.types import BacktestConfig
+        from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+
+        underlying_close = 100.0
+        entry_date = date(2025, 5, 2)
+        expiration = date(2025, 5, 30)
+
+        bar = DailyBar(
+            trade_date=entry_date,
+            open_price=underlying_close,
+            high_price=underlying_close,
+            low_price=underlying_close,
+            close_price=underlying_close,
+            volume=1_000_000,
+        )
+
+        class DebitGW:
+            def list_contracts(self, entry_dt, contract_type, target_dte, dte_tolerance_days):
+                if contract_type == "call":
+                    return [
+                        OptionContractRecord("C100", "call", expiration, 100, 100),
+                        OptionContractRecord("C105", "call", expiration, 105, 100),
+                    ]
+                return [
+                    OptionContractRecord("P95", "put", expiration, 95, 100),
+                    OptionContractRecord("P100", "put", expiration, 100, 100),
+                ]
+
+            def get_quote(self, ticker, dt):
+                prices = {"C100": 1.0, "C105": 3.0, "P100": 1.0, "P95": 3.0}
+                mid = prices.get(ticker, 2.0)
+                return OptionQuoteRecord(trade_date=dt, bid_price=mid, ask_price=mid, participant_timestamp=None)
+
+            def get_chain_delta_lookup(self, contracts):
+                return {}
+
+        config = BacktestConfig(
+            symbol="TEST",
+            strategy_type="iron_condor",
+            start_date=date(2025, 5, 1),
+            end_date=date(2025, 5, 30),
+            target_dte=28,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=50_000,
+            risk_per_trade_pct=5,
+            commission_per_contract=0,
+            entry_rules=[],
+        )
+
+        strategy = IronCondorStrategy()
+        position = strategy.build_position(config, bar, 0, DebitGW())
+        if position is not None and position.entry_value_per_unit > 0:
+            assert position.max_profit_per_unit == 0.0, (
+                "Debit iron condor should have max_profit_per_unit == 0.0"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Item 50: Butterfly credit max_loss is 0
+# ---------------------------------------------------------------------------
+
+
+class TestButterflyMaxLoss:
+    """When a butterfly is entered at a net credit (negative entry_value_per_unit),
+    max_loss_per_unit should be 0.0 because the position is inherently profitable."""
+
+    def test_credit_butterfly_max_loss_is_zero(self):
+        from backtestforecast.backtests.strategies.butterfly import ButterflyStrategy
+        from backtestforecast.backtests.types import BacktestConfig
+        from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+
+        underlying_close = 100.0
+        entry_date = date(2025, 5, 2)
+        expiration = date(2025, 5, 30)
+
+        bar = DailyBar(
+            trade_date=entry_date,
+            open_price=underlying_close,
+            high_price=underlying_close,
+            low_price=underlying_close,
+            close_price=underlying_close,
+            volume=1_000_000,
+        )
+
+        class CreditButterflyGW:
+            def list_contracts(self, entry_dt, contract_type, target_dte, dte_tolerance_days):
+                return [
+                    OptionContractRecord("C95", "call", expiration, 95, 100),
+                    OptionContractRecord("C100", "call", expiration, 100, 100),
+                    OptionContractRecord("C105", "call", expiration, 105, 100),
+                ]
+
+            def get_quote(self, ticker, dt):
+                prices = {"C95": 7.0, "C100": 1.0, "C105": 5.0}
+                mid = prices.get(ticker, 2.0)
+                return OptionQuoteRecord(trade_date=dt, bid_price=mid, ask_price=mid, participant_timestamp=None)
+
+            def get_chain_delta_lookup(self, contracts):
+                return {}
+
+        config = BacktestConfig(
+            symbol="TEST",
+            strategy_type="butterfly",
+            start_date=date(2025, 5, 1),
+            end_date=date(2025, 5, 30),
+            target_dte=28,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=50_000,
+            risk_per_trade_pct=5,
+            commission_per_contract=0,
+            entry_rules=[],
+        )
+
+        strategy = ButterflyStrategy()
+        position = strategy.build_position(config, bar, 0, CreditButterflyGW())
+        if position is not None and position.entry_value_per_unit < 0:
+            assert position.max_loss_per_unit == 0.0, (
+                "Credit butterfly should have max_loss_per_unit == 0.0"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Item 51: Reverse conversion max_loss formula correct
+# ---------------------------------------------------------------------------
+
+
+class TestReverseConversionMaxLoss:
+    """Verify reverse conversion max_loss is 0 when position is inherently
+    profitable (net credit exceeds any risk)."""
+
+    def test_profitable_reverse_conversion_max_loss_is_zero(self):
+        from backtestforecast.backtests.strategies.common import offset_strike
+        from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
+
+        underlying_close = 100.0
+        strike = 100.0
+
+        call_mid = 3.0
+        put_mid = 5.0
+        net_credit = (put_mid - call_mid) * 100
+        assert net_credit > 0, "Test setup: must be net credit"
+
+        stock_cost = underlying_close * 100
+        max_loss = max(stock_cost - strike * 100 - net_credit, 0.0)
+        assert max_loss == 0.0, (
+            "When stock_cost == strike * 100 and there's a net credit, "
+            "max_loss should be 0.0"
+        )

@@ -14,8 +14,9 @@ from backtestforecast.billing.entitlements import (
     resolve_scanner_policy,
     validate_strategy_access,
 )
+from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError, NotFoundError, ValidationError
-from backtestforecast.schemas.json_shapes import validate_json_shape
+from backtestforecast.schemas.json_shapes import _FORECAST_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.utils.dates import market_date_today
 from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
 from backtestforecast.market_data.service import HistoricalDataBundle
@@ -163,7 +164,6 @@ class ScanService:
             return job
 
         payload = CreateScannerJobRequest.model_validate(job.request_snapshot_json)
-        self.repository.delete_recommendations(job.id)
         job.status = "running"
         job.started_at = datetime.now(UTC)
         job.completed_at = None
@@ -171,13 +171,15 @@ class ScanService:
         job.error_message = None
         job.recommendation_count = 0
         job.evaluated_candidate_count = 0
-        job.warnings_json = []
         self.session.commit()
         self.session.refresh(job)
 
         try:
+            self.repository.delete_recommendations(job.id)
             return self._execute_scan(job, payload)
-        except Exception:
+        except Exception:  # Intentional broad catch: any failure during scan execution must
+            # mark the job as failed in the DB so the client sees a terminal state
+            # rather than a perpetually "running" job. The exception is re-raised.
             logger.exception("scan.run_job_failed", job_id=str(job_id))
             try:
                 self.session.rollback()
@@ -188,7 +190,8 @@ class ScanService:
                     job.error_message = "An unexpected error occurred during scan execution."
                     job.completed_at = datetime.now(UTC)
                     self.session.commit()
-            except Exception:
+            except Exception:  # Intentional: the recovery handler itself must not raise,
+                # otherwise the original exception would be masked.
                 logger.exception("scan.run_job_failed.recovery_failed", job_id=str(job_id))
                 self.session.rollback()
             raise
@@ -212,6 +215,7 @@ class ScanService:
         historical_cache = self._batch_historical_performance(payload, job.created_at)
         scan_start = _time.monotonic()
         _scan_timed_out = False
+        _scan_timeout = get_settings().scan_timeout_seconds
 
         for symbol in payload.symbols:
             if _scan_timed_out:
@@ -222,11 +226,6 @@ class ScanService:
                 for rule_set in payload.rule_sets:
                     if not is_strategy_rule_set_compatible(strategy.value, rule_set.entry_rules):
                         continue
-
-                    if _time.monotonic() - scan_start > 540:
-                        warnings.append({"type": "timeout", "message": "Scan time limit approaching; remaining candidates were skipped."})
-                        _scan_timed_out = True
-                        break
 
                     request = CreateBacktestRunRequest(
                         symbol=symbol,
@@ -244,7 +243,7 @@ class ScanService:
                     candidate_rule_set_hash = rule_set_hash(rule_set.entry_rules)
                     try:
                         elapsed_so_far = _time.monotonic() - scan_start
-                        if elapsed_so_far > 540 - self._CANDIDATE_TIMEOUT_SECONDS:
+                        if elapsed_so_far > _scan_timeout - self._CANDIDATE_TIMEOUT_SECONDS:
                             warnings.append({"type": "timeout", "message": "Scan time limit approaching; remaining candidates were skipped."})
                             _scan_timed_out = True
                             break
@@ -310,7 +309,8 @@ class ScanService:
                                 "error_code": exc.code,
                             }
                         )
-                    except Exception:  # pragma: no cover - safeguard
+                    except Exception:  # Intentional broad catch: individual candidate failures
+                        # must not abort the entire scan. Logged and appended as a warning.
                         logger.warning(
                             "scan.candidate_failed",
                             symbol=symbol,
@@ -355,8 +355,8 @@ class ScanService:
         selected = sorted_candidates[: payload.max_recommendations]
 
         for candidate in selected:
-            validate_json_shape(candidate["summary"], "ScannerRecommendation.summary_json")
-            validate_json_shape(candidate["forecast"], "ScannerRecommendation.forecast_json")
+            validate_json_shape(candidate["summary"], "ScannerRecommendation.summary_json", required_keys=frozenset({"trade_count"}))
+            validate_json_shape(candidate["forecast"], "ScannerRecommendation.forecast_json", required_keys=_FORECAST_REQUIRED_KEYS)
             rank = rank_lookup[(candidate["symbol"], candidate["strategy_type"], candidate["rule_set_name"])]
             job.recommendations.append(
                 ScannerRecommendation(
@@ -385,8 +385,8 @@ class ScanService:
         self.session.refresh(job)
         return job
 
-    def list_jobs(self, user: User, limit: int = 50) -> ScannerJobListResponse:
-        jobs = self.repository.list_for_user(user.id, limit=limit)
+    def list_jobs(self, user: User, limit: int = 50, offset: int = 0) -> ScannerJobListResponse:
+        jobs = self.repository.list_for_user(user.id, limit=limit, offset=offset)
         return ScannerJobListResponse(items=[self._to_job_response(job) for job in jobs])
 
     def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
@@ -434,7 +434,8 @@ class ScanService:
                     mode=source.mode,
                 )
                 continue
-            except Exception:
+            except Exception:  # Intentional: entitlement/validation errors for individual
+                # refresh sources must not prevent processing of remaining sources.
                 logger.exception(
                     "refresh.skipped_unexpected_error",
                     user_id=str(source.user_id),
@@ -496,7 +497,7 @@ class ScanService:
             start_date=market_date_today() - timedelta(days=365),
             end_date=market_date_today() - timedelta(days=1),
             target_dte=max(horizon_days, 7),
-            dte_tolerance_days=10,
+            dte_tolerance_days=min(5, max(horizon_days, 7) - 1),
             max_holding_days=horizon_days,
             account_size=Decimal("10000"),
             risk_per_trade_pct=Decimal("5"),
@@ -506,7 +507,7 @@ class ScanService:
         bundle = self.execution_service.market_data_service.prepare_backtest(request)
         forecast = self._forecast_for_bundle(
             symbol=symbol,
-            strategy_type=strategy_type,
+            strategy_type=effective_strategy,
             bars=bundle.bars,
             horizon_days=horizon_days,
         )
@@ -673,7 +674,7 @@ class ScanService:
                 horizon_days=horizon_days,
                 strategy_type=strategy_type,
             )
-        except ValueError:
+        except (ValueError, LookupError):
             fallback_date = bars[-1].trade_date if bars else market_date_today()
             return HistoricalAnalogForecastResponse(
                 symbol=symbol,
@@ -684,7 +685,7 @@ class ScanService:
                 expected_return_low_pct=Decimal("0"),
                 expected_return_median_pct=Decimal("0"),
                 expected_return_high_pct=Decimal("0"),
-                positive_outcome_rate_pct=Decimal("50"),
+                positive_outcome_rate_pct=None,
                 summary="Not enough analog history was available to build a bounded expected range for this symbol.",
                 disclaimer=(
                     "This is a bounded probability range based on historical analogs "
@@ -697,7 +698,9 @@ class ScanService:
     @staticmethod
     def _serialize_summary(summary) -> dict[str, Any]:
         def _opt(val: float | None) -> float | None:
-            return float(to_decimal(val)) if val is not None else None
+            if val is None:
+                return None
+            return float(to_decimal(val))
 
         return {
             "trade_count": summary.trade_count,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 import structlog
@@ -27,7 +27,8 @@ class ScannerMode(str, Enum):
     ADVANCED = "advanced"
 
 
-PAID_STATUSES = {"active", "trialing", "past_due"}
+PAID_STATUSES = {"active", "trialing"}
+PAST_DUE_GRACE_DAYS = 7
 INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete_expired", "paused"}
 
 
@@ -172,16 +173,26 @@ def normalize_plan_tier(
 ) -> PlanTier:
     if subscription_status in INACTIVE_STATUSES:
         return PlanTier.FREE
-    if subscription_status is not None and subscription_status not in PAID_STATUSES:
+    if subscription_status == "past_due":
+        if subscription_current_period_end is None:
+            return PlanTier.FREE
+        grace_deadline = subscription_current_period_end + timedelta(days=PAST_DUE_GRACE_DAYS)
+        if datetime.now(UTC) > grace_deadline:
+            _logger.info(
+                "normalize_plan_tier.past_due_grace_expired",
+                plan_tier=plan_tier,
+                period_end=str(subscription_current_period_end),
+            )
+            return PlanTier.FREE
+        # Within grace window — fall through to normal tier resolution
+    elif subscription_status is not None and subscription_status not in PAID_STATUSES:
         _logger.warning(
             "normalize_plan_tier.unknown_subscription_status",
             subscription_status=subscription_status,
             plan_tier=plan_tier,
         )
-        if plan_tier in (PlanTier.PREMIUM.value, PlanTier.PRO.value):
-            return PlanTier(plan_tier)
         return PlanTier.FREE
-    if subscription_status is None:
+    elif subscription_status is None:
         return PlanTier.FREE
     if (
         subscription_current_period_end is not None
@@ -255,17 +266,6 @@ def resolve_scanner_policy(
             "Scanner access is not available for the current entitlement.", required_tier="premium"
         )
     return policy
-
-
-def _assert_strategy_sets_consistent() -> None:
-    from backtestforecast.schemas.backtests import StrategyType
-    schema_values = {st.value for st in StrategyType}
-    missing_from_advanced = schema_values - ADVANCED_SCANNER_STRATEGIES
-    if missing_from_advanced:
-        _logger.warning(
-            "entitlements.strategy_set_drift",
-            missing_from_advanced=sorted(missing_from_advanced),
-        )
 
 
 def validate_strategy_access(policy: ScannerAccessPolicy, strategy_types: list[str]) -> None:

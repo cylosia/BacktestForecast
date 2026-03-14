@@ -49,6 +49,7 @@ class BacktestExecutionService:
             commission_per_contract=float(request.commission_per_contract),
             entry_rules=request.entry_rules,
             risk_free_rate=get_settings().risk_free_rate,
+            slippage_pct=request.slippage_pct,
             strategy_overrides=request.strategy_overrides,
             custom_legs=request.custom_legs,
         )

@@ -164,6 +164,10 @@ def _forecast_alignment_score(
     forecast: HistoricalAnalogForecastResponse,
     reasons: list[str],
 ) -> float:
+    if forecast.analog_count == 0 or forecast.positive_outcome_rate_pct is None:
+        reasons.append("No analog forecast data available; forecast alignment excluded from scoring.")
+        return 0.0
+
     median_return = float(forecast.expected_return_median_pct)
     positive_rate = float(forecast.positive_outcome_rate_pct)
     dispersion = abs(float(forecast.expected_return_high_pct) - float(forecast.expected_return_low_pct))

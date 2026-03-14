@@ -116,6 +116,13 @@ class VerticalSpreadStrategy(StrategyDefinition):
         entry_value_per_unit = long_value - short_value
         width = abs(long_contract.strike_price - short_contract.strike_price) * 100.0
 
+        # Vertical spread payoff math:
+        # Debit spread (e.g. bull call debit, bear put debit): pay a net debit
+        # upfront. Max loss = debit paid. Max profit = strike width - debit
+        # (underlying moves fully through the spread at expiration).
+        # Credit spread (e.g. bull put credit, bear call credit): collect a net
+        # credit upfront. Max profit = credit received. Max loss = strike width
+        # - credit (underlying moves fully through the spread).
         if self.is_debit:
             debit = max(entry_value_per_unit, 0.0)
             max_loss_per_unit = debit

@@ -136,3 +136,57 @@ def test_rate_limit_info_fields():
     assert info.remaining == 9
     assert info.reset_at > 0
     assert info.reset_at % 60 == 0
+
+
+# ---------------------------------------------------------------------------
+# Item 70: Rate limiter behavior under high load
+# ---------------------------------------------------------------------------
+
+
+def test_high_load_rejects_after_limit_and_stays_rejected():
+    """After reaching the limit, every subsequent request must be rejected
+    within the same time window — the counter must not reset unexpectedly."""
+    limiter = _make_limiter()
+    limit = 5
+    params = dict(bucket="highload", actor_key="user-load", limit=limit, window_seconds=60)
+
+    for i in range(limit):
+        info = limiter.check(**params)
+        assert info.remaining == limit - (i + 1)
+
+    for _ in range(20):
+        with pytest.raises(RateLimitError):
+            limiter.check(**params)
+
+
+def test_high_load_different_actors_independent():
+    """Under high load, rate limiting for one actor must not affect another."""
+    limiter = _make_limiter()
+    limit = 3
+
+    for _ in range(limit):
+        limiter.check(bucket="load", actor_key="heavy", limit=limit, window_seconds=60)
+
+    with pytest.raises(RateLimitError):
+        limiter.check(bucket="load", actor_key="heavy", limit=limit, window_seconds=60)
+
+    info = limiter.check(bucket="load", actor_key="fresh", limit=limit, window_seconds=60)
+    assert info.remaining == limit - 1
+
+
+def test_high_load_remaining_reaches_zero_at_limit():
+    """At exactly the limit count, remaining must be 0 (not negative)."""
+    limiter = _make_limiter()
+    limit = 10
+    params = dict(bucket="exact", actor_key="u", limit=limit, window_seconds=60)
+
+    last_info = None
+    for _ in range(limit):
+        last_info = limiter.check(**params)
+
+    assert last_info is not None
+    assert last_info.remaining == 0
+
+    with pytest.raises(RateLimitError) as exc_info:
+        limiter.check(**params)
+    assert exc_info.value.rate_limit_info.remaining == 0  # type: ignore[attr-defined]

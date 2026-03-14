@@ -272,6 +272,25 @@ def test_iv_percentile_low(monkeypatch):
     assert ev.is_entry_allowed(49) is False
 
 
+def test_iv_percentile_zero_when_current_is_minimum(monkeypatch):
+    """Item 84: When the current IV equals the minimum in the lookback window,
+    percentile must be 0% (strict less-than means no values are below it)."""
+    closes = [100.0] * 50
+    rule = IvPercentileRule(
+        type="iv_percentile", operator=ComparisonOperator.LTE, threshold=Decimal("0"), lookback_days=30
+    )
+
+    iv_series = [0.30] * 49 + [0.10]
+    import backtestforecast.backtests.rules as rules_mod
+
+    monkeypatch.setattr(rules_mod, "build_estimated_iv_series", lambda **kwargs: iv_series)
+
+    ev = _build_evaluator(closes, [rule])
+    assert ev.is_entry_allowed(49) is True, (
+        "Current IV is the minimum — percentile should be 0%, satisfying <= 0 threshold"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 7. Volume Spike
 # ---------------------------------------------------------------------------
@@ -443,3 +462,22 @@ def test_index_zero_returns_false():
     rule = RsiRule(type="rsi", operator=ComparisonOperator.LTE, threshold=Decimal("90"), period=2)
     ev = _build_evaluator(closes, [rule])
     assert ev.is_entry_allowed(0) is False
+
+
+# ---------------------------------------------------------------------------
+# Item 94: is_entry_allowed allows index 0 for non-crossover rules
+# ---------------------------------------------------------------------------
+
+
+def test_index_zero_allowed_for_rsi_only_rule():
+    """RSI-only rules (no crossover) should not be unconditionally blocked at
+    index 0. The crossover guard ``if index <= 0 and _has_crossover_rule(...)``
+    must only fire when crossover rules are present."""
+    closes = [100.0] * 20
+    rule = RsiRule(type="rsi", operator=ComparisonOperator.LTE, threshold=Decimal("50"), period=14)
+    ev = _build_evaluator(closes, [rule])
+    # Pre-populate the RSI cache so index 0 has a valid value that meets the threshold
+    ev.rsi_cache[14] = [25.0] * 20
+    assert ev.is_entry_allowed(0) is True, (
+        "Index 0 with RSI-only rules should return True when the threshold is met"
+    )

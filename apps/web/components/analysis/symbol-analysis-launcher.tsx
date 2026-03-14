@@ -36,7 +36,7 @@ function regimeColor(r: string) {
   return "bg-muted text-muted-foreground";
 }
 
-function indicatorCard(label: string, value: number | null, suffix?: string) {
+function indicatorCard(label: string, value: number | null | undefined, suffix?: string) {
   return (
     <div className="rounded-lg border border-border/60 p-3">
       <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
@@ -139,10 +139,20 @@ function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
 }
 
 function asNullableNumericRecord(value: unknown): Partial<Record<string, number | null>> {
-  if (value != null && typeof value === "object" && !Array.isArray(value)) {
-    return value as Partial<Record<string, number | null>>;
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return {};
   }
-  return {};
+  const raw = value as Record<string, unknown>;
+  const result: Partial<Record<string, number | null>> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v == null) {
+      result[k] = null;
+    } else {
+      const n = typeof v === "number" ? v : parseFloat(String(v));
+      result[k] = Number.isFinite(n) ? n : null;
+    }
+  }
+  return result;
 }
 
 function TopResultCard({ result }: { result: AnalysisTopResult }) {
@@ -219,6 +229,7 @@ export function SymbolAnalysisLauncher() {
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [result, setResult] = useState<SymbolAnalysisFullResponse | null>(null);
   const mountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     return () => {
@@ -226,8 +237,6 @@ export function SymbolAnalysisLauncher() {
       abortRef.current?.abort();
     };
   }, []);
-
-  const abortRef = useRef<AbortController | null>(null);
 
   const pollForCompletion = useCallback(
     async (token: string, analysisId: string, signal: AbortSignal) => {
@@ -238,7 +247,7 @@ export function SymbolAnalysisLauncher() {
 
         let status;
         try {
-          status = await fetchAnalysisStatus(token, analysisId);
+          status = await fetchAnalysisStatus(token, analysisId, signal);
           consecutiveErrors = 0;
         } catch (err) {
           if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
@@ -255,7 +264,7 @@ export function SymbolAnalysisLauncher() {
         setStage(status.stage);
 
         if (status.status === "succeeded") {
-          const full = await fetchAnalysisFull(token, analysisId);
+          const full = await fetchAnalysisFull(token, analysisId, signal);
           if (signal.aborted || !mountedRef.current) return;
           setResult(full);
           setPhase("done");
@@ -275,6 +284,12 @@ export function SymbolAnalysisLauncher() {
     const sym = symbol.trim().toUpperCase();
     if (!sym) return;
 
+    if (!/^[A-Z0-9./^]{1,16}$/.test(sym)) {
+      setPhase("error");
+      setErrorMessage("Invalid symbol format.");
+      return;
+    }
+
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -289,10 +304,10 @@ export function SymbolAnalysisLauncher() {
       const token = await getToken();
       if (!token) throw new Error("Session expired.");
 
-      const created = await createSymbolAnalysis(token, sym, `deep-${sym}-${crypto.randomUUID()}`);
+      const created = await createSymbolAnalysis(token, sym, `deep-${sym}-${crypto.randomUUID()}`, controller.signal);
 
       if (created.status === "succeeded") {
-        const full = await fetchAnalysisFull(token, created.id);
+        const full = await fetchAnalysisFull(token, created.id, controller.signal);
         if (controller.signal.aborted) return;
         setResult(full);
         setPhase("done");
@@ -336,7 +351,7 @@ export function SymbolAnalysisLauncher() {
                 <Input
                   id="analysisSymbol"
                   placeholder="AAPL"
-                  maxLength={10}
+                  maxLength={16}
                   value={symbol}
                   onChange={(e) => setSymbol(e.target.value.toUpperCase())}
                   disabled={phase === "polling"}
@@ -355,6 +370,19 @@ export function SymbolAnalysisLauncher() {
                   </>
                 )}
               </Button>
+              {phase === "polling" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    abortRef.current?.abort();
+                    setPhase("idle");
+                    setStage("");
+                  }}
+                >
+                  Cancel
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -363,7 +391,7 @@ export function SymbolAnalysisLauncher() {
       {errorMessage && isPlanLimitError(errorCode) ? (
         <UpgradePrompt message={errorMessage} />
       ) : errorMessage ? (
-        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+        <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
           {errorMessage}
         </div>
       ) : null}

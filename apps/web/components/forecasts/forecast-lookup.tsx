@@ -69,9 +69,9 @@ export function ForecastLookup() {
       setErrorMessage("Enter a ticker symbol.");
       return;
     }
-    if (!/^[A-Z]{1,5}(\.[A-Z]{1,5})?$/.test(normalizedTicker)) {
+    if (!/^[A-Z0-9./^]{1,16}$/.test(normalizedTicker)) {
       setStatus("error");
-      setErrorMessage("Ticker must be 1–5 letters, optionally followed by a dot and 1–5 letters (e.g. BRK.B).");
+      setErrorMessage("Ticker may only contain letters, digits, dots, slashes, or ^ (max 16 characters).");
       return;
     }
 
@@ -91,6 +91,7 @@ export function ForecastLookup() {
       const data = await fetchForecast(token, normalizedTicker, {
         strategyType: strategyType || undefined,
         horizonDays: Number(horizonDays),
+        signal: controller.signal,
       });
       if (!mountedRef.current || controller.signal.aborted) return;
       setResult(data);
@@ -133,7 +134,7 @@ export function ForecastLookup() {
                   maxLength={16}
                   placeholder="SPY"
                   value={ticker}
-                  onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z.]/g, ""))}
+                  onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9./^]/g, ""))}
                 />
               </div>
               <div className="space-y-2">
@@ -177,7 +178,7 @@ export function ForecastLookup() {
       {errorMessage && isPlanLimitError(errorCode) ? (
         <UpgradePrompt message={errorMessage} />
       ) : errorMessage ? (
-        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+        <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
           {errorMessage}
         </div>
       ) : null}
@@ -293,7 +294,10 @@ function RangeBar({
   median: number;
   high: number;
 }) {
-  // Map to 0–100% within the range [low, high]
+  if (!Number.isFinite(low) || !Number.isFinite(median) || !Number.isFinite(high)) {
+    return <div className="absolute inset-0 rounded-full bg-muted" />;
+  }
+
   const range = high - low || 1;
   const medianPct = ((median - low) / range) * 100;
   const zeroPct = low >= 0 ? 0 : ((-low) / range) * 100;

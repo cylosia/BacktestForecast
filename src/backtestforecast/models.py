@@ -39,16 +39,20 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     clerk_user_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
-    plan_tier: Mapped[str] = mapped_column(String(16), nullable=False, default="free", server_default="free")
+    plan_tier: Mapped[str] = mapped_column(String(16), nullable=False, default="free")
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     stripe_price_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     subscription_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_billing_interval: Mapped[str | None] = mapped_column(String(16), nullable=True)
     subscription_current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     plan_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # NOTE: onupdate=func.now() is ORM-only. Direct SQL UPDATE statements
+    # (e.g. bulk updates, raw SQL, or reaper queries) will NOT refresh this
+    # timestamp. If DB-level accuracy is required, add a PostgreSQL trigger
+    # via an Alembic migration.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
@@ -64,8 +68,10 @@ class User(Base):
 class BacktestRun(Base):
     __tablename__ = "backtest_runs"
     __table_args__ = (
+        Index("ix_backtest_runs_user_id", "user_id"),
         Index("ix_backtest_runs_user_created_at", "user_id", "created_at"),
         Index("ix_backtest_runs_user_status", "user_id", "status"),
+        Index("ix_backtest_runs_started_at", "started_at"),
         Index("ix_backtest_runs_celery_task_id", "celery_task_id"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_backtest_runs_user_idempotency_key"),
         CheckConstraint(
@@ -215,6 +221,7 @@ class ScannerJob(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "idempotency_key", name="uq_scanner_jobs_user_idempotency_key"),
         UniqueConstraint("refresh_key", name="uq_scanner_jobs_refresh_key"),
+        Index("ix_scanner_jobs_user_id", "user_id"),
         Index("ix_scanner_jobs_user_created_at", "user_id", "created_at"),
         Index("ix_scanner_jobs_user_status", "user_id", "status"),
         Index("ix_scanner_jobs_request_hash", "request_hash"),
@@ -313,6 +320,7 @@ class ExportJob(Base):
     __tablename__ = "export_jobs"
     __table_args__ = (
         UniqueConstraint("user_id", "idempotency_key", name="uq_export_jobs_user_idempotency_key"),
+        Index("ix_export_jobs_user_id", "user_id"),
         Index("ix_export_jobs_user_created_at", "user_id", "created_at"),
         Index("ix_export_jobs_user_status", "user_id", "status"),
         Index("ix_export_jobs_celery_task_id", "celery_task_id"),
@@ -355,6 +363,8 @@ class ExportJob(Base):
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     __table_args__ = (
+        Index("ix_audit_events_user_id", "user_id"),
+        Index("ix_audit_events_event_type", "event_type"),
         Index("ix_audit_events_user_created_at", "user_id", "created_at"),
         Index("ix_audit_events_event_type_created_at", "event_type", "created_at"),
         UniqueConstraint("event_type", "subject_type", "subject_id", name="uq_audit_events_dedup"),
@@ -457,6 +467,7 @@ class DailyRecommendation(Base):
 class SymbolAnalysis(Base):
     __tablename__ = "symbol_analyses"
     __table_args__ = (
+        Index("ix_symbol_analyses_user_id", "user_id"),
         Index("ix_symbol_analyses_user_created", "user_id", "created_at"),
         Index("ix_symbol_analyses_symbol", "symbol"),
         Index("ix_symbol_analyses_status_created", "status", "created_at"),
@@ -487,6 +498,9 @@ class SymbolAnalysis(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, server_default=func.now(), onupdate=func.now()
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

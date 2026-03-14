@@ -1,6 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from backtestforecast.config import get_settings
+from backtestforecast.security import get_rate_limiter
 
 router = APIRouter(tags=["meta"])
 
@@ -8,8 +9,15 @@ API_VERSION = "0.1.0"
 
 
 @router.get("/meta")
-def get_meta() -> dict[str, str | bool]:
+def get_meta(request: Request) -> dict[str, str | bool]:
     settings = get_settings()
+    client_ip = request.client.host if request.client else "unknown"
+    get_rate_limiter().check(
+        bucket="meta:read",
+        actor_key=client_ip,
+        limit=120,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     result: dict[str, str | bool] = {
         "service": "backtestforecast-api",
         "version": API_VERSION,

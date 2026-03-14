@@ -28,8 +28,7 @@ class TradeDetailShape(TypedDict, total=False):
     stock_legs: list[dict[str, Any]]
 
 
-_TRADE_DETAIL_REQUIRED_KEYS: frozenset[str] = frozenset()
-_TRADE_DETAIL_KNOWN_KEYS: frozenset[str] = frozenset(TradeDetailShape.__annotations__)
+_TRADE_DETAIL_REQUIRED_KEYS: frozenset[str] = frozenset({"entry_mid", "exit_mid"})
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +67,7 @@ class ForecastShape(TypedDict, total=False):
     percentile_95: float
 
 
-_FORECAST_KNOWN_KEYS: frozenset[str] = frozenset(ForecastShape.__annotations__)
+_FORECAST_REQUIRED_KEYS: frozenset[str] = frozenset({"horizon_days"})
 
 
 # ---------------------------------------------------------------------------
@@ -85,14 +84,34 @@ def validate_json_shape(
     """Log a warning if *data* is missing required keys or is the wrong type.
 
     Returns True when the shape is valid, False otherwise.  Never raises.
+
+    For multi-leg trade shapes that store per-leg data under a ``legs``
+    list, required keys that are absent from the top level are checked
+    inside each leg entry before being reported as missing.
     """
     if not isinstance(data, dict):
         logger.warning("json_shape_invalid_type", label=label, got_type=type(data).__name__)
         return False
 
+    if "phase" in data and "legs" not in data:
+        return True
+
     missing = required_keys - data.keys()
     if missing:
-        logger.warning("json_shape_missing_keys", label=label, missing=sorted(missing))
-        return False
+        legs = data.get("legs") or data.get("option_legs")
+        if isinstance(legs, list) and legs:
+            for leg in legs:
+                if isinstance(leg, dict):
+                    missing -= leg.keys()
+                if not missing:
+                    break
+        if missing:
+            logger.warning("json_shape_missing_keys", label=label, missing=sorted(missing))
+            return False
+
+    if known_keys is not None:
+        unknown = data.keys() - known_keys - required_keys
+        if unknown:
+            logger.info("json_shape_unknown_keys", label=label, unknown=sorted(unknown))
 
     return True

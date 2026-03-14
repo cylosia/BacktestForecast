@@ -231,3 +231,94 @@ def test_horizon_days_zero_raises() -> None:
             horizon_days=0,
             strategy_type="long_call",
         )
+
+
+# ---------------------------------------------------------------------------
+# Item 41: horizon_days=5 doesn't crash — CreateBacktestRunRequest validation
+# ---------------------------------------------------------------------------
+
+
+def test_horizon_days_5_does_not_crash() -> None:
+    """CreateBacktestRunRequest with target_dte=7 and dte_tolerance_days=min(5,6)=5
+    must not raise ValueError, validating that short horizon_days is accepted."""
+    from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 30),
+        target_dte=7,
+        dte_tolerance_days=min(5, 6),
+        max_holding_days=5,
+        account_size="10000",
+        risk_per_trade_pct="5",
+        commission_per_contract="1",
+        entry_rules=[],
+    )
+    assert request.dte_tolerance_days == 5
+    assert request.target_dte == 7
+
+
+def test_forecast_horizon_5_runs_successfully() -> None:
+    """HistoricalAnalogForecaster.forecast with horizon_days=5 does not crash."""
+    bars = _make_bars(n=250)
+    forecast = HistoricalAnalogForecaster().forecast(
+        symbol="SPY",
+        bars=bars,
+        horizon_days=5,
+        strategy_type="long_call",
+    )
+    assert forecast.horizon_days == 5
+    assert forecast.analog_count > 0
+
+
+# ---------------------------------------------------------------------------
+# Item 60: build_forecast dte_tolerance edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("horizon_days", [5, 6, 7, 10, 30])
+def test_dte_tolerance_less_than_target_dte(horizon_days: int) -> None:
+    """For each horizon_days value, verify that dte_tolerance_days < target_dte
+    holds when constructing a CreateBacktestRunRequest with target_dte = horizon_days + 2."""
+    from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+
+    target_dte = horizon_days + 2
+    dte_tolerance = min(horizon_days, target_dte - 1)
+    assert dte_tolerance < target_dte, (
+        f"dte_tolerance_days ({dte_tolerance}) must be < target_dte ({target_dte})"
+    )
+
+    request = CreateBacktestRunRequest(
+        symbol="SPY",
+        strategy_type="long_call",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 30),
+        target_dte=target_dte,
+        dte_tolerance_days=dte_tolerance,
+        max_holding_days=horizon_days,
+        account_size="10000",
+        risk_per_trade_pct="5",
+        commission_per_contract="1",
+        entry_rules=[],
+    )
+    assert request.dte_tolerance_days == dte_tolerance
+
+
+# ---------------------------------------------------------------------------
+# Item 89: Canary test — dte_tolerance < target_dte across all horizon_days
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("horizon_days", [1, 5, 7, 14, 30, 60, 90, 180, 365])
+def test_forecast_builder_dte_tolerance_invariant(horizon_days: int) -> None:
+    """For every supported horizon_days, the ScanService.build_forecast formula
+    must produce dte_tolerance_days < target_dte to satisfy
+    CreateBacktestRunRequest validation."""
+    target_dte = max(horizon_days, 7)
+    dte_tolerance = min(5, target_dte - 1)
+    assert dte_tolerance < target_dte, (
+        f"horizon_days={horizon_days}: dte_tolerance_days ({dte_tolerance}) "
+        f"must be strictly less than target_dte ({target_dte})"
+    )

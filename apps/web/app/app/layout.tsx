@@ -20,13 +20,15 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  // Intentional fallback: if the API is unreachable or returns an error,
+  // default to "free" so the layout still renders with baseline UI chrome.
   let planTier = "free";
 
   try {
     const user = await getCurrentUser();
     planTier = user.plan_tier;
-  } catch {
-    planTier = "free";
+  } catch (error) {
+    console.error("Failed to fetch user plan tier:", error);
   }
 
   return (
@@ -63,7 +65,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">{children}</main>
+      <main id="main-content" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">{children}</main>
     </div>
   );
 }

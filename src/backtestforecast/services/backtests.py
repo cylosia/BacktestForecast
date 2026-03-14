@@ -7,18 +7,19 @@ from typing import Self
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.types import BacktestExecutionResult
-from backtestforecast.schemas.json_shapes import validate_json_shape
+from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.errors import (
     AppError,
     FeatureLockedError,
     NotFoundError,
     QuotaExceededError,
+    ValidationError,
 )
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
@@ -42,17 +43,21 @@ from backtestforecast.services.backtest_execution import BacktestExecutionServic
 logger = structlog.get_logger("services.backtests")
 
 DECIMAL_QUANT = Decimal("0.0001")
+EQUITY_CURVE_LIMIT = 10_000
 
 
 def to_decimal(value: float | Decimal) -> Decimal:
+    """Convert a float or Decimal to a quantized Decimal.
+
+    Non-finite values (NaN, Inf) raise ``ValueError`` so callers can handle
+    the anomaly explicitly rather than silently storing zero.
+    """
     if isinstance(value, Decimal):
         if not value.is_finite():
-            logger.warning("to_decimal.non_finite_value", value=str(value))
-            return Decimal("0")
+            raise ValueError(f"Non-finite float value: {value}")
         return value.quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
     if not math.isfinite(value):
-        logger.warning("to_decimal.non_finite_value", value=str(value))
-        return Decimal("0")
+        raise ValueError(f"Non-finite float value: {value}")
     return Decimal(str(value)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 
 
@@ -182,19 +187,31 @@ class BacktestService:
             self.session.commit()
         except AppError as exc:
             self.session.rollback()
-            run.status = "failed"
-            run.error_code = exc.code
-            run.error_message = "Backtest execution failed. Please try again."
-            run.completed_at = datetime.now(UTC)
+            self.session.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id == run.id, BacktestRun.status != "succeeded")
+                .values(
+                    status="failed",
+                    error_code=exc.code,
+                    error_message="Backtest execution failed. Please try again.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             self.session.commit()
             raise
         except Exception:
             logger.exception("backtest.execution_failed", run_id=str(run.id))
             self.session.rollback()
-            run.status = "failed"
-            run.error_code = "internal_error"
-            run.error_message = "An internal error occurred during backtest execution."
-            run.completed_at = datetime.now(UTC)
+            self.session.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id == run.id, BacktestRun.status != "succeeded")
+                .values(
+                    status="failed",
+                    error_code="internal_error",
+                    error_message="An internal error occurred during backtest execution.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             self.session.commit()
             raise
         finally:
@@ -265,19 +282,31 @@ class BacktestService:
             self.session.commit()
         except AppError as exc:
             self.session.rollback()
-            run.status = "failed"
-            run.error_code = exc.code
-            run.error_message = "Backtest execution failed. Please try again."
-            run.completed_at = datetime.now(UTC)
+            self.session.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id == run.id, BacktestRun.status != "succeeded")
+                .values(
+                    status="failed",
+                    error_code=exc.code,
+                    error_message="Backtest execution failed. Please try again.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             self.session.commit()
             raise
         except Exception:
             logger.exception("backtest.execution_failed", run_id=str(run.id))
             self.session.rollback()
-            run.status = "failed"
-            run.error_code = "internal_error"
-            run.error_message = "An internal error occurred during backtest execution."
-            run.completed_at = datetime.now(UTC)
+            self.session.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id == run.id, BacktestRun.status != "succeeded")
+                .values(
+                    status="failed",
+                    error_code="internal_error",
+                    error_message="An internal error occurred during backtest execution.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             self.session.commit()
             raise
         finally:
@@ -288,7 +317,7 @@ class BacktestService:
             raise NotFoundError("Backtest run was created but could not be reloaded.")
         return stored
 
-    def list_runs(self, user: User, limit: int = 50) -> BacktestRunListResponse:
+    def list_runs(self, user: User, limit: int = 50, offset: int = 0) -> BacktestRunListResponse:
         feature_policy = resolve_feature_policy(
             user.plan_tier, user.subscription_status, user.subscription_current_period_end,
         )
@@ -296,7 +325,7 @@ class BacktestService:
         if feature_policy.history_days is not None:
             created_since = datetime.now(UTC) - timedelta(days=feature_policy.history_days)
         effective_limit = min(limit, feature_policy.history_item_limit)
-        runs = self.run_repository.list_for_user(user.id, limit=effective_limit, created_since=created_since)
+        runs = self.run_repository.list_for_user(user.id, limit=effective_limit, offset=offset, created_since=created_since)
         return BacktestRunListResponse(items=[self._to_history_item(run) for run in runs])
 
     def get_run_status(self, user: User, run_id: UUID) -> BacktestRunStatusResponse:
@@ -317,10 +346,12 @@ class BacktestService:
         return self.get_run_for_owner(user_id=user.id, run_id=run_id, trade_limit=trade_limit)
 
     def get_run_for_owner(self, *, user_id: UUID, run_id: UUID, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
-        run = self.run_repository.get_for_user(run_id, user_id)
+        run = self.run_repository.get_lightweight_for_user(run_id, user_id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
-        return self._to_detail_response(run, trade_limit=trade_limit)
+        trades = self.run_repository.get_trades_for_run(run_id, limit=trade_limit)
+        equity = self.run_repository.get_equity_points_for_run(run_id, limit=EQUITY_CURVE_LIMIT)
+        return self._to_detail_response(run, trades=trades, equity_points=equity)
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
         feature_policy = resolve_feature_policy(
@@ -329,16 +360,19 @@ class BacktestService:
         limit = feature_policy.side_by_side_comparison_limit
 
         if len(request.run_ids) > limit:
-            if feature_policy.tier.value == "premium":
+            tier_name = feature_policy.tier.value
+            if tier_name == "premium":
                 raise QuotaExceededError(
                     f"You can compare up to {limit} runs at a time. "
                     f"You requested {len(request.run_ids)}.",
                     current_tier="premium",
                 )
+            required = "pro" if tier_name == "free" else "premium"
             raise FeatureLockedError(
-                f"Your {feature_policy.tier.value} plan allows comparing up to {limit} runs at a time. "
-                f"You requested {len(request.run_ids)}. Upgrade for more.",
-                required_tier="pro" if feature_policy.tier.value == "free" else "premium",
+                f"Your {tier_name} plan allows comparing up to {limit} runs at a time. "
+                f"You requested {len(request.run_ids)}. "
+                f"Upgrade to the {required} plan to compare more runs side-by-side.",
+                required_tier=required,
             )
 
         runs = self.run_repository.get_many_for_user(request.run_ids, user.id)
@@ -350,9 +384,23 @@ class BacktestService:
         if missing_ids:
             raise NotFoundError(f"One or more runs could not be found: {', '.join(str(rid) for rid in missing_ids)}")
 
+        non_succeeded = [rid for rid in request.run_ids if run_map[rid].status != "succeeded"]
+        if non_succeeded:
+            raise ValidationError(
+                f"All runs must have status 'succeeded' to compare. "
+                f"Non-succeeded: {', '.join(str(rid) for rid in non_succeeded)}"
+            )
+
         ordered = [run_map[rid] for rid in request.run_ids]
         return CompareBacktestsResponse(
-            items=[self._to_detail_response(run) for run in ordered],
+            items=[
+                self._to_detail_response(
+                    run,
+                    trades=run.trades,
+                    equity_points=run.equity_points,
+                )
+                for run in ordered
+            ],
             comparison_limit=limit,
         )
 
@@ -459,7 +507,7 @@ class BacktestService:
         run.recovery_factor = to_decimal(summary.recovery_factor) if summary.recovery_factor is not None else None
 
         for trade in execution_result.trades:
-            validate_json_shape(trade.detail_json, "BacktestTrade.detail_json")
+            validate_json_shape(trade.detail_json, "BacktestTrade.detail_json", required_keys=_TRADE_DETAIL_REQUIRED_KEYS)
             run.trades.append(
                 BacktestTrade(
                     option_ticker=trade.option_ticker,
@@ -537,7 +585,18 @@ class BacktestService:
             summary=self._summary_response(run),
         )
 
-    def _to_detail_response(self, run: BacktestRun, *, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
+    def _to_detail_response(
+        self,
+        run: BacktestRun,
+        *,
+        trade_limit: int = 10_000,
+        trades: list[BacktestTrade] | None = None,
+        equity_points: list[BacktestEquityPoint] | None = None,
+    ) -> BacktestRunDetailResponse:
+        if trades is None:
+            trades = self.run_repository.get_trades_for_run(run.id, limit=trade_limit)
+        if equity_points is None:
+            equity_points = self.run_repository.get_equity_points_for_run(run.id, limit=EQUITY_CURVE_LIMIT)
         return BacktestRunDetailResponse(
             id=run.id,
             symbol=run.symbol,
@@ -560,6 +619,6 @@ class BacktestService:
             error_code=run.error_code,
             error_message=run.error_message,
             summary=self._summary_response(run),
-            trades=[BacktestTradeResponse.model_validate(trade) for trade in run.trades[:trade_limit]],
-            equity_curve=[EquityCurvePointResponse.model_validate(point) for point in run.equity_points[:10_000]],
+            trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
+            equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
         )

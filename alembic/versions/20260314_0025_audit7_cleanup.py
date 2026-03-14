@@ -6,6 +6,7 @@ Create Date: 2026-03-14
 """
 from __future__ import annotations
 
+import sqlalchemy as sa
 from alembic import op
 
 revision = "20260314_0025"
@@ -15,6 +16,20 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column(
+        "export_jobs",
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+    )
+    op.add_column(
+        "nightly_pipeline_runs",
+        sa.Column("celery_task_id", sa.String(64), nullable=True),
+    )
+
     op.drop_index(
         "ix_nightly_pipeline_runs_trade_date_succeeded",
         table_name="nightly_pipeline_runs",
@@ -37,3 +52,6 @@ def downgrade() -> None:
         unique=True,
         postgresql_where="status = 'succeeded'",
     )
+
+    op.drop_column("nightly_pipeline_runs", "celery_task_id")
+    op.drop_column("export_jobs", "updated_at")

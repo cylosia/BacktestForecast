@@ -27,7 +27,13 @@ logger = structlog.get_logger(__name__)
 
 class OptionsBacktestEngine:
     def __init__(self) -> None:
-        self.wheel_engine = WheelStrategyBacktestEngine()
+        self._wheel_engine: WheelStrategyBacktestEngine | None = None
+
+    @property
+    def wheel_engine(self) -> WheelStrategyBacktestEngine:
+        if self._wheel_engine is None:
+            self._wheel_engine = WheelStrategyBacktestEngine()
+        return self._wheel_engine
 
     def run(
         self,
@@ -142,6 +148,7 @@ class OptionsBacktestEngine:
                             max_loss_per_unit=candidate.max_loss_per_unit,
                             entry_cost_per_unit=abs(ev_per_unit),
                             commission_per_unit=commission_per_unit,
+                            slippage_pct=config.slippage_pct,
                         )
                         if quantity <= 0:
                             self._add_warning_once(
@@ -156,7 +163,8 @@ class OptionsBacktestEngine:
                             candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
                             entry_commission = self._option_commission_total(candidate, config.commission_per_contract)
                             candidate.entry_commission_total = entry_commission
-                            slippage_cost = abs(ev_per_unit) * quantity * (config.slippage_pct / 100.0)
+                            gross_notional_per_unit = sum(abs(leg.entry_mid * 100.0) for leg in candidate.option_legs)
+                            slippage_cost = gross_notional_per_unit * quantity * (config.slippage_pct / 100.0)
                             cash -= (ev_per_unit * quantity) + entry_commission + slippage_cost
                             position = candidate
                             if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
@@ -217,6 +225,7 @@ class OptionsBacktestEngine:
         ending_equity = equity_curve[-1].equity if equity_curve else config.account_size
         summary = build_summary(
             config.account_size, ending_equity, trades, equity_curve, risk_free_rate=config.risk_free_rate,
+            warnings=warnings,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
 
@@ -284,6 +293,7 @@ class OptionsBacktestEngine:
         max_loss_per_unit: float | None,
         entry_cost_per_unit: float = 0.0,
         commission_per_unit: float = 0.0,
+        slippage_pct: float = 0.0,
     ) -> int:
         if capital_required_per_unit <= 0:
             return 0
@@ -294,7 +304,8 @@ class OptionsBacktestEngine:
         if effective_risk <= 0:
             return 0
         by_risk = int(risk_budget // effective_risk)
-        cash_per_unit = max(capital_required_per_unit, entry_cost_per_unit) + commission_per_unit
+        slippage_per_unit = entry_cost_per_unit * (slippage_pct / 100.0)
+        cash_per_unit = max(capital_required_per_unit, entry_cost_per_unit) + commission_per_unit + slippage_per_unit
         by_cash = int(available_cash // cash_per_unit) if cash_per_unit > 0 else 0
         return max(0, min(by_risk, by_cash))
 
@@ -310,13 +321,17 @@ class OptionsBacktestEngine:
     ) -> tuple[TradeResult, float]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
         exit_commission = self._option_commission_total(position, config.commission_per_contract)
-        exit_slippage = abs(exit_value) * (config.slippage_pct / 100.0)
-        cash_delta = exit_value - exit_commission - exit_slippage
+        exit_gross_notional = sum(abs(leg.last_mid * 100.0) for leg in position.option_legs) * position.quantity
+        exit_slippage = exit_gross_notional * (config.slippage_pct / 100.0)
         entry_value_per_unit = self._entry_value_per_unit(position)
+        entry_gross_notional = sum(abs(leg.entry_mid * 100.0) for leg in position.option_legs) * position.quantity
+        entry_slippage = entry_gross_notional * (config.slippage_pct / 100.0)
+        cash_delta = exit_value - exit_commission - exit_slippage
         exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0
         gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position.quantity
         total_commissions = position.entry_commission_total + exit_commission
-        net_pnl = gross_pnl - total_commissions
+        total_slippage = entry_slippage + exit_slippage
+        net_pnl = gross_pnl - total_commissions - total_slippage
         expiration_date = position.scheduled_exit_date or (
             max(leg.expiration_date for leg in position.option_legs)
             if position.option_legs
@@ -334,6 +349,10 @@ class OptionsBacktestEngine:
             holding_period_days=(exit_date - position.entry_date).days,
             entry_underlying_close=self._entry_underlying_close(position),
             exit_underlying_close=exit_underlying_close,
+            # entry_mid and exit_mid are the per-contract net cost (not a single-leg
+            # price). They are derived by dividing the total per-unit package value
+            # by 100 (the contract multiplier) so that downstream consumers see a
+            # per-share equivalent suitable for display and reporting.
             entry_mid=entry_value_per_unit / 100.0,
             exit_mid=exit_value_per_unit / 100.0,
             gross_pnl=gross_pnl,
@@ -341,7 +360,7 @@ class OptionsBacktestEngine:
             total_commissions=total_commissions,
             entry_reason=position.entry_reason,
             exit_reason=exit_reason,
-            detail_json=self._build_trade_detail_json(position, exit_prices, exit_value_per_unit),
+            detail_json={**self._build_trade_detail_json(position, exit_prices, exit_value_per_unit), "unit_convention": "per_unit_divided_by_100"},
         )
         return trade, cash_delta
 
@@ -370,7 +389,7 @@ class OptionsBacktestEngine:
         exit_value_per_unit: float,
     ) -> dict[str, Any]:
         detail = dict(position.detail_json)
-        legs = list(detail.get("legs", []))
+        legs = [dict(leg) for leg in detail.get("legs", [])]
         for leg in legs:
             ticker = leg.get("ticker")
             if isinstance(ticker, str) and ticker in exit_prices:
@@ -424,7 +443,3 @@ class OptionsBacktestEngine:
             return
         warning_codes.add(code)
         warnings.append({"code": code, "message": message})
-
-
-#: Legacy alias retained for backward compatibility with external callers.
-LongOptionBacktestEngine = OptionsBacktestEngine

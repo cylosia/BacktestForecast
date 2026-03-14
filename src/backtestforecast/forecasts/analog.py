@@ -31,7 +31,8 @@ class HistoricalAnalogForecaster:
             raise ValueError("horizon_days must be at least 1.")
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         calendar_horizon = horizon_days
-        horizon_days = self._calendar_to_trading_days(horizon_days)
+        trading_horizon = self._calendar_to_trading_days(horizon_days)
+        horizon_days = trading_horizon
         if len(sorted_bars) < max(80, horizon_days + 40):
             raise ValueError("Not enough historical bars were available to build a forecast.")
 
@@ -112,7 +113,9 @@ class HistoricalAnalogForecaster:
             strategy_type=strategy_type,
             as_of_date=sorted_bars[as_of_index].trade_date,
             horizon_days=calendar_horizon,
+            trading_days_used=trading_horizon,
             analog_count=len(analogs),
+            analogs_used=len(analogs),
             expected_return_low_pct=self._to_decimal(low),
             expected_return_median_pct=self._to_decimal(med),
             expected_return_high_pct=self._to_decimal(high),
@@ -183,6 +186,20 @@ class HistoricalAnalogForecaster:
 
     @staticmethod
     def _distance(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+        # Scale denominators normalise each feature into a comparable range so
+        # that raw magnitude differences (e.g. RSI 0-100 vs volume ratio ~1)
+        # don't dominate.  The values were calibrated empirically on US large-
+        # cap daily bars:
+        #   0: 5-day return %  (scale  8)   – typical swing ~±8%
+        #   1: 20-day return % (scale 15)   – wider window, larger moves
+        #   2: RSI-14          (scale 20)   – 0-100 range, 20 keeps it moderate
+        #   3: EMA8/EMA21 gap% (scale  5)   – usually within a few percent
+        #   4: Volume ratio    (scale 1.5)  – centered around 1.0
+        #   5: Annualised vol  (scale 25)   – typically 10-40%
+        #   6: 1-day return %  (scale  4)   – single-day shock
+        #
+        # Weights emphasise 20-day momentum (1.2) and volatility regime (1.1)
+        # while down-weighting volume ratio (0.7) and single-day return (0.6).
         scales = (8.0, 15.0, 20.0, 5.0, 1.5, 25.0, 4.0)
         weights = (1.0, 1.2, 0.8, 1.0, 0.7, 1.1, 0.6)
         return sum(
