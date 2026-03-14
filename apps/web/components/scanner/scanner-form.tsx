@@ -212,7 +212,7 @@ export function ScannerForm({
 
     if (errors.length > 0) {
       setStatus("error");
-      setErrorMessage(errors.join(" "));
+      setErrorMessage(errors.length === 1 ? errors[0] : errors.map((e, i) => `${i + 1}. ${e}`).join("\n"));
       return;
     }
 
@@ -289,7 +289,7 @@ export function ScannerForm({
       {errorMessage && isPlanLimitError(errorCode) ? (
         <UpgradePrompt message={errorMessage} />
       ) : errorMessage ? (
-        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive whitespace-pre-line">
           {errorMessage}
         </div>
       ) : null}

@@ -33,9 +33,12 @@ def db_session():
 
 @pytest.fixture()
 def db_session_factory(db_session):
-    def factory():
-        return db_session
-    return factory
+    engine = db_session.get_bind()
+    factory = sessionmaker(bind=engine)
+
+    def create():
+        return factory()
+    return create
 
 
 def test_reaper_skips_when_lock_already_held(monkeypatch):
@@ -49,11 +52,10 @@ def test_reaper_skips_when_lock_already_held(monkeypatch):
     mock_redis_inst.lock.return_value = mock_lock
     mock_redis_cls.from_url.return_value = mock_redis_inst
 
-    with patch("apps.worker.app.tasks.get_settings") as mock_settings:
+    with patch("backtestforecast.config.get_settings") as mock_settings, \
+         patch("redis.Redis", mock_redis_cls):
         mock_settings.return_value = SimpleNamespace(redis_url="redis://localhost:6379/0")
-        with patch.dict("sys.modules", {"redis": MagicMock(Redis=mock_redis_cls)}):
-            with patch("apps.worker.app.tasks.Redis", mock_redis_cls):
-                result = tasks_module.reap_stale_jobs(stale_minutes=30)
+        result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
     assert result.get("skipped") == 1
 
@@ -163,16 +165,15 @@ def test_reaper_runs_without_lock_when_redis_unavailable(db_session, db_session_
     mock_redis_cls = MagicMock()
     mock_redis_cls.from_url.side_effect = ConnectionError("Redis is down")
 
-    with patch("apps.worker.app.tasks.get_settings") as mock_settings:
+    with patch("backtestforecast.config.get_settings") as mock_settings, \
+         patch("redis.Redis", mock_redis_cls):
         mock_settings.return_value = SimpleNamespace(redis_url="redis://localhost:6379/0")
-        with patch("apps.worker.app.tasks.Redis", mock_redis_cls):
-            result = tasks_module.reap_stale_jobs(stale_minutes=30)
+        result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
     assert "backtest_runs" in result
     assert result["backtest_runs"] >= 1
     assert len(dispatched) >= 1, "Reaper should still dispatch even when Redis lock is unavailable"
 
-    # Two concurrent reapers without the lock would both see the same stale run.
     dispatched2: list[tuple[str, dict]] = []
 
     def fake_send_task2(name, kwargs=None, **kw):
@@ -188,10 +189,10 @@ def test_reaper_runs_without_lock_when_redis_unavailable(db_session, db_session_
         refreshed.status = "queued"
         db_session.commit()
 
-    with patch("apps.worker.app.tasks.get_settings") as mock_settings:
+    with patch("backtestforecast.config.get_settings") as mock_settings, \
+         patch("redis.Redis", mock_redis_cls):
         mock_settings.return_value = SimpleNamespace(redis_url="redis://localhost:6379/0")
-        with patch("apps.worker.app.tasks.Redis", mock_redis_cls):
-            result2 = tasks_module.reap_stale_jobs(stale_minutes=30)
+        result2 = tasks_module.reap_stale_jobs(stale_minutes=30)
 
     assert result2["backtest_runs"] >= 1, (
         "Without Redis lock, a second reaper would also see and dispatch the same stale jobs"

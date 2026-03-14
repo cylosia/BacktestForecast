@@ -27,6 +27,15 @@ export function PortalButton({ children }: { children: React.ReactNode }) {
       if (!result.portal_url) {
         throw new Error("The billing portal URL was not returned. Please try again.");
       }
+      const allowed = ["https://billing.stripe.com", "https://checkout.stripe.com"];
+      try {
+        const origin = new URL(result.portal_url).origin;
+        if (!allowed.some((a) => origin.startsWith(a))) {
+          throw new Error("Unexpected portal URL origin.");
+        }
+      } catch {
+        throw new Error("Invalid portal URL received.");
+      }
       window.location.href = result.portal_url;
     } catch (error) {
       const nextMessage =
@@ -37,6 +46,8 @@ export function PortalButton({ children }: { children: React.ReactNode }) {
             : "Billing portal could not be opened.";
       setStatus("error");
       setMessage(nextMessage);
+    } finally {
+      setStatus((prev) => (prev === "loading" ? "idle" : prev));
     }
   }
 

@@ -40,6 +40,15 @@ export function CheckoutButton({
       if (!result.checkout_url) {
         throw new Error("The checkout URL was not returned. Please try again.");
       }
+      const allowed = ["https://checkout.stripe.com", "https://billing.stripe.com"];
+      try {
+        const origin = new URL(result.checkout_url).origin;
+        if (!allowed.some((a) => origin.startsWith(a))) {
+          throw new Error("Unexpected checkout URL origin.");
+        }
+      } catch {
+        throw new Error("Invalid checkout URL received.");
+      }
       window.location.href = result.checkout_url;
     } catch (error) {
       const nextMessage =
@@ -50,6 +59,8 @@ export function CheckoutButton({
             : "Checkout could not be started.";
       setStatus("error");
       setMessage(nextMessage);
+    } finally {
+      setStatus((prev) => (prev === "loading" ? "idle" : prev));
     }
   }
 

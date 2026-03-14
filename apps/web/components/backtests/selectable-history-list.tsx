@@ -16,19 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-
-function statusBadgeVariant(status: string): "default" | "success" | "destructive" | "secondary" {
-  switch (status) {
-    case "succeeded":
-      return "success";
-    case "failed":
-      return "destructive";
-    case "running":
-      return "default";
-    default:
-      return "secondary";
-  }
-}
+import { statusBadgeVariant } from "@/lib/ui/status-badge";
 
 export function SelectableHistoryList({
   items,

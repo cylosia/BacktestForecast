@@ -193,11 +193,15 @@ class ScanService:
                 self.session.rollback()
             raise
 
+    _CANDIDATE_TIMEOUT_SECONDS = 120
+
     def _execute_scan(
         self,
         job: ScannerJob,
         payload: CreateScannerJobRequest,
     ) -> ScannerJob:
+        import time as _time
+
         compatibility_candidate_count, compatibility_warnings = self._count_compatible_candidates(payload)
         job.candidate_count = compatibility_candidate_count
         warnings: list[dict[str, Any]] = list(compatibility_warnings)
@@ -227,11 +231,14 @@ class ScanService:
                         entry_rules=rule_set.entry_rules,
                     )
                     candidate_rule_set_hash = rule_set_hash(rule_set.entry_rules)
+                    candidate_start = _time.monotonic()
                     try:
                         bundle = bundle_cache.get(symbol)
                         if bundle is None:
                             continue
                         execution_result = self.execution_service.execute_request(request, bundle=bundle)
+                        if _time.monotonic() - candidate_start > self._CANDIDATE_TIMEOUT_SECONDS:
+                            raise TimeoutError(f"Candidate {symbol}/{strategy.value} exceeded {self._CANDIDATE_TIMEOUT_SECONDS}s")
                         forecast = forecast_cache.get((symbol, strategy.value))
                         if forecast is None:
                             forecast = self._forecast_for_bundle(
@@ -428,7 +435,7 @@ class ScanService:
                 name=source.name,
                 status="queued",
                 mode=source.mode,
-                plan_tier_snapshot=source.plan_tier_snapshot,
+                plan_tier_snapshot=owner.plan_tier,
                 job_kind="scheduled_refresh",
                 request_hash=source.request_hash,
                 refresh_key=refresh_key,

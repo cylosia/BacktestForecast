@@ -147,9 +147,10 @@ def get_pipeline_history(
     if cursor:
         try:
             cursor_dt = _dt.fromisoformat(cursor)
-            stmt = stmt.where(NightlyPipelineRun.created_at < cursor_dt)
         except ValueError:
-            pass
+            from backtestforecast.errors import ValidationError as _VE
+            raise _VE("Invalid pagination cursor format. Expected an ISO 8601 timestamp.")
+        stmt = stmt.where(NightlyPipelineRun.created_at < cursor_dt)
     stmt = stmt.limit(limit)
     runs = list(db.scalars(stmt))
 

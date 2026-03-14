@@ -9,7 +9,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CI to pass
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: "backend-and-web"
+          wait-interval: 15
+          allowed-conclusions: success
+
   build-and-push:
+    needs: ci-gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -71,6 +84,7 @@ jobs:
     if: vars.API_PRODUCTION_URL != ''
     steps:
       - name: Health check
+        id: smoke
         run: |
           API_URL="${{ vars.API_PRODUCTION_URL }}"
           echo "Checking ${API_URL}/health/live"
@@ -80,3 +94,9 @@ jobs:
           echo "Checking ${API_URL}/v1/meta"
           curl --fail --silent --max-time 10 "${API_URL}/v1/meta" || exit 1
           echo "All smoke checks passed."
+
+      - name: Rollback on failure
+        if: failure() && steps.smoke.outcome == 'failure' && vars.ROLLBACK_TAG != ''
+        run: |
+          echo "::warning::Smoke check failed — previous known-good tag: ${{ vars.ROLLBACK_TAG }}"
+          echo "Automated rollback not yet wired. Deploy ${{ vars.ROLLBACK_TAG }} manually."

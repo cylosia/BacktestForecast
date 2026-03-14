@@ -30,6 +30,8 @@ def get_forecast(
     strategy_type: StrategyType | None = Query(default=None),
     horizon_days: int = Query(default=20, ge=5, le=90),
 ) -> ForecastEnvelopeResponse:
+    if not _TICKER_RE.match(ticker):
+        raise ValidationError("Ticker must be 1-10 alphabetic characters.")
     get_rate_limiter().check(
         bucket="forecasts:get",
         actor_key=str(user.id),
@@ -37,8 +39,6 @@ def get_forecast(
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-    if not _TICKER_RE.match(ticker):
-        raise ValidationError("Ticker must be 1-10 alphabetic characters.")
     symbol = ticker.strip().upper()
     with ScanService(db) as service:
         return service.build_forecast(

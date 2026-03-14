@@ -110,6 +110,15 @@ class RateLimiter:
         except RedisError:
             return False
 
+    def close(self) -> None:
+        """Release Redis connection resources."""
+        if self._redis is not None:
+            try:
+                self._redis.close()
+            except Exception:
+                pass
+            self._redis = None
+
     def reset(self) -> None:
         with self._memory_lock:
             self._memory_counters.clear()
@@ -118,7 +127,8 @@ class RateLimiter:
         bucket = int(time.time() // window_seconds)
         bucket_key = f"{key}:{bucket}"
         redis = self._redis
-        assert redis is not None
+        if redis is None:
+            raise RedisError("Redis client is not initialized")
         with self._memory_lock:
             sha = self._lua_sha
         if sha is None:

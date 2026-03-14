@@ -90,9 +90,14 @@ def stripe_webhook(
             ip_address=ip_address,
         )
     except Exception as exc:
-        from backtestforecast.errors import AuthenticationError as _AuthErr
+        from backtestforecast.errors import AuthenticationError as _AuthErr, AppError as _AppErr
         if isinstance(exc, _AuthErr):
             raise
+        if isinstance(exc, _AppErr):
+            _webhook_logger.warning(
+                "webhook.deterministic_error", code=exc.code, ip=ip_address, request_id=request_id,
+            )
+            return {"status": "error", "code": exc.code}
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
         return JSONResponse(  # type: ignore[return-value]
             status_code=500,

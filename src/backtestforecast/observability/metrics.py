@@ -92,6 +92,7 @@ _RE_UUID = re.compile(
 _RE_INT = re.compile(r"/\d+(?=/|$)")
 _DYNAMIC_SEGMENT_PREFIXES = {
     "/symbols/", "/tickers/", "/api/v1/symbols/", "/api/v1/tickers/",
+    "/v1/forecasts/", "/forecasts/",
 }
 
 

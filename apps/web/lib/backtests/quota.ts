@@ -1,7 +1,5 @@
 import type { CurrentUserResponse, PlanTier } from "@backtestforecast/api-client";
 
-export const FREE_BACKTEST_LIMIT = 5;
-
 export interface BacktestQuota {
   tier: PlanTier;
   limit: number | null;

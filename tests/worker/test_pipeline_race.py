@@ -31,13 +31,13 @@ def db_session():
 
 
 def test_duplicate_pipeline_run_same_date_rejected(db_session):
-    """If a pipeline run already exists for today, a second attempt should not
-    create a duplicate (or should detect the existing run)."""
+    """If a succeeded pipeline run already exists for today, a second insert
+    with status='succeeded' should be rejected by the unique partial index."""
     today = date.today()
     first = NightlyPipelineRun(
         id=uuid4(),
         trade_date=today,
-        status="completed",
+        status="succeeded",
         symbols_screened=100,
         recommendations_produced=5,
         created_at=datetime.now(UTC),
@@ -46,13 +46,41 @@ def test_duplicate_pipeline_run_same_date_rejected(db_session):
     db_session.add(first)
     db_session.commit()
 
+    second = NightlyPipelineRun(
+        id=uuid4(),
+        trade_date=today,
+        status="succeeded",
+        symbols_screened=50,
+        recommendations_produced=3,
+        created_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+    )
+    db_session.add(second)
+
     from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        db_session.commit()
+        existing = db_session.scalars(
+            select(NightlyPipelineRun).where(
+                NightlyPipelineRun.trade_date == today,
+                NightlyPipelineRun.status == "succeeded",
+            )
+        ).all()
+        assert len(existing) == 1, (
+            "SQLite does not enforce partial unique indexes; on Postgres this would raise IntegrityError"
+        )
+    except IntegrityError:
+        db_session.rollback()
 
     existing = db_session.scalars(
-        select(NightlyPipelineRun).where(NightlyPipelineRun.trade_date == today)
+        select(NightlyPipelineRun).where(
+            NightlyPipelineRun.trade_date == today,
+            NightlyPipelineRun.status == "succeeded",
+        )
     ).all()
     assert len(existing) == 1
-    assert existing[0].status == "completed"
 
 
 def test_pipeline_run_different_dates_allowed(db_session):
@@ -63,7 +91,7 @@ def test_pipeline_run_different_dates_allowed(db_session):
     r1 = NightlyPipelineRun(
         id=uuid4(),
         trade_date=yesterday,
-        status="completed",
+        status="succeeded",
         symbols_screened=50,
         recommendations_produced=3,
         created_at=datetime.now(UTC),

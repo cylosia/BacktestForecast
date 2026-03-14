@@ -255,7 +255,6 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
 @celery_app.task(name="backtests.run", base=BaseTaskWithDLQ, bind=True, max_retries=2, soft_time_limit=300, time_limit=330)
 def run_backtest(self, run_id: str) -> dict[str, str]:
     with SessionLocal() as session:
-        from backtestforecast.models import BacktestRun, User
         if not _validate_task_ownership(session, BacktestRun, UUID(run_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="backtests.run").inc()
             logger.info("backtests.run.duplicate_delivery", run_id=run_id, task_id=self.request.id)
@@ -301,8 +300,6 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             session.rollback()
             from datetime import UTC, datetime
 
-            from backtestforecast.models import BacktestRun
-
             run_obj = session.get(BacktestRun, UUID(run_id))
             if run_obj is not None and run_obj.status in ("queued", "running"):
                 run_obj.status = "failed"
@@ -328,8 +325,6 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
                 from datetime import UTC, datetime
-
-                from backtestforecast.models import BacktestRun
 
                 run_obj = session.get(BacktestRun, UUID(run_id))
                 if run_obj is not None and run_obj.status in ("queued", "running"):
@@ -368,7 +363,6 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
 @celery_app.task(name="exports.generate", base=BaseTaskWithDLQ, bind=True, max_retries=2, soft_time_limit=120, time_limit=150)
 def generate_export(self, export_job_id: str) -> dict[str, str | int]:
     with SessionLocal() as session:
-        from backtestforecast.models import ExportJob as ExportJobModel, User
         if not _validate_task_ownership(session, ExportJobModel, UUID(export_job_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="exports.generate").inc()
             logger.info("exports.generate.duplicate_delivery", export_job_id=export_job_id, task_id=self.request.id)
@@ -418,9 +412,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             session.rollback()
             from datetime import UTC, datetime
 
-            from backtestforecast.models import ExportJob
-
-            export_obj = session.get(ExportJob, UUID(export_job_id))
+            export_obj = session.get(ExportJobModel, UUID(export_job_id))
             if export_obj is not None and export_obj.status in ("queued", "running"):
                 export_obj.status = "failed"
                 export_obj.error_code = "time_limit_exceeded"
@@ -445,9 +437,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             except self.MaxRetriesExceededError:
                 from datetime import UTC, datetime
 
-                from backtestforecast.models import ExportJob
-
-                export_obj = session.get(ExportJob, UUID(export_job_id))
+                export_obj = session.get(ExportJobModel, UUID(export_job_id))
                 if export_obj is not None and export_obj.status in ("queued", "running"):
                     export_obj.status = "failed"
                     export_obj.error_code = "max_retries_exceeded"
@@ -627,7 +617,6 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
 @celery_app.task(name="scans.run_job", base=BaseTaskWithDLQ, bind=True, max_retries=3, soft_time_limit=600, time_limit=660)
 def run_scan_job(self, job_id: str) -> dict[str, str | int]:
     with SessionLocal() as session:
-        from backtestforecast.models import ScannerJob as ScannerJobModel, User
         if not _validate_task_ownership(session, ScannerJobModel, UUID(job_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="scans.run_job").inc()
             logger.info("scans.run_job.duplicate_delivery", job_id=job_id, task_id=self.request.id)
@@ -673,8 +662,6 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             session.rollback()
             from datetime import UTC, datetime
 
-            from backtestforecast.models import ScannerJob as ScannerJobModel
-
             scan_obj = session.get(ScannerJobModel, UUID(job_id))
             if scan_obj is not None and scan_obj.status in ("queued", "running"):
                 scan_obj.status = "failed"
@@ -699,8 +686,6 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
                 from datetime import UTC, datetime
-
-                from backtestforecast.models import ScannerJob as ScannerJobModel
 
                 scan_obj = session.get(ScannerJobModel, UUID(job_id))
                 if scan_obj is not None and scan_obj.status in ("queued", "running"):

@@ -26,9 +26,14 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
             except ValueError:
                 return self._payload_too_large(request)
         if request.method in {"POST", "PUT", "PATCH"} and content_length is None:
-            body = await request.body()
-            if len(body) > effective_limit:
-                return self._payload_too_large(request)
+            total = 0
+            chunks: list[bytes] = []
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > effective_limit:
+                    return self._payload_too_large(request)
+                chunks.append(chunk)
+            request._body = b"".join(chunks)  # type: ignore[attr-defined]
         return await call_next(request)
 
     @staticmethod

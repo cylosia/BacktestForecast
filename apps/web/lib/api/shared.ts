@@ -16,7 +16,14 @@ function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSignal): Ab
     return AbortSignal.any([userSignal, timeoutSignal]);
   }
   const controller = new AbortController();
-  const onAbort = () => controller.abort();
+  const onAbort = () => {
+    controller.abort();
+    cleanup();
+  };
+  const cleanup = () => {
+    userSignal.removeEventListener("abort", onAbort);
+    timeoutSignal.removeEventListener("abort", onAbort);
+  };
   for (const sig of [userSignal, timeoutSignal]) {
     if (sig.aborted) { controller.abort(); return controller.signal; }
     sig.addEventListener("abort", onAbort, { once: true });

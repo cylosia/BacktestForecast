@@ -178,12 +178,14 @@ class ExportService:
         self.session.refresh(export_job)
         return export_job
 
-    def cleanup_expired_exports(self, *, batch_size: int = 100) -> int:
+    def cleanup_expired_exports(self, *, batch_size: int = 100, max_batches: int = 100) -> int:
         """Delete storage content for expired exports. Returns count cleaned."""
         cleaned = 0
         now = datetime.now(UTC)
+        batch_count = 0
 
-        while True:
+        while batch_count < max_batches:
+            batch_count += 1
             jobs = self.exports.list_expired_for_cleanup(now, batch_size)
             if not jobs:
                 break

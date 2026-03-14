@@ -119,6 +119,9 @@ class BacktestRun(Base):
     max_consecutive_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     recovery_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -190,6 +193,7 @@ class BacktestTemplate(Base):
         Index("ix_backtest_templates_user_created_at", "user_id", "created_at"),
         Index("ix_backtest_templates_user_strategy", "user_id", "strategy_type"),
         Index("ix_backtest_templates_user_updated_at", "user_id", "updated_at"),
+        UniqueConstraint("user_id", "name", name="uq_backtest_templates_user_name"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -416,7 +420,6 @@ class DailyRecommendation(Base):
         UniqueConstraint("pipeline_run_id", "rank", name="uq_daily_recs_pipeline_rank"),
         Index("ix_daily_recs_trade_date", "trade_date"),
         Index("ix_daily_recs_symbol_strategy", "symbol", "strategy_type"),
-        Index("ix_daily_recs_pipeline_run_id", "pipeline_run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -428,7 +431,7 @@ class DailyRecommendation(Base):
     score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     strategy_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    regime_labels: Mapped[str] = mapped_column(String(255), nullable=False)
+    regime_labels: Mapped[str] = mapped_column(Text, nullable=False, default="")
     close_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     target_dte: Mapped[int] = mapped_column(Integer, nullable=False)
     config_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
@@ -466,6 +469,7 @@ class SymbolAnalysis(Base):
     configs_tested: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     top_results_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

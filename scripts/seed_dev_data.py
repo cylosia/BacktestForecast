@@ -26,6 +26,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reset-user-data", action="store_true", help="Delete existing data for the target user before seeding."
     )
+    parser.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompts for destructive operations."
+    )
     parser.add_argument("--clerk-user-id", default="dev_seed_user", help="Clerk user id to upsert.")
     parser.add_argument("--email", default="dev@backtestforecast.local", help="Email address for the seeded user.")
     parser.add_argument(
@@ -289,6 +292,11 @@ def main() -> None:
             plan_tier=args.plan_tier,
         )
         if args.reset_user_data:
+            if not args.yes:
+                confirm = input(f"This will DELETE all data for user '{args.clerk_user_id}'. Continue? [y/N] ")
+                if confirm.strip().lower() not in ("y", "yes"):
+                    print("Aborted.")
+                    raise SystemExit(0)
             reset_user_data(session, user)
             session.commit()
             session.refresh(user)

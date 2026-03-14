@@ -1,4 +1,8 @@
-from fastapi import APIRouter
+import time
+from collections import deque
+from threading import Lock
+
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -7,6 +11,10 @@ from backtestforecast.db.session import ping_database
 from backtestforecast.security.rate_limits import ping_redis
 
 router = APIRouter(tags=["health"])
+
+_health_window: deque[float] = deque()
+_health_lock = Lock()
+_HEALTH_MAX_RPM = 120
 
 HEALTH_VERSION = "0.1.0"
 
@@ -17,7 +25,14 @@ def live() -> dict[str, str]:
 
 
 @router.get("/health/ready")
-def ready() -> JSONResponse:
+def ready(request: Request) -> JSONResponse:
+    now = time.monotonic()
+    with _health_lock:
+        while _health_window and _health_window[0] < now - 60:
+            _health_window.popleft()
+        if len(_health_window) >= _HEALTH_MAX_RPM:
+            return JSONResponse(status_code=429, content={"status": "rate_limited"})
+        _health_window.append(now)
     settings = get_settings()
     redis_up = ping_redis()
     try:

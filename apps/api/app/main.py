@@ -95,7 +95,7 @@ def _custom_openapi():
     }
     schema["components"]["schemas"]["ErrorEnvelope"] = error_schema
     for path_obj in schema.get("paths", {}).values():
-        for operation in path_obj.values():
+        for method, operation in path_obj.items():
             if not isinstance(operation, dict):
                 continue
             operation.setdefault("responses", {})
@@ -107,7 +107,7 @@ def _custom_openapi():
                     },
                 },
             }
-            if "get" in path_obj or "delete" in path_obj:
+            if method in ("get", "delete"):
                 operation["responses"].setdefault("404", {
                     "description": "Resource not found",
                     "content": {
@@ -275,8 +275,9 @@ def dlq_status(request: Request) -> Response:
             except Exception:
                 recent.append({"raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)})
         return JSONResponse(content={"depth": depth, "recent": recent})
-    except Exception as exc:
-        return JSONResponse(status_code=503, content={"error": "dlq_unavailable", "detail": str(exc)})
+    except Exception:
+        logger.exception("admin.dlq_unavailable")
+        return JSONResponse(status_code=503, content={"error": "dlq_unavailable"})
 
 
 @app.get("/")

@@ -115,6 +115,7 @@ class S3Storage:
             logger.info("s3.delete", bucket=self._bucket, key=storage_key)
         except Exception:
             logger.warning("s3.delete_failed", bucket=self._bucket, key=storage_key, exc_info=True)
+            raise
 
     def exists(self, storage_key: str) -> bool:
         try:

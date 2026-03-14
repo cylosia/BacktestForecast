@@ -40,7 +40,7 @@ jobs:
       - name: Start web app
         run: pnpm --filter @backtestforecast/web start &
       - name: Wait for server
-        run: sleep 15
+        run: npx wait-on http://localhost:3000 --timeout 60000
 
       - name: Run Playwright tests
         run: pnpm --filter @backtestforecast/web test:e2e

@@ -7,19 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
-
-function statusBadgeVariant(status: string): "default" | "success" | "destructive" | "secondary" {
-  switch (status) {
-    case "succeeded":
-      return "success";
-    case "failed":
-      return "destructive";
-    case "running":
-      return "default";
-    default:
-      return "secondary";
-  }
-}
+import { statusBadgeVariant } from "@/lib/ui/status-badge";
 
 export default async function ScannerPage() {
   let user;

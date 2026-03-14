@@ -52,6 +52,15 @@ class RequestMetadata:
     ip_address: str | None
 
 
+def _validate_ip(value: str) -> str | None:
+    """Return the IP string if valid, otherwise None."""
+    try:
+        ipaddress.ip_address(value)
+        return value
+    except ValueError:
+        return None
+
+
 def _extract_client_ip(request: Request) -> str | None:
     direct_host = request.client.host if request.client is not None else None
     if _is_trusted_proxy(direct_host):
@@ -59,10 +68,16 @@ def _extract_client_ip(request: Request) -> str | None:
         if forwarded_for:
             first = forwarded_for.split(",", maxsplit=1)[0].strip()
             if first:
-                return first
+                validated = _validate_ip(first)
+                if validated:
+                    return validated
         real_ip = request.headers.get("x-real-ip")
         if real_ip:
-            return real_ip.strip() or None
+            stripped = real_ip.strip()
+            if stripped:
+                validated = _validate_ip(stripped)
+                if validated:
+                    return validated
     return direct_host
 
 

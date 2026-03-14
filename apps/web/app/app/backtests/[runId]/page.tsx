@@ -20,19 +20,7 @@ import { EquityCurveChart } from "@/components/backtests/equity-curve-chart";
 import { ExportActions } from "@/components/backtests/export-actions";
 import { ResultSummaryCards } from "@/components/backtests/result-summary-cards";
 import { TradeListTable } from "@/components/backtests/trade-list-table";
-
-function statusBadgeVariant(status: string): "default" | "success" | "destructive" | "secondary" {
-  switch (status) {
-    case "succeeded":
-      return "success";
-    case "failed":
-      return "destructive";
-    case "running":
-      return "default";
-    default:
-      return "secondary";
-  }
-}
+import { statusBadgeVariant } from "@/lib/ui/status-badge";
 
 export default async function BacktestDetailPage({
   params,

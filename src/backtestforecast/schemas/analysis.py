@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class AnalysisSummaryResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
     id: str
     symbol: str
     status: str
@@ -16,7 +18,7 @@ class AnalysisSummaryResponse(BaseModel):
     top_results_count: int
     duration_seconds: float | None = None
     error_message: str | None = None
-    created_at: str
+    created_at: str | None = None
     completed_at: str | None = None
 
 

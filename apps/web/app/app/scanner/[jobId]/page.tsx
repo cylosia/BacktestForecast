@@ -8,19 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScannerJobPoller } from "@/components/scanner/scanner-job-poller";
 import { RecommendationList } from "@/components/scanner/recommendation-list";
-
-function statusBadgeVariant(status: string): "default" | "success" | "destructive" | "secondary" {
-  switch (status) {
-    case "succeeded":
-      return "success";
-    case "failed":
-      return "destructive";
-    case "running":
-      return "default";
-    default:
-      return "secondary";
-  }
-}
+import { statusBadgeVariant } from "@/lib/ui/status-badge";
 
 export default async function ScannerDetailPage({
   params,

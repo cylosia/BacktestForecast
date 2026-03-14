@@ -8,11 +8,11 @@ API_VERSION = "0.1.0"
 
 
 @router.get("/meta")
-def get_meta() -> dict[str, str]:
+def get_meta() -> dict[str, str | bool]:
     settings = get_settings()
     return {
         "service": "backtestforecast-api",
         "environment": settings.app_env,
         "version": API_VERSION,
-        "billing_enabled": str(settings.stripe_billing_enabled).lower(),
+        "billing_enabled": settings.stripe_billing_enabled,
     }
