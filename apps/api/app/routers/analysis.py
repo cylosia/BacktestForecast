@@ -84,6 +84,7 @@ def get_analysis(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Get full analysis results (for polling and display)."""
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     service = SymbolDeepAnalysisService(
         db,
         market_data_fetcher=None,
@@ -107,6 +108,7 @@ def get_analysis_status(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Lightweight status endpoint for polling."""
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     service = SymbolDeepAnalysisService(
         db,
         market_data_fetcher=None,
@@ -123,6 +125,7 @@ def list_analyses(
     limit: int = Query(default=10, ge=1, le=50),
 ) -> dict[str, Any]:
     """List recent analyses for the current user."""
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     service = SymbolDeepAnalysisService(
         db,
         market_data_fetcher=None,

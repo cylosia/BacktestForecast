@@ -70,11 +70,17 @@ class TemplateResponse(BaseModel):
         if hasattr(data, "__dict__"):
             raw = getattr(data, "config_json", None)
             if isinstance(raw, dict):
-                object.__setattr__(data, "config_json", TemplateConfig(**raw))
+                attrs = {
+                    k: getattr(data, k)
+                    for k in ("id", "name", "description", "strategy_type", "created_at", "updated_at")
+                    if hasattr(data, k)
+                }
+                attrs["config_json"] = TemplateConfig(**raw)
+                return attrs
         elif isinstance(data, dict):
             raw = data.get("config_json") or data.get("config")
             if isinstance(raw, dict):
-                data["config_json"] = TemplateConfig(**raw)
+                data = {**data, "config_json": TemplateConfig(**raw)}
         return data
 
 

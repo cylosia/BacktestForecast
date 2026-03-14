@@ -8,6 +8,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -20,6 +24,10 @@ services:
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping"]
       interval: 10s
@@ -44,7 +52,7 @@ services:
         limits:
           memory: 512m
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/live || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')\""]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -76,6 +84,16 @@ services:
       celery -A apps.worker.app.celery_app.celery_app beat
       --scheduler=redbeat.RedBeatScheduler
       --loglevel=INFO
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A apps.worker.app.celery_app.celery_app inspect ping --timeout 10 || exit 0"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
 
   web:
     image: ${WEB_IMAGE:-ghcr.io/backtestforecast/web:latest}

@@ -45,7 +45,11 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         super().on_failure(exc, task_id, args, kwargs, einfo)
-        if self.request.retries >= self.max_retries:
+        is_terminal = (
+            self.request.retries >= self.max_retries
+            or isinstance(exc, SoftTimeLimitExceeded)
+        )
+        if is_terminal:
             logger.error(
                 "task.dead_letter",
                 task_name=self.name,
@@ -54,24 +58,32 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                 retries=self.request.retries,
                 exc=str(exc),
             )
+            fallback_conn = None
             try:
                 import json
                 from backtestforecast.config import get_settings
                 redis_conn = self.app.backend.client if hasattr(self.app, 'backend') and hasattr(self.app.backend, 'client') else None
                 if redis_conn is None:
                     from redis import Redis
-                    redis_conn = Redis.from_url(get_settings().redis_url, socket_timeout=5)
+                    fallback_conn = Redis.from_url(get_settings().redis_url, socket_timeout=5)
+                    redis_conn = fallback_conn
                 redis_conn.lpush("bff:dead_letter_queue", json.dumps({
                     "task_name": self.name,
                     "task_id": task_id,
-                    "args": [str(a) for a in (args or [])],
-                    "kwargs": {k: str(v) for k, v in (kwargs or {}).items()},
+                    "args": list(args or []),
+                    "kwargs": dict(kwargs or {}),
                     "retries": self.request.retries,
                     "error": str(exc),
                 }))
                 DLQ_MESSAGES_TOTAL.labels(task_name=self.name).inc()
             except Exception:
                 logger.warning("task.dlq_persist_failed", exc_info=True)
+            finally:
+                if fallback_conn is not None:
+                    try:
+                        fallback_conn.close()
+                    except Exception:
+                        pass
 
 
 @celery_app.task(name="maintenance.ping")
@@ -149,6 +161,7 @@ def nightly_scan_pipeline(
         lock = redis_client.lock(lock_key, timeout=2100, blocking=False)
         if not lock.acquire():
             logger.info("pipeline.already_locked", trade_date=str(trade_date))
+            redis_client.close()
             return {"status": "skipped", "reason": "locked"}
 
         try:
@@ -241,7 +254,8 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
         return True
     obj = session.get(model_cls, obj_id)
     if obj is None:
-        return True
+        logger.warning("validate_task_ownership.obj_not_found", model=model_cls.__name__, obj_id=str(obj_id))
+        return False
     stored = getattr(obj, "celery_task_id", None)
     if stored is None:
         result = session.execute(
@@ -254,7 +268,7 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
         except Exception:
             session.rollback()
             logger.warning("validate_task_ownership.commit_failed", model=model_cls.__name__, obj_id=str(obj_id), exc_info=True)
-            return True
+            return False
         if result.rowcount == 0:
             return False
         session.refresh(obj)
@@ -273,7 +287,6 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         if run_obj is None:
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
             return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
-        publish_job_status("backtest", UUID(run_id), "running")
         user = session.get(User, run_obj.user_id)
         if user is None:
             run_obj.status = "failed"
@@ -290,6 +303,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             session.commit()
             publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
+        publish_job_status("backtest", UUID(run_id), "running")
         service = BacktestService(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
@@ -378,7 +392,6 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
         if ej is None:
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
             return {"status": "failed", "export_job_id": export_job_id, "error_code": "not_found"}
-        publish_job_status("export", UUID(export_job_id), "running")
         user = session.get(User, ej.user_id)
         if user is None:
             ej.status = "failed"
@@ -400,6 +413,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             session.commit()
             publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
+        publish_job_status("export", UUID(export_job_id), "running")
         service = ExportService(session)
         try:
             job = service.execute_export_by_id(UUID(export_job_id))
@@ -519,7 +533,6 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
             if sa_obj is None:
                 CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
                 return {"status": "failed", "analysis_id": analysis_id, "error_code": "not_found"}
-            publish_job_status("analysis", UUID(analysis_id), "running")
             user = session.get(User, sa_obj.user_id)
             if user is None:
                 sa_obj.status = "failed"
@@ -536,6 +549,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 session.commit()
                 publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
+            publish_job_status("analysis", UUID(analysis_id), "running")
             service = SymbolDeepAnalysisService(
                 session,
                 market_data_fetcher=market_data,
@@ -594,6 +608,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     analysis = session.get(SymbolAnalysis, UUID(analysis_id))
                     if analysis is not None and analysis.status in ("queued", "running"):
                         analysis.status = "failed"
+                        analysis.error_code = "max_retries_exceeded"
                         analysis.error_message = "Analysis failed after exhausting retries."
                         from datetime import UTC, datetime as _dt_mr
                         analysis.completed_at = _dt_mr.now(UTC)
@@ -639,7 +654,6 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         if sj is None:
             CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
             return {"status": "failed", "job_id": job_id, "error_code": "not_found"}
-        publish_job_status("scan", UUID(job_id), "running")
         user = session.get(User, sj.user_id)
         if user is None:
             sj.status = "failed"
@@ -657,6 +671,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             session.commit()
             publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
+        publish_job_status("scan", UUID(job_id), "running")
         service = ScanService(session)
         try:
             job = service.run_job(UUID(job_id))
@@ -740,8 +755,8 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         }
 
 
-@celery_app.task(name="scans.refresh_prioritized", soft_time_limit=300, time_limit=360)
-def refresh_prioritized_scans() -> dict[str, int]:
+@celery_app.task(name="scans.refresh_prioritized", base=BaseTaskWithDLQ, bind=True, max_retries=1, soft_time_limit=300, time_limit=360)
+def refresh_prioritized_scans(self) -> dict[str, int]:
     from sqlalchemy import update as sa_update
 
     from backtestforecast.models import ScannerJob
@@ -773,6 +788,7 @@ def refresh_prioritized_scans() -> dict[str, int]:
                         job_obj.error_message = "Unable to dispatch scheduled refresh."
                         try:
                             session.commit()
+                            publish_job_status("scan", job.id, "failed", metadata={"error_code": "enqueue_failed"})
                         except Exception:
                             session.rollback()
         finally:
@@ -786,8 +802,8 @@ def refresh_prioritized_scans() -> dict[str, int]:
     }
 
 
-@celery_app.task(name="maintenance.reap_stale_jobs", soft_time_limit=300, time_limit=360)
-def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
+@celery_app.task(name="maintenance.reap_stale_jobs", base=BaseTaskWithDLQ, bind=True, max_retries=1, soft_time_limit=300, time_limit=360)
+def reap_stale_jobs(self, stale_minutes: int = 30) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
     from datetime import UTC, datetime, timedelta
 
@@ -799,22 +815,31 @@ def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
     from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL
 
     settings = get_settings()
+    redis = None
+    lock = None
+    lock_acquired = False
     try:
         redis = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=5.0)
         lock = redis.lock("bff:reaper:lock", timeout=300, blocking_timeout=0)
-        if not lock.acquire(blocking=False):
+        lock_acquired = lock.acquire(blocking=False)
+        if not lock_acquired:
             logger.info("reaper.skipped_locked")
             return {"skipped": 1}
     except Exception:
         logger.warning("reaper.lock_unavailable", exc_info=True)
-        lock = None
+        return {"skipped": 1, "reason": "lock_unavailable"}
 
     try:
         return _reap_stale_jobs_inner(stale_minutes)
     finally:
-        if lock is not None:
+        if lock is not None and lock_acquired:
             try:
                 lock.release()
+            except Exception:
+                pass
+        if redis is not None:
+            try:
+                redis.close()
             except Exception:
                 pass
 
@@ -828,6 +853,8 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL
 
     cutoff = datetime.now(UTC) - timedelta(minutes=stale_minutes)
+    pipeline_cutoff = datetime.now(UTC) - timedelta(minutes=max(stale_minutes, 60))
+    analysis_cutoff = datetime.now(UTC) - timedelta(minutes=max(stale_minutes, 45))
     counts: dict[str, int] = {}
 
     with SessionLocal() as session:
@@ -864,8 +891,10 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             select(BacktestRun.id)
             .where(
                 BacktestRun.status == "running",
-                BacktestRun.started_at.isnot(None),
-                BacktestRun.started_at < cutoff,
+                or_(
+                    BacktestRun.started_at.isnot(None) & (BacktestRun.started_at < cutoff),
+                    BacktestRun.started_at.is_(None) & (BacktestRun.created_at < cutoff),
+                ),
             )
             .limit(50)
         )
@@ -922,8 +951,10 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             select(ExportJob.id)
             .where(
                 ExportJob.status == "running",
-                ExportJob.started_at.isnot(None),
-                ExportJob.started_at < cutoff,
+                or_(
+                    ExportJob.started_at.isnot(None) & (ExportJob.started_at < cutoff),
+                    ExportJob.started_at.is_(None) & (ExportJob.created_at < cutoff),
+                ),
             )
             .limit(50)
         )
@@ -980,8 +1011,10 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             select(ScannerJob.id)
             .where(
                 ScannerJob.status == "running",
-                ScannerJob.started_at.isnot(None),
-                ScannerJob.started_at < cutoff,
+                or_(
+                    ScannerJob.started_at.isnot(None) & (ScannerJob.started_at < cutoff),
+                    ScannerJob.started_at.is_(None) & (ScannerJob.created_at < cutoff),
+                ),
             )
             .limit(50)
         )
@@ -1010,7 +1043,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             .where(
                 SymbolAnalysis.status == "queued",
                 SymbolAnalysis.celery_task_id.is_(None),
-                SymbolAnalysis.created_at < cutoff,
+                SymbolAnalysis.created_at < analysis_cutoff,
             )
             .limit(50)
         )
@@ -1038,8 +1071,10 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             select(SymbolAnalysis.id)
             .where(
                 SymbolAnalysis.status == "running",
-                SymbolAnalysis.started_at.isnot(None),
-                SymbolAnalysis.started_at < cutoff,
+                or_(
+                    SymbolAnalysis.started_at.isnot(None) & (SymbolAnalysis.started_at < analysis_cutoff),
+                    SymbolAnalysis.started_at.is_(None) & (SymbolAnalysis.created_at < analysis_cutoff),
+                ),
             )
             .limit(50)
         )
@@ -1069,8 +1104,8 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             .where(
                 NightlyPipelineRun.status == "running",
                 or_(
-                    NightlyPipelineRun.started_at.isnot(None) & (NightlyPipelineRun.started_at < cutoff),
-                    NightlyPipelineRun.started_at.is_(None) & (NightlyPipelineRun.created_at < cutoff),
+                    NightlyPipelineRun.started_at.isnot(None) & (NightlyPipelineRun.started_at < pipeline_cutoff),
+                    NightlyPipelineRun.started_at.is_(None) & (NightlyPipelineRun.created_at < pipeline_cutoff),
                 ),
             )
             .limit(50)

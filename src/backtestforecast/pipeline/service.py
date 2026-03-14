@@ -128,12 +128,11 @@ class NightlyPipelineService:
             logger.info("pipeline.already_exists", run_id=str(succeeded.id), status=succeeded.status)
             return succeeded
 
-        # Mark any prior stale "running" runs for this date so they don't block retries
         stale = list(self.session.scalars(
             select(NightlyPipelineRun).where(
                 NightlyPipelineRun.trade_date == trade_date,
                 NightlyPipelineRun.status.in_(["running", "queued"]),
-            )
+            ).with_for_update()
         ))
         for s in stale:
             s.status = "failed"
@@ -234,7 +233,7 @@ class NightlyPipelineService:
                     score=Decimal(str(round(result.score, 6))),
                     symbol=result.symbol,
                     strategy_type=result.strategy_type,
-                    regime_labels=",".join(sorted(r.value for r in result.regime.regimes)),
+                    regime_labels=sorted(r.value for r in result.regime.regimes),
                     close_price=Decimal(str(round(result.close_price, 4))),
                     target_dte=result.target_dte,
                     config_snapshot_json=result.config_snapshot,

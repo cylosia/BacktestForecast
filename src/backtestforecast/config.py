@@ -224,7 +224,10 @@ class Settings(BaseSettings):
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
-        return max(int(value), 1)
+        v = int(value)
+        if v < 1:
+            raise ValueError(f"Value must be >= 1, got {v}")
+        return v
 
     @field_validator("massive_timeout_seconds", "sse_redis_socket_timeout", "sse_redis_connect_timeout")
     @classmethod

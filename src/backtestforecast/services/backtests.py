@@ -152,6 +152,8 @@ class BacktestService:
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:
         """Execute the backtest for a previously enqueued run. Called by the Celery worker."""
+        from sqlalchemy import update as sa_update
+
         run = self.run_repository.get_by_id(run_id, for_update=True)
         if run is None:
             raise NotFoundError("Backtest run not found.")
@@ -159,9 +161,16 @@ class BacktestService:
         if run.status != "queued":
             return run
 
-        run.status = "running"
-        run.started_at = datetime.now(UTC)
+        rows = self.session.execute(
+            sa_update(BacktestRun)
+            .where(BacktestRun.id == run_id, BacktestRun.status == "queued")
+            .values(status="running", started_at=datetime.now(UTC))
+        )
         self.session.commit()
+        if rows.rowcount == 0:
+            self.session.refresh(run)
+            return run
+        self.session.refresh(run)
 
         request = CreateBacktestRunRequest.model_validate(run.input_snapshot_json)
 

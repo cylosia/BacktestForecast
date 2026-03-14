@@ -33,6 +33,13 @@ def dispatch_celery_task(
     ``error_code``, and ``error_message`` attributes.
     """
     if job.status != "queued" or job.celery_task_id is not None:
+        logger.info(
+            f"{log_event}.dispatch_skipped",
+            reason="idempotent_return",
+            status=job.status,
+            has_celery_task_id=job.celery_task_id is not None,
+            **task_kwargs,
+        )
         return
 
     headers: dict[str, str] = {}
@@ -52,9 +59,13 @@ def dispatch_celery_task(
         except Exception:
             db.rollback()
             logger.exception(f"{log_event}.enqueued_but_commit_failed", celery_task_id=result.id, **task_kwargs)
-            return
+            try:
+                celery_app.control.revoke(result.id)
+            except Exception:
+                logger.warning(f"{log_event}.revoke_failed", celery_task_id=result.id)
+            raise
         logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)
-    except (OSError, ConnectionError, KombuError, KombuOperationalError):
+    except (OSError, ConnectionError, KombuError, KombuOperationalError, TimeoutError):
         logger.exception(f"{log_event}.enqueue_failed", **task_kwargs)
         job.status = "failed"
         job.error_code = "enqueue_failed"

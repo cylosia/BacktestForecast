@@ -261,13 +261,15 @@ def dlq_status(request: Request) -> Response:
         if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
             return JSONResponse(status_code=403, content={"error": "forbidden"})
     try:
+        import json
         from redis import Redis
 
         r = Redis.from_url(settings.redis_url, socket_timeout=5)
-        depth = r.llen("bff:dead_letter_queue")
-        recent_raw = r.lrange("bff:dead_letter_queue", 0, 9)
-        r.close()
-        import json
+        try:
+            depth = r.llen("bff:dead_letter_queue")
+            recent_raw = r.lrange("bff:dead_letter_queue", 0, 9)
+        finally:
+            r.close()
 
         recent = []
         for raw in recent_raw:

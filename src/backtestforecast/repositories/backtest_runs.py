@@ -60,7 +60,7 @@ class BacktestRunRepository:
             BacktestRun.user_id == user_id,
             BacktestRun.created_at >= start_inclusive,
             BacktestRun.created_at < end_exclusive,
-            BacktestRun.status.notin_(("failed", "cancelled")),
+            BacktestRun.status.notin_(("failed", "cancelled", "queued", "running")),
         )
         return int(self.session.scalar(stmt) or 0)
 

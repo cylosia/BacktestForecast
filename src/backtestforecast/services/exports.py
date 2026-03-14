@@ -114,6 +114,8 @@ class ExportService:
 
     def execute_export_by_id(self, export_job_id: UUID) -> ExportJob:
         """Generate the export content. Called by the Celery worker."""
+        from sqlalchemy import update as sa_update
+
         export_job = self.exports.get(export_job_id, for_update=True)
         if export_job is None:
             raise NotFoundError("Export job not found.")
@@ -122,9 +124,16 @@ class ExportService:
             logger.info("export.execute_skipped", export_job_id=str(export_job_id), status=export_job.status)
             return export_job
 
-        export_job.status = "running"
-        export_job.started_at = datetime.now(UTC)
+        rows = self.session.execute(
+            sa_update(ExportJob)
+            .where(ExportJob.id == export_job_id, ExportJob.status == "queued")
+            .values(status="running", started_at=datetime.now(UTC))
+        )
         self.session.commit()
+        if rows.rowcount == 0:
+            self.session.refresh(export_job)
+            return export_job
+        self.session.refresh(export_job)
 
         try:
             detail = self.backtest_service.get_run_for_owner(

@@ -103,7 +103,7 @@ def get_latest_daily_picks(
                 "score": float(rec.score),
                 "symbol": rec.symbol,
                 "strategy_type": rec.strategy_type,
-                "regime_labels": [label for label in rec.regime_labels.split(",") if label] if rec.regime_labels else [],
+                "regime_labels": rec.regime_labels if isinstance(rec.regime_labels, list) else [l for l in (rec.regime_labels or "").split(",") if l],
                 "close_price": float(rec.close_price),
                 "target_dte": rec.target_dte,
                 "config_snapshot": rec.config_snapshot_json,
@@ -154,7 +154,7 @@ def get_pipeline_history(
     stmt = stmt.limit(limit)
     runs = list(db.scalars(stmt))
 
-    next_cursor = runs[-1].created_at.isoformat() if runs else None
+    next_cursor = runs[-1].created_at.isoformat() if len(runs) == limit else None
 
     return {
         "items": [

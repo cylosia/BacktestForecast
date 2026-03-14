@@ -16,7 +16,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.15.4
 
       - uses: actions/setup-node@v4
         with:
@@ -34,15 +34,14 @@ jobs:
         env:
           NEXT_PUBLIC_APP_URL: http://localhost:3000
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_TEST_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_TEST_SECRET_KEY }}
           NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
 
-      - name: Start web app
-        run: pnpm --filter @backtestforecast/web start &
-      - name: Wait for server
-        run: npx wait-on http://localhost:3000 --timeout 60000
-
-      - name: Run Playwright tests
-        run: pnpm --filter @backtestforecast/web test:e2e
+      - name: Start web app and run Playwright tests
+        run: |
+          pnpm --filter @backtestforecast/web start &
+          npx wait-on http://localhost:3000 --timeout 60000
+          pnpm --filter @backtestforecast/web test:e2e
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
           NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in

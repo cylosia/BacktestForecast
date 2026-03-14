@@ -153,7 +153,7 @@ export async function fetchScannerRecommendations(
   token: string,
   jobId: string,
 ): Promise<ScannerRecommendationListResponse> {
-  return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${jobId}/recommendations`, token);
+  return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token);
 }
 
 export async function fetchForecast(

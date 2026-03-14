@@ -6,9 +6,9 @@ import { strategyLabel } from "@/lib/backtests/format";
 import type { BacktestFormValues } from "@/lib/backtests/validation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> | null {
-  const config = template.config as Record<string, unknown> | undefined;
-  if (!config || typeof config !== "object") return null;
+function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
+  if (!obj || typeof obj !== "object") return false;
+  const record = obj as Record<string, unknown>;
   const requiredFields = [
     "strategy_type",
     "target_dte",
@@ -17,11 +17,14 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
     "account_size",
     "risk_per_trade_pct",
     "commission_per_contract",
-  ] as const;
-  for (const field of requiredFields) {
-    if (!(field in config)) return null;
-  }
-  const typed = config as unknown as TemplateConfig;
+  ];
+  return requiredFields.every((field) => field in record);
+}
+
+export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> | null {
+  const config = template.config;
+  if (!isValidTemplateConfig(config)) return null;
+  const typed = config;
   const patch: Partial<BacktestFormValues> = {
     strategyType: typed.strategy_type as BacktestFormValues["strategyType"],
     targetDte: String(typed.target_dte),

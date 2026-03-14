@@ -211,15 +211,21 @@ class ScanService:
         bundle_cache = self._prepare_bundles(payload, warnings)
         historical_cache = self._batch_historical_performance(payload, job.created_at)
         scan_start = _time.monotonic()
+        _scan_timed_out = False
 
         for symbol in payload.symbols:
+            if _scan_timed_out:
+                break
             for strategy in payload.strategy_types:
+                if _scan_timed_out:
+                    break
                 for rule_set in payload.rule_sets:
                     if not is_strategy_rule_set_compatible(strategy.value, rule_set.entry_rules):
                         continue
 
                     if _time.monotonic() - scan_start > 540:
                         warnings.append({"type": "timeout", "message": "Scan time limit approaching; remaining candidates were skipped."})
+                        _scan_timed_out = True
                         break
 
                     request = CreateBacktestRunRequest(
@@ -236,14 +242,16 @@ class ScanService:
                         entry_rules=rule_set.entry_rules,
                     )
                     candidate_rule_set_hash = rule_set_hash(rule_set.entry_rules)
-                    candidate_start = _time.monotonic()
                     try:
+                        elapsed_so_far = _time.monotonic() - scan_start
+                        if elapsed_so_far > 540 - self._CANDIDATE_TIMEOUT_SECONDS:
+                            warnings.append({"type": "timeout", "message": "Scan time limit approaching; remaining candidates were skipped."})
+                            _scan_timed_out = True
+                            break
                         bundle = bundle_cache.get(symbol)
                         if bundle is None:
                             continue
                         execution_result = self.execution_service.execute_request(request, bundle=bundle)
-                        if _time.monotonic() - candidate_start > self._CANDIDATE_TIMEOUT_SECONDS:
-                            raise TimeoutError(f"Candidate {symbol}/{strategy.value} exceeded {self._CANDIDATE_TIMEOUT_SECONDS}s")
                         forecast = forecast_cache.get((symbol, strategy.value))
                         if forecast is None:
                             forecast = self._forecast_for_bundle(

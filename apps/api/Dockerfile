@@ -12,7 +12,7 @@ COPY src /app/src
 COPY alembic /app/alembic
 COPY alembic.ini /app/alembic.ini
 
-RUN pip install --upgrade pip && pip install .
+RUN pip install --upgrade pip && pip install ".[s3]"
 
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app

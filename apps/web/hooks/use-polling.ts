@@ -56,50 +56,60 @@ export function usePolling<T>({
     }
   }, []);
 
+  const fetcherRef = useRef(fetcher);
+  const onCompleteRef = useRef(onComplete);
+  const isCompleteRef = useRef(isComplete);
+  const onProgressRef = useRef(onProgress);
+  useEffect(() => { fetcherRef.current = fetcher; }, [fetcher]);
+  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
+  useEffect(() => { isCompleteRef.current = isComplete; }, [isComplete]);
+  useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
+
+  const attemptsRef = useRef(0);
+
   const poll = useCallback(async () => {
     if (!mountedRef.current) return;
 
     try {
-      const result = await fetcher();
+      const result = await fetcherRef.current();
       if (!mountedRef.current) return;
 
-      onProgress?.(result);
+      onProgressRef.current?.(result);
 
-      if (isComplete(result)) {
+      if (isCompleteRef.current(result)) {
         setStatus("done");
-        onComplete(result);
+        onCompleteRef.current(result);
         return;
       }
 
-      setAttempts((prev) => {
-        const next = prev + 1;
-        if (next >= maxAttempts) {
-          setStatus("timeout");
-          return next;
-        }
+      const next = attemptsRef.current + 1;
+      attemptsRef.current = next;
+      setAttempts(next);
+      if (next >= maxAttempts) {
+        setStatus("timeout");
+      } else {
         timerRef.current = setTimeout(poll, interval);
-        return next;
-      });
+      }
     } catch (err) {
       if (!mountedRef.current) return;
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         setStatus("error");
         return;
       }
-      setAttempts((prev) => {
-        const next = prev + 1;
-        if (next >= maxAttempts) {
-          setStatus("error");
-          return next;
-        }
+      const next = attemptsRef.current + 1;
+      attemptsRef.current = next;
+      setAttempts(next);
+      if (next >= maxAttempts) {
+        setStatus("error");
+      } else {
         timerRef.current = setTimeout(poll, interval * 2);
-        return next;
-      });
+      }
     }
-  }, [fetcher, isComplete, onComplete, onProgress, interval, maxAttempts]);
+  }, [interval, maxAttempts]);
 
   const start = useCallback(() => {
     cancel();
+    attemptsRef.current = 0;
     setAttempts(0);
     setStatus("polling");
     timerRef.current = setTimeout(poll, interval);

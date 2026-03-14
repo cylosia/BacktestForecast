@@ -249,7 +249,7 @@ jobs:
   e2e-tests:
     # Requires CLERK_TESTING_TOKEN repository secret for Clerk-authenticated E2E flows.
     # Set this in GitHub > Settings > Secrets > Actions to enable this job.
-    if: secrets.CLERK_TESTING_TOKEN != ''
+    if: ${{ vars.ENABLE_E2E_TESTS == 'true' }}
     runs-on: ubuntu-latest
     env:
       CI: true
@@ -285,8 +285,11 @@ jobs:
       - name: Build web app
         run: pnpm --filter @backtestforecast/web build
 
-      - name: Run E2E tests
-        run: pnpm --filter @backtestforecast/web test:e2e
+      - name: Start web app and run E2E tests
+        run: |
+          pnpm --filter @backtestforecast/web start &
+          npx wait-on http://localhost:3000 --timeout 60000
+          pnpm --filter @backtestforecast/web test:e2e
 
       - name: Upload Playwright report
         if: failure()
@@ -331,10 +334,48 @@ jobs:
           push: false
           load: true
 
-      - name: Run Trivy vulnerability scanner
+      - name: Build Worker image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          tags: backtestforecast-worker:trivy
+          push: false
+          load: true
+
+      - name: Run Trivy on API image
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: backtestforecast-api:trivy
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+
+      - name: Run Trivy on Worker image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: backtestforecast-worker:trivy
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+
+      - name: Build Web image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          tags: backtestforecast-web:trivy
+          push: false
+          load: true
+          build-args: |
+            NEXT_PUBLIC_APP_URL=http://localhost:3000
+            NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_dummy
+
+      - name: Run Trivy on Web image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: backtestforecast-web:trivy
           format: table
           exit-code: 1
           severity: CRITICAL,HIGH

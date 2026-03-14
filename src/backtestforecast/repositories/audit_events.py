@@ -33,7 +33,8 @@ class AuditEventRepository:
     def add_always(self, event: AuditEvent) -> AuditEvent:
         """Insert an audit event unconditionally (no dedup). Appends a UUID suffix to subject_id."""
         if event.subject_id is not None:
-            event.subject_id = f"{event.subject_id}:{uuid4()}"
+            combined = f"{event.subject_id}:{uuid4()}"
+            event.subject_id = combined[:255]
         self.session.add(event)
         self.session.flush()
         return event

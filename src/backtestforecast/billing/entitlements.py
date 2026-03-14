@@ -4,8 +4,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 
+import structlog
+
 from backtestforecast.errors import FeatureLockedError, ValidationError
 from backtestforecast.schemas.common import PlanTier
+
+_logger = structlog.get_logger("billing.entitlements")
 
 
 class BillingInterval(str, Enum):
@@ -168,7 +172,16 @@ def normalize_plan_tier(
 ) -> PlanTier:
     if subscription_status in INACTIVE_STATUSES:
         return PlanTier.FREE
-    if subscription_status not in PAID_STATUSES:
+    if subscription_status is not None and subscription_status not in PAID_STATUSES:
+        _logger.warning(
+            "normalize_plan_tier.unknown_subscription_status",
+            subscription_status=subscription_status,
+            plan_tier=plan_tier,
+        )
+        if plan_tier in (PlanTier.PREMIUM.value, PlanTier.PRO.value):
+            return PlanTier(plan_tier)
+        return PlanTier.FREE
+    if subscription_status is None:
         return PlanTier.FREE
     if (
         subscription_current_period_end is not None
@@ -242,6 +255,17 @@ def resolve_scanner_policy(
             "Scanner access is not available for the current entitlement.", required_tier="premium"
         )
     return policy
+
+
+def _assert_strategy_sets_consistent() -> None:
+    from backtestforecast.schemas.backtests import StrategyType
+    schema_values = {st.value for st in StrategyType}
+    missing_from_advanced = schema_values - ADVANCED_SCANNER_STRATEGIES
+    if missing_from_advanced:
+        _logger.warning(
+            "entitlements.strategy_set_drift",
+            missing_from_advanced=sorted(missing_from_advanced),
+        )
 
 
 def validate_strategy_access(policy: ScannerAccessPolicy, strategy_types: list[str]) -> None:

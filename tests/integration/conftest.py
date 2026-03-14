@@ -115,7 +115,7 @@ def _fake_celery(monkeypatch: pytest.MonkeyPatch) -> _FakeCeleryApp:
 
 @pytest.fixture()
 def stub_execution(monkeypatch: pytest.MonkeyPatch) -> None:
-    from test_api_critical_flows import FakeExecutionService, FakeForecaster
+    from tests.integration.test_api_critical_flows import FakeExecutionService, FakeForecaster
 
     import backtestforecast.services.backtests as bs
     import backtestforecast.services.scans as ss

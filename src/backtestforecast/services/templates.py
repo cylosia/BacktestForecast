@@ -104,9 +104,12 @@ class BacktestTemplateService:
         from sqlalchemy.exc import IntegrityError
         try:
             self.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             self.session.rollback()
-            raise ValidationError(f"A template named '{request.name or template.name}' already exists.")
+            exc_str = str(exc.orig).lower() if exc.orig else ""
+            if "unique" in exc_str or "duplicate" in exc_str or "uq_" in exc_str:
+                raise ValidationError(f"A template named '{request.name or template.name}' already exists.")
+            raise
         self.session.refresh(template)
         return self._to_response(template)
 

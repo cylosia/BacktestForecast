@@ -37,12 +37,13 @@ export async function getCurrentUser(): Promise<CurrentUserResponse> {
 
 export async function getBacktestHistory(limit = 50): Promise<BacktestRunListResponse> {
   const token = await getServerToken();
-  return apiRequest<BacktestRunListResponse>(`/v1/backtests?limit=${limit}`, token, { cache: "no-store" });
+  const safeLimit = Math.max(1, Math.min(limit, 100));
+  return apiRequest<BacktestRunListResponse>(`/v1/backtests?limit=${safeLimit}`, token, { cache: "no-store" });
 }
 
 export async function getBacktestRun(runId: string): Promise<BacktestRunDetailResponse> {
   const token = await getServerToken();
-  return apiRequest<BacktestRunDetailResponse>(`/v1/backtests/${runId}`, token, { cache: "no-store" });
+  return apiRequest<BacktestRunDetailResponse>(`/v1/backtests/${encodeURIComponent(runId)}`, token, { cache: "no-store" });
 }
 
 export async function getTemplates(): Promise<TemplateListResponse> {
@@ -66,12 +67,12 @@ export async function getScannerJobs(limit = 50): Promise<ScannerJobListResponse
 
 export async function getScannerJob(jobId: string): Promise<ScannerJobResponse> {
   const token = await getServerToken();
-  return apiRequest<ScannerJobResponse>(`/v1/scans/${jobId}`, token, { cache: "no-store" });
+  return apiRequest<ScannerJobResponse>(`/v1/scans/${encodeURIComponent(jobId)}`, token, { cache: "no-store" });
 }
 
 export async function getScannerRecommendations(jobId: string): Promise<ScannerRecommendationListResponse> {
   const token = await getServerToken();
-  return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${jobId}/recommendations`, token, { cache: "no-store" });
+  return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, { cache: "no-store" });
 }
 
 export async function getStrategyCatalog(): Promise<StrategyCatalogResponse> {

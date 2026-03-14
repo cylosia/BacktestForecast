@@ -89,7 +89,7 @@ class BacktestRun(Base):
     commission_per_contract: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
     warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
-    engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="long-option-v1")
+    engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2")
     data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="massive")
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -231,6 +231,10 @@ class ScannerJob(Base):
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="ck_scanner_jobs_valid_job_status",
         ),
+        CheckConstraint(
+            "plan_tier_snapshot IN ('free', 'pro', 'premium')",
+            name="ck_scanner_jobs_valid_plan_tier",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -337,6 +341,9 @@ class ExportJob(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -404,6 +411,7 @@ class NightlyPipelineRun(Base):
     full_backtests_run: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     recommendations_produced: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     stage_details_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

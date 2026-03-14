@@ -78,7 +78,7 @@ export function ExportActions({
           document.body.appendChild(anchor);
           anchor.click();
           document.body.removeChild(anchor);
-          setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
+          setTimeout(() => window.URL.revokeObjectURL(blobUrl), 60_000);
           return;
         }
 
@@ -126,7 +126,7 @@ export function ExportActions({
         document.body.appendChild(anchor);
         anchor.click();
         document.body.removeChild(anchor);
-        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 60_000);
       } else {
         await pollAndDownload(token, exportJob.id, exportJob.file_name, controller.signal);
       }

@@ -5,7 +5,8 @@ function requireValue(
   fallback: string,
   name?: string,
 ): string {
-  const result = value && value.trim().length > 0 ? value : fallback;
+  const trimmed = value?.trim();
+  const result = trimmed && trimmed.length > 0 ? trimmed : fallback;
   if (!result && name) {
     throw new Error(`Missing required environment variable: ${name}`);
   }

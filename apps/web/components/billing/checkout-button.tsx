@@ -30,7 +30,7 @@ export function CheckoutButton({
     try {
       const token = await getToken();
       if (!token) {
-        window.location.href = "/sign-in";
+        window.location.href = `/sign-in?redirect_url=${encodeURIComponent(window.location.pathname)}`;
         return;
       }
       const result = await createCheckoutSession(token, {

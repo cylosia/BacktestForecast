@@ -18,7 +18,7 @@ jobs:
           ref: ${{ github.sha }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           running-workflow-name: cd
-          check-regexp: "backend-and-web|postgres-integration|migration-check|container-smoke|trivy-scan|secret-scanning|dependency-audit|codeql-sast"
+          check-regexp: "backend-and-web|postgres-integration|migration-check|container-smoke|trivy-scan|secret-scanning|dependency-audit|codeql-sast|e2e-tests"
           wait-interval: 15
           allowed-conclusions: success
 
@@ -62,6 +62,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Validate required CD vars
+        env:
+          APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+          CLERK_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$APP_URL" ]; then echo "::error::NEXT_PUBLIC_APP_URL is not set"; exit 1; fi
+          if [ -z "$API_BASE_URL" ]; then echo "::error::NEXT_PUBLIC_API_BASE_URL is not set"; exit 1; fi
+          if [ -z "$CLERK_KEY" ]; then echo "::error::NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is not set"; exit 1; fi
+
       - name: Build and push Web image
         uses: docker/build-push-action@v6
         with:
@@ -86,8 +96,9 @@ jobs:
     steps:
       - name: Health check
         id: smoke
+        env:
+          API_URL: ${{ vars.API_PRODUCTION_URL }}
         run: |
-          API_URL="${{ vars.API_PRODUCTION_URL }}"
           echo "Checking ${API_URL}/health/live"
           curl --fail --silent --max-time 10 "${API_URL}/health/live" || exit 1
           echo "Checking ${API_URL}/health/ready"

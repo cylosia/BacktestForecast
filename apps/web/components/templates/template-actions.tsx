@@ -38,6 +38,7 @@ export function TemplateActions({
         return;
       }
       await deleteTemplate(token, templateId);
+      setDeleting(false);
       router.refresh();
     } catch {
       setError("Failed to delete template. Please try again.");

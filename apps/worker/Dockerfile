@@ -10,7 +10,7 @@ COPY pyproject.toml README.md /app/
 COPY apps/worker /app/apps/worker
 COPY src /app/src
 
-RUN pip install --upgrade pip && pip install .
+RUN pip install --upgrade pip && pip install ".[s3]"
 
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app

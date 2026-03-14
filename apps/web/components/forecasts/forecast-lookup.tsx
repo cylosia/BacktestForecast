@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2, TrendingUp } from "lucide-react";
 import { fetchForecast } from "@/lib/api/client";
@@ -51,6 +51,15 @@ export function ForecastLookup() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [result, setResult] = useState<ForecastEnvelopeResponse | null>(null);
+  const mountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -66,6 +75,10 @@ export function ForecastLookup() {
       return;
     }
 
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setStatus("loading");
     setErrorMessage(null);
     setErrorCode(undefined);
@@ -79,9 +92,11 @@ export function ForecastLookup() {
         strategyType: strategyType || undefined,
         horizonDays: Number(horizonDays),
       });
+      if (!mountedRef.current || controller.signal.aborted) return;
       setResult(data);
       setStatus("idle");
     } catch (error) {
+      if (!mountedRef.current || controller.signal.aborted) return;
       const msg =
         error instanceof ApiError
           ? error.message

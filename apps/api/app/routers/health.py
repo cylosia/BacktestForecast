@@ -38,16 +38,12 @@ def ready(request: Request) -> JSONResponse:
     try:
         ping_database()
     except SQLAlchemyError:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "degraded",
-                "version": HEALTH_VERSION,
-                "environment": settings.app_env,
-                "database": "down",
-                "redis": "up" if redis_up else "degraded",
-            },
-        )
+        content: dict[str, str] = {"status": "degraded", "version": HEALTH_VERSION}
+    if settings.app_env not in ("production", "staging"):
+        content["environment"] = settings.app_env
+        content["database"] = "down"
+        content["redis"] = "up" if redis_up else "degraded"
+    return JSONResponse(status_code=503, content=content)
 
     if redis_up:
         rl_mode = "redis"
@@ -56,13 +52,14 @@ def ready(request: Request) -> JSONResponse:
     else:
         rl_mode = "in_memory_fallback"
 
-    payload = {
+    payload: dict[str, str] = {
         "status": "ok" if redis_up else "degraded",
         "version": HEALTH_VERSION,
-        "environment": settings.app_env,
-        "database": "up",
-        "redis": "up" if redis_up else "degraded",
-        "rate_limit_mode": rl_mode,
     }
+    if settings.app_env not in ("production", "staging"):
+        payload["environment"] = settings.app_env
+        payload["database"] = "up"
+        payload["redis"] = "up" if redis_up else "degraded"
+        payload["rate_limit_mode"] = rl_mode
     status_code = 200
     return JSONResponse(status_code=status_code, content=payload)

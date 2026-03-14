@@ -54,7 +54,7 @@ def upgrade() -> None:
             type_=sa.JSON(),
             existing_nullable=False,
             server_default=sa.text("'[]'"),
-            postgresql_using="regime_labels::json",
+            postgresql_using="to_jsonb(string_to_array(regime_labels, ','))",
         )
 
     op.create_index(

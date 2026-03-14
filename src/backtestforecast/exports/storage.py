@@ -52,8 +52,12 @@ class DatabaseStorage:
         pass
 
     def exists(self, storage_key: str) -> bool:
-        """Content is in the DB row; always True when key is provided."""
-        return True
+        """Content is in the DB row; check cannot verify without a session.
+
+        Callers should verify ``ExportJob.content_bytes is not None`` before
+        streaming.  Returns ``bool(storage_key)`` as a basic sanity check.
+        """
+        return bool(storage_key)
 
 
 def _retry(fn, max_attempts=3, base_delay=0.5):
@@ -85,12 +89,18 @@ class S3Storage:
         if not self._bucket:
             raise ConfigurationError("S3_BUCKET must be set when using S3 storage.")
         self._prefix = "exports/"
+        from botocore.config import Config as BotoConfig
         self._client = boto3.client(
             "s3",
             region_name=settings.s3_region,
             endpoint_url=settings.s3_endpoint_url,
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
+            config=BotoConfig(
+                connect_timeout=10,
+                read_timeout=30,
+                retries={"max_attempts": 2, "mode": "standard"},
+            ),
         )
 
     def _object_key(self, export_job_id: UUID, file_name: str) -> str:

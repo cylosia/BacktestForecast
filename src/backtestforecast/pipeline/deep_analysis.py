@@ -171,15 +171,20 @@ class SymbolDeepAnalysisService:
         self.session.execute(
             select(User).where(User.id == user.id).with_for_update()
         )
+        from backtestforecast.billing.entitlements import resolve_feature_policy
+        policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        max_concurrent = 5 if policy.tier.value == "premium" else 3
+
         active_count = self.session.scalar(
             select(func.count()).select_from(SymbolAnalysis).where(
                 SymbolAnalysis.user_id == user.id,
                 SymbolAnalysis.status.in_(["queued", "running"]),
             )
         )
-        if active_count is not None and active_count >= 3:
+        if active_count is not None and active_count >= max_concurrent:
             raise QuotaExceededError(
-                "You already have 3 analyses in progress. Please wait for them to complete."
+                f"You already have {active_count} analyses in progress (limit: {max_concurrent}). "
+                "Please wait for them to complete."
             )
 
         analysis = SymbolAnalysis(

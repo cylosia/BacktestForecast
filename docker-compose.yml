@@ -21,15 +21,15 @@ services:
     container_name: backtestforecast-redis
     # Set REDIS_PASSWORD in .env for non-local environments.
     # When empty, Redis runs without authentication (dev only).
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-devpassword}"]
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-devpassword}
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping || redis-cli ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"${REDIS_PASSWORD:-devpassword}\" --no-auth-warning ping"]
       interval: 10s
       timeout: 5s
       retries: 5

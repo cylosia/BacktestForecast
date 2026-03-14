@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test_api_critical_flows import _create_backtest, _set_user_plan
+from tests.integration.test_api_critical_flows import _create_backtest, _set_user_plan
 
 
 def test_export_download_csv_content_type_and_disposition(

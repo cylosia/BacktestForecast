@@ -12,11 +12,12 @@ logger = get_logger("events")
 
 _redis_client = None
 _redis_lock = threading.Lock()
+_atexit_registered = False
 
 
 def _get_redis():
     """Return a lazily-initialised, reusable sync Redis client."""
-    global _redis_client
+    global _redis_client, _atexit_registered
     if _redis_client is not None:
         return _redis_client
 
@@ -33,7 +34,9 @@ def _get_redis():
             socket_connect_timeout=2.0,
             retry_on_timeout=True,
         )
-        atexit.register(_shutdown_redis)
+        if not _atexit_registered:
+            atexit.register(_shutdown_redis)
+            _atexit_registered = True
         return _redis_client
 
 

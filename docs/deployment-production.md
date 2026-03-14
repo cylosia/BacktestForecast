@@ -3,7 +3,7 @@
 ## Recommended topology
 - **Web**: Next.js standalone build on a Node container or edge runtime.
 - **API**: FastAPI container (`apps/api/Dockerfile`).
-- **Worker**: Celery worker container (`apps/worker/Dockerfile`) — processes `research,market_data,exports,maintenance` queues.
+- **Worker**: Celery worker container (`apps/worker/Dockerfile`) — processes `research,exports,maintenance,pipeline` queues.
 - **Beat**: Same worker image with CMD override: `celery -A apps.worker.app.celery_app.celery_app beat --loglevel=INFO`. Must be a singleton.
 - **Stateful services**: PostgreSQL + Redis.
 

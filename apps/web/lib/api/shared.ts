@@ -45,6 +45,30 @@ export class ApiError extends Error {
   }
 }
 
+const KNOWN_STATUS_DEFAULTS: Record<number, { message: string; code: string }> = {
+  401: { message: "Your session has expired. Please sign in again.", code: "authentication_error" },
+  403: { message: "You don't have permission to access this resource.", code: "authorization_error" },
+  404: { message: "The requested resource was not found.", code: "not_found" },
+  429: { message: "Too many requests. Please try again later.", code: "rate_limited" },
+};
+
+async function handleKnownStatus(response: Response): Promise<void> {
+  const fallback = KNOWN_STATUS_DEFAULTS[response.status];
+  if (!fallback) return;
+  let payload: ApiErrorPayload | undefined;
+  try {
+    payload = (await response.json()) as ApiErrorPayload;
+  } catch {
+    payload = undefined;
+  }
+  throw new ApiError(
+    payload?.error?.message ?? fallback.message,
+    response.status,
+    payload?.error?.code ?? fallback.code,
+    payload?.error?.request_id,
+  );
+}
+
 function buildHeaders(token: string, init?: RequestInit): HeadersInit {
   const custom = (init?.headers ?? {}) as Record<string, string>;
   const { Authorization: _a, "Content-Type": _ct, ...safe } = custom;
@@ -148,28 +172,20 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
     });
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 429) {
-        let payload: ApiErrorPayload | undefined;
-        try {
-          payload = (await response.json()) as ApiErrorPayload;
-        } catch {
-          payload = undefined;
-        }
-        const defaults: Record<number, { message: string; code: string }> = {
-          401: { message: "Your session has expired. Please sign in again.", code: "authentication_error" },
-          403: { message: "You don't have permission to access this resource.", code: "authorization_error" },
-          404: { message: "The requested resource was not found.", code: "not_found" },
-          429: { message: "Too many requests. Please try again later.", code: "rate_limited" },
-        };
-        const fallback = defaults[response.status]!;
-        throw new ApiError(
-          payload?.error?.message ?? fallback.message,
-          response.status,
-          payload?.error?.code ?? fallback.code,
-          payload?.error?.request_id,
-        );
+      if (response.status in KNOWN_STATUS_DEFAULTS) {
+        await handleKnownStatus(response);
       }
       await parseApiError(response);
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      const errorPayload = await response.json() as ApiErrorPayload;
+      throw new ApiError(
+        errorPayload?.error?.message ?? "Unexpected JSON response for download.",
+        response.status,
+        errorPayload?.error?.code,
+      );
     }
 
     return response;

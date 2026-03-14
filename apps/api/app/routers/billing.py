@@ -69,12 +69,15 @@ def create_portal_session(
 @router.post("/webhook", status_code=status.HTTP_200_OK)
 def stripe_webhook(
     request: Request,
-    payload: bytes = Body(..., media_type="application/json", max_length=65_536),
-    signature: str = Header(alias="Stripe-Signature"),
+    payload: bytes = Body(..., media_type="application/json", max_length=256_000),
+    signature: str | None = Header(default=None, alias="Stripe-Signature"),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
+    from apps.api.app.dependencies import get_request_metadata
+
     request_id = getattr(request.state, "request_id", None)
-    ip_address = request.client.host if request.client is not None else None
+    meta = get_request_metadata(request)
+    ip_address = meta.ip_address
     settings = get_settings()
     get_rate_limiter().check(
         bucket="billing:webhook",

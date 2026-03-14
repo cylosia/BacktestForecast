@@ -33,6 +33,10 @@ from backtestforecast.services.audit import AuditService
 logger = get_logger("billing")
 
 
+_STRIPE_CIRCUIT_COOLDOWN = 30
+_STRIPE_CIRCUIT_KEY = "bff:stripe_circuit_open"
+
+
 class BillingService:
     def __init__(self, session: Session, settings: Settings | None = None) -> None:
         self.session = session
@@ -197,7 +201,8 @@ class BillingService:
                 STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
                 return {"status": "duplicate", "event_type": event_type}
             logger.exception("billing.webhook.integrity_error", event_id=event_id, event_type=event_type)
-            raise
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
+            return {"status": "error", "event_type": event_type, "reason": "integrity_error"}
 
         data_object = event["data"]["object"]
         user: User | None = None
@@ -217,6 +222,7 @@ class BillingService:
                 logger.info("billing.webhook.ignored", event_type=event_type)
         except ExternalServiceError:
             self.session.rollback()
+            self._trip_stripe_circuit()
             raise
 
         self.session.commit()
@@ -427,6 +433,17 @@ class BillingService:
             return None
 
     def _get_stripe_client(self):
+        try:
+            from redis import Redis
+            r = Redis.from_url(self.settings.redis_url, socket_timeout=2)
+            if r.exists(_STRIPE_CIRCUIT_KEY):
+                r.close()
+                raise ExternalServiceError("Stripe is temporarily unavailable. Please try again shortly.")
+            r.close()
+        except ExternalServiceError:
+            raise
+        except Exception:
+            pass
         if self._stripe_client is not None:
             return self._stripe_client
         if not self.settings.stripe_secret_key or not self.settings.stripe_webhook_secret:
@@ -437,3 +454,13 @@ class BillingService:
             raise ConfigurationError("The Stripe SDK is not installed.") from exc
         self._stripe_client = stripe.StripeClient(self.settings.stripe_secret_key)
         return self._stripe_client
+
+    def _trip_stripe_circuit(self) -> None:
+        try:
+            from redis import Redis
+            r = Redis.from_url(self.settings.redis_url, socket_timeout=2)
+            r.setex(_STRIPE_CIRCUIT_KEY, _STRIPE_CIRCUIT_COOLDOWN, "1")
+            r.close()
+        except Exception:
+            pass
+        logger.warning("billing.stripe_circuit_opened", cooldown_seconds=_STRIPE_CIRCUIT_COOLDOWN)
