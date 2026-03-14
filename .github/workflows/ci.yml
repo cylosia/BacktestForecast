@@ -49,6 +49,13 @@ jobs:
       - name: Python compile smoke check
         run: python -m compileall src apps tests scripts
 
+      - name: Critical entrypoint syntax check
+        run: |
+          python -c "import py_compile; py_compile.compile('apps/worker/app/tasks.py', doraise=True)"
+          python -c "import py_compile; py_compile.compile('apps/worker/app/celery_app.py', doraise=True)"
+          python -c "import py_compile; py_compile.compile('apps/api/app/main.py', doraise=True)"
+          python -c "import py_compile; py_compile.compile('tests/load/locustfile.py', doraise=True)"
+
       - name: Import API app smoke check
         run: python -c "from apps.api.app.main import app; print(app.title)"
 
@@ -240,6 +247,8 @@ jobs:
           alembic upgrade head
 
   e2e-tests:
+    # Requires CLERK_TESTING_TOKEN repository secret for Clerk-authenticated E2E flows.
+    # Set this in GitHub > Settings > Secrets > Actions to enable this job.
     if: ${{ secrets.CLERK_TESTING_TOKEN != '' }}
     runs-on: ubuntu-latest
     env:

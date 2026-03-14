@@ -309,7 +309,6 @@ class ExportJob(Base):
         Index("ix_export_jobs_user_status", "user_id", "status"),
         Index("ix_export_jobs_celery_task_id", "celery_task_id"),
         Index("ix_export_jobs_backtest_run_id", "backtest_run_id"),
-        Index("ix_export_jobs_expires_at", "expires_at"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')",
             name="ck_export_jobs_valid_export_status",

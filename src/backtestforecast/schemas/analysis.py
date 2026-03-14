@@ -93,6 +93,27 @@ class PipelineStatsResponse(BaseModel):
     completed_at: str | None = None
 
 
+class DailyPickSummary(BaseModel):
+    """Known keys produced by the backtest engine for daily pick summaries."""
+    model_config = {"extra": "allow"}
+    trade_count: int = 0
+    win_rate: float = 0.0
+    total_roi_pct: float = 0.0
+    max_drawdown_pct: float = 0.0
+    total_net_pnl: float = 0.0
+    profit_factor: float | None = None
+    sharpe_ratio: float | None = None
+    expectancy: float = 0.0
+
+
+class DailyPickForecast(BaseModel):
+    """Known keys produced by the forecaster for daily pick forecasts."""
+    model_config = {"extra": "allow"}
+    expected_return_median_pct: float | None = None
+    positive_outcome_rate_pct: float | None = None
+    analog_count: int | None = None
+
+
 class DailyPickItemResponse(BaseModel):
     rank: int
     score: float
@@ -102,8 +123,8 @@ class DailyPickItemResponse(BaseModel):
     close_price: float
     target_dte: int
     config_snapshot: dict[str, Any] = Field(default_factory=dict)
-    summary: dict[str, Any] = Field(default_factory=dict)
-    forecast: dict[str, Any] = Field(default_factory=dict)
+    summary: DailyPickSummary = Field(default_factory=DailyPickSummary)
+    forecast: DailyPickForecast = Field(default_factory=DailyPickForecast)
 
 
 class DailyPicksResponse(BaseModel):

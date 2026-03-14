@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
@@ -41,8 +41,9 @@ def list_backtests(
 @router.post("", response_model=BacktestRunDetailResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_backtest(
     payload: CreateBacktestRunRequest,
+    request: Request,
     user: User = Depends(get_current_user),
-    _metadata=Depends(get_request_metadata),
+    metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> BacktestRunDetailResponse:
     get_rate_limiter().check(
@@ -62,6 +63,8 @@ def create_backtest(
         queue="research",
         log_event="backtest",
         logger=logger,
+        request_id=metadata.request_id,
+        traceparent=request.headers.get("traceparent"),
     )
 
     db.expire_all()
@@ -93,6 +96,7 @@ def get_backtest(
     run_id: UUID,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    trade_limit: int = Query(default=10_000, ge=0, le=50_000),
 ) -> BacktestRunDetailResponse:
     service = BacktestService(db)
-    return service.get_run(user, run_id)
+    return service.get_run(user, run_id, trade_limit=trade_limit)

@@ -86,3 +86,7 @@ def _on_worker_shutdown(sig, how, exitcode, **kwargs):  # type: ignore[no-untype
         how=how,
         exitcode=exitcode,
     )
+    # With task_acks_late=True and task_reject_on_worker_lost=True,
+    # in-progress tasks will be re-delivered to another worker.
+    # Celery's warm shutdown (SIGTERM) allows currently executing
+    # tasks to complete before exiting.

@@ -271,6 +271,14 @@ export interface paths {
         /**
          * Get Pipeline History
          * @description Return recent pipeline run history (Pro+ gated).
+         *
+         *     Pipeline runs are system-wide (not user-scoped) since they represent
+         *     shared nightly scanning results.  Access is gated by forecasting
+         *     entitlement.
+         *
+         *     Supports optional cursor-based pagination via the ``cursor`` parameter
+         *     which should be the ``created_at`` ISO timestamp of the last item from
+         *     the previous page.
          */
         get: operations["get_pipeline_history_v1_daily_picks_history_get"];
         put?: never;
@@ -570,7 +578,7 @@ export interface components {
             /** Configs Tested */
             configs_tested: number;
             /** Created At */
-            created_at?: string | null;
+            created_at: string;
             /** Duration Seconds */
             duration_seconds?: number | null;
             /** Error Message */
@@ -611,7 +619,7 @@ export interface components {
             /** Configs Tested */
             configs_tested: number;
             /** Created At */
-            created_at?: string | null;
+            created_at: string;
             /** Duration Seconds */
             duration_seconds?: number | null;
             /** Error Message */
@@ -743,7 +751,7 @@ export interface components {
             risk_per_trade_pct: string;
             /** Started At */
             started_at?: string | null;
-            status: components["schemas"]["RunStatus"];
+            status: components["schemas"]["JobStatus"];
             /** Strategy Type */
             strategy_type: string;
             summary: components["schemas"]["BacktestSummaryResponse"];
@@ -784,7 +792,7 @@ export interface components {
             id: string;
             /** Max Holding Days */
             max_holding_days: number;
-            status: components["schemas"]["RunStatus"];
+            status: components["schemas"]["JobStatus"];
             /** Strategy Type */
             strategy_type: string;
             summary: components["schemas"]["BacktestSummaryResponse"];
@@ -813,7 +821,7 @@ export interface components {
             id: string;
             /** Started At */
             started_at?: string | null;
-            status: components["schemas"]["RunStatus"];
+            status: components["schemas"]["JobStatus"];
         };
         /** BacktestSummaryResponse */
         BacktestSummaryResponse: {
@@ -910,8 +918,11 @@ export interface components {
             gross_pnl: string;
             /** Holding Period Days */
             holding_period_days: number;
-            /** Id */
-            id?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /** Net Pnl */
             net_pnl: string;
             /** Option Ticker */
@@ -936,7 +947,7 @@ export interface components {
          */
         BollingerBand: "lower" | "middle" | "upper";
         /** BollingerBandsRule */
-        BollingerBandsRule: {
+        "BollingerBandsRule-Input": {
             band: components["schemas"]["BollingerBand"];
             operator: components["schemas"]["ComparisonOperator"];
             /**
@@ -949,6 +960,26 @@ export interface components {
              * @default 2
              */
             standard_deviations: number | string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "bollinger_bands";
+        };
+        /** BollingerBandsRule */
+        "BollingerBandsRule-Output": {
+            band: components["schemas"]["BollingerBand"];
+            operator: components["schemas"]["ComparisonOperator"];
+            /**
+             * Period
+             * @default 20
+             */
+            period: number;
+            /**
+             * Standard Deviations
+             * @default 2
+             */
+            standard_deviations: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1011,7 +1042,7 @@ export interface components {
              */
             end_date: string;
             /** Entry Rules */
-            entry_rules?: (components["schemas"]["RsiRule"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule"] | components["schemas"]["IvRankRule"] | components["schemas"]["IvPercentileRule"] | components["schemas"]["VolumeSpikeRule"] | components["schemas"]["SupportResistanceRule"] | components["schemas"]["AvoidEarningsRule"])[];
+            entry_rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"])[];
             /** Idempotency Key */
             idempotency_key?: string | null;
             /** Max Holding Days */
@@ -1117,7 +1148,7 @@ export interface components {
         };
         /** CreateTemplateRequest */
         CreateTemplateRequest: {
-            config: components["schemas"]["TemplateConfig"];
+            config: components["schemas"]["TemplateConfig-Input"];
             /** Description */
             description?: string | null;
             /** Name */
@@ -1128,7 +1159,16 @@ export interface components {
          * @enum {string}
          */
         CrossoverDirection: "bullish" | "bearish";
-        /** CurrentUserResponse */
+        /**
+         * CurrentUserResponse
+         * @description Response schema for the authenticated user endpoint.
+         *
+         *     ``features`` and ``usage`` are computed fields that do not correspond to
+         *     database columns on the User model.  Callers must construct this response
+         *     explicitly (see ``BacktestService.to_current_user_response``) rather than
+         *     passing an ORM User object directly — ``from_attributes`` is enabled only
+         *     for the flat scalar fields inherited from the User row.
+         */
         CurrentUserResponse: {
             /**
              * Cancel At Period End
@@ -1150,8 +1190,7 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Plan Tier */
-            plan_tier: string;
+            plan_tier: components["schemas"]["PlanTier"];
             /** Subscription Billing Interval */
             subscription_billing_interval?: string | null;
             /** Subscription Current Period End */
@@ -1196,6 +1235,20 @@ export interface components {
              */
             strike_offset: number;
         };
+        /**
+         * DailyPickForecast
+         * @description Known keys produced by the forecaster for daily pick forecasts.
+         */
+        DailyPickForecast: {
+            /** Analog Count */
+            analog_count?: number | null;
+            /** Expected Return Median Pct */
+            expected_return_median_pct?: number | null;
+            /** Positive Outcome Rate Pct */
+            positive_outcome_rate_pct?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** DailyPickItemResponse */
         DailyPickItemResponse: {
             /** Close Price */
@@ -1204,10 +1257,7 @@ export interface components {
             config_snapshot?: {
                 [key: string]: unknown;
             };
-            /** Forecast */
-            forecast?: {
-                [key: string]: unknown;
-            };
+            forecast?: components["schemas"]["DailyPickForecast"];
             /** Rank */
             rank: number;
             /** Regime Labels */
@@ -1216,14 +1266,53 @@ export interface components {
             score: number;
             /** Strategy Type */
             strategy_type: string;
-            /** Summary */
-            summary?: {
-                [key: string]: unknown;
-            };
+            summary?: components["schemas"]["DailyPickSummary"];
             /** Symbol */
             symbol: string;
             /** Target Dte */
             target_dte: number;
+        };
+        /**
+         * DailyPickSummary
+         * @description Known keys produced by the backtest engine for daily pick summaries.
+         */
+        DailyPickSummary: {
+            /**
+             * Expectancy
+             * @default 0
+             */
+            expectancy: number;
+            /**
+             * Max Drawdown Pct
+             * @default 0
+             */
+            max_drawdown_pct: number;
+            /** Profit Factor */
+            profit_factor?: number | null;
+            /** Sharpe Ratio */
+            sharpe_ratio?: number | null;
+            /**
+             * Total Net Pnl
+             * @default 0
+             */
+            total_net_pnl: number;
+            /**
+             * Total Roi Pct
+             * @default 0
+             */
+            total_roi_pct: number;
+            /**
+             * Trade Count
+             * @default 0
+             */
+            trade_count: number;
+            /**
+             * Win Rate
+             * @default 0
+             */
+            win_rate: number;
+        } & {
+            [key: string]: unknown;
         };
         /** DailyPicksResponse */
         DailyPicksResponse: {
@@ -1253,6 +1342,13 @@ export interface components {
              */
             trade_date: string;
         };
+        ErrorEnvelope: {
+            error: {
+                code: string;
+                message: string;
+                request_id?: string | null;
+            };
+        };
         /**
          * ExportFormat
          * @enum {string}
@@ -1271,6 +1367,8 @@ export interface components {
             error_code?: string | null;
             /** Error Message */
             error_message?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
             /** Export Format */
             export_format: string;
             /** File Name */
@@ -1296,8 +1394,6 @@ export interface components {
             started_at?: string | null;
             /** Status */
             status: string;
-            /** Expires At */
-            expires_at?: string | null;
         };
         /** FeatureAccessResponse */
         FeatureAccessResponse: {
@@ -1311,8 +1407,7 @@ export interface components {
             history_item_limit: number;
             /** Monthly Backtest Quota */
             monthly_backtest_quota?: number | null;
-            /** Plan Tier */
-            plan_tier: string;
+            plan_tier: components["schemas"]["PlanTier"];
             /** Scanner Modes */
             scanner_modes?: string[];
             /** Side By Side Comparison Limit */
@@ -1400,7 +1495,7 @@ export interface components {
             weighted_win_rate: string;
         };
         /** IvPercentileRule */
-        IvPercentileRule: {
+        "IvPercentileRule-Input": {
             /**
              * Lookback Days
              * @default 252
@@ -1415,8 +1510,24 @@ export interface components {
              */
             type: "iv_percentile";
         };
+        /** IvPercentileRule */
+        "IvPercentileRule-Output": {
+            /**
+             * Lookback Days
+             * @default 252
+             */
+            lookback_days: number;
+            operator: components["schemas"]["ComparisonOperator"];
+            /** Threshold */
+            threshold: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "iv_percentile";
+        };
         /** IvRankRule */
-        IvRankRule: {
+        "IvRankRule-Input": {
             /**
              * Lookback Days
              * @default 252
@@ -1431,6 +1542,27 @@ export interface components {
              */
             type: "iv_rank";
         };
+        /** IvRankRule */
+        "IvRankRule-Output": {
+            /**
+             * Lookback Days
+             * @default 252
+             */
+            lookback_days: number;
+            operator: components["schemas"]["ComparisonOperator"];
+            /** Threshold */
+            threshold: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "iv_rank";
+        };
+        /**
+         * JobStatus
+         * @enum {string}
+         */
+        JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /** LandscapeCell */
         LandscapeCell: {
             /** Config */
@@ -1537,6 +1669,8 @@ export interface components {
         PipelineHistoryResponse: {
             /** Items */
             items: components["schemas"]["PipelineHistoryItemResponse"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** PipelineStatsResponse */
         PipelineStatsResponse: {
@@ -1557,6 +1691,11 @@ export interface components {
             /** Symbols Screened */
             symbols_screened: number;
         };
+        /**
+         * PlanTier
+         * @enum {string}
+         */
+        PlanTier: "free" | "pro" | "premium";
         /** PortalSessionResponse */
         PortalSessionResponse: {
             /** Portal Url */
@@ -1601,7 +1740,7 @@ export interface components {
             [key: string]: unknown;
         };
         /** RsiRule */
-        RsiRule: {
+        "RsiRule-Input": {
             operator: components["schemas"]["ComparisonOperator"];
             /**
              * Period
@@ -1616,18 +1755,29 @@ export interface components {
              */
             type: "rsi";
         };
+        /** RsiRule */
+        "RsiRule-Output": {
+            operator: components["schemas"]["ComparisonOperator"];
+            /**
+             * Period
+             * @default 14
+             */
+            period: number;
+            /** Threshold */
+            threshold: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "rsi";
+        };
         /** RuleSetDefinition */
         RuleSetDefinition: {
             /** Entry Rules */
-            entry_rules?: (components["schemas"]["RsiRule"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule"] | components["schemas"]["IvRankRule"] | components["schemas"]["IvPercentileRule"] | components["schemas"]["VolumeSpikeRule"] | components["schemas"]["SupportResistanceRule"] | components["schemas"]["AvoidEarningsRule"])[];
+            entry_rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"])[];
             /** Name */
             name: string;
         };
-        /**
-         * RunStatus
-         * @enum {string}
-         */
-        RunStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /** ScannerJobListResponse */
         ScannerJobListResponse: {
             /** Items */
@@ -1660,8 +1810,7 @@ export interface components {
             mode: components["schemas"]["ScannerMode"];
             /** Name */
             name: string | null;
-            /** Plan Tier Snapshot */
-            plan_tier_snapshot: string;
+            plan_tier_snapshot: components["schemas"]["PlanTier"];
             /** Recommendation Count */
             recommendation_count: number;
             /** Refresh Daily */
@@ -1670,17 +1819,12 @@ export interface components {
             refresh_priority: number;
             /** Started At */
             started_at: string | null;
-            status: components["schemas"]["ScannerJobStatus"];
-            /** Warnings */
-            warnings?: {
+            status: components["schemas"]["JobStatus"];
+            /** Warnings Json */
+            warnings_json?: {
                 [key: string]: unknown;
             }[];
         };
-        /**
-         * ScannerJobStatus
-         * @enum {string}
-         */
-        ScannerJobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /**
          * ScannerMode
          * @enum {string}
@@ -1785,6 +1929,8 @@ export interface components {
             groups: components["schemas"]["StrategyCatalogGroupResponse"][];
             /** Total Strategies */
             total_strategies: number;
+            /** User Tier */
+            user_tier?: string | null;
         };
         /**
          * StrategyOverrides
@@ -1835,7 +1981,7 @@ export interface components {
          */
         SupportResistanceMode: "near_support" | "near_resistance" | "breakout_above_resistance" | "breakdown_below_support";
         /** SupportResistanceRule */
-        SupportResistanceRule: {
+        "SupportResistanceRule-Input": {
             /**
              * Lookback Period
              * @default 20
@@ -1853,11 +1999,30 @@ export interface components {
              */
             type: "support_resistance";
         };
+        /** SupportResistanceRule */
+        "SupportResistanceRule-Output": {
+            /**
+             * Lookback Period
+             * @default 20
+             */
+            lookback_period: number;
+            mode: components["schemas"]["SupportResistanceMode"];
+            /**
+             * Tolerance Pct
+             * @default 1.0
+             */
+            tolerance_pct: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "support_resistance";
+        };
         /**
          * TemplateConfig
          * @description The reusable portion of a backtest configuration — everything except symbol and dates.
          */
-        TemplateConfig: {
+        "TemplateConfig-Input": {
             /** Account Size */
             account_size: number | string;
             /** Commission Per Contract */
@@ -1870,11 +2035,37 @@ export interface components {
              */
             dte_tolerance_days: number;
             /** Entry Rules */
-            entry_rules?: (components["schemas"]["RsiRule"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule"] | components["schemas"]["IvRankRule"] | components["schemas"]["IvPercentileRule"] | components["schemas"]["VolumeSpikeRule"] | components["schemas"]["SupportResistanceRule"] | components["schemas"]["AvoidEarningsRule"])[];
+            entry_rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"])[];
             /** Max Holding Days */
             max_holding_days: number;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: number | string;
+            strategy_type: components["schemas"]["StrategyType"];
+            /** Target Dte */
+            target_dte: number;
+        };
+        /**
+         * TemplateConfig
+         * @description The reusable portion of a backtest configuration — everything except symbol and dates.
+         */
+        "TemplateConfig-Output": {
+            /** Account Size */
+            account_size: string;
+            /** Commission Per Contract */
+            commission_per_contract: string;
+            /** Default Symbol */
+            default_symbol?: string | null;
+            /**
+             * Dte Tolerance Days
+             * @default 5
+             */
+            dte_tolerance_days: number;
+            /** Entry Rules */
+            entry_rules?: (components["schemas"]["RsiRule-Output"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Output"] | components["schemas"]["IvRankRule-Output"] | components["schemas"]["IvPercentileRule-Output"] | components["schemas"]["VolumeSpikeRule-Output"] | components["schemas"]["SupportResistanceRule-Output"] | components["schemas"]["AvoidEarningsRule"])[];
+            /** Max Holding Days */
+            max_holding_days: number;
+            /** Risk Per Trade Pct */
+            risk_per_trade_pct: string;
             strategy_type: components["schemas"]["StrategyType"];
             /** Target Dte */
             target_dte: number;
@@ -1890,10 +2081,7 @@ export interface components {
         };
         /** TemplateResponse */
         TemplateResponse: {
-            /** Config */
-            config: {
-                [key: string]: unknown;
-            };
+            config_json: components["schemas"]["TemplateConfig-Output"];
             /**
              * Created At
              * Format: date-time
@@ -1908,8 +2096,7 @@ export interface components {
             id: string;
             /** Name */
             name: string;
-            /** Strategy Type */
-            strategy_type: string;
+            strategy_type: components["schemas"]["StrategyType"];
             /**
              * Updated At
              * Format: date-time
@@ -1918,12 +2105,14 @@ export interface components {
         };
         /** UpdateTemplateRequest */
         UpdateTemplateRequest: {
-            config?: components["schemas"]["TemplateConfig"] | null;
+            config?: components["schemas"]["TemplateConfig-Input"] | null;
             /**
              * Description
              * @default UNSET
              */
             description: (string | components["schemas"]["_Unset"]) | null;
+            /** Expected Updated At */
+            expected_updated_at?: string | null;
             /** Name */
             name?: string | null;
         };
@@ -1951,7 +2140,7 @@ export interface components {
             type: string;
         };
         /** VolumeSpikeRule */
-        VolumeSpikeRule: {
+        "VolumeSpikeRule-Input": {
             /**
              * Lookback Period
              * @default 20
@@ -1962,6 +2151,26 @@ export interface components {
              * @default 1.5
              */
             multiplier: number | string;
+            /** @default gte */
+            operator: components["schemas"]["ComparisonOperator"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "volume_spike";
+        };
+        /** VolumeSpikeRule */
+        "VolumeSpikeRule-Output": {
+            /**
+             * Lookback Period
+             * @default 20
+             */
+            lookback_period: number;
+            /**
+             * Multiplier
+             * @default 1.5
+             */
+            multiplier: string;
             /** @default gte */
             operator: components["schemas"]["ComparisonOperator"];
             /**
@@ -2004,6 +2213,24 @@ export interface operations {
                     };
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     live_health_live_get: {
@@ -2026,6 +2253,24 @@ export interface operations {
                     };
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     ready_health_ready_get: {
@@ -2044,6 +2289,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2070,13 +2333,22 @@ export interface operations {
                     "application/json": components["schemas"]["AnalysisListResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2105,13 +2377,22 @@ export interface operations {
                     "application/json": components["schemas"]["AnalysisSummaryResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2138,13 +2419,22 @@ export interface operations {
                     "application/json": components["schemas"]["AnalysisDetailResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2171,13 +2461,22 @@ export interface operations {
                     "application/json": components["schemas"]["AnalysisSummaryResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2204,13 +2503,22 @@ export interface operations {
                     "application/json": components["schemas"]["BacktestRunListResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2239,13 +2547,22 @@ export interface operations {
                     "application/json": components["schemas"]["BacktestRunDetailResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2280,14 +2597,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
     };
     get_backtest_v1_backtests__run_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                trade_limit?: number;
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -2307,13 +2626,22 @@ export interface operations {
                     "application/json": components["schemas"]["BacktestRunDetailResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2340,13 +2668,22 @@ export interface operations {
                     "application/json": components["schemas"]["BacktestRunStatusResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2381,7 +2718,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2416,7 +2753,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2453,7 +2790,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2481,13 +2818,22 @@ export interface operations {
                     "application/json": components["schemas"]["DailyPicksResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2496,6 +2842,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description created_at ISO cursor from previous page */
+                cursor?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -2514,13 +2862,22 @@ export interface operations {
                     "application/json": components["schemas"]["PipelineHistoryResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2538,13 +2895,23 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Server-Sent Events stream. Events: status, timeout, error, done. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": unknown;
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2553,7 +2920,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2571,13 +2938,23 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Server-Sent Events stream. Events: status, timeout, error, done. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": unknown;
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2586,7 +2963,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2604,13 +2981,23 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Server-Sent Events stream. Events: status, timeout, error, done. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": unknown;
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2619,7 +3006,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2637,13 +3024,23 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Server-Sent Events stream. Events: status, timeout, error, done. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": unknown;
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2652,7 +3049,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2687,7 +3084,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2705,13 +3102,27 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Exported file streamed as an attachment. */
             200: {
                 headers: {
+                    /** @description attachment; filename="<safe_name>" */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": unknown;
+                    "application/octet-stream": string;
+                    "application/pdf": string;
+                    "text/csv": string;
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2720,7 +3131,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2747,13 +3158,22 @@ export interface operations {
                     "application/json": components["schemas"]["ExportJobResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2783,13 +3203,22 @@ export interface operations {
                     "application/json": components["schemas"]["ForecastEnvelopeResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2814,13 +3243,22 @@ export interface operations {
                     "application/json": components["schemas"]["CurrentUserResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2843,6 +3281,24 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2869,13 +3325,22 @@ export interface operations {
                     "application/json": components["schemas"]["ScannerJobListResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2904,13 +3369,22 @@ export interface operations {
                     "application/json": components["schemas"]["ScannerJobResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2937,13 +3411,22 @@ export interface operations {
                     "application/json": components["schemas"]["ScannerJobResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2970,13 +3453,22 @@ export interface operations {
                     "application/json": components["schemas"]["ScannerRecommendationListResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -3001,13 +3493,22 @@ export interface operations {
                     "application/json": components["schemas"]["StrategyCatalogResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -3034,13 +3535,22 @@ export interface operations {
                     "application/json": components["schemas"]["TemplateListResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -3069,13 +3579,22 @@ export interface operations {
                     "application/json": components["schemas"]["TemplateResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -3102,13 +3621,22 @@ export interface operations {
                     "application/json": components["schemas"]["TemplateResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -3133,13 +3661,22 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -3170,13 +3707,22 @@ export interface operations {
                     "application/json": components["schemas"]["TemplateResponse"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

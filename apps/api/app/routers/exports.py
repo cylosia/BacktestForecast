@@ -6,7 +6,7 @@ from typing import Generator
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
@@ -28,6 +28,7 @@ logger = structlog.get_logger("api.exports")
 @router.post("", response_model=ExportJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_export(
     payload: CreateExportRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
@@ -56,7 +57,11 @@ def create_export(
             queue="exports",
             log_event="export",
             logger=logger,
+            request_id=metadata.request_id,
+            traceparent=request.headers.get("traceparent"),
         )
+    else:
+        logger.error("export.post_enqueue_missing", export_job_id=str(job_response.id))
 
     db.expire_all()
     return service.get_export_status(user, job_response.id)

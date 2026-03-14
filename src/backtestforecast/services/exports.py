@@ -189,16 +189,20 @@ class ExportService:
                 break
 
             for job in jobs:
+                storage_deleted = True
                 if job.storage_key:
                     try:
                         self._storage.delete(job.storage_key)
                     except Exception:
+                        storage_deleted = False
                         logger.warning(
                             "cleanup.delete_failed",
                             export_job_id=str(job.id),
                             storage_key=job.storage_key,
                             exc_info=True,
                         )
+                if not storage_deleted:
+                    continue
                 job.content_bytes = None
                 job.storage_key = None
                 job.status = "expired"

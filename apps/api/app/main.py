@@ -107,6 +107,15 @@ def _custom_openapi():
                     },
                 },
             }
+            if "get" in path_obj or "delete" in path_obj:
+                operation["responses"].setdefault("404", {
+                    "description": "Resource not found",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ErrorEnvelope"},
+                        },
+                    },
+                })
 
     app.openapi_schema = schema
     return schema
@@ -235,6 +244,39 @@ def prometheus_metrics(request: Request) -> Response:
         if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
             return JSONResponse(status_code=403, content={"error": "forbidden"})
     return metrics_response()
+
+
+@app.get("/admin/dlq", include_in_schema=False)
+def dlq_status(request: Request) -> Response:
+    """Inspect the dead-letter queue depth and recent items.
+
+    Protected by the same metrics token as /metrics in production.
+    """
+    if settings.app_env in ("production", "staging"):
+        import hmac as _hmac
+
+        auth = request.headers.get("Authorization", "")
+        token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+        if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+    try:
+        from redis import Redis
+
+        r = Redis.from_url(settings.redis_url, socket_timeout=5)
+        depth = r.llen("bff:dead_letter_queue")
+        recent_raw = r.lrange("bff:dead_letter_queue", 0, 9)
+        r.close()
+        import json
+
+        recent = []
+        for raw in recent_raw:
+            try:
+                recent.append(json.loads(raw))
+            except Exception:
+                recent.append({"raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)})
+        return JSONResponse(content={"depth": depth, "recent": recent})
+    except Exception as exc:
+        return JSONResponse(status_code=503, content={"error": "dlq_unavailable", "detail": str(exc)})
 
 
 @app.get("/")

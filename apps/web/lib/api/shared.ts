@@ -80,7 +80,7 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
     });
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403 || response.status === 429) {
+      if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 429) {
         let payload: ApiErrorPayload | undefined;
         try {
           payload = (await response.json()) as ApiErrorPayload;
@@ -90,6 +90,7 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
         const defaults: Record<number, { message: string; code: string }> = {
           401: { message: "Your session has expired. Please sign in again.", code: "authentication_error" },
           403: { message: "You don't have permission to access this resource.", code: "authorization_error" },
+          404: { message: "The requested resource was not found.", code: "not_found" },
           429: { message: "Too many requests. Please try again later.", code: "rate_limited" },
         };
         const fallback = defaults[response.status]!;
@@ -140,7 +141,7 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
     });
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403 || response.status === 429) {
+      if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 429) {
         let payload: ApiErrorPayload | undefined;
         try {
           payload = (await response.json()) as ApiErrorPayload;
@@ -150,6 +151,7 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
         const defaults: Record<number, { message: string; code: string }> = {
           401: { message: "Your session has expired. Please sign in again.", code: "authentication_error" },
           403: { message: "You don't have permission to access this resource.", code: "authorization_error" },
+          404: { message: "The requested resource was not found.", code: "not_found" },
           429: { message: "Too many requests. Please try again later.", code: "rate_limited" },
         };
         const fallback = defaults[response.status]!;

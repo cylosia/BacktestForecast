@@ -63,6 +63,17 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
       return;
     }
 
+    if (!values.strategyType) {
+      setMessage("Strategy type is required to save a template.");
+      return;
+    }
+
+    const dte = Number(values.targetDte);
+    if (!Number.isFinite(dte) || dte <= 0) {
+      setMessage("Target DTE must be a positive number.");
+      return;
+    }
+
     setSaving(true);
     setMessage(null);
 

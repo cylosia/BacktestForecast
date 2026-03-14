@@ -20,6 +20,13 @@ from backtestforecast.observability.metrics import (
     DLQ_MESSAGES_TOTAL,
     DUPLICATE_TASK_EXECUTION_TOTAL,
 )
+from backtestforecast.models import (
+    BacktestRun,
+    ExportJob as ExportJobModel,
+    ScannerJob as ScannerJobModel,
+    SymbolAnalysis,
+    User,
+)
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
@@ -388,7 +395,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             requested_format = _EF(ej.export_format)
         except ValueError:
             requested_format = None
-        if not policy.export_formats or (requested_format is not None and requested_format not in policy.export_formats):
+        if not policy.export_formats or requested_format is None or requested_format not in policy.export_formats:
             ej.status = "failed"
             ej.error_code = "entitlement_revoked"
             ej.error_message = f"Your plan no longer supports {ej.export_format} export."
@@ -521,12 +528,12 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
             policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-                if not policy.forecasting_access:
-                    sa_obj.status = "failed"
-                    sa_obj.error_message = "Your plan no longer supports this operation."
-                    session.commit()
-                    publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
-                    return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
+            if not policy.forecasting_access:
+                sa_obj.status = "failed"
+                sa_obj.error_message = "Your plan no longer supports this operation."
+                session.commit()
+                publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
             service = SymbolDeepAnalysisService(
                 session,
                 market_data_fetcher=market_data,

@@ -95,6 +95,6 @@ def stripe_webhook(
             raise
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
         return JSONResponse(  # type: ignore[return-value]
-            status_code=422,
+            status_code=500,
             content={"error": {"code": "webhook_processing_failed", "message": "Webhook could not be processed."}},
         )

@@ -124,6 +124,10 @@ def get_pipeline_history(
 ) -> dict[str, Any]:
     """Return recent pipeline run history (Pro+ gated).
 
+    Pipeline runs are system-wide (not user-scoped) since they represent
+    shared nightly scanning results.  Access is gated by forecasting
+    entitlement.
+
     Supports optional cursor-based pagination via the ``cursor`` parameter
     which should be the ``created_at`` ISO timestamp of the last item from
     the previous page.

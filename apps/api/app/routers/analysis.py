@@ -5,10 +5,10 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user
+from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import get_settings
@@ -34,7 +34,9 @@ logger = structlog.get_logger("api.analysis")
 @router.post("", response_model=AnalysisSummaryResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_analysis(
     payload: CreateAnalysisRequest,
+    request: Request,
     user: User = Depends(get_current_user),
+    metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Create and enqueue a single-symbol deep analysis (Pro+ gated)."""
@@ -67,6 +69,8 @@ def create_analysis(
         queue="research",
         log_event="analysis",
         logger=logger,
+        request_id=metadata.request_id,
+        traceparent=request.headers.get("traceparent"),
     )
 
     db.expire_all()

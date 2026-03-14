@@ -41,7 +41,8 @@ async def _get_async_redis():
     """Return a lazily-initialised shared async Redis connection pool.
 
     Validates pool health via ``ping()`` at most once every 60 s; recreates on
-    failure.
+    failure.  All checks and mutations are done under the lock to prevent
+    races between concurrent coroutines.
     """
     from redis.exceptions import RedisError
 
@@ -51,16 +52,22 @@ async def _get_async_redis():
     now = _time.monotonic()
     if _async_redis_pool is not None and (now - _async_redis_last_ping) < _REDIS_PING_INTERVAL:
         return _async_redis_pool
-    if _async_redis_pool is not None:
-        try:
-            await _async_redis_pool.ping()
-            _async_redis_last_ping = now
-        except (RedisError, OSError):
-            logger.warning("sse.redis_pool_stale", action="recreating")
-            _async_redis_pool = None
     async with _async_redis_lock:
-        if _async_redis_pool is not None:
+        now = _time.monotonic()
+        if _async_redis_pool is not None and (now - _async_redis_last_ping) < _REDIS_PING_INTERVAL:
             return _async_redis_pool
+        if _async_redis_pool is not None:
+            try:
+                await _async_redis_pool.ping()
+                _async_redis_last_ping = now
+                return _async_redis_pool
+            except (RedisError, OSError):
+                logger.warning("sse.redis_pool_stale", action="recreating")
+                try:
+                    await _async_redis_pool.aclose()
+                except Exception:
+                    pass
+                _async_redis_pool = None
         import redis.asyncio as aioredis
 
         settings = get_settings()
@@ -71,10 +78,11 @@ async def _get_async_redis():
             socket_timeout=settings.sse_redis_socket_timeout,
             socket_connect_timeout=settings.sse_redis_connect_timeout,
         )
+        _async_redis_last_ping = _time.monotonic()
     return _async_redis_pool
 
 
-async def _invalidate_async_redis() -> None:
+async def _close_async_redis(*, suppress_errors: bool = True) -> None:
     """Close and discard the shared pool so it is recreated on next request."""
     global _async_redis_pool, _async_redis_last_ping
     async with _async_redis_lock:
@@ -82,19 +90,20 @@ async def _invalidate_async_redis() -> None:
             try:
                 await _async_redis_pool.aclose()
             except Exception:
-                pass
+                if not suppress_errors:
+                    raise
             _async_redis_pool = None
             _async_redis_last_ping = 0.0
+
+
+async def _invalidate_async_redis() -> None:
+    """Alias: close and discard the shared pool (suppresses errors)."""
+    await _close_async_redis(suppress_errors=True)
 
 
 async def shutdown_async_redis() -> None:
     """Close the shared async Redis pool. Called from app lifespan shutdown."""
-    global _async_redis_pool, _async_redis_last_ping
-    async with _async_redis_lock:
-        if _async_redis_pool is not None:
-            await _async_redis_pool.aclose()
-            _async_redis_pool = None
-            _async_redis_last_ping = 0.0
+    await _close_async_redis(suppress_errors=False)
 
 
 def _check_sse_rate(user_id: UUID) -> None:

@@ -220,12 +220,14 @@ class Settings(BaseSettings):
         "template_mutate_rate_limit", "analysis_create_rate_limit",
         "forecast_rate_limit", "daily_picks_rate_limit",
         "rate_limit_memory_max_keys",
+        "sse_rate_limit", "sse_redis_max_connections",
+        "db_pool_max_overflow",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
         return max(int(value), 1)
 
-    @field_validator("massive_timeout_seconds")
+    @field_validator("massive_timeout_seconds", "sse_redis_socket_timeout", "sse_redis_connect_timeout")
     @classmethod
     def validate_positive_floats(cls, value: float) -> float:
         return max(float(value), 0.1)

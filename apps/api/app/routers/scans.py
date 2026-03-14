@@ -4,10 +4,10 @@ from typing import Annotated
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user
+from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
@@ -39,7 +39,9 @@ def list_scans(
 @router.post("", response_model=ScannerJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_scan(
     payload: CreateScannerJobRequest,
+    request: Request,
     user: User = Depends(get_current_user),
+    metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> ScannerJobResponse:
     get_rate_limiter().check(
@@ -58,6 +60,8 @@ def create_scan(
         queue="research",
         log_event="scan",
         logger=logger,
+        request_id=metadata.request_id,
+        traceparent=request.headers.get("traceparent"),
     )
     db.expire_all()
     return service.get_job(user, job.id)

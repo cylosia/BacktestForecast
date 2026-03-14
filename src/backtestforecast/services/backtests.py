@@ -134,14 +134,17 @@ class BacktestService:
         self.session.refresh(run)
         return run
 
-    def set_celery_task_id(self, run_id: UUID, celery_task_id: str) -> bool:
+    def set_celery_task_id(self, run_id: UUID, celery_task_id: str, *, user_id: UUID | None = None) -> bool:
         """Attach the Celery task ID after dispatch. Returns True if the update succeeded."""
         from sqlalchemy import update
-        result = self.session.execute(
+        stmt = (
             update(BacktestRun)
             .where(BacktestRun.id == run_id, BacktestRun.status == "queued")
             .values(celery_task_id=celery_task_id)
         )
+        if user_id is not None:
+            stmt = stmt.where(BacktestRun.user_id == user_id)
+        result = self.session.execute(stmt)
         self.session.commit()
         return result.rowcount > 0
 
@@ -299,14 +302,14 @@ class BacktestService:
             error_message=run.error_message,
         )
 
-    def get_run(self, user: User, run_id: UUID) -> BacktestRunDetailResponse:
-        return self.get_run_for_owner(user_id=user.id, run_id=run_id)
+    def get_run(self, user: User, run_id: UUID, *, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
+        return self.get_run_for_owner(user_id=user.id, run_id=run_id, trade_limit=trade_limit)
 
-    def get_run_for_owner(self, *, user_id: UUID, run_id: UUID) -> BacktestRunDetailResponse:
+    def get_run_for_owner(self, *, user_id: UUID, run_id: UUID, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
         run = self.run_repository.get_for_user(run_id, user_id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
-        return self._to_detail_response(run)
+        return self._to_detail_response(run, trade_limit=trade_limit)
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
         feature_policy = resolve_feature_policy(
@@ -523,7 +526,7 @@ class BacktestService:
             summary=self._summary_response(run),
         )
 
-    def _to_detail_response(self, run: BacktestRun) -> BacktestRunDetailResponse:
+    def _to_detail_response(self, run: BacktestRun, *, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
         return BacktestRunDetailResponse(
             id=run.id,
             symbol=run.symbol,
@@ -546,6 +549,6 @@ class BacktestService:
             error_code=run.error_code,
             error_message=run.error_message,
             summary=self._summary_response(run),
-            trades=[BacktestTradeResponse.model_validate(trade) for trade in run.trades],
+            trades=[BacktestTradeResponse.model_validate(trade) for trade in run.trades[:trade_limit]],
             equity_curve=[EquityCurvePointResponse.model_validate(point) for point in run.equity_points],
         )

@@ -1,0 +1,38 @@
+groups:
+  - name: backtestforecast
+    rules:
+      - alert: DLQDepthHigh
+        expr: bff_dlq_messages_total > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead-letter queue has unprocessed messages"
+          description: "{{ $labels.task_name }} has {{ $value }} DLQ entries in the last 5 minutes. Inspect via GET /admin/dlq."
+
+      - alert: CircuitBreakerTripped
+        expr: rate(bff_circuit_breaker_trips_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker tripped for {{ $labels.service }}"
+          description: "The circuit breaker for {{ $labels.service }} has tripped. External service may be unavailable."
+
+      - alert: HighTaskFailureRate
+        expr: rate(bff_celery_tasks_total{status="failed"}[10m]) / rate(bff_celery_tasks_total[10m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Celery task failure rate for {{ $labels.task_name }}"
+          description: "More than 20% of {{ $labels.task_name }} tasks are failing."
+
+      - alert: DuplicateTaskExecutions
+        expr: rate(bff_duplicate_task_execution_total[10m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Duplicate task executions detected"
+          description: "Task {{ $labels.task_name }} is being delivered multiple times."
