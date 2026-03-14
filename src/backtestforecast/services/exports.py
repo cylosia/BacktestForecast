@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from backtestforecast.billing.entitlements import ExportFormat, ensure_export_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.errors import AppError, NotFoundError, ValidationError
-from backtestforecast.exports.storage import DatabaseStorage, ExportStorage, get_export_storage
+from backtestforecast.exports.storage import DatabaseStorage, ExportStorage, get_storage
 from backtestforecast.models import ExportJob, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
@@ -48,7 +48,7 @@ class ExportService:
         self.backtests = BacktestRunRepository(session)
         self.audit = AuditService(session)
         self.backtest_service = BacktestService(session)
-        self._storage = storage or get_export_storage(settings or get_settings())
+        self._storage = storage or get_storage(settings or get_settings())
 
     def close(self) -> None:
         self.backtest_service.close()
@@ -243,8 +243,24 @@ class ExportService:
 
             for job in jobs:
                 old_storage_key = job.storage_key
+                old_content_bytes = job.content_bytes is not None
+
+                storage_deleted = True
+                if old_storage_key:
+                    try:
+                        self._storage.delete(old_storage_key)
+                    except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
+                        logger.warning(
+                            "cleanup.storage_delete_failed",
+                            export_job_id=str(job.id),
+                            storage_key=old_storage_key,
+                            error=str(exc),
+                        )
+                        storage_deleted = False
+
                 job.content_bytes = None
-                job.storage_key = None
+                if storage_deleted:
+                    job.storage_key = None
                 job.status = "expired"
                 job.size_bytes = 0
                 job.sha256_hex = None
@@ -255,19 +271,10 @@ class ExportService:
                     logger.warning("cleanup.commit_failed", export_job_id=str(job.id), exc_info=True)
                     continue
                 cleaned += 1
-                if old_storage_key:
-                    try:
-                        self._storage.delete(old_storage_key)
-                    except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
-                        logger.warning(
-                            "cleanup.storage_delete_after_commit",
-                            export_job_id=str(job.id),
-                            storage_key=old_storage_key,
-                            error=str(exc),
-                        )
                 logger.info(
                     "cleanup.expired",
                     export_job_id=str(job.id),
+                    storage_deleted=storage_deleted,
                     expires_at=str(job.expires_at) if job.expires_at else None,
                 )
 
@@ -329,23 +336,7 @@ class ExportService:
             raise NotFoundError("Export content is not available.")
         if use_db_content and not export_job.content_bytes:
             raise NotFoundError("Export content is not available.")
-        if not use_db_content and export_job.storage_key:
-            try:
-                content = self._storage.get(export_job.storage_key)
-            except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError, KeyError) as exc:
-                logger.exception(
-                    "export.download_storage_error",
-                    export_job_id=str(export_job.id),
-                    storage_key=export_job.storage_key,
-                    error=str(exc),
-                )
-                raise AppError(
-                    code="storage_unavailable",
-                    message="Export file is temporarily unavailable.",
-                ) from exc
-            self.session.expunge(export_job)
-            export_job.content_bytes = content
-        if not export_job.content_bytes:
+        if not use_db_content and not export_job.storage_key:
             raise NotFoundError("Export content is not available.")
         self.audit.record_always(
             event_type="export.downloaded",

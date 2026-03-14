@@ -128,6 +128,7 @@ export function usePolling<T>({
   const start = useCallback(() => {
     cancel();
     attemptsRef.current = 0;
+    consecutiveErrorsRef.current = 0;
     setAttempts(0);
     setStatus("polling");
     timerRef.current = setTimeout(poll, 0);

@@ -41,6 +41,7 @@ repos:
     hooks:
       - id: schema-model-check
         name: Schema-model consistency check
+        # Requires project dev dependencies to be installed (pip install -e ".[dev]")
         entry: python -m pytest tests/contract/test_schema_model_consistency.py tests/unit/test_check_constraint_naming.py -x -q
         language: system
         pass_filenames: false

@@ -77,3 +77,29 @@ describe("validateBacktestForm – zero entry rules", () => {
     expect(errors.form).toBeUndefined();
   });
 });
+
+describe("validateBacktestForm – enabled-but-invalid entry rules", () => {
+  it("does NOT show form error when RSI is enabled but has invalid values", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: true,
+      rsiThreshold: "999",
+      movingAverageEnabled: false,
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.rsiThreshold).toBeDefined();
+    expect(errors.form).toBeUndefined();
+  });
+
+  it("does NOT show form error when moving average is enabled but has invalid values", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: false,
+      movingAverageEnabled: true,
+      fastPeriod: "0",
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.fastPeriod).toBeDefined();
+    expect(errors.form).toBeUndefined();
+  });
+});

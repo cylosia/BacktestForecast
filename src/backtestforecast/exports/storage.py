@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 import structlog
@@ -35,6 +35,10 @@ class ExportStorage(Protocol):
         """Check if content exists at the given key."""
         ...
 
+    def get_object(self, key: str) -> Any:
+        """Get the raw storage object (for streaming)."""
+        ...
+
 
 class DatabaseStorage:
     """Stores export content in the ExportJob.content_bytes DB column (default)."""
@@ -58,6 +62,9 @@ class DatabaseStorage:
         streaming.  Returns ``bool(storage_key)`` as a basic sanity check.
         """
         return bool(storage_key)
+
+    def get_object(self, key: str) -> Any:
+        raise NotImplementedError("DatabaseStorage does not support streaming")
 
 
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024  # 50 MB safety cap
@@ -212,3 +219,8 @@ def get_storage(settings: Settings) -> ExportStorage:
             return _storage_instance
         _storage_instance = get_export_storage(settings)
         return _storage_instance
+
+
+def _invalidate_storage() -> None:
+    global _storage_instance
+    _storage_instance = None

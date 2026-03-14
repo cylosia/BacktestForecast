@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PAID_STATUSES, BillingInterval, PlanTier
+from backtestforecast.billing.events import log_billing_event
 from backtestforecast.billing.urls import resolve_return_url
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.errors import (
@@ -310,6 +311,9 @@ class BillingService:
             and user.stripe_subscription_id is not None
             and subscription_id != user.stripe_subscription_id
             and user.subscription_status in ("active", "trialing", "past_due")
+            and current_period_end is not None
+            and user.subscription_current_period_end is not None
+            and current_period_end <= user.subscription_current_period_end
         ):
             logger.info(
                 "billing.subscription.stale_subscription_event_skipped",
@@ -334,6 +338,12 @@ class BillingService:
             )
             return
 
+        old_state = {
+            "plan_tier": user.plan_tier,
+            "subscription_status": user.subscription_status,
+            "stripe_subscription_id": user.stripe_subscription_id,
+        }
+
         if subscription_id is not None:
             user.stripe_subscription_id = subscription_id
         if customer_id is not None:
@@ -346,6 +356,15 @@ class BillingService:
         user.cancel_at_period_end = cancel_at_period_end
         user.plan_tier = effective_tier
         user.plan_updated_at = datetime.now(UTC)
+
+        log_billing_event(
+            user_id=user.id,
+            event_type="subscription.synced",
+            subscription_id=subscription_id,
+            old_state=old_state,
+            new_state={"plan_tier": effective_tier, "subscription_status": status},
+        )
+
         self.session.add(user)
         self.session.flush()
 

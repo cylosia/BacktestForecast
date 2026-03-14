@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -372,10 +373,10 @@ class Settings(BaseSettings):
 
 _settings_cache: Settings | None = None
 _settings_lock = threading.Lock()
-_invalidation_callbacks: list[callable] = []
+_invalidation_callbacks: list[Callable[[], None]] = []
 
 
-def register_invalidation_callback(callback: callable) -> None:
+def register_invalidation_callback(callback: Callable[[], None]) -> None:
     _invalidation_callbacks.append(callback)
 
 
@@ -401,7 +402,8 @@ def invalidate_settings() -> None:
     global _settings_cache
     with _settings_lock:
         _settings_cache = None
-    for cb in _invalidation_callbacks:
+        callbacks = list(_invalidation_callbacks)
+    for cb in callbacks:
         try:
             cb()
         except Exception:

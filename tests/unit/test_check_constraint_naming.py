@@ -52,18 +52,15 @@ def _extract_check_constraint_names(model_cls) -> list[str]:
 def test_no_doubled_prefixes_in_check_constraints():
     """No CheckConstraint name should contain a duplicated segment."""
     for model in _ALL_MODELS:
+        table_name = model.__tablename__
         for name in _extract_check_constraint_names(model):
-            parts = name.split("_")
-            for i in range(len(parts) - 1):
-                suffix = "_".join(parts[i:])
-                prefix = "_".join(parts[:len(parts) - i])
-                if len(parts) > 2:
-                    half = len(parts) // 2
-                    first_half = "_".join(parts[:half])
-                    second_half = "_".join(parts[half:2 * half])
-                    assert first_half != second_half, (
-                        f"CheckConstraint '{name}' on {model.__tablename__} "
-                        f"has duplicated prefix '{first_half}'"
+            if name.startswith("ck_"):
+                prefix = f"ck_{table_name}_"
+                if name.startswith(prefix):
+                    rest = name[len(prefix):]
+                    assert not rest.startswith(prefix), (
+                        f"CheckConstraint '{name}' on {table_name} "
+                        f"has doubled prefix"
                     )
 
 

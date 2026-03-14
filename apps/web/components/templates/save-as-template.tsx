@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Bookmark, Loader2 } from "lucide-react";
@@ -58,6 +58,12 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
 
   async function handleSave() {
     if (!name.trim()) {
@@ -171,6 +177,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
           size="sm"
           variant="ghost"
           onClick={() => {
+            if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
             setOpen(false);
             setMessage(null);
           }}

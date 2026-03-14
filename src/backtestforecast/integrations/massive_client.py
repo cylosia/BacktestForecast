@@ -13,7 +13,6 @@ import structlog
 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import ConfigurationError, ExternalServiceError
-from backtestforecast.observability.metrics import CIRCUIT_BREAKER_TRIPS_TOTAL
 from backtestforecast.market_data.types import (
     DailyBar,
     OptionContractRecord,
@@ -21,76 +20,11 @@ from backtestforecast.market_data.types import (
     OptionQuoteRecord,
     OptionSnapshotRecord,
 )
+from backtestforecast.resilience.circuit_breaker import CircuitBreaker
 
 logger = structlog.get_logger("massive_client")
 
 MAX_PAGINATION_PAGES = 100
-
-
-class _CircuitBreaker:
-    """Thread-safe circuit breaker: opens after ``threshold`` consecutive
-    failures, stays open for ``cooldown`` seconds, then transitions to
-    half-open.
-
-    In the half-open state exactly one probe request is allowed through.
-    If the probe succeeds the circuit resets to closed; if it fails the
-    cooldown timer restarts.
-    """
-
-    def __init__(self, threshold: int = 5, cooldown: float = 30.0) -> None:
-        import threading
-        self._threshold = threshold
-        self._cooldown = cooldown
-        self._failure_count = 0
-        self._opened_at: float | None = None
-        self._half_open = False
-        self._probe_in_flight = False
-        self._lock = threading.Lock()
-
-    def record_success(self) -> None:
-        with self._lock:
-            self._failure_count = 0
-            self._opened_at = None
-            self._half_open = False
-            self._probe_in_flight = False
-
-    def record_failure(self) -> None:
-        with self._lock:
-            self._failure_count += 1
-            was_closed = self._opened_at is None
-            if self._half_open or self._failure_count >= self._threshold:
-                self._opened_at = time.time()
-                self._half_open = False
-                self._probe_in_flight = False
-                if was_closed:
-                    CIRCUIT_BREAKER_TRIPS_TOTAL.labels(service="massive_api").inc()
-
-    def allow_request(self) -> bool:
-        """Return True if a request should be attempted, False to reject."""
-        with self._lock:
-            if self._opened_at is None:
-                return True
-            elapsed = time.time() - self._opened_at
-            if elapsed <= self._cooldown:
-                return False
-            if not self._half_open:
-                self._half_open = True
-                self._probe_in_flight = False
-            if self._probe_in_flight:
-                return False
-            self._probe_in_flight = True
-            return True
-
-    @property
-    def is_open(self) -> bool:
-        """Check if the circuit is open without side effects."""
-        with self._lock:
-            if self._opened_at is None:
-                return False
-            elapsed = time.time() - self._opened_at
-            if elapsed > self._cooldown:
-                return False
-            return True
 
 
 class MassiveClient:
@@ -105,7 +39,7 @@ class MassiveClient:
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.Client(timeout=self.timeout)
-        self._circuit = _CircuitBreaker(threshold=5, cooldown=30.0)
+        self._circuit = CircuitBreaker(name="massive_api", failure_threshold=5, recovery_timeout=30.0)
 
     def close(self) -> None:
         self._http.close()
@@ -484,7 +418,7 @@ class AsyncMassiveClient:
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.AsyncClient(timeout=self.timeout)
-        self._circuit = _CircuitBreaker(threshold=5, cooldown=30.0)
+        self._circuit = CircuitBreaker(name="massive_api", failure_threshold=5, recovery_timeout=30.0)
 
     async def close(self) -> None:
         await self._http.aclose()

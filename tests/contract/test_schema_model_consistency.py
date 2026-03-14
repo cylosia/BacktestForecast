@@ -17,6 +17,7 @@ _PYDANTIC_TO_SQL_COMPAT: dict[str, set[str]] = {
     "str": {"String", "Text", "VARCHAR", "CHAR"},
     "int": {"Integer", "BigInteger", "SmallInteger"},
     "float": {"Numeric", "Float", "Double", "DECIMAL"},
+    "Decimal": {"Numeric", "Float", "Double", "DECIMAL"},
     "datetime": {"DateTime", "TIMESTAMP"},
     "date": {"Date"},
     "bool": {"Boolean"},

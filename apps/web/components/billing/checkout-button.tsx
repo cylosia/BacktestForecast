@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
 import { createCheckoutSession } from "@/lib/api/client";
@@ -22,6 +22,13 @@ export function CheckoutButton({
   const { getToken } = useAuth();
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    };
+  }, []);
 
   async function handleClick() {
     setStatus("loading");
@@ -61,7 +68,7 @@ export function CheckoutButton({
       setStatus("error");
       setMessage(nextMessage);
     } finally {
-      setTimeout(() => {
+      resetTimerRef.current = setTimeout(() => {
         if (document.visibilityState !== "hidden") {
           setStatus((prev) => (prev === "loading" ? "idle" : prev));
         }

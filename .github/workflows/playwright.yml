@@ -1,3 +1,19 @@
+# Standalone Playwright E2E workflow.
+#
+# This workflow runs a full-stack E2E suite (API + web) on PRs that touch
+# frontend or API-client code.  It overlaps with the `e2e-tests` job in
+# ci.yml, which is gated behind the `ENABLE_E2E_TESTS` repository variable.
+#
+# Key differences from ci.yml's e2e-tests job:
+#   - Triggered by path-filtered PRs (apps/web/**, packages/api-client/**)
+#     and manual workflow_dispatch.
+#   - Spins up the Python API server alongside the web app for true
+#     full-stack coverage, whereas ci.yml's e2e-tests job only starts the
+#     web frontend.
+#   - Uses separate Clerk test secrets (CLERK_TEST_EMAIL / CLERK_TEST_PASSWORD).
+#
+# If ci.yml's e2e-tests job already ran in the same commit/PR, this workflow
+# can be skipped via the concurrency group or by disabling it at the repo level.
 name: Playwright E2E
 
 on:
@@ -6,6 +22,10 @@ on:
       - "apps/web/**"
       - "packages/api-client/**"
   workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   e2e:
@@ -33,8 +53,11 @@ jobs:
         run: pnpm --filter @backtestforecast/web build
         env:
           NEXT_PUBLIC_APP_URL: http://localhost:3000
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_TEST_PUBLISHABLE_KEY || 'pk_test_dummy' }}
-          CLERK_SECRET_KEY: ${{ secrets.CLERK_TEST_SECRET_KEY || 'sk_test_dummy' }}
+          # Use the same secret names as ci.yml e2e-tests for consistency.
+          # Configure NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY
+          # in GitHub > Settings > Secrets > Actions.
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_dummy' }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_dummy' }}
           NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
 
       - name: Set up Python

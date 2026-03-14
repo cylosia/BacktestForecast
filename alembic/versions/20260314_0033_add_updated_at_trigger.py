@@ -39,7 +39,7 @@ def upgrade() -> None:
     op.execute(_TRIGGER_FUNCTION)
     for table in _TABLES:
         op.execute(f"""
-            CREATE TRIGGER trg_{table}_updated_at
+            CREATE OR REPLACE TRIGGER trg_{table}_updated_at
             BEFORE UPDATE ON {table}
             FOR EACH ROW
             EXECUTE FUNCTION set_updated_at();

@@ -133,9 +133,11 @@ def download_export(
 
     if storage_key and content is None:
         try:
-            from backtestforecast.exports.storage import get_storage
+            from backtestforecast.exports.storage import get_storage, S3Storage
 
             s3_storage = get_storage(settings)
+            if not isinstance(s3_storage, S3Storage):
+                raise NotImplementedError
             s3_obj = s3_storage.get_object(storage_key)
             content_length = s3_obj.get("ContentLength")
 

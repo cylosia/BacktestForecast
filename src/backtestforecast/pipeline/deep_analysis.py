@@ -476,7 +476,15 @@ class SymbolDeepAnalysisService:
                 if cell is not None:
                     cells.append(cell)
         except TimeoutError:
-            logger.warning("deep_analysis.landscape_timeout", total_items=len(work_items))
+            logger.warning("deep_analysis.landscape_timeout", total_items=len(work_items), collected=len(cells))
+            for f in futures:
+                if f.done() and not f.cancelled():
+                    try:
+                        cell = f.result(timeout=0)
+                        if cell is not None:
+                            cells.append(cell)
+                    except Exception:
+                        pass
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
@@ -524,7 +532,13 @@ class SymbolDeepAnalysisService:
                 except Exception:
                     logger.warning("deep_analysis.deep_dive_future_failed", exc_info=True)
         except TimeoutError:
-            logger.warning("deep_analysis.deep_dive_timeout", total_candidates=len(candidates))
+            logger.warning("deep_analysis.deep_dive_timeout", total_candidates=len(candidates), collected=len(backtest_results))
+            for f in futures:
+                if f.done() and not f.cancelled():
+                    try:
+                        backtest_results.append(f.result(timeout=0))
+                    except Exception:
+                        pass
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 

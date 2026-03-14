@@ -297,6 +297,7 @@ export function SymbolAnalysisLauncher() {
     }
 
     abortRef.current?.abort();
+    cancelPolling();
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -384,6 +385,8 @@ export function SymbolAnalysisLauncher() {
                   onClick={() => {
                     abortRef.current?.abort();
                     cancelPolling();
+                    lifecycleAbortRef.current.abort();
+                    lifecycleAbortRef.current = new AbortController();
                     setPhase("idle");
                     setStage("");
                   }}

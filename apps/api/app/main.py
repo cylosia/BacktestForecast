@@ -74,6 +74,9 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 
     register_invalidation_callback(reset_trusted_networks)
 
+    from backtestforecast.exports.storage import _invalidate_storage
+    register_invalidation_callback(_invalidate_storage)
+
     logger.info("lifespan.startup_complete")
     yield
     logger.info("lifespan.shutdown_started")

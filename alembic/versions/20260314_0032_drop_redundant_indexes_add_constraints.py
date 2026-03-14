@@ -22,77 +22,77 @@ depends_on = None
 
 def upgrade() -> None:
     op.drop_index(
-        "ix_scanner_recommendations_job_rank",
+        op.f("ix_scanner_recommendations_job_rank"),
         table_name="scanner_recommendations",
         if_exists=True,
     )
     op.drop_index(
-        "ix_backtest_equity_points_run_date",
+        op.f("ix_backtest_equity_points_run_date"),
         table_name="backtest_equity_points",
         if_exists=True,
     )
 
     op.create_check_constraint(
-        "ck_scanner_jobs_valid_mode",
+        op.f("ck_scanner_jobs_valid_mode"),
         "scanner_jobs",
         "mode IN ('basic', 'advanced', 'pro')",
     )
     op.create_check_constraint(
-        "ck_scanner_jobs_valid_job_kind",
+        op.f("ck_scanner_jobs_valid_job_kind"),
         "scanner_jobs",
         "job_kind IN ('manual', 'refresh', 'nightly')",
     )
 
     op.create_index(
-        "ix_backtest_runs_status_celery_created",
+        op.f("ix_backtest_runs_status_celery_created"),
         "backtest_runs",
         ["status", "celery_task_id", "created_at"],
     )
     op.create_index(
-        "ix_export_jobs_status_celery_created",
+        op.f("ix_export_jobs_status_celery_created"),
         "export_jobs",
         ["status", "celery_task_id", "created_at"],
     )
     op.create_index(
-        "ix_export_jobs_status_expires_at",
+        op.f("ix_export_jobs_status_expires_at"),
         "export_jobs",
         ["status", "expires_at"],
     )
     op.create_index(
-        "ix_scanner_jobs_status_celery_created",
+        op.f("ix_scanner_jobs_status_celery_created"),
         "scanner_jobs",
         ["status", "celery_task_id", "created_at"],
     )
     op.create_index(
-        "ix_symbol_analyses_status_celery_created",
+        op.f("ix_symbol_analyses_status_celery_created"),
         "symbol_analyses",
         ["status", "celery_task_id", "created_at"],
     )
     op.create_index(
-        "ix_nightly_pipeline_runs_cursor",
+        op.f("ix_nightly_pipeline_runs_cursor"),
         "nightly_pipeline_runs",
         ["created_at"],
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_nightly_pipeline_runs_cursor", table_name="nightly_pipeline_runs")
-    op.drop_index("ix_symbol_analyses_status_celery_created", table_name="symbol_analyses")
-    op.drop_index("ix_scanner_jobs_status_celery_created", table_name="scanner_jobs")
-    op.drop_index("ix_export_jobs_status_expires_at", table_name="export_jobs")
-    op.drop_index("ix_export_jobs_status_celery_created", table_name="export_jobs")
-    op.drop_index("ix_backtest_runs_status_celery_created", table_name="backtest_runs")
+    op.drop_index(op.f("ix_nightly_pipeline_runs_cursor"), table_name="nightly_pipeline_runs")
+    op.drop_index(op.f("ix_symbol_analyses_status_celery_created"), table_name="symbol_analyses")
+    op.drop_index(op.f("ix_scanner_jobs_status_celery_created"), table_name="scanner_jobs")
+    op.drop_index(op.f("ix_export_jobs_status_expires_at"), table_name="export_jobs")
+    op.drop_index(op.f("ix_export_jobs_status_celery_created"), table_name="export_jobs")
+    op.drop_index(op.f("ix_backtest_runs_status_celery_created"), table_name="backtest_runs")
 
-    op.drop_constraint("ck_scanner_jobs_valid_job_kind", "scanner_jobs", type_="check")
-    op.drop_constraint("ck_scanner_jobs_valid_mode", "scanner_jobs", type_="check")
+    op.drop_constraint(op.f("ck_scanner_jobs_valid_job_kind"), "scanner_jobs", type_="check")
+    op.drop_constraint(op.f("ck_scanner_jobs_valid_mode"), "scanner_jobs", type_="check")
 
     op.create_index(
-        "ix_backtest_equity_points_run_date",
+        op.f("ix_backtest_equity_points_run_date"),
         "backtest_equity_points",
         ["run_id", "trade_date"],
     )
     op.create_index(
-        "ix_scanner_recommendations_job_rank",
+        op.f("ix_scanner_recommendations_job_rank"),
         "scanner_recommendations",
         ["scanner_job_id", "rank"],
     )

@@ -40,7 +40,7 @@ export default async function DashboardPage() {
   const user = userResult.value;
   const history = historyResult.status === "fulfilled" ? (historyResult.value?.items ?? []) : [];
   const quota = buildBacktestQuota(user);
-  const latestRun = history.find((r) => r.status === "succeeded" || r.status === "failed") ?? null;
+  const latestRun = history.find((r) => r.status === "succeeded") ?? null;
 
   return (
     <div className="space-y-8">

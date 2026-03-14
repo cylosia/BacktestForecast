@@ -207,7 +207,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     }
   }
 
-  if (entryRules.length === 0) {
+  if (entryRules.length === 0 && !values.rsiEnabled && !values.movingAverageEnabled) {
     errors.form = "At least one entry rule (RSI or moving average) must be enabled.";
   }
 

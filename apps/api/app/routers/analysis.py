@@ -103,15 +103,15 @@ def get_analysis(
     analysis = service.get_analysis(user, analysis_id)
 
     summary = _to_summary(analysis)
+    detail_kwargs = summary.model_dump()
     if analysis.status == "succeeded":
-        return AnalysisDetailResponse(
-            **summary.model_dump(),
+        detail_kwargs.update(
             regime=analysis.regime_json,
             landscape=analysis.landscape_json,
             top_results=analysis.top_results_json,
             forecast=analysis.forecast_json,
         )
-    return AnalysisDetailResponse(**summary.model_dump())
+    return AnalysisDetailResponse(**detail_kwargs)
 
 
 @router.get("/{analysis_id}/status", response_model=AnalysisSummaryResponse)

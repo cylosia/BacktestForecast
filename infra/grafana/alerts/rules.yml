@@ -78,7 +78,7 @@ groups:
             Workers may be under-provisioned or stuck.
 
       - alert: DeadLetterQueueDepth
-        expr: bff_dlq_depth > 0
+        expr: dlq_depth > 0
         for: 15m
         labels:
           severity: warning

@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import ExportFormat
-from backtestforecast.schemas.common import sanitize_error_message
+from backtestforecast.schemas.common import ExportJobStatus, sanitize_error_message
 
 
 class CreateExportRequest(BaseModel):
@@ -25,7 +25,7 @@ class ExportJobResponse(BaseModel):
     id: UUID
     run_id: UUID
     export_format: str
-    status: str
+    status: ExportJobStatus
     file_name: str
     mime_type: str
     size_bytes: int = 0

@@ -89,10 +89,12 @@ export async function createPortalSession(
 export async function createExport(
   token: string,
   payload: CreateExportRequest,
+  signal?: AbortSignal,
 ): Promise<ExportJobResponse> {
   return apiRequest<ExportJobResponse>("/v1/exports", token, {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   });
 }
 

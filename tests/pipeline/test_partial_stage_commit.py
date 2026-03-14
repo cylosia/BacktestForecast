@@ -144,16 +144,15 @@ class TestPartialStageCommit:
         mock_top_result.forecast = {"some": "forecast"}
         mock_top_result.score = 1.0
 
-        def raise_on_forecast(*args, **kwargs):
+        commit_count = 0
+
+        def commit_side_effect():
+            nonlocal commit_count
+            commit_count += 1
             if mock_analysis.stage == "forecast":
                 raise RuntimeError("Forecast computation failed")
-            return mock_analysis
 
-        session.commit.side_effect = lambda: (
-            setattr(mock_analysis, "stage", "forecast")
-            if mock_analysis.stage == "deep_dive"
-            else None
-        )
+        session.commit.side_effect = commit_side_effect
 
         with patch.object(service, "_market_data") as mock_md, \
              patch("backtestforecast.pipeline.deep_analysis.classify_regime", return_value=mock_regime), \
@@ -164,6 +163,12 @@ class TestPartialStageCommit:
             mock_md.get_daily_bars.return_value = []
             mock_md.get_earnings_dates.return_value = set()
 
-            service.execute_analysis(analysis_id)
+            with pytest.raises(RuntimeError, match="Forecast computation failed"):
+                service.execute_analysis(analysis_id)
 
-        assert session.commit.call_count >= 4
+        assert mock_analysis.status == "failed", (
+            f"Expected status 'failed', got '{mock_analysis.status}'"
+        )
+        assert mock_analysis.stage == "forecast", (
+            f"Expected stage 'forecast', got '{mock_analysis.stage}'"
+        )

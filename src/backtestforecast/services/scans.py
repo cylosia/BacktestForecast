@@ -609,7 +609,16 @@ class ScanService:
         try:
             futures = {pool.submit(_fetch_one, sym): sym for sym in payload.symbols}
             for future in as_completed(futures):
-                sym, bundle, warning = future.result()
+                try:
+                    sym, bundle, warning = future.result()
+                except Exception:
+                    sym = futures[future]
+                    logger.warning("scan.bundle_fetch_failed", symbol=sym, exc_info=True)
+                    warnings.append({
+                        "code": "symbol_data_unavailable",
+                        "message": f"{sym} could not be loaded (unexpected error)",
+                    })
+                    continue
                 if bundle is not None:
                     bundles[sym] = bundle
                 if warning is not None:
