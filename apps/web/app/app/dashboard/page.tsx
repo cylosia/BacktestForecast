@@ -150,7 +150,7 @@ export default async function DashboardPage() {
             <CardHeader>
               <CardTitle>Latest run snapshot</CardTitle>
               <CardDescription>
-                {latestRun ? `Most recent completed run at ${formatDateTime(latestRun.created_at)}.` : "No runs yet."}
+                {latestRun ? `Most recent completed run at ${formatDateTime(latestRun.created_at)}.` : "No successful runs yet."}
               </CardDescription>
             </CardHeader>
             <CardContent>

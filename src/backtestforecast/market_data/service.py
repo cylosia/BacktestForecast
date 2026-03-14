@@ -210,6 +210,48 @@ class MarketDataService:
         self.client = client
         self._bars_cache: OrderedDict[tuple[str, date, date], list[DailyBar]] = OrderedDict()
         self._bars_cache_lock = threading.Lock()
+        self._bars_inflight: dict[tuple[str, date, date], threading.Event] = {}
+
+    def _fetch_bars_coalesced(self, symbol: str, start: date, end: date) -> list[DailyBar]:
+        """Fetch bars with request coalescing: only one thread fetches per key."""
+        cache_key = (symbol, start, end)
+
+        with self._bars_cache_lock:
+            cached = self._bars_cache.get(cache_key)
+            if cached is not None:
+                self._bars_cache.move_to_end(cache_key)
+                return cached
+
+            inflight_event = self._bars_inflight.get(cache_key)
+            if inflight_event is None:
+                inflight_event = threading.Event()
+                self._bars_inflight[cache_key] = inflight_event
+                am_fetcher = True
+            else:
+                am_fetcher = False
+
+        if not am_fetcher:
+            inflight_event.wait(timeout=600)
+            with self._bars_cache_lock:
+                cached = self._bars_cache.get(cache_key)
+                if cached is not None:
+                    self._bars_cache.move_to_end(cache_key)
+                    return cached
+            return self.client.get_stock_daily_bars(symbol, start, end)
+
+        try:
+            raw_bars = self.client.get_stock_daily_bars(symbol, start, end)
+            with self._bars_cache_lock:
+                if cache_key not in self._bars_cache:
+                    if len(self._bars_cache) >= self._MAX_BARS_CACHE_SIZE:
+                        self._bars_cache.popitem(last=False)
+                    self._bars_cache[cache_key] = raw_bars
+                self._bars_cache.move_to_end(cache_key)
+                return self._bars_cache[cache_key]
+        finally:
+            with self._bars_cache_lock:
+                self._bars_inflight.pop(cache_key, None)
+            inflight_event.set()
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
 
@@ -219,23 +261,7 @@ class MarketDataService:
             days=max(request.max_holding_days, request.target_dte + request.dte_tolerance_days) + 45
         )
 
-        cache_key = (request.symbol, extended_start, extended_end)
-        with self._bars_cache_lock:
-            cached = self._bars_cache.get(cache_key)
-            if cached is not None:
-                self._bars_cache.move_to_end(cache_key)
-                raw_bars = cached
-            else:
-                cached = None
-        if cached is None:
-            raw_bars = self.client.get_stock_daily_bars(request.symbol, extended_start, extended_end)
-            with self._bars_cache_lock:
-                if cache_key not in self._bars_cache:
-                    if len(self._bars_cache) >= self._MAX_BARS_CACHE_SIZE:
-                        self._bars_cache.popitem(last=False)
-                    self._bars_cache[cache_key] = raw_bars
-                self._bars_cache.move_to_end(cache_key)
-                raw_bars = self._bars_cache[cache_key]
+        raw_bars = self._fetch_bars_coalesced(request.symbol, extended_start, extended_end)
         bars = self._validate_bars(raw_bars, request.symbol)
 
         if not bars:

@@ -362,7 +362,13 @@ class OptionsBacktestEngine:
             total_commissions=total_commissions,
             entry_reason=position.entry_reason,
             exit_reason=exit_reason,
-            detail_json={**self._build_trade_detail_json(position, exit_prices, exit_value_per_unit), "unit_convention": "per_unit_divided_by_100"},
+            detail_json={
+                **self._build_trade_detail_json(position, exit_prices, exit_value_per_unit),
+                "unit_convention": "per_unit_divided_by_100",
+                "total_slippage": total_slippage,
+                "entry_slippage": entry_slippage,
+                "exit_slippage": exit_slippage,
+            },
         )
         return trade, cash_delta
 

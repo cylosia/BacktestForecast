@@ -45,14 +45,9 @@ class CircuitBreaker:
 
     @property
     def is_open(self) -> bool:
-        """Check if the circuit is open without side effects."""
+        """True when the circuit is not fully closed (OPEN or HALF_OPEN)."""
         with self._lock:
-            if self._state != CircuitState.OPEN:
-                return False
-            if self._last_failure_time is None:
-                return False
-            elapsed = time.monotonic() - self._last_failure_time
-            return elapsed <= self.recovery_timeout
+            return self._state != CircuitState.CLOSED
 
     def record_success(self) -> None:
         with self._lock:
@@ -76,19 +71,23 @@ class CircuitBreaker:
                 CIRCUIT_BREAKER_TRIPS_TOTAL.labels(service=self.name).inc()
 
     def allow_request(self) -> bool:
-        state = self.state
-        if state == CircuitState.CLOSED:
-            return True
-        if state == CircuitState.HALF_OPEN:
-            with self._lock:
+        with self._lock:
+            if self._state == CircuitState.OPEN and self._last_failure_time is not None:
+                if time.monotonic() - self._last_failure_time >= self.recovery_timeout:
+                    self._state = CircuitState.HALF_OPEN
+                    self._half_open_calls = 0
+                    self._probe_in_flight = False
+            if self._state == CircuitState.CLOSED:
+                return True
+            if self._state == CircuitState.HALF_OPEN:
                 if self._probe_in_flight:
                     return False
                 if self._half_open_calls < self.half_open_max_calls:
                     self._half_open_calls += 1
                     self._probe_in_flight = True
                     return True
+                return False
             return False
-        return False
 
     def reset(self) -> None:
         with self._lock:

@@ -465,9 +465,11 @@ class SymbolDeepAnalysisService:
 
         max_workers = max(1, min(4, len(work_items)))
         pool = ThreadPoolExecutor(max_workers=max_workers)
+        collected_futures: set = set()
         try:
             futures = {pool.submit(_run_cell, item): item for item in work_items}
             for future in as_completed(futures, timeout=300):
+                collected_futures.add(future)
                 try:
                     cell = future.result(timeout=300)
                 except Exception:
@@ -478,7 +480,7 @@ class SymbolDeepAnalysisService:
         except TimeoutError:
             logger.warning("deep_analysis.landscape_timeout", total_items=len(work_items), collected=len(cells))
             for f in futures:
-                if f.done() and not f.cancelled():
+                if f not in collected_futures and f.done() and not f.cancelled():
                     try:
                         cell = f.result(timeout=0)
                         if cell is not None:
@@ -524,9 +526,11 @@ class SymbolDeepAnalysisService:
         max_workers = max(1, min(4, len(candidates)))
         backtest_results: list[tuple[LandscapeCell, dict[str, Any] | None]] = []
         pool = ThreadPoolExecutor(max_workers=max_workers)
+        collected_futures: set = set()
         try:
             futures = {pool.submit(_run_candidate, c): c for c in candidates}
             for future in as_completed(futures, timeout=300):
+                collected_futures.add(future)
                 try:
                     backtest_results.append(future.result(timeout=300))
                 except Exception:
@@ -534,7 +538,7 @@ class SymbolDeepAnalysisService:
         except TimeoutError:
             logger.warning("deep_analysis.deep_dive_timeout", total_candidates=len(candidates), collected=len(backtest_results))
             for f in futures:
-                if f.done() and not f.cancelled():
+                if f not in collected_futures and f.done() and not f.cancelled():
                     try:
                         backtest_results.append(f.result(timeout=0))
                     except Exception:

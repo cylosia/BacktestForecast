@@ -244,14 +244,18 @@ export function SymbolAnalysisLauncher() {
     },
     onComplete: async (summary) => {
       if (summary.status !== "succeeded") return;
+      const signal = lifecycleAbortRef.current.signal;
       const token = await getTokenRef.current();
+      if (signal.aborted) return;
       const id = analysisIdRef.current;
       if (!token || !id) return;
       try {
-        const full = await fetchAnalysisFull(token, id, lifecycleAbortRef.current.signal);
+        const full = await fetchAnalysisFull(token, id, signal);
+        if (signal.aborted) return;
         setResult(full);
         setPhase("done");
       } catch {
+        if (signal.aborted) return;
         setPhase("error");
         setErrorMessage("Analysis completed but could not load full results.");
       }

@@ -124,7 +124,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
 
   if (!open) {
     return (
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+      <Button type="button" variant="outline" size="sm" onClick={() => { setOpen(true); setMessage(null); }}>
         <Bookmark className="h-4 w-4" />
         Save as template
       </Button>

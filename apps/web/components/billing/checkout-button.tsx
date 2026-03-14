@@ -22,7 +22,7 @@ export function CheckoutButton({
   const { getToken } = useAuth();
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
-  const resetTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
@@ -31,12 +31,19 @@ export function CheckoutButton({
   }, []);
 
   async function handleClick() {
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
+
     setStatus("loading");
     setMessage(null);
 
+    let redirecting = false;
     try {
       const token = await getToken();
       if (!token) {
+        redirecting = true;
         window.location.href = `/sign-in?redirect_url=${encodeURIComponent(window.location.pathname)}`;
         return;
       }
@@ -57,6 +64,7 @@ export function CheckoutButton({
       if (!allowed.includes(parsedOrigin)) {
         throw new Error("Unexpected checkout URL origin.");
       }
+      redirecting = true;
       window.location.href = result.checkout_url;
     } catch (error) {
       const nextMessage =
@@ -68,11 +76,13 @@ export function CheckoutButton({
       setStatus("error");
       setMessage(nextMessage);
     } finally {
-      resetTimerRef.current = setTimeout(() => {
-        if (document.visibilityState !== "hidden") {
-          setStatus((prev) => (prev === "loading" ? "idle" : prev));
-        }
-      }, 2000);
+      if (!redirecting) {
+        resetTimerRef.current = setTimeout(() => {
+          if (document.visibilityState !== "hidden") {
+            setStatus((prev) => (prev === "loading" ? "idle" : prev));
+          }
+        }, 2000);
+      }
     }
   }
 

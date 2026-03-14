@@ -223,4 +223,5 @@ def get_storage(settings: Settings) -> ExportStorage:
 
 def _invalidate_storage() -> None:
     global _storage_instance
-    _storage_instance = None
+    with _storage_lock:
+        _storage_instance = None

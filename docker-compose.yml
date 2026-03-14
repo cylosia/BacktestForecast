@@ -20,6 +20,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   redis:
     image: redis:7-alpine
@@ -27,7 +31,7 @@ services:
     restart: unless-stopped
     # Set REDIS_PASSWORD in .env for non-local environments.
     # When empty, Redis runs without authentication (dev only).
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-devpassword}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-devpassword}", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-devpassword}
     ports:
@@ -39,6 +43,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 384m
 
 volumes:
   postgres_data:

@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from backtestforecast.config import Settings, get_settings
+from backtestforecast.config import Settings, get_settings, register_invalidation_callback
 
 
 def build_engine(
@@ -81,7 +81,22 @@ def get_db() -> Generator[Session, None, None]:
 
 def ping_database() -> None:
     with _get_engine().connect() as connection:
+        connection.execute(text("SET LOCAL statement_timeout = '2s'"))
         connection.execute(text("SELECT 1"))
+
+
+def _invalidate_db_caches() -> None:
+    """Dispose the current engine and clear cached singletons so fresh
+    settings (e.g. rotated credentials) take effect on next access."""
+    try:
+        _get_engine().dispose()
+    except Exception:
+        pass
+    _get_engine.cache_clear()
+    _get_session_factory.cache_clear()
+
+
+register_invalidation_callback(_invalidate_db_caches)
 
 
 def get_pool_stats() -> dict[str, int]:

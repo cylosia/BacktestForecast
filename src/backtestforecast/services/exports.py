@@ -243,7 +243,6 @@ class ExportService:
 
             for job in jobs:
                 old_storage_key = job.storage_key
-                old_content_bytes = job.content_bytes is not None
 
                 storage_deleted = True
                 if old_storage_key:

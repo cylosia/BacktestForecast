@@ -77,6 +77,9 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     from backtestforecast.exports.storage import _invalidate_storage
     register_invalidation_callback(_invalidate_storage)
 
+    from backtestforecast.events import _reset_redis as _reset_events_redis
+    register_invalidation_callback(_reset_events_redis)
+
     logger.info("lifespan.startup_complete")
     yield
     logger.info("lifespan.shutdown_started")

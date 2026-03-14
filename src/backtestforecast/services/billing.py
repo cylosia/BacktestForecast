@@ -357,16 +357,19 @@ class BillingService:
         user.plan_tier = effective_tier
         user.plan_updated_at = datetime.now(UTC)
 
-        log_billing_event(
-            user_id=user.id,
-            event_type="subscription.synced",
-            subscription_id=subscription_id,
-            old_state=old_state,
-            new_state={"plan_tier": effective_tier, "subscription_status": status},
-        )
-
         self.session.add(user)
         self.session.flush()
+
+        try:
+            log_billing_event(
+                user_id=user.id,
+                event_type="subscription.synced",
+                subscription_id=subscription_id,
+                old_state=old_state,
+                new_state={"plan_tier": effective_tier, "subscription_status": status},
+            )
+        except Exception:
+            logger.warning("billing.log_event_failed", user_id=str(user.id), exc_info=True)
 
         self.audit.record(
             event_type="billing.subscription.synced",

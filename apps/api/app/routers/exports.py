@@ -173,9 +173,12 @@ def download_export(
                 media_type=mime_type,
                 headers=headers,
             )
+        except NotImplementedError:
+            pass
         except Exception:
-            logger.warning("export.s3_stream_fallback", export_job_id=str(export_job_id), exc_info=True)
-            content = export_job.content_bytes
+            logger.warning("export.s3_stream_unavailable", export_job_id=str(export_job_id), exc_info=True)
+            from backtestforecast.errors import ExternalServiceError
+            raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.")
 
     if content is None:
         from backtestforecast.errors import NotFoundError
