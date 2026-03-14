@@ -26,6 +26,8 @@ export interface UsePollingReturn {
   status: PollingStatus;
   /** Begin (or restart) the polling loop. */
   start: () => void;
+  /** Cancel the current polling loop. */
+  cancel: () => void;
   /** Number of polls executed so far. */
   attempts: number;
 }
@@ -71,6 +73,11 @@ export function usePolling<T>({
   const consecutiveErrorsRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
+  const intervalRef = useRef(interval);
+  const maxAttemptsRef = useRef(maxAttempts);
+  useEffect(() => { intervalRef.current = interval; }, [interval]);
+  useEffect(() => { maxAttemptsRef.current = maxAttempts; }, [maxAttempts]);
+
   const poll = useCallback(async () => {
     if (!mountedRef.current) return;
 
@@ -94,10 +101,10 @@ export function usePolling<T>({
       const next = attemptsRef.current + 1;
       attemptsRef.current = next;
       setAttempts(next);
-      if (next >= maxAttempts) {
+      if (next >= maxAttemptsRef.current) {
         setStatus("timeout");
       } else {
-        timerRef.current = setTimeout(poll, interval);
+        timerRef.current = setTimeout(poll, intervalRef.current);
       }
     } catch (err) {
       if (!mountedRef.current || controller.signal.aborted) return;
@@ -109,14 +116,14 @@ export function usePolling<T>({
       const next = attemptsRef.current + 1;
       attemptsRef.current = next;
       setAttempts(next);
-      if (next >= maxAttempts) {
+      if (next >= maxAttemptsRef.current) {
         setStatus("error");
       } else {
-        const backoff = interval * Math.min(2 ** consecutiveErrorsRef.current, 16);
+        const backoff = intervalRef.current * Math.min(2 ** consecutiveErrorsRef.current, 16);
         timerRef.current = setTimeout(poll, backoff);
       }
     }
-  }, [interval, maxAttempts]);
+  }, []);
 
   const start = useCallback(() => {
     cancel();
@@ -141,5 +148,5 @@ export function usePolling<T>({
     };
   }, [autoStart, start, cancel]);
 
-  return { status, start, attempts };
+  return { status, start, cancel, attempts };
 }

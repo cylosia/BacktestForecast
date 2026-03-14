@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -192,3 +192,6 @@ class ScannerJobResponse(BaseModel):
 
 class ScannerJobListResponse(BaseModel):
     items: list[ScannerJobResponse]
+    total: int = 0
+    offset: int = 0
+    limit: int = 50

@@ -15,11 +15,14 @@ from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.errors import AppError
 from backtestforecast.events import publish_job_status
 from backtestforecast.observability.metrics import (
+    ANALYSIS_JOBS_TOTAL,
     BACKTEST_RUNS_TOTAL,
     CELERY_TASKS_TOTAL,
     DLQ_DEPTH,
     DLQ_MESSAGES_TOTAL,
     DUPLICATE_TASK_EXECUTION_TOTAL,
+    EXPORT_JOBS_TOTAL,
+    SCAN_JOBS_TOTAL,
 )
 from backtestforecast.models import (
     BacktestRun,
@@ -77,7 +80,7 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                     "retries": self.request.retries,
                     "error": str(exc),
                 }))
-                redis_conn.ltrim(dlq_key, 0, 999)
+                redis_conn.ltrim(dlq_key, 0, 4999)
                 DLQ_MESSAGES_TOTAL.labels(task_name=self.name).inc()
                 try:
                     DLQ_DEPTH.set(redis_conn.llen(dlq_key))
@@ -117,10 +120,16 @@ def _find_pipeline_run(session, model_cls, run, trade_date, *, run_id=None):
         return session.get(model_cls, effective_id)
     from sqlalchemy import select, desc
 
-    logger.warning(
+    logger.error(
         "pipeline.find_run_fallback",
         trade_date=str(trade_date),
-        msg="No run_id available; falling back to date-based lookup which may match the wrong row.",
+        msg=(
+            "No run_id available; falling back to heuristic date-based lookup. "
+            "This may mark the WRONG pipeline run as failed if multiple runs "
+            "exist for the same trade_date. Investigate why run_id was not "
+            "captured — this usually means the pipeline raised before "
+            "returning a run object."
+        ),
     )
     stmt = (
         select(model_cls)
@@ -177,7 +186,7 @@ def nightly_scan_pipeline(
         from redis import Redis
         lock_key = f"bff:pipeline:{trade_date.isoformat()}"
         redis_client = Redis.from_url(settings.redis_url, socket_timeout=5)
-        lock = redis_client.lock(lock_key, timeout=2100, blocking=False)
+        lock = redis_client.lock(lock_key, timeout=1750, blocking=False)
         if not lock.acquire():
             logger.info("pipeline.already_locked", trade_date=str(trade_date))
             redis_client.close()
@@ -383,6 +392,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             run = service.execute_run_by_id(UUID(run_id))
         except AppError as exc:
             session.rollback()
+            session.expire_all()
             BACKTEST_RUNS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
             publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": exc.code})
@@ -393,6 +403,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             }
         except SoftTimeLimitExceeded:
             session.rollback()
+            session.expire_all()
             from datetime import UTC, datetime
 
             run_obj = session.get(BacktestRun, UUID(run_id))
@@ -416,6 +427,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         except Exception as exc:  # Intentional broad catch: any unexpected failure triggers
             # retry with backoff. After max retries, job is marked failed. Re-raised.
             session.rollback()
+            session.expire_all()
             try:
                 delay = 30 * (self.request.retries + 1)
                 raise self.retry(exc=exc, countdown=delay)
@@ -494,6 +506,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             job = service.execute_export_by_id(UUID(export_job_id))
         except AppError as exc:
             session.rollback()
+            session.expire_all()
             ej_obj = session.get(ExportJobModel, UUID(export_job_id))
             if ej_obj is not None and ej_obj.status in ("queued", "running"):
                 ej_obj.status = "failed"
@@ -512,6 +525,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             }
         except SoftTimeLimitExceeded:
             session.rollback()
+            session.expire_all()
             from datetime import UTC, datetime
 
             export_obj = session.get(ExportJobModel, UUID(export_job_id))
@@ -534,6 +548,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
         except Exception as exc:  # Intentional broad catch: any unexpected export failure
             # triggers retry with backoff. After max retries, job is marked failed.
             session.rollback()
+            session.expire_all()
             try:
                 delay = 15 * (self.request.retries + 1)
                 raise self.retry(exc=exc, countdown=delay)
@@ -567,6 +582,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="succeeded").inc()
         else:
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
+        EXPORT_JOBS_TOTAL.labels(status=job.status).inc()
         publish_job_status("export", UUID(export_job_id), job.status)
         return {
             "status": job.status,
@@ -636,6 +652,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 result = service.execute_analysis(UUID(analysis_id))
             except AppError as exc:
                 session.rollback()
+                session.expire_all()
                 sa_fail = session.get(SymbolAnalysis, UUID(analysis_id))
                 if sa_fail is not None and sa_fail.status in ("queued", "running"):
                     sa_fail.status = "failed"
@@ -654,6 +671,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 }
             except SoftTimeLimitExceeded:
                 session.rollback()
+                session.expire_all()
                 from backtestforecast.models import SymbolAnalysis as _SA
 
                 analysis = session.get(_SA, UUID(analysis_id))
@@ -677,6 +695,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
             except Exception as exc:  # Intentional broad catch: any unexpected analysis failure
                 # triggers retry. After max retries, analysis is marked failed.
                 session.rollback()
+                session.expire_all()
                 try:
                     raise self.retry(exc=exc, countdown=60)
                 except self.MaxRetriesExceededError:
@@ -703,6 +722,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
 
             effective_status = "succeeded" if result.status == "succeeded" else "failed"
             CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status=effective_status).inc()
+            ANALYSIS_JOBS_TOTAL.labels(status=result.status).inc()
             publish_job_status("analysis", UUID(analysis_id), result.status)
             return {
                 "status": result.status,
@@ -754,6 +774,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             job = service.run_job(UUID(job_id))
         except AppError as exc:
             session.rollback()
+            session.expire_all()
             sj_obj = session.get(ScannerJobModel, UUID(job_id))
             if sj_obj is not None and sj_obj.status in ("queued", "running"):
                 sj_obj.status = "failed"
@@ -772,6 +793,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             }
         except SoftTimeLimitExceeded:
             session.rollback()
+            session.expire_all()
             from datetime import UTC, datetime
 
             scan_obj = session.get(ScannerJobModel, UUID(job_id))
@@ -794,6 +816,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         except Exception as exc:  # Intentional broad catch: any unexpected scan failure
             # triggers retry with backoff. After max retries, job is marked failed.
             session.rollback()
+            session.expire_all()
             try:
                 delay = 60 * (self.request.retries + 1)
                 raise self.retry(exc=exc, countdown=delay)
@@ -825,6 +848,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
 
         effective_status = "succeeded" if job.status == "succeeded" else "failed"
         CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status=effective_status).inc()
+        SCAN_JOBS_TOTAL.labels(status=job.status).inc()
         publish_job_status("scan", UUID(job_id), job.status)
         return {
             "status": job.status,
@@ -880,18 +904,26 @@ def refresh_prioritized_scans(self) -> dict[str, int]:
     }
 
 
+_S3_ORPHAN_MAX_DELETIONS = 500
+
+
 @celery_app.task(name="maintenance.reconcile_s3_orphans", ignore_result=True)
 def reconcile_s3_orphans() -> None:
     """Remove S3 objects that have no corresponding ExportJob in the database."""
-    import structlog
-    logger = structlog.get_logger()
     logger.info("s3_orphan_reconciliation_started")
     try:
+        from backtestforecast.config import get_settings
         from backtestforecast.db.session import SessionLocal
-        from backtestforecast.exports.storage import get_storage
+        from backtestforecast.exports.storage import S3Storage
         from backtestforecast.models import ExportJob
 
-        storage = get_storage()
+        settings = get_settings()
+        if not settings.s3_bucket:
+            logger.info("s3_orphan_reconciliation_skipped", reason="no_s3_bucket_configured")
+            return
+
+        s3_storage = S3Storage(settings)
+        prefix = s3_storage._prefix
         with SessionLocal() as session:
             known_keys = {
                 row[0] for row in session.query(ExportJob.storage_key).filter(
@@ -899,11 +931,24 @@ def reconcile_s3_orphans() -> None:
                 ).all()
             }
             orphan_count = 0
-            for s3_key in storage.list_keys():
-                if s3_key not in known_keys:
-                    storage.delete(s3_key)
-                    orphan_count += 1
-            logger.info("s3_orphan_reconciliation_complete", orphans_removed=orphan_count)
+            limit_reached = False
+            paginator = s3_storage._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=s3_storage._bucket, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    if orphan_count >= _S3_ORPHAN_MAX_DELETIONS:
+                        limit_reached = True
+                        break
+                    s3_key = obj["Key"]
+                    if s3_key not in known_keys:
+                        s3_storage.delete(s3_key)
+                        orphan_count += 1
+                if limit_reached:
+                    break
+            logger.info(
+                "s3_orphan_reconciliation_complete",
+                orphans_removed=orphan_count,
+                limit_reached=limit_reached,
+            )
     except Exception:  # Intentional: reconciliation is a maintenance task; failures are
         # logged but must not crash the worker or trigger retries.
         logger.exception("s3_orphan_reconciliation_failed")
@@ -958,7 +1003,21 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     from sqlalchemy import or_, select, update
 
     from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SymbolAnalysis
-    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL, JOBS_STUCK_RUNNING
+    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL, JOBS_STUCK_RUNNING, QUEUE_DEPTH
+
+    try:
+        from backtestforecast.config import get_settings as _gs
+        from redis import Redis as _Redis
+
+        _r = _Redis.from_url(_gs().redis_url, decode_responses=True, socket_timeout=5)
+        try:
+            for q_name in ("research", "exports", "maintenance", "pipeline"):
+                depth = _r.llen(q_name)
+                QUEUE_DEPTH.labels(queue=q_name).set(depth)
+        finally:
+            _r.close()
+    except Exception:
+        logger.warning("reaper.queue_depth_unavailable", exc_info=True)
 
     cutoff = datetime.now(UTC) - timedelta(minutes=stale_minutes)
     pipeline_cutoff = datetime.now(UTC) - timedelta(minutes=max(stale_minutes, 60))
@@ -974,6 +1033,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 BacktestRun.created_at < cutoff,
             )
             .limit(50)
+            .with_for_update(skip_locked=True)
         )
         stale_run_ids = list(session.scalars(stale_runs_stmt))
         for run_id in stale_run_ids:
@@ -1031,6 +1091,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 ExportJob.created_at < cutoff,
             )
             .limit(50)
+            .with_for_update(skip_locked=True)
         )
         stale_export_ids = list(session.scalars(stale_exports_stmt))
         for eid in stale_export_ids:
@@ -1088,6 +1149,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 ScannerJob.created_at < cutoff,
             )
             .limit(50)
+            .with_for_update(skip_locked=True)
         )
         stale_scan_ids = list(session.scalars(stale_scans_stmt))
         for sid in stale_scan_ids:
@@ -1145,6 +1207,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 SymbolAnalysis.created_at < analysis_cutoff,
             )
             .limit(50)
+            .with_for_update(skip_locked=True)
         )
         stale_analysis_ids = list(session.scalars(stale_analyses_stmt))
         for aid in stale_analysis_ids:

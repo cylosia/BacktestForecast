@@ -94,7 +94,14 @@ class ClerkTokenVerifier:
 
     def _resolve_signing_key(self, token: str) -> Any:
         if self.settings.clerk_jwt_key:
-            return self.settings.clerk_jwt_key
+            key = self.settings.clerk_jwt_key
+            if isinstance(key, str) and key.strip().startswith("-----BEGIN"):
+                if "-----END" not in key:
+                    raise ConfigurationError(
+                        "CLERK_JWT_KEY appears to be a truncated PEM key. "
+                        "Ensure the full key including the END marker is provided."
+                    )
+            return key
 
         jwks_client = self._get_jwks_client()
         try:

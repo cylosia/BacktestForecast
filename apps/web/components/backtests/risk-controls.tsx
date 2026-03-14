@@ -30,10 +30,12 @@ export function RiskControls({
           id="accountSize"
           inputMode="decimal"
           value={values.accountSize}
+          aria-invalid={!!errors.accountSize}
+          aria-describedby={errors.accountSize ? "accountSize-error" : undefined}
           onChange={(event) => onChange({ accountSize: event.target.value })}
         />
         <p className="text-xs text-muted-foreground">The starting capital for the run.</p>
-        {errors.accountSize ? <p className="text-sm text-destructive">{errors.accountSize}</p> : null}
+        {errors.accountSize ? <p id="accountSize-error" className="text-sm text-destructive">{errors.accountSize}</p> : null}
       </div>
 
       <div className="space-y-2">
@@ -42,11 +44,13 @@ export function RiskControls({
           id="riskPerTradePct"
           inputMode="decimal"
           value={values.riskPerTradePct}
+          aria-invalid={!!errors.riskPerTradePct}
+          aria-describedby={errors.riskPerTradePct ? "riskPerTradePct-error" : undefined}
           onChange={(event) => onChange({ riskPerTradePct: event.target.value })}
         />
         <p className="text-xs text-muted-foreground">Greater than 0 and up to 100.</p>
         {errors.riskPerTradePct ? (
-          <p className="text-sm text-destructive">{errors.riskPerTradePct}</p>
+          <p id="riskPerTradePct-error" className="text-sm text-destructive">{errors.riskPerTradePct}</p>
         ) : null}
       </div>
 
@@ -56,11 +60,13 @@ export function RiskControls({
           id="commissionPerContract"
           inputMode="decimal"
           value={values.commissionPerContract}
+          aria-invalid={!!errors.commissionPerContract}
+          aria-describedby={errors.commissionPerContract ? "commissionPerContract-error" : undefined}
           onChange={(event) => onChange({ commissionPerContract: event.target.value })}
         />
         <p className="text-xs text-muted-foreground">Use the all-in per-contract commission estimate.</p>
         {errors.commissionPerContract ? (
-          <p className="text-sm text-destructive">{errors.commissionPerContract}</p>
+          <p id="commissionPerContract-error" className="text-sm text-destructive">{errors.commissionPerContract}</p>
         ) : null}
       </div>
     </div>

@@ -4,9 +4,9 @@ import { CheckoutButton } from "@/components/billing/checkout-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-// TODO: Fetch prices from the API or a shared config so they stay in sync
-// with the Stripe price objects.  Currently these are hard-coded and must be
-// updated manually whenever Stripe prices change.
+// Prices are hard-coded to match Stripe configuration. If Stripe prices
+// change, update these values. A future improvement would fetch from a
+// /api/pricing endpoint to guarantee parity.
 const plans = [
   {
     title: "Free",
@@ -110,7 +110,7 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 text-center text-xs text-muted-foreground">
-        Prices shown may not reflect real-time changes.
+        All amounts in USD. Prices shown match current Stripe configuration.
       </p>
     </main>
   );

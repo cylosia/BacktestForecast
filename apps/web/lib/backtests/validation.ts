@@ -87,15 +87,15 @@ export function validateBacktestForm(values: BacktestFormValues): {
     errors.symbol = "Symbol may only contain letters, digits, dots, slashes, or ^.";
   }
 
-  if (!values.startDate) {
+  if (!values.startDate || !values.startDate.trim()) {
     errors.startDate = "Start date is required.";
   }
 
-  if (!values.endDate) {
+  if (!values.endDate || !values.endDate.trim()) {
     errors.endDate = "End date is required.";
   }
 
-  if (values.startDate && values.endDate && values.startDate >= values.endDate) {
+  if (values.startDate?.trim() && values.endDate?.trim() && values.startDate >= values.endDate) {
     errors.endDate = "End date must be later than start date.";
   }
 

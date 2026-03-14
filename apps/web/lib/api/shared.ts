@@ -46,10 +46,16 @@ export class ApiError extends Error {
 }
 
 const KNOWN_STATUS_DEFAULTS: Record<number, { message: string; code: string }> = {
+  400: { message: "The request was invalid. Please check your input and try again.", code: "bad_request" },
   401: { message: "Your session has expired. Please sign in again.", code: "authentication_error" },
   403: { message: "You don't have permission to access this resource.", code: "authorization_error" },
   404: { message: "The requested resource was not found.", code: "not_found" },
+  409: { message: "This action conflicts with the current state. Please refresh and try again.", code: "conflict" },
+  422: { message: "The submitted data could not be processed. Please review your input.", code: "validation_error" },
   429: { message: "Too many requests. Please try again later.", code: "rate_limited" },
+  500: { message: "An unexpected server error occurred. Please try again later.", code: "server_error" },
+  502: { message: "The server is temporarily unreachable. Please try again shortly.", code: "bad_gateway" },
+  503: { message: "The service is temporarily unavailable. Please try again shortly.", code: "service_unavailable" },
 };
 
 async function handleKnownStatus(response: Response): Promise<void> {
@@ -143,7 +149,7 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
     }
 
     if (response.status === 204) {
-      return undefined as unknown as T;
+      return undefined as T;
     }
 
     try {

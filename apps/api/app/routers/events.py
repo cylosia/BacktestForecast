@@ -13,6 +13,7 @@ from apps.api.app.dependencies import get_current_user
 from backtestforecast.config import get_settings
 from backtestforecast.errors import NotFoundError
 from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SymbolAnalysis, User
+from backtestforecast.observability.metrics import ACTIVE_SSE_CONNECTIONS
 from backtestforecast.security import get_rate_limiter
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -127,12 +128,12 @@ def _verify_ownership(model: type, resource_id: UUID, user_id: UUID) -> bool:
     """Return True if the resource belongs to the user, raise NotFoundError otherwise.
 
     Called *before* entering the SSE stream so the ownership check completes
-    during the HTTP request phase, not inside the async generator. Creates its
-    own session to avoid sharing the request-scoped session across threads.
+    during the HTTP request phase, not inside the async generator. Uses the
+    shared session factory to benefit from connection pooling.
     """
-    from backtestforecast.db.session import create_session
+    from backtestforecast.db.session import SessionLocal
 
-    db = create_session()
+    db = SessionLocal()
     try:
         stmt = select(model.id).where(model.id == resource_id, model.user_id == user_id)
         if db.execute(stmt).first() is None:
@@ -181,30 +182,49 @@ async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGen
                 pass
 
 
+_SSE_SLOT_ACQUIRE_LUA = """
+local count = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+if count > tonumber(ARGV[2]) then
+    redis.call('DECR', KEYS[1])
+    return 0
+end
+return 1
+"""
+
+_SSE_SLOT_RELEASE_LUA = """
+local count = redis.call('DECR', KEYS[1])
+if count <= 0 then
+    redis.call('DEL', KEYS[1])
+end
+return count
+"""
+
+
 async def _acquire_sse_slot(user_id: UUID) -> bool:
-    """Try to acquire a per-user SSE connection slot using Redis INCR."""
+    """Try to acquire a per-user SSE connection slot atomically via Lua."""
     try:
         pool = await _get_async_redis()
         key = f"{_SSE_CONN_KEY_PREFIX}{user_id}"
-        count = await pool.incr(key)
-        await pool.expire(key, _SSE_CONN_TTL)
-        if count > SSE_MAX_CONNECTIONS_PER_USER:
-            await pool.decr(key)
-            return False
-        return True
+        result = await pool.eval(
+            _SSE_SLOT_ACQUIRE_LUA, 1, key, _SSE_CONN_TTL, SSE_MAX_CONNECTIONS_PER_USER,
+        )
+        return int(result) == 1
     except Exception:
         logger.warning("sse.acquire_slot_redis_error", user_id=str(user_id), exc_info=True)
         return True
 
 
 async def _release_sse_slot(user_id: UUID) -> None:
-    """Release a per-user SSE connection slot using Redis DECR."""
+    """Release a per-user SSE connection slot atomically via Lua.
+
+    Uses a Lua script to make DECR + conditional DEL atomic, preventing a
+    race where a concurrent acquire INCRs between DECR and DEL.
+    """
     try:
         pool = await _get_async_redis()
         key = f"{_SSE_CONN_KEY_PREFIX}{user_id}"
-        count = await pool.decr(key)
-        if count <= 0:
-            await pool.delete(key)
+        await pool.eval(_SSE_SLOT_RELEASE_LUA, 1, key)
     except Exception:
         logger.warning("sse.release_slot_redis_error", user_id=str(user_id), exc_info=True)
 
@@ -223,6 +243,7 @@ async def _event_stream(
         yield {"event": "done", "data": "stream_ended"}
         return
 
+    ACTIVE_SSE_CONNECTIONS.inc()
     deadline = asyncio.get_running_loop().time() + SSE_TIMEOUT_SECONDS
 
     try:
@@ -238,6 +259,7 @@ async def _event_stream(
         logger.warning("sse.redis_error", channel=channel, error=str(exc))
         yield {"event": "error", "data": "Event stream unavailable. Please poll for status instead."}
     finally:
+        ACTIVE_SSE_CONNECTIONS.dec()
         await _release_sse_slot(user_id)
 
     yield {"event": "done", "data": "stream_ended"}

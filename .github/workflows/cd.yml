@@ -141,10 +141,15 @@ jobs:
           if [ -n "${DEPLOY_COMMAND:-}" ]; then
             bash -c "${DEPLOY_COMMAND}"
           else
-            echo "::error::DEPLOY_COMMAND is not set. Rollback images were pushed but the deployment was NOT restarted."
-            echo "Manual action required:"
-            echo "  Docker Compose: docker compose pull && docker compose up -d"
+            echo "::warning::DEPLOY_COMMAND variable is not configured. Rollback images were re-tagged to :latest but the running deployment was NOT restarted automatically."
+            echo "::error::Manual intervention required to complete rollback."
+            echo ""
+            echo "To finish the rollback, run one of the following on the deployment host:"
+            echo "  Docker Compose: docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d"
             echo "  Kubernetes:     kubectl rollout undo deployment/api deployment/worker deployment/web"
+            echo ""
+            echo "To avoid this in future deployments, set the DEPLOY_COMMAND repository variable"
+            echo "to the command that restarts your services (e.g. 'ssh deploy@host docker compose pull && docker compose up -d')."
           fi
 
           echo ""

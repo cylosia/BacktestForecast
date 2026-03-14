@@ -22,8 +22,8 @@ const percentFormatter = new Intl.NumberFormat("en-US", {
 
 export function toNumber(value: NumericValue | null | undefined): number {
   if (value == null) return NaN;
-  if (typeof value === "number") return value;
-  return Number(value);
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : NaN;
 }
 
 export function formatCurrency(value: NumericValue | null | undefined): string {

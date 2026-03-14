@@ -15,6 +15,9 @@ COPY packages/api-client /app/packages/api-client
 FROM base AS builder
 WORKDIR /app
 
+# These NEXT_PUBLIC_* values are intentionally public — they are embedded in the
+# client-side JS bundle by Next.js at build time and visible to end users.
+# Never pass secret keys (CLERK_SECRET_KEY, etc.) as build args.
 ARG NEXT_PUBLIC_APP_URL
 ARG NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY

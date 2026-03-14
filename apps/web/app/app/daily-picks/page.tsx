@@ -1,4 +1,5 @@
 import { getCurrentUser, getDailyPicks } from "@/lib/api/server";
+import { ApiError } from "@/lib/api/shared";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
 import type { DailyPickItem, DailyPicksResponse } from "@backtestforecast/api-client";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
@@ -126,8 +127,8 @@ export default async function DailyPicksPage() {
   try {
     data = await getDailyPicks();
   } catch (err) {
-    const isApiError = err != null && typeof err === "object" && "status" in err;
-    const status = isApiError ? (err as { status: number }).status : 0;
+    const isApiError = err instanceof ApiError;
+    const status = isApiError ? err.status : 0;
     const message =
       status === 404
         ? "No pipeline data available yet. The nightly scan runs at 4:00 AM UTC."

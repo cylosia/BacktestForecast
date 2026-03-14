@@ -175,3 +175,68 @@ def test_export_job_has_cleanup_fields() -> None:
     cols = {c.name for c in ExportJob.__table__.columns}
     assert "size_bytes" in cols
     assert "sha256_hex" in cols
+
+
+# ---------------------------------------------------------------------------
+# Key endpoints present in the schema
+# ---------------------------------------------------------------------------
+
+
+_EXPECTED_ENDPOINTS: list[tuple[str, str]] = [
+    ("post", "/v1/backtests"),
+    ("get", "/v1/backtests"),
+    ("get", "/v1/backtests/{run_id}"),
+    ("get", "/v1/backtests/{run_id}/status"),
+    ("post", "/v1/backtests/compare"),
+    ("post", "/v1/exports"),
+    ("get", "/v1/exports/{export_job_id}"),
+    ("get", "/v1/exports/{export_job_id}/status"),
+    ("post", "/v1/scans"),
+    ("get", "/v1/scans/{job_id}"),
+    ("get", "/v1/scans/{job_id}/recommendations"),
+    ("get", "/v1/forecasts/{symbol}"),
+    ("post", "/v1/templates"),
+    ("get", "/v1/templates"),
+    ("get", "/v1/templates/{template_id}"),
+    ("patch", "/v1/templates/{template_id}"),
+    ("delete", "/v1/templates/{template_id}"),
+    ("get", "/v1/me"),
+    ("get", "/v1/strategy-catalog"),
+    ("post", "/v1/billing/checkout"),
+    ("post", "/v1/billing/webhook"),
+    ("post", "/v1/analysis"),
+    ("get", "/v1/analysis/{analysis_id}"),
+    ("get", "/v1/daily-picks"),
+]
+
+
+@pytest.mark.parametrize("method,path", _EXPECTED_ENDPOINTS, ids=[f"{m.upper()} {p}" for m, p in _EXPECTED_ENDPOINTS])
+def test_expected_endpoint_exists(openapi_schema: dict, method: str, path: str) -> None:
+    """Verify that each key endpoint is present in the runtime OpenAPI spec."""
+    paths = openapi_schema.get("paths", {})
+    assert path in paths, f"Path {path} missing from OpenAPI schema. Available: {sorted(paths.keys())[:15]}"
+    assert method in paths[path], (
+        f"{method.upper()} {path} missing. Available methods: {list(paths[path].keys())}"
+    )
+
+
+_EXPECTED_SCHEMAS = [
+    "BacktestRunDetailResponse",
+    "BacktestSummaryResponse",
+    "CreateBacktestRunRequest",
+    "ExportJobResponse",
+    "ScannerJobResponse",
+    "TemplateResponse",
+    "ErrorEnvelope",
+]
+
+
+@pytest.mark.parametrize("schema_name", _EXPECTED_SCHEMAS)
+def test_expected_schema_exists(openapi_schema: dict, schema_name: str) -> None:
+    """Verify that each key schema is present in the OpenAPI components."""
+    schemas = openapi_schema.get("components", {}).get("schemas", {})
+    matching = [name for name in schemas if name.startswith(schema_name.split("-")[0])]
+    assert matching, (
+        f"Schema {schema_name} missing from OpenAPI components. "
+        f"Available (first 20): {sorted(schemas.keys())[:20]}"
+    )

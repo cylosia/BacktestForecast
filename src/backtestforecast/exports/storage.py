@@ -60,16 +60,22 @@ class DatabaseStorage:
         return bool(storage_key)
 
 
+_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024  # 50 MB safety cap
+
+
 def _retry(fn, max_attempts=3, base_delay=0.5):
     from botocore.exceptions import ClientError, EndpointConnectionError, ConnectionClosedError
+    last_exc: Exception | None = None
     for attempt in range(max_attempts):
         try:
             return fn()
-        except (EndpointConnectionError, ConnectionClosedError, OSError):
+        except (EndpointConnectionError, ConnectionClosedError, OSError) as exc:
+            last_exc = exc
             if attempt == max_attempts - 1:
                 raise
             time.sleep(base_delay * (2 ** attempt))
         except ClientError as e:
+            last_exc = e
             error_code = e.response.get("Error", {}).get("Code", "")
             if error_code in ("RequestTimeout", "RequestTimeoutException", "SlowDown", "InternalError", "ServiceUnavailable"):
                 if attempt == max_attempts - 1:
@@ -77,6 +83,7 @@ def _retry(fn, max_attempts=3, base_delay=0.5):
                 time.sleep(base_delay * (2 ** attempt))
             else:
                 raise
+    raise RuntimeError("_retry exhausted all attempts") from last_exc
 
 
 class S3Storage:
@@ -125,13 +132,28 @@ class S3Storage:
 
     def put(self, export_job_id: UUID, content: bytes, file_name: str) -> str:
         key = self._object_key(export_job_id, file_name)
+        safe_name = self._sanitize_file_name(file_name)
         content_type = self._guess_content_type(file_name)
-        _retry(lambda: self._client.put_object(Bucket=self._bucket, Key=key, Body=content, ContentType=content_type))
+        disposition = f'attachment; filename="{safe_name}"'
+        _retry(lambda: self._client.put_object(
+            Bucket=self._bucket,
+            Key=key,
+            Body=content,
+            ContentType=content_type,
+            ContentDisposition=disposition,
+        ))
         logger.info("s3.put", bucket=self._bucket, key=key, size=len(content))
         return key
 
     def get(self, storage_key: str) -> bytes:
         resp = _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
+        content_length = resp.get("ContentLength", 0)
+        if content_length > _MAX_DOWNLOAD_BYTES:
+            resp["Body"].close()
+            raise ValueError(
+                f"S3 object {storage_key} is {content_length} bytes, "
+                f"exceeding the {_MAX_DOWNLOAD_BYTES} byte safety limit."
+            )
         body = resp["Body"]
         try:
             data: bytes = body.read()

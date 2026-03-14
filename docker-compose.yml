@@ -1,7 +1,12 @@
+# WARNING: The defaults below are for local development only.
+# In production, override POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB,
+# and REDIS_PASSWORD via environment variables or a .env file with strong,
+# unique credentials.
 services:
   postgres:
     image: postgres:16-alpine
     container_name: backtestforecast-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-backtestforecast}
       POSTGRES_USER: ${POSTGRES_USER:-backtestforecast}
@@ -19,6 +24,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: backtestforecast-redis
+    restart: unless-stopped
     # Set REDIS_PASSWORD in .env for non-local environments.
     # When empty, Redis runs without authentication (dev only).
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-devpassword}"]

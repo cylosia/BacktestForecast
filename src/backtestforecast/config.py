@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import warnings
-from functools import lru_cache
+import threading
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -157,6 +156,9 @@ class Settings(BaseSettings):
         "ABNB",
     ]
 
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.1
+
     metrics_token: str | None = None
 
     ip_hash_salt: str = Field(default="backtestforecast-default-ip-salt-change-me")
@@ -200,6 +202,15 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
 
+    # Runtime feature flags — toggle via env vars without code deployment.
+    feature_backtests_enabled: bool = True
+    feature_scanner_enabled: bool = True
+    feature_exports_enabled: bool = True
+    feature_forecasts_enabled: bool = True
+    feature_analysis_enabled: bool = True
+    feature_daily_picks_enabled: bool = True
+    feature_billing_enabled: bool = True
+
     @field_validator("app_env")
     @classmethod
     def normalize_app_env(cls, value: str) -> str:
@@ -239,7 +250,10 @@ class Settings(BaseSettings):
     @field_validator("massive_timeout_seconds", "sse_redis_socket_timeout", "sse_redis_connect_timeout")
     @classmethod
     def validate_positive_floats(cls, value: float) -> float:
-        return max(float(value), 0.1)
+        v = float(value)
+        if v < 0.1:
+            raise ValueError(f"Value must be >= 0.1, got {v}")
+        return v
 
     @field_validator("massive_max_retries")
     @classmethod
@@ -255,10 +269,9 @@ class Settings(BaseSettings):
     @classmethod
     def validate_ip_hash_salt_length(cls, value: str) -> str:
         if len(value) < 16:
-            warnings.warn(
+            raise ValueError(
                 f"IP_HASH_SALT is only {len(value)} characters; "
-                "use at least 16 characters for adequate entropy.",
-                stacklevel=2,
+                "use at least 16 characters for adequate entropy."
             )
         return value
 
@@ -292,6 +305,13 @@ class Settings(BaseSettings):
     def stripe_billing_enabled(self) -> bool:
         return bool(self.stripe_secret_key and self.stripe_webhook_secret and self.stripe_price_lookup)
 
+    # Model validators run in definition order:
+    # 1. apply_env_overrides — merges env-var CSV overrides
+    # 2. default_redis_cache_url — fills redis_cache_url from redis_url
+    # 3. validate_redis_consistency — injects password into URL
+    # 4. validate_production_security — enforces production invariants
+    # Adding new validators? Place them before validate_production_security
+    # so their effects are visible to the security checks.
     @model_validator(mode="after")
     def apply_env_overrides(self) -> "Settings":
         if self.pipeline_default_symbols_csv:
@@ -342,9 +362,37 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
             if not self.clerk_authorized_parties:
                 raise ValueError("Production-like environments require at least one CLERK_AUTHORIZED_PARTIES entry.")
+            if "sslmode" not in self.database_url:
+                raise ValueError(
+                    "Production-like environments require sslmode in DATABASE_URL "
+                    "(e.g. ?sslmode=require) to encrypt Postgres traffic in transit."
+                )
         return self
 
 
-@lru_cache
+_settings_cache: Settings | None = None
+_settings_lock = threading.Lock()
+
+
 def get_settings() -> Settings:
-    return Settings()
+    """Return the application settings singleton.
+
+    Unlike ``@lru_cache``, this cache can be explicitly invalidated via
+    ``invalidate_settings()`` so that rotated secrets or updated environment
+    variables take effect without a full process restart.
+    """
+    global _settings_cache
+    if _settings_cache is not None:
+        return _settings_cache
+    with _settings_lock:
+        if _settings_cache is not None:
+            return _settings_cache
+        _settings_cache = Settings()
+        return _settings_cache
+
+
+def invalidate_settings() -> None:
+    """Clear cached settings so the next ``get_settings()`` creates a fresh instance."""
+    global _settings_cache
+    with _settings_lock:
+        _settings_cache = None

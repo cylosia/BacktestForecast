@@ -37,3 +37,11 @@ class BillingStateResponse(BaseModel):
     subscription_billing_interval: str | None = None
     subscription_current_period_end: datetime | None = None
     cancel_at_period_end: bool = False
+
+
+class WebhookResponse(BaseModel):
+    """Typed response for the Stripe webhook endpoint."""
+    status: str
+    event_type: str | None = None
+    reason: str | None = None
+    code: str | None = None

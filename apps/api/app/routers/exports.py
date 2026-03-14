@@ -32,6 +32,9 @@ def create_export(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> ExportJobResponse:
+    if not settings.feature_exports_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Exports are temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="exports:create",
         actor_key=str(user.id),
@@ -125,16 +128,15 @@ def download_export(
     allowed_mime_types = {"text/csv", "text/csv; charset=utf-8", "application/pdf"}
     mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
 
-    s3_key = getattr(export_job, "s3_key", None)
+    storage_key = getattr(export_job, "storage_key", None)
     content = export_job.content_bytes
 
-    if s3_key and content is None:
+    if storage_key and content is None:
         try:
-            from backtestforecast.exports.storage import get_s3_client
+            from backtestforecast.exports.storage import S3Storage
 
-            s3 = get_s3_client()
-            bucket = settings.s3_export_bucket
-            s3_obj = s3.get_object(Bucket=bucket, Key=s3_key)
+            s3_storage = S3Storage(settings)
+            s3_obj = s3_storage._client.get_object(Bucket=s3_storage._bucket, Key=storage_key)
             content_length = s3_obj.get("ContentLength")
 
             headers = {

@@ -205,11 +205,10 @@ class BillingService:
             return {"status": "error", "event_type": event_type, "reason": "integrity_error"}
 
         data_object = event["data"]["object"]
-        user: User | None = None
 
         try:
             if event_type == "checkout.session.completed":
-                user = self._sync_checkout_session(data_object)
+                self._sync_checkout_session(data_object)
             elif event_type in {
                 "customer.subscription.created",
                 "customer.subscription.updated",
@@ -217,7 +216,7 @@ class BillingService:
                 "customer.subscription.paused",
                 "customer.subscription.resumed",
             }:
-                user = self._sync_subscription(data_object)
+                self._sync_subscription(data_object)
             else:
                 logger.info("billing.webhook.ignored", event_type=event_type)
         except ExternalServiceError:
@@ -416,9 +415,26 @@ class BillingService:
 
     @staticmethod
     def _extract_price_details(subscription: Any) -> tuple[str | None, str | None]:
+        """Extract price ID and billing interval from the first subscription item.
+
+        TODO: Support multi-item subscriptions. Currently only the first line
+        item is inspected. If the product catalog evolves to include bundled
+        add-ons (e.g. data packs, priority queue credits) each item's price
+        should be matched against the configured price lookup and the primary
+        plan item identified — possibly by a metadata tag such as
+        ``"is_plan": "true"`` on the Stripe Price object.
+        """
         items = subscription.get("items", {}).get("data", []) if isinstance(subscription, dict) else []
         if not items:
             return None, None
+        if len(items) > 1:
+            logger.warning(
+                "billing.multi_item_subscription",
+                item_count=len(items),
+                sub_id=subscription.get("id") if isinstance(subscription, dict) else None,
+                hint="Only the first line item is used for tier resolution. "
+                     "Review if add-on items are now present.",
+            )
         price = items[0].get("price", {})
         price_id = price.get("id") if isinstance(price, dict) else None
         recurring = price.get("recurring", {}) if isinstance(price, dict) else {}
@@ -459,8 +475,8 @@ class BillingService:
                 raise ExternalServiceError("Stripe is temporarily unavailable. Please try again shortly.")
         except ExternalServiceError:
             raise
-        except Exception:
-            pass
+        except (ConnectionError, OSError, TimeoutError, RuntimeError):
+            logger.debug("billing.circuit_check_skipped", reason="redis_unavailable")
         if self._stripe_client is not None:
             return self._stripe_client
         if not self.settings.stripe_secret_key or not self.settings.stripe_webhook_secret:
@@ -478,6 +494,6 @@ class BillingService:
             r = get_rate_limiter()._get_redis()
             if r is not None:
                 r.setex(_STRIPE_CIRCUIT_KEY, _STRIPE_CIRCUIT_COOLDOWN, "1")
-        except Exception:
-            pass
+        except (ConnectionError, OSError, TimeoutError, RuntimeError):
+            logger.debug("billing.circuit_trip_skipped", reason="redis_unavailable")
         logger.warning("billing.stripe_circuit_opened", cooldown_seconds=_STRIPE_CIRCUIT_COOLDOWN)

@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { Loader2, Microscope, TrendingDown, TrendingUp } from "lucide-react";
+import { Loader2, Microscope } from "lucide-react";
 import {
   createSymbolAnalysis,
   fetchAnalysisFull,
   fetchAnalysisStatus,
 } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
+import { usePolling } from "@/hooks/use-polling";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
 import type {
   AnalysisTopResult,
@@ -228,56 +229,55 @@ export function SymbolAnalysisLauncher() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [result, setResult] = useState<SymbolAnalysisFullResponse | null>(null);
-  const mountedRef = useRef(true);
+  const analysisIdRef = useRef<string | null>(null);
+  const tokenRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      abortRef.current?.abort();
-    };
-  }, []);
-
-  const pollForCompletion = useCallback(
-    async (token: string, analysisId: string, signal: AbortSignal) => {
-      let consecutiveErrors = 0;
-      for (let i = 0; i < MAX_POLLS; i++) {
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-        if (signal.aborted || !mountedRef.current) return;
-
-        let status;
-        try {
-          status = await fetchAnalysisStatus(token, analysisId, signal);
-          consecutiveErrors = 0;
-        } catch (err) {
-          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-            throw err;
-          }
-          consecutiveErrors++;
-          if (consecutiveErrors >= 3) {
-            throw new Error("Status check failed repeatedly. Please try again.");
-          }
-          continue;
-        }
-
-        if (signal.aborted || !mountedRef.current) return;
-        setStage(status.stage);
-
-        if (status.status === "succeeded") {
-          const full = await fetchAnalysisFull(token, analysisId, signal);
-          if (signal.aborted || !mountedRef.current) return;
-          setResult(full);
-          setPhase("done");
-          return;
-        }
-        if (status.status === "failed") {
-          throw new Error(status.error_message || "Analysis failed.");
-        }
-      }
-      throw new Error("Analysis is still running. Check back later.");
+  const { status: pollingStatus, start: startPolling, cancel: cancelPolling } = usePolling<SymbolAnalysisSummary>({
+    fetcher: async (signal) => {
+      const token = tokenRef.current;
+      const id = analysisIdRef.current;
+      if (!token || !id) throw new Error("Missing context for poll.");
+      return fetchAnalysisStatus(token, id, signal);
     },
-    [],
-  );
+    onComplete: async (summary) => {
+      const token = tokenRef.current;
+      const id = analysisIdRef.current;
+      if (!token || !id) return;
+      try {
+        const full = await fetchAnalysisFull(token, id);
+        setResult(full);
+        setPhase("done");
+      } catch {
+        setPhase("error");
+        setErrorMessage("Analysis completed but could not load full results.");
+      }
+    },
+    isComplete: (summary) => summary.status === "succeeded" || summary.status === "failed",
+    onProgress: (summary) => {
+      setStage(summary.stage);
+      if (summary.status === "failed") {
+        setPhase("error");
+        setErrorMessage(summary.error_message || "Analysis failed.");
+      }
+    },
+    interval: POLL_INTERVAL,
+    maxAttempts: MAX_POLLS,
+  });
+
+  useEffect(() => {
+    if (pollingStatus === "timeout") {
+      setPhase("error");
+      setErrorMessage("Analysis is still running. Check back later.");
+    } else if (pollingStatus === "error" && phase === "polling") {
+      setPhase("error");
+      setErrorMessage((prev) => prev || "Status check failed. Please try again.");
+    }
+  }, [pollingStatus, phase]);
+
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -304,6 +304,7 @@ export function SymbolAnalysisLauncher() {
       const token = await getToken();
       if (!token) throw new Error("Session expired.");
 
+      tokenRef.current = token;
       const created = await createSymbolAnalysis(token, sym, `deep-${sym}-${crypto.randomUUID()}`, controller.signal);
 
       if (created.status === "succeeded") {
@@ -312,7 +313,8 @@ export function SymbolAnalysisLauncher() {
         setResult(full);
         setPhase("done");
       } else {
-        await pollForCompletion(token, created.id, controller.signal);
+        analysisIdRef.current = created.id;
+        startPolling();
       }
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -376,6 +378,7 @@ export function SymbolAnalysisLauncher() {
                   variant="outline"
                   onClick={() => {
                     abortRef.current?.abort();
+                    cancelPolling();
                     setPhase("idle");
                     setStage("");
                   }}

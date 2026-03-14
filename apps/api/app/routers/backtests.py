@@ -54,6 +54,9 @@ def create_backtest(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunDetailResponse:
+    if not settings.feature_backtests_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Backtesting is temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="backtests:create",
         actor_key=str(user.id),

@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, desc, func, select, tuple_
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, noload, selectinload
 
 from backtestforecast.models import ScannerJob, ScannerRecommendation
 
@@ -22,11 +22,16 @@ class ScannerJobRepository:
         stmt = (
             select(ScannerJob)
             .where(ScannerJob.user_id == user_id)
+            .options(noload(ScannerJob.recommendations))
             .order_by(desc(ScannerJob.created_at))
             .offset(offset)
             .limit(limit)
         )
         return list(self.session.scalars(stmt))
+
+    def count_for_user(self, user_id: UUID) -> int:
+        stmt = select(func.count(ScannerJob.id)).where(ScannerJob.user_id == user_id)
+        return int(self.session.scalar(stmt) or 0)
 
     def get_for_user(
         self,

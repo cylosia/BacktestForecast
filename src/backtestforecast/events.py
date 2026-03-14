@@ -27,8 +27,11 @@ def _get_redis():
         if _redis_client is not None:
             return _redis_client
         settings = get_settings()
+        # Use the dedicated cache/SSE Redis URL to isolate pub/sub traffic
+        # from the Celery broker. The model validator guarantees
+        # redis_cache_url is always populated (defaults to redis_url).
         _redis_client = Redis.from_url(
-            settings.redis_url,
+            settings.redis_cache_url,
             decode_responses=True,
             socket_timeout=5.0,
             socket_connect_timeout=2.0,
@@ -143,7 +146,7 @@ def _fallback_persist_status(
         if model_cls is None:
             return
 
-        _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+        _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "expired"})
         with SessionLocal() as session:
             result = session.execute(
                 update(model_cls)

@@ -79,9 +79,11 @@ export function TaRuleControls({
                 id="rsiThreshold"
                 inputMode="decimal"
                 value={values.rsiThreshold}
+                aria-invalid={!!errors.rsiThreshold}
+                aria-describedby={errors.rsiThreshold ? "rsiThreshold-error" : undefined}
                 onChange={(event) => onChange({ rsiThreshold: event.target.value })}
               />
-              {errors.rsiThreshold ? <p className="text-sm text-destructive">{errors.rsiThreshold}</p> : null}
+              {errors.rsiThreshold ? <p id="rsiThreshold-error" className="text-sm text-destructive">{errors.rsiThreshold}</p> : null}
             </div>
 
             <div className="space-y-2">
@@ -90,9 +92,11 @@ export function TaRuleControls({
                 id="rsiPeriod"
                 inputMode="numeric"
                 value={values.rsiPeriod}
+                aria-invalid={!!errors.rsiPeriod}
+                aria-describedby={errors.rsiPeriod ? "rsiPeriod-error" : undefined}
                 onChange={(event) => onChange({ rsiPeriod: event.target.value })}
               />
-              {errors.rsiPeriod ? <p className="text-sm text-destructive">{errors.rsiPeriod}</p> : null}
+              {errors.rsiPeriod ? <p id="rsiPeriod-error" className="text-sm text-destructive">{errors.rsiPeriod}</p> : null}
             </div>
           </div>
         ) : null}
@@ -140,9 +144,11 @@ export function TaRuleControls({
                 id="fastPeriod"
                 inputMode="numeric"
                 value={values.fastPeriod}
+                aria-invalid={!!errors.fastPeriod}
+                aria-describedby={errors.fastPeriod ? "fastPeriod-error" : undefined}
                 onChange={(event) => onChange({ fastPeriod: event.target.value })}
               />
-              {errors.fastPeriod ? <p className="text-sm text-destructive">{errors.fastPeriod}</p> : null}
+              {errors.fastPeriod ? <p id="fastPeriod-error" className="text-sm text-destructive">{errors.fastPeriod}</p> : null}
             </div>
 
             <div className="space-y-2">
@@ -151,9 +157,11 @@ export function TaRuleControls({
                 id="slowPeriod"
                 inputMode="numeric"
                 value={values.slowPeriod}
+                aria-invalid={!!errors.slowPeriod}
+                aria-describedby={errors.slowPeriod ? "slowPeriod-error" : undefined}
                 onChange={(event) => onChange({ slowPeriod: event.target.value })}
               />
-              {errors.slowPeriod ? <p className="text-sm text-destructive">{errors.slowPeriod}</p> : null}
+              {errors.slowPeriod ? <p id="slowPeriod-error" className="text-sm text-destructive">{errors.slowPeriod}</p> : null}
             </div>
 
             <div className="space-y-2">

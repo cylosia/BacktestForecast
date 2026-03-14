@@ -7,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from apps.api.app.dependencies import get_db, token_verifier
 from apps.api.app.main import app
@@ -17,15 +16,14 @@ from backtestforecast.security.rate_limits import get_rate_limiter
 
 
 def _make_engine():
-    """Use Postgres when DATABASE_URL is set (CI), otherwise in-memory SQLite."""
+    """Require a real Postgres DATABASE_URL — SQLite hides Postgres-specific bugs."""
     url = os.environ.get("DATABASE_URL")
-    if url:
-        return create_engine(url)
-    return create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    if not url:
+        pytest.skip(
+            "DATABASE_URL is not set — integration tests require a real Postgres instance. "
+            "See the postgres-integration CI job for the expected configuration."
+        )
+    return create_engine(url)
 
 
 @pytest.fixture()

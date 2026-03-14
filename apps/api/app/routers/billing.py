@@ -13,6 +13,7 @@ from backtestforecast.schemas.billing import (
     CreateCheckoutSessionRequest,
     CreatePortalSessionRequest,
     PortalSessionResponse,
+    WebhookResponse,
 )
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.billing import BillingService
@@ -29,6 +30,9 @@ def create_checkout_session(
     db: Session = Depends(get_db),
 ) -> CheckoutSessionResponse:
     settings = get_settings()
+    if not settings.feature_billing_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Billing is temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="billing:checkout",
         actor_key=str(user.id),
@@ -65,17 +69,15 @@ def create_portal_session(
     )
 
 
-@router.post("/webhook", status_code=status.HTTP_200_OK)
+@router.post("/webhook", status_code=status.HTTP_200_OK, response_model=WebhookResponse)
 def stripe_webhook(
     request: Request,
     payload: bytes = Body(..., media_type="application/json", max_length=256_000),
     signature: str | None = Header(alias="Stripe-Signature"),
     db: Session = Depends(get_db),
-) -> dict[str, str]:
+) -> WebhookResponse | dict[str, str]:
     if signature is None:
         raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
-
-    from apps.api.app.dependencies import get_request_metadata
 
     request_id = getattr(request.state, "request_id", None)
     meta = get_request_metadata(request)

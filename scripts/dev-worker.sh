@@ -13,4 +13,5 @@ set +a
 
 celery -A apps.worker.app.celery_app.celery_app worker \
   --loglevel=INFO \
-  --queues=research,exports,maintenance,pipeline
+  --queues=research,exports,maintenance,pipeline \
+  --max-tasks-per-child=200

@@ -35,9 +35,11 @@ export function TimeframeControls({
             id="startDate"
             type="date"
             value={values.startDate}
+            aria-invalid={!!errors.startDate}
+            aria-describedby={errors.startDate ? "startDate-error" : undefined}
             onChange={(event) => onChange({ startDate: event.target.value })}
           />
-          {errors.startDate ? <p className="text-sm text-destructive">{errors.startDate}</p> : null}
+          {errors.startDate ? <p id="startDate-error" className="text-sm text-destructive">{errors.startDate}</p> : null}
         </div>
 
         <div className="space-y-2">
@@ -46,9 +48,11 @@ export function TimeframeControls({
             id="endDate"
             type="date"
             value={values.endDate}
+            aria-invalid={!!errors.endDate}
+            aria-describedby={errors.endDate ? "endDate-error" : undefined}
             onChange={(event) => onChange({ endDate: event.target.value })}
           />
-          {errors.endDate ? <p className="text-sm text-destructive">{errors.endDate}</p> : null}
+          {errors.endDate ? <p id="endDate-error" className="text-sm text-destructive">{errors.endDate}</p> : null}
         </div>
       </div>
 
@@ -59,10 +63,12 @@ export function TimeframeControls({
             id="targetDte"
             inputMode="numeric"
             value={values.targetDte}
+            aria-invalid={!!errors.targetDte}
+            aria-describedby={errors.targetDte ? "targetDte-error" : undefined}
             onChange={(event) => onChange({ targetDte: event.target.value })}
           />
           <p className="text-xs text-muted-foreground">7 to 365 calendar days.</p>
-          {errors.targetDte ? <p className="text-sm text-destructive">{errors.targetDte}</p> : null}
+          {errors.targetDte ? <p id="targetDte-error" className="text-sm text-destructive">{errors.targetDte}</p> : null}
         </div>
 
         <div className="space-y-2">
@@ -71,11 +77,13 @@ export function TimeframeControls({
             id="dteToleranceDays"
             inputMode="numeric"
             value={values.dteToleranceDays}
+            aria-invalid={!!errors.dteToleranceDays}
+            aria-describedby={errors.dteToleranceDays ? "dteToleranceDays-error" : undefined}
             onChange={(event) => onChange({ dteToleranceDays: event.target.value })}
           />
           <p className="text-xs text-muted-foreground">0 to 60 days around the target expiration.</p>
           {errors.dteToleranceDays ? (
-            <p className="text-sm text-destructive">{errors.dteToleranceDays}</p>
+            <p id="dteToleranceDays-error" className="text-sm text-destructive">{errors.dteToleranceDays}</p>
           ) : null}
         </div>
 
@@ -85,11 +93,13 @@ export function TimeframeControls({
             id="maxHoldingDays"
             inputMode="numeric"
             value={values.maxHoldingDays}
+            aria-invalid={!!errors.maxHoldingDays}
+            aria-describedby={errors.maxHoldingDays ? "maxHoldingDays-error" : undefined}
             onChange={(event) => onChange({ maxHoldingDays: event.target.value })}
           />
           <p className="text-xs text-muted-foreground">1 to 120 calendar days.</p>
           {errors.maxHoldingDays ? (
-            <p className="text-sm text-destructive">{errors.maxHoldingDays}</p>
+            <p id="maxHoldingDays-error" className="text-sm text-destructive">{errors.maxHoldingDays}</p>
           ) : null}
         </div>
       </div>

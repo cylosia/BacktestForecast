@@ -8,7 +8,7 @@ from datetime import date, timedelta
 
 import structlog
 
-from backtestforecast.errors import DataUnavailableError, ExternalServiceError, ValidationError
+from backtestforecast.errors import DataUnavailableError, ExternalServiceError
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
 from backtestforecast.schemas.backtests import (

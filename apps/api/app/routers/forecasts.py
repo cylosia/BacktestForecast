@@ -30,8 +30,11 @@ def get_forecast(
     horizon_days: int = Query(default=20, ge=5, le=90),
     settings: Settings = Depends(get_settings),
 ) -> ForecastEnvelopeResponse:
+    if not settings.feature_forecasts_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Forecasts are temporarily disabled.", required_tier="free")
     if not _TICKER_RE.match(ticker):
-        raise ValidationError("Ticker must be 1-10 alphabetic characters.")
+        raise ValidationError("Ticker must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
     get_rate_limiter().check(
         bucket="forecasts:get",
         actor_key=str(user.id),

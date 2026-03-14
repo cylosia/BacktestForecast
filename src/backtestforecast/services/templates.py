@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -103,6 +103,7 @@ class BacktestTemplateService:
         if request.config is not None:
             template.strategy_type = request.config.strategy_type.value
             template.config_json = request.config.model_dump(mode="json")
+            template.updated_at = datetime.now(UTC)  # type: ignore[assignment]
 
         from sqlalchemy.exc import IntegrityError
         try:

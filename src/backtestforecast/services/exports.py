@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Self
 from uuid import UUID
@@ -25,6 +26,8 @@ from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
 
 logger = structlog.get_logger("services.exports")
+
+_LOOKS_NUMERIC = re.compile(r"^-?(\d[\d,]*\.?\d*|\.\d+)([eE][+-]?\d+)?$")
 
 _MAX_CSV_TRADES = 10_000
 _MAX_CSV_EQUITY_POINTS = 50_000
@@ -243,12 +246,13 @@ class ExportService:
                 if job.storage_key:
                     try:
                         self._storage.delete(job.storage_key)
-                    except Exception:
+                    except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
                         storage_deleted = False
                         logger.warning(
                             "cleanup.delete_failed",
                             export_job_id=str(job.id),
                             storage_key=job.storage_key,
+                            error=str(exc),
                             exc_info=True,
                         )
                 if not storage_deleted:
@@ -329,16 +333,17 @@ class ExportService:
         if not use_db_content and export_job.storage_key:
             try:
                 content = self._storage.get(export_job.storage_key)
-            except Exception:
+            except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError, KeyError) as exc:
                 logger.exception(
                     "export.download_storage_error",
                     export_job_id=str(export_job.id),
                     storage_key=export_job.storage_key,
+                    error=str(exc),
                 )
                 raise AppError(
                     code="storage_unavailable",
                     message="Export file is temporarily unavailable.",
-                )
+                ) from exc
             self.session.expunge(export_job)
             export_job.content_bytes = content
         if not export_job.content_bytes:
@@ -478,9 +483,19 @@ class ExportService:
         width, height = letter
         y = height - 0.75 * inch
 
+        _BASE_FONT = "Helvetica"
+        _BOLD_FONT = "Helvetica-Bold"
+        try:
+            pdf.setFont(_BASE_FONT, 10)
+        except KeyError:
+            from reportlab.pdfbase import pdfmetrics  # type: ignore
+            available = pdfmetrics.getRegisteredFontNames()
+            _BASE_FONT = available[0] if available else "Courier"
+            _BOLD_FONT = _BASE_FONT
+
         def line(text: str, *, bold: bool = False, step: float = 16.0) -> None:
             nonlocal y
-            pdf.setFont("Helvetica-Bold" if bold else "Helvetica", 10 if not bold else 12)
+            pdf.setFont(_BOLD_FONT if bold else _BASE_FONT, 10 if not bold else 12)
             pdf.drawString(0.75 * inch, y, text)
             y -= step
             if y < 0.75 * inch:
@@ -542,9 +557,15 @@ class ExportService:
     def _sanitize_csv_cell(value: object) -> object:
         if not isinstance(value, str):
             return value
+        original_first = value[:1]
+        if original_first in {"\t", "\r"}:
+            return "'" + value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
         sanitized = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
         stripped = sanitized.strip()
-        if stripped[:1] in {"=", "+", "-", "@", "|"}:
+        first = stripped[:1]
+        if first in {"=", "+", "@", "|"}:
+            return "'" + sanitized
+        if first == "-" and not _LOOKS_NUMERIC.match(stripped):
             return "'" + sanitized
         return sanitized
 

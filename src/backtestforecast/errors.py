@@ -65,8 +65,11 @@ class NotFoundError(AppError):
 
 
 class RateLimitError(AppError):
+    rate_limit_info: object | None
+
     def __init__(self, message: str = "Rate limit exceeded. Please retry later.") -> None:
         super().__init__(code="rate_limited", message=message, status_code=429)
+        self.rate_limit_info = None
 
 
 class ConflictError(AppError):

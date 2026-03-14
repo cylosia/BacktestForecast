@@ -3,9 +3,11 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 
 import structlog
+
+from collections.abc import Sequence
 
 from backtestforecast.backtests.types import BacktestConfig, OptionDataGateway
 from backtestforecast.indicators.calculations import (
@@ -236,12 +238,10 @@ class EntryRuleEvaluator:
         return not any(blackout_start <= earnings_date <= blackout_end for earnings_date in self.earnings_dates)
 
     @staticmethod
-    def _has_crossover_rule(rules: list) -> bool:
+    def _has_crossover_rule(rules: Sequence) -> bool:
         """Check if any rule requires the previous bar (index-1) for crossover detection."""
         for rule in rules:
             if isinstance(rule, (MovingAverageCrossoverRule, MacdRule)):
-                return True
-            if hasattr(rule, "type") and isinstance(rule, dict) and rule.get("type") in ("sma_crossover", "ema_crossover", "macd"):
                 return True
         return False
 
@@ -278,16 +278,22 @@ def build_estimated_iv_series(
     results: list[float | None] = []
     last_iv: float | None = None
     last_index = len(bars) - 1
+    iv_cache: dict[date, float | None] = {}
     for index, bar in enumerate(bars):
         if index % sample_interval == 0 or index == last_index:
-            iv_value = estimate_atm_iv_for_date(
-                trade_date=bar.trade_date,
-                underlying_close=bar.close_price,
-                option_gateway=option_gateway,
-                target_dte=target_dte,
-                dte_tolerance_days=dte_tolerance_days,
-                risk_free_rate=risk_free_rate,
-            )
+            cached = iv_cache.get(bar.trade_date)
+            if cached is not None:
+                iv_value = cached
+            else:
+                iv_value = estimate_atm_iv_for_date(
+                    trade_date=bar.trade_date,
+                    underlying_close=bar.close_price,
+                    option_gateway=option_gateway,
+                    target_dte=target_dte,
+                    dte_tolerance_days=dte_tolerance_days,
+                    risk_free_rate=risk_free_rate,
+                )
+                iv_cache[bar.trade_date] = iv_value
             if iv_value is not None:
                 last_iv = iv_value
             results.append(iv_value if iv_value is not None else last_iv)
@@ -431,8 +437,8 @@ def normal_cdf(value: float) -> float:
     return 0.5 * (1.0 + math.erf(value / math.sqrt(2.0)))
 
 
-def _group_by_expiration(contracts: list[OptionContractRecord]) -> dict:
-    grouped: dict = defaultdict(list)
+def _group_by_expiration(contracts: list[OptionContractRecord]) -> dict[date, list[OptionContractRecord]]:
+    grouped: dict[date, list[OptionContractRecord]] = defaultdict(list)
     for contract in contracts:
         grouped[contract.expiration_date].append(contract)
     return grouped

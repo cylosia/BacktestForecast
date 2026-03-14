@@ -23,13 +23,13 @@ const GRID_COLS: Record<number, string> = {
 };
 
 function safeCurrency(v: unknown): string {
-  return v != null ? formatCurrency(v as number) : "—";
+  return v != null ? formatCurrency(toNumber(v)) : "—";
 }
 function safePercent(v: unknown): string {
-  return v != null ? formatPercent(v as number) : "—";
+  return v != null ? formatPercent(toNumber(v)) : "—";
 }
 function safeNum(v: unknown): string {
-  return v != null ? formatNumber(v as number) : "—";
+  return v != null ? formatNumber(toNumber(v)) : "—";
 }
 function safeRatio(v: unknown): string {
   if (v == null) return "—";

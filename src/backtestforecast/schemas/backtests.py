@@ -413,7 +413,7 @@ class CreateBacktestRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self) -> "CreateBacktestRunRequest":
-        from datetime import UTC, datetime as _dt, timedelta as _td
+        from datetime import UTC, datetime as _dt
         if self.end_date > _dt.now(UTC).date():
             raise ValueError("end_date cannot be in the future.")
         if self.start_date >= self.end_date:
@@ -594,6 +594,9 @@ class BacktestRunStatusResponse(BaseModel):
 
 class BacktestRunListResponse(BaseModel):
     items: list[BacktestRunHistoryItemResponse]
+    total: int = 0
+    offset: int = 0
+    limit: int = 50
 
 
 class CompareBacktestsRequest(BaseModel):

@@ -19,10 +19,12 @@ export function SymbolInput({
         maxLength={16}
         placeholder="SPY"
         value={value}
+        aria-invalid={!!error}
+        aria-describedby={error ? "symbol-error" : undefined}
         onChange={(event) => onChange(event.target.value.toUpperCase())}
       />
       <p className="text-xs text-muted-foreground">Use an underlying ticker like SPY, QQQ, or AAPL.</p>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <p id="symbol-error" className="text-sm text-destructive">{error}</p> : null}
     </div>
   );
 }

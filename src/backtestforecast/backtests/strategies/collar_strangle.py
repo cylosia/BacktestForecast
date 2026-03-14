@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from backtestforecast.backtests.margin import collar_margin, covered_strangle_margin, naked_put_margin
+from backtestforecast.backtests.margin import collar_margin, covered_strangle_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_primary_expiration,

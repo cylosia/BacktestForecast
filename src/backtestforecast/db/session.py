@@ -59,10 +59,15 @@ SessionLocal = create_session
 def get_db() -> Generator[Session, None, None]:
     """Yield a SQLAlchemy session for request-scoped use.
 
-    The session is configured with ``autoflush=False`` and does NOT
-    auto-commit.  Callers must explicitly call ``db.commit()`` to
-    persist changes.  On unhandled exceptions the session is rolled back
-    automatically; it is always closed when the request finishes.
+    **Commit contract:** The session is configured with ``autoflush=False``
+    and does NOT auto-commit.  Callers (services, routers) MUST explicitly
+    call ``db.commit()`` to persist changes.  On unhandled exceptions the
+    session is rolled back automatically; it is always closed when the
+    request finishes.
+
+    Services should commit at the end of their public method after all
+    mutations are applied.  Routers should not commit — that is the
+    responsibility of the service layer.
     """
     db = SessionLocal()
     try:

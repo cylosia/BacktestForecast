@@ -17,7 +17,7 @@ import { planLabel } from "@/lib/plan";
 export default async function DashboardPage() {
   const [userResult, historyResult] = await Promise.allSettled([getCurrentUser(), getBacktestHistory(10)]);
 
-  if (userResult.status === "rejected" || historyResult.status === "rejected") {
+  if (userResult.status === "rejected") {
     return (
       <div className="space-y-6">
         <div>
@@ -38,7 +38,7 @@ export default async function DashboardPage() {
   }
 
   const user = userResult.value;
-  const history = historyResult.value?.items ?? [];
+  const history = historyResult.status === "fulfilled" ? (historyResult.value?.items ?? []) : [];
   const quota = buildBacktestQuota(user);
   const latestRun = history.find((r) => r.status === "succeeded" || r.status === "failed") ?? null;
 

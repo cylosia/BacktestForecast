@@ -92,10 +92,13 @@ class RateLimiter:
         remaining = max(limit - count, 0)
         reset_at = (current_bucket + 1) * window_seconds
         info = RateLimitInfo(limit=limit, remaining=remaining, reset_at=reset_at)
+        # INCR returns the post-increment value, so count=limit means
+        # the limit-th request (the last allowed one). count > limit means
+        # the request exceeded the quota.
         if count > limit:
             RATE_LIMIT_HITS_TOTAL.labels(bucket=bucket).inc()
             err = RateLimitError()
-            err.rate_limit_info = info  # type: ignore[attr-defined]
+            err.rate_limit_info = info
             raise err
         return info
 
@@ -162,9 +165,14 @@ class RateLimiter:
                     del self._memory_counters[k]
             if len(self._memory_counters) > max_keys * 2:
                 logger.warning("rate_limiter.memory_hard_cap", size=len(self._memory_counters), max_keys=max_keys)
-                sorted_entries = sorted(self._memory_counters.items(), key=lambda item: item[1][0])
-                keep = sorted_entries[len(sorted_entries) // 2:]
-                self._memory_counters = dict(keep)
+                cutoff_aggressive = bucket - 1
+                stale_aggressive = [k for k, (b, _) in self._memory_counters.items() if b < cutoff_aggressive]
+                for k in stale_aggressive:
+                    del self._memory_counters[k]
+                if len(self._memory_counters) > max_keys * 2:
+                    keep_count = max_keys
+                    items = list(self._memory_counters.items())
+                    self._memory_counters = dict(items[-keep_count:])
             counter_bucket, counter_value = self._memory_counters.get(namespaced, (bucket, 0))
             if counter_bucket != bucket:
                 counter_value = 0

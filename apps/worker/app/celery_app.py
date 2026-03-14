@@ -1,7 +1,7 @@
 import structlog
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_shutting_down
+from celery.signals import task_postrun, task_prerun, worker_ready, worker_shutdown, worker_shutting_down
 from kombu import Queue
 from redbeat import RedBeatSchedulerEntry  # noqa: F401 — registers the custom scheduler
 
@@ -12,6 +12,22 @@ _shutdown_logger = structlog.get_logger("worker.lifecycle")
 
 settings = get_settings()
 configure_logging(settings)
+
+if settings.sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.celery import CeleryIntegration
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.app_env,
+            traces_sample_rate=settings.sentry_traces_sample_rate,
+            send_default_pii=False,
+            integrations=[CeleryIntegration()],
+        )
+        _shutdown_logger.info("sentry.initialized", environment=settings.app_env)
+    except Exception:
+        _shutdown_logger.warning("sentry.init_failed", exc_info=True)
 
 celery_app = Celery(
     "backtestforecast",
@@ -86,15 +102,56 @@ celery_app.conf.beat_schedule = {
 }
 
 
+@task_prerun.connect
+def _bind_task_context(task_id, task, *args, **kwargs):  # type: ignore[no-untyped-def]
+    structlog.contextvars.clear_contextvars()
+    ctx: dict[str, str] = {"task_id": task_id, "task_name": task.name}
+    headers = getattr(task.request, "headers", None) or {}
+    if isinstance(headers, dict):
+        origin_request_id = headers.get("request_id")
+        if origin_request_id:
+            ctx["origin_request_id"] = origin_request_id
+    structlog.contextvars.bind_contextvars(**ctx)
+
+
+@task_postrun.connect
+def _clear_task_context(task_id, task, *args, **kwargs):  # type: ignore[no-untyped-def]
+    structlog.contextvars.clear_contextvars()
+
+
+@worker_ready.connect
+def _on_worker_ready(**kwargs):  # type: ignore[no-untyped-def]
+    _shutdown_logger.info("worker.ready")
+
+
 @worker_shutting_down.connect
-def _on_worker_shutdown(sig, how, exitcode, **kwargs):  # type: ignore[no-untyped-def]
+def _on_worker_shutting_down(sig, how, exitcode, **kwargs):  # type: ignore[no-untyped-def]
     _shutdown_logger.info(
         "worker.shutting_down",
         signal=str(sig),
         how=how,
         exitcode=exitcode,
     )
-    # With task_acks_late=True and task_reject_on_worker_lost=True,
-    # in-progress tasks will be re-delivered to another worker.
-    # Celery's warm shutdown (SIGTERM) allows currently executing
-    # tasks to complete before exiting.
+
+
+@worker_shutdown.connect
+def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
+    _shutdown_logger.info("worker.shutdown_cleanup_started")
+    try:
+        from backtestforecast.db.session import _get_engine
+
+        if _get_engine.cache_info().currsize > 0:
+            _get_engine().dispose()
+            _shutdown_logger.info("worker.db_engine_disposed")
+        else:
+            _shutdown_logger.info("worker.db_engine_never_created")
+    except Exception:
+        _shutdown_logger.warning("worker.db_engine_dispose_failed", exc_info=True)
+    try:
+        from backtestforecast.events import _shutdown_redis
+
+        _shutdown_redis()
+        _shutdown_logger.info("worker.redis_closed")
+    except Exception:
+        _shutdown_logger.warning("worker.redis_close_failed", exc_info=True)
+    _shutdown_logger.info("worker.shutdown_cleanup_complete")

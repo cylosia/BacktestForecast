@@ -326,7 +326,13 @@ class BacktestService:
             created_since = datetime.now(UTC) - timedelta(days=feature_policy.history_days)
         effective_limit = min(limit, feature_policy.history_item_limit)
         runs = self.run_repository.list_for_user(user.id, limit=effective_limit, offset=offset, created_since=created_since)
-        return BacktestRunListResponse(items=[self._to_history_item(run) for run in runs])
+        total = self.run_repository.count_for_user(user.id, created_since=created_since)
+        return BacktestRunListResponse(
+            items=[self._to_history_item(run) for run in runs],
+            total=total,
+            offset=offset,
+            limit=effective_limit,
+        )
 
     def get_run_status(self, user: User, run_id: UUID) -> BacktestRunStatusResponse:
         """Lightweight status check without loading trades/equity."""

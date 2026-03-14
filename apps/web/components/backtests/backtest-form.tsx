@@ -49,12 +49,16 @@ export function BacktestForm({
     return () => { submitAbortRef.current?.abort(); };
   }, []);
 
+  const templateAppliedRef = useRef(false);
   useEffect(() => {
-    if (!initialTemplateId) return;
+    if (!initialTemplateId || templateAppliedRef.current) return;
     const match = templates.find((t) => t.id === initialTemplateId);
     if (match) {
       const patch = templateToFormValues(match);
-      if (patch) setValues((current) => ({ ...current, ...patch }));
+      if (patch) {
+        setValues((current) => ({ ...current, ...patch }));
+        templateAppliedRef.current = true;
+      }
     }
   }, [initialTemplateId, templates]);
 
@@ -118,7 +122,7 @@ export function BacktestForm({
   }
 
   return (
-    <form className="space-y-6" onSubmit={handleSubmit}>
+    <form className="space-y-6" noValidate onSubmit={handleSubmit} aria-label="Backtest configuration">
       <TemplatePicker templates={templates} onApply={updateValues} />
 
       {quota.reached ? (

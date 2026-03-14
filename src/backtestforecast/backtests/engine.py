@@ -306,7 +306,9 @@ class OptionsBacktestEngine:
         by_risk = int(risk_budget // effective_risk)
         slippage_per_unit = entry_cost_per_unit * (slippage_pct / 100.0)
         cash_per_unit = max(capital_required_per_unit, entry_cost_per_unit) + commission_per_unit + slippage_per_unit
-        by_cash = int(available_cash // cash_per_unit) if cash_per_unit > 0 else 0
+        if cash_per_unit <= 0:
+            return 0
+        by_cash = int(available_cash // cash_per_unit)
         return max(0, min(by_risk, by_cash))
 
     def _close_position(

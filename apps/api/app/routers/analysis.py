@@ -41,6 +41,9 @@ def create_analysis(
     settings: Settings = Depends(get_settings),
 ) -> AnalysisSummaryResponse:
     """Create and enqueue a single-symbol deep analysis (Pro+ gated)."""
+    if not settings.feature_analysis_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Analysis is temporarily disabled.", required_tier="free")
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     get_rate_limiter().check(
         bucket="analysis:create",
@@ -59,7 +62,7 @@ def create_analysis(
 
     symbol = payload.symbol.strip().upper()
     if not _SYMBOL_RE.match(symbol):
-        raise ValidationError("Symbol must be 1-10 alphabetic characters.")
+        raise ValidationError("Symbol must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
 
     idempotency_key = payload.idempotency_key
 
@@ -163,8 +166,12 @@ def list_analyses(
         backtest_executor=None,
     )
     analyses = service.list_for_user(user, limit=limit, offset=offset)
+    total = service.count_for_user(user)
     return {
         "items": [_to_summary(a) for a in analyses],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
     }
 
 

@@ -22,6 +22,29 @@ function labelForFormat(format: ExportFormat, busy: boolean) {
   return format === "pdf" ? "Export PDF" : "Export CSV";
 }
 
+function triggerBlobDownload(
+  blob: Blob,
+  fileName: string,
+  blobUrlsRef: React.MutableRefObject<string[]>,
+  revokeTimersRef: React.MutableRefObject<ReturnType<typeof setTimeout>[]>,
+): void {
+  const blobUrl = window.URL.createObjectURL(blob);
+  blobUrlsRef.current.push(blobUrl);
+  const anchor = document.createElement("a");
+  anchor.href = blobUrl;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  const timer = setTimeout(() => {
+    window.URL.revokeObjectURL(blobUrl);
+    blobUrlsRef.current = blobUrlsRef.current.filter((u) => u !== blobUrl);
+    revokeTimersRef.current = revokeTimersRef.current.filter((t) => t !== timer);
+  }, BLOB_REVOKE_DELAY_MS);
+  revokeTimersRef.current.push(timer);
+}
+
 export function ExportActions({
   runId,
   formats,
@@ -48,6 +71,17 @@ export function ExportActions({
       blobUrlsRef.current = [];
     };
   }, []);
+
+  const fetchAndDownload = useCallback(
+    async (token: string, exportJobId: string, fileName: string, signal: AbortSignal) => {
+      const response = await downloadExport(token, exportJobId, signal);
+      if (signal.aborted) return;
+      const blob = await response.blob();
+      if (signal.aborted || !mountedRef.current) return;
+      triggerBlobDownload(blob, fileName, blobUrlsRef, revokeTimersRef);
+    },
+    [],
+  );
 
   const pollAndDownload = useCallback(
     async (token: string, exportJobId: string, fileName: string, signal: AbortSignal) => {
@@ -77,25 +111,7 @@ export function ExportActions({
         if (signal.aborted || !mountedRef.current) return;
 
         if (result.status === "succeeded") {
-          const response = await downloadExport(token, exportJobId, signal);
-          if (signal.aborted) return;
-          const blob = await response.blob();
-          if (signal.aborted || !mountedRef.current) return;
-          const blobUrl = window.URL.createObjectURL(blob);
-          blobUrlsRef.current.push(blobUrl);
-          const anchor = document.createElement("a");
-          anchor.href = blobUrl;
-          anchor.download = fileName;
-          anchor.style.display = "none";
-          document.body.appendChild(anchor);
-          anchor.click();
-          document.body.removeChild(anchor);
-          const timer = setTimeout(() => {
-            window.URL.revokeObjectURL(blobUrl);
-            blobUrlsRef.current = blobUrlsRef.current.filter((u) => u !== blobUrl);
-            revokeTimersRef.current = revokeTimersRef.current.filter((t) => t !== timer);
-          }, BLOB_REVOKE_DELAY_MS);
-          revokeTimersRef.current.push(timer);
+          await fetchAndDownload(token, exportJobId, fileName, signal);
           return;
         }
 
@@ -105,7 +121,7 @@ export function ExportActions({
       }
       throw new Error("Export is still processing. Please try downloading from the history later.");
     },
-    [],
+    [fetchAndDownload],
   );
 
   async function handleExport(format: ExportFormat) {
@@ -126,31 +142,13 @@ export function ExportActions({
       const exportJob = await createExport(token, {
         run_id: runId,
         format,
-        idempotency_key: `${runId}:${format}:${Date.now()}`,
+        idempotency_key: `${runId}:${format}`,
       });
 
       if (controller.signal.aborted) return;
 
       if (exportJob.status === "succeeded") {
-        const response = await downloadExport(token, exportJob.id, controller.signal);
-        if (controller.signal.aborted) return;
-        const blob = await response.blob();
-        if (controller.signal.aborted || !mountedRef.current) return;
-        const blobUrl = window.URL.createObjectURL(blob);
-        blobUrlsRef.current.push(blobUrl);
-        const anchor = document.createElement("a");
-        anchor.href = blobUrl;
-        anchor.download = exportJob.file_name;
-        anchor.style.display = "none";
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
-        const timer = setTimeout(() => {
-          window.URL.revokeObjectURL(blobUrl);
-          blobUrlsRef.current = blobUrlsRef.current.filter((u) => u !== blobUrl);
-          revokeTimersRef.current = revokeTimersRef.current.filter((t) => t !== timer);
-        }, BLOB_REVOKE_DELAY_MS);
-        revokeTimersRef.current.push(timer);
+        await fetchAndDownload(token, exportJob.id, exportJob.file_name, controller.signal);
       } else {
         await pollAndDownload(token, exportJob.id, exportJob.file_name, controller.signal);
       }

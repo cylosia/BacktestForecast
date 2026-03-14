@@ -79,6 +79,9 @@ class CreateAnalysisRequest(BaseModel):
 
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisSummaryResponse]
+    total: int = 0
+    offset: int = 0
+    limit: int = 50
 
 
 # ---------------------------------------------------------------------------

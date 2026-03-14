@@ -20,9 +20,7 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  // Intentional fallback: if the API is unreachable or returns an error,
-  // default to "free" so the layout still renders with baseline UI chrome.
-  let planTier = "free";
+  let planTier: string | null = null;
 
   try {
     const user = await getCurrentUser();
@@ -45,7 +43,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               </Link>
               <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                 <span>Research workspace</span>
-                <Badge variant={planBadgeVariant(planTier)}>{planLabel(planTier)}</Badge>
+                <Badge variant={planTier ? planBadgeVariant(planTier) : "outline"}>{planTier ? planLabel(planTier) : "…"}</Badge>
               </div>
             </div>
           </div>

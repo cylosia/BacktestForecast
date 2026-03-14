@@ -9,9 +9,7 @@ export default async function AnalysisPage() {
   } catch {
     return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
   }
-  // Uses forecasting_access as a proxy for analysis access. If the API
-  // exposes a dedicated analysis_access feature flag, prefer it.
-  const hasAccess = (user.features as Record<string, unknown>).analysis_access ?? user.features.forecasting_access;
+  const hasAccess = user.features.forecasting_access;
 
   return (
     <div className="space-y-6">

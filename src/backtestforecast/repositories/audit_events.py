@@ -34,7 +34,13 @@ class AuditEventRepository:
             return event, False
 
     def add_always(self, event: AuditEvent) -> AuditEvent:
-        """Insert an audit event unconditionally (no dedup). Appends a UUID suffix to subject_id."""
+        """Insert an audit event unconditionally (no dedup). Appends a UUID suffix to subject_id.
+
+        WARNING: Events created via this method bypass the dedup unique constraint
+        and will accumulate unboundedly for frequently-triggered event types
+        (e.g. ``export.downloaded``). Consider periodic cleanup or archival for
+        high-volume event types.
+        """
         if event.subject_id is not None:
             combined = f"{event.subject_id}:{uuid4()}"
             event.subject_id = combined[:255]

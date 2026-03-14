@@ -45,7 +45,7 @@ export function SelectableHistoryList({
   function handleCompare() {
     if (!canCompare) return;
     const ids = Array.from(selected).join(",");
-    router.push(`/app/backtests/compare?ids=${ids}`);
+    router.push(`/app/backtests/compare?ids=${encodeURIComponent(ids)}`);
   }
 
   if (items.length === 0) {
@@ -110,7 +110,7 @@ export function SelectableHistoryList({
                         type="checkbox"
                         checked={isSelected}
                         disabled={!isSelected && selected.size >= comparisonLimit}
-                        className="h-4 w-4 rounded border-input"
+                        className="h-4 w-4 rounded border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                         aria-label={`Select ${item.symbol} ${item.strategy_type} run for comparison`}
                         onChange={() => toggle(item.id)}
                       />

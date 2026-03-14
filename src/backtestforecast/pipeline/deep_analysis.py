@@ -395,6 +395,11 @@ class SymbolDeepAnalysisService:
         )
         return list(self.session.scalars(stmt))
 
+    def count_for_user(self, user: User) -> int:
+        from sqlalchemy import func as sa_func
+        stmt = select(sa_func.count(SymbolAnalysis.id)).where(SymbolAnalysis.user_id == user.id)
+        return int(self.session.scalar(stmt) or 0)
+
     # -------------------------------------------------------------------
     # Internal stages
     # -------------------------------------------------------------------

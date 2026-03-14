@@ -4,9 +4,8 @@ import re
 import time
 
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 HTTP_REQUESTS_TOTAL = Counter(
     "http_requests_total",
@@ -117,6 +116,64 @@ REDIS_POOL_IN_USE = Gauge(
     "Redis connections currently checked out from the pool",
 )
 
+ACTIVE_SSE_CONNECTIONS = Gauge(
+    "active_sse_connections",
+    "Number of currently active SSE connections",
+)
+
+CACHE_HITS_TOTAL = Counter(
+    "cache_hits_total",
+    "Cache lookups that returned a hit",
+    ["cache"],
+)
+CACHE_MISSES_TOTAL = Counter(
+    "cache_misses_total",
+    "Cache lookups that returned a miss",
+    ["cache"],
+)
+
+CIRCUIT_BREAKER_STATE = Gauge(
+    "circuit_breaker_state",
+    "Current circuit breaker state (0=closed, 1=half-open, 2=open)",
+    ["service"],
+)
+
+QUEUE_DEPTH = Gauge(
+    "queue_depth",
+    "Number of messages waiting in a Celery task queue",
+    ["queue"],
+)
+
+EXPORT_JOBS_TOTAL = Counter(
+    "export_jobs_total",
+    "Total export jobs by final status",
+    ["status"],
+)
+
+SCAN_JOBS_TOTAL = Counter(
+    "scan_jobs_total",
+    "Total scan jobs by final status",
+    ["status"],
+)
+
+ANALYSIS_JOBS_TOTAL = Counter(
+    "analysis_jobs_total",
+    "Total analysis jobs by final status",
+    ["status"],
+)
+
+API_ERRORS_TOTAL = Counter(
+    "api_errors_total",
+    "Total API error responses by error code",
+    ["code"],
+)
+
+BILLING_EVENTS_TOTAL = Counter(
+    "billing_events_total",
+    "Total billing events (checkout, subscription changes, cancellations)",
+    ["event_type"],
+)
+
 
 _RE_UUID = re.compile(
     r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -155,26 +212,37 @@ def _normalize_path(path: str) -> str:
     return path
 
 
-class PrometheusMiddleware(BaseHTTPMiddleware):
-    """TODO: Convert to pure ASGI middleware to avoid SSE buffering issues
-    caused by BaseHTTPMiddleware wrapping the response body iterator."""
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        method = request.method
+class PrometheusMiddleware:
+    """Pure ASGI middleware that records HTTP request metrics without
+    buffering the response body, preserving SSE streaming."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "GET")
+        path = _normalize_path(scope.get("path", "/"))
         start = time.perf_counter()
         status_code = 500
 
+        async def send_with_metrics(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 500)
+            await send(message)
+
         try:
-            response: Response = await call_next(request)
-            status_code = response.status_code
+            await self.app(scope, receive, send_with_metrics)
         except Exception:
             raise
         finally:
             duration = time.perf_counter() - start
-            path = _normalize_path(request.url.path)
             HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status=str(status_code)).inc()
             HTTP_REQUEST_DURATION_SECONDS.labels(method=method, path=path).observe(duration)
-
-        return response
 
 
 def metrics_response() -> Response:

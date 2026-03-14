@@ -1,8 +1,9 @@
 services:
-  # NOTE: Production deployments should configure sslmode=require in the
-  # DATABASE_URL connection string (e.g. ?sslmode=require) to encrypt
-  # Postgres traffic in transit. The local compose setup does not enforce
-  # SSL for development convenience.
+  # IMPORTANT: Production DATABASE_URL values (set in .env.prod) MUST include
+  # ?sslmode=require to encrypt Postgres traffic in transit.
+  # Example: postgresql+psycopg://user:pass@host:5432/db?sslmode=require
+  # The api and worker services read DATABASE_URL from .env.prod — ensure
+  # sslmode=require is present there.
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped

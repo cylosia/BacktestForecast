@@ -10,13 +10,23 @@ import json
 import sys
 
 
-def main() -> None:
-    from apps.api.app.main import app
+def main() -> int:
+    try:
+        from apps.api.app.main import app
+    except Exception as exc:
+        print(f"ERROR: failed to import the FastAPI app: {exc}", file=sys.stderr)
+        return 1
 
-    schema = app.openapi()
+    try:
+        schema = app.openapi()
+    except Exception as exc:
+        print(f"ERROR: failed to generate OpenAPI schema: {exc}", file=sys.stderr)
+        return 1
+
     json.dump(schema, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

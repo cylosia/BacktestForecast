@@ -155,6 +155,10 @@ def _compute_cagr(
     if starting_equity <= 0 or ending_equity <= 0:
         return None
     calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
+    # Require at least 60 calendar days to avoid misleadingly large annualised
+    # returns from very short observation windows.  For example, a 10% return
+    # over 30 days would annualise to ~244% CAGR which is not statistically
+    # meaningful.
     if calendar_days < 60:
         return None
     ratio = ending_equity / starting_equity

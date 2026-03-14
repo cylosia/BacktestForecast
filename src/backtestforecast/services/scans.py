@@ -36,6 +36,7 @@ from backtestforecast.schemas.backtests import (
     BacktestTradeResponse,
     CreateBacktestRunRequest,
     EquityCurvePointResponse,
+    RsiRule,
 )
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
 from backtestforecast.schemas.scans import (
@@ -387,7 +388,13 @@ class ScanService:
 
     def list_jobs(self, user: User, limit: int = 50, offset: int = 0) -> ScannerJobListResponse:
         jobs = self.repository.list_for_user(user.id, limit=limit, offset=offset)
-        return ScannerJobListResponse(items=[self._to_job_response(job) for job in jobs])
+        total = self.repository.count_for_user(user.id)
+        return ScannerJobListResponse(
+            items=[self._to_job_response(job) for job in jobs],
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
 
     def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
         job = self.repository.get_for_user(job_id, user.id)
@@ -502,7 +509,7 @@ class ScanService:
             account_size=Decimal("10000"),
             risk_per_trade_pct=Decimal("5"),
             commission_per_contract=Decimal("1"),
-            entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("40"), "period": 14}],
+            entry_rules=[RsiRule(type="rsi", operator="lte", threshold=Decimal("40"), period=14)],
         )
         bundle = self.execution_service.market_data_service.prepare_backtest(request)
         forecast = self._forecast_for_bundle(
@@ -582,16 +589,30 @@ class ScanService:
             entry_rules=all_rules or _FALLBACK_ENTRY_RULES,
         )
         bundles: dict[str, HistoricalDataBundle] = {}
-        for symbol in payload.symbols:
+        mds = self.execution_service.market_data_service
+
+        def _fetch_one(symbol: str) -> tuple[str, HistoricalDataBundle | None, dict[str, Any] | None]:
             try:
                 req = representative.model_copy(update={"symbol": symbol})
-                bundles[symbol] = self.execution_service.market_data_service.prepare_backtest(req)
+                return symbol, mds.prepare_backtest(req), None
             except AppError as exc:
-                warnings.append({
+                return symbol, None, {
                     "code": "symbol_data_unavailable",
                     "message": f"{symbol} could not be loaded ({exc.code})",
                     "error_code": exc.code,
-                })
+                }
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        max_workers = min(len(payload.symbols), 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_fetch_one, sym): sym for sym in payload.symbols}
+            for future in as_completed(futures):
+                sym, bundle, warning = future.result()
+                if bundle is not None:
+                    bundles[sym] = bundle
+                if warning is not None:
+                    warnings.append(warning)
         return bundles
 
     def _batch_historical_performance(

@@ -139,6 +139,8 @@ export function StrategySelector({
           id="strategyType"
           className="flex h-10 w-full appearance-none rounded-lg border border-input bg-background px-3 py-2 pr-10 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           value={value}
+          aria-invalid={!!error}
+          aria-describedby={error ? "strategyType-error" : undefined}
           onChange={(e) => onChange(e.target.value as StrategyType)}
         >
           {groups.map((group) => (
@@ -182,7 +184,7 @@ export function StrategySelector({
           );
         })}
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <p id="strategyType-error" className="text-sm text-destructive">{error}</p> : null}
     </div>
   );
 }

@@ -33,12 +33,28 @@ jobs:
         run: pnpm --filter @backtestforecast/web build
         env:
           NEXT_PUBLIC_APP_URL: http://localhost:3000
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_TEST_PUBLISHABLE_KEY }}
-          CLERK_SECRET_KEY: ${{ secrets.CLERK_TEST_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_TEST_PUBLISHABLE_KEY || 'pk_test_dummy' }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_TEST_SECRET_KEY || 'sk_test_dummy' }}
           NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
 
-      # NOTE: No API server (apps/api) is started. E2E tests that hit API
-      # endpoints will fail or be skipped until a backend start step is added.
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install API dependencies
+        run: pip install -e ".[s3]"
+
+      - name: Start API server
+        run: |
+          uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000 &
+          npx wait-on http://localhost:8000/health/live --timeout 30000
+        env:
+          PYTHONPATH: src:.
+          APP_ENV: test
+          DATABASE_URL: sqlite://
+          LOG_JSON: "false"
+
       - name: Start web app and run Playwright tests
         run: |
           pnpm --filter @backtestforecast/web start &

@@ -64,3 +64,77 @@ groups:
           summary: "P95 HTTP latency >5 seconds"
           description: >-
             API response time at p95 has exceeded 5 seconds.
+
+      - alert: QueueDepthHigh
+        expr: |
+          sum by (queue) (queue_depth) > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery queue depth >100 for {{ $labels.queue }}"
+          description: >-
+            Queue {{ $labels.queue }} has {{ $value }} pending messages.
+            Workers may be under-provisioned or stuck.
+
+      - alert: DLQDepthHigh
+        expr: |
+          dlq_depth > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dead-letter queue depth >10"
+          description: >-
+            {{ $value }} messages in the dead-letter queue.  Tasks are
+            exhausting retries.  Review DLQ contents via /admin/dlq.
+
+      - alert: CircuitBreakerOpen
+        expr: |
+          circuit_breaker_state == 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.service }}"
+          description: >-
+            The circuit breaker for {{ $labels.service }} has been open
+            for over 2 minutes.  Downstream service may be unavailable.
+
+      - alert: BacktestJobFailureRate
+        expr: |
+          sum(rate(backtest_runs_total{status="failed"}[15m]))
+          / sum(rate(backtest_runs_total[15m]))
+          > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backtest job failure rate >25%"
+          description: >-
+            More than 25% of backtest runs are failing over the last 15 minutes.
+
+      - alert: ScanJobFailureRate
+        expr: |
+          sum(rate(scan_jobs_total{status="failed"}[15m]))
+          / sum(rate(scan_jobs_total[15m]))
+          > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scan job failure rate >25%"
+          description: >-
+            More than 25% of scan jobs are failing over the last 15 minutes.
+
+      - alert: HighSSEConnections
+        expr: |
+          active_sse_connections > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Active SSE connections >500"
+          description: >-
+            {{ $value }} active SSE connections.  This may exhaust
+            file descriptors or Redis pub/sub capacity.

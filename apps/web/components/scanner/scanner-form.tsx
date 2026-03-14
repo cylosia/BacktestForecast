@@ -122,27 +122,53 @@ export function ScannerForm({
 
   const defaultMode: ScannerMode = scannerModes.includes("advanced") ? "advanced" : "basic";
 
-  const [mode, setMode] = useState<ScannerMode>(defaultMode);
-  const [name, setName] = useState("");
-  const [symbolsText, setSymbolsText] = useState("SPY, QQQ, AAPL");
+  interface FormFields {
+    mode: ScannerMode;
+    name: string;
+    symbolsText: string;
+    ruleSetName: string;
+    rsiEnabled: boolean;
+    rsiOperator: string;
+    rsiThreshold: string;
+    rsiPeriod: string;
+    startDate: string;
+    endDate: string;
+    targetDte: string;
+    dteTolerance: string;
+    maxHolding: string;
+    accountSize: string;
+    riskPct: string;
+    commission: string;
+    maxRecs: string;
+  }
+
+  const [form, setForm] = useState<FormFields>({
+    mode: defaultMode,
+    name: "",
+    symbolsText: "SPY, QQQ, AAPL",
+    ruleSetName: "RSI oversold",
+    rsiEnabled: true,
+    rsiOperator: "lt",
+    rsiThreshold: "35",
+    rsiPeriod: "14",
+    startDate: daysAgo(365),
+    endDate: daysAgo(0),
+    targetDte: "30",
+    dteTolerance: "5",
+    maxHolding: "10",
+    accountSize: "10000",
+    riskPct: "2",
+    commission: "0.65",
+    maxRecs: "10",
+  });
+
+  function setField<K extends keyof FormFields>(key: K, value: FormFields[K]) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
   const [selectedStrategies, setSelectedStrategies] = useState<Set<string>>(
     new Set(["long_call", "long_put"]),
   );
-  const [ruleSetName, setRuleSetName] = useState("RSI oversold");
-  const [rsiEnabled, setRsiEnabled] = useState(true);
-  const [rsiOperator, setRsiOperator] = useState("lt");
-  const [rsiThreshold, setRsiThreshold] = useState("35");
-  const [rsiPeriod, setRsiPeriod] = useState("14");
-
-  const [startDate, setStartDate] = useState(daysAgo(365));
-  const [endDate, setEndDate] = useState(daysAgo(0));
-  const [targetDte, setTargetDte] = useState("30");
-  const [dteTolerance, setDteTolerance] = useState("5");
-  const [maxHolding, setMaxHolding] = useState("10");
-  const [accountSize, setAccountSize] = useState("10000");
-  const [riskPct, setRiskPct] = useState("2");
-  const [commission, setCommission] = useState("0.65");
-  const [maxRecs, setMaxRecs] = useState("10");
 
   const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -150,13 +176,13 @@ export function ScannerForm({
 
   useEffect(() => {
     const allowed: Set<string> = new Set(
-      (mode === "advanced" ? ADVANCED_STRATEGIES : BASIC_STRATEGIES).map((s) => s.value),
+      (form.mode === "advanced" ? ADVANCED_STRATEGIES : BASIC_STRATEGIES).map((s) => s.value),
     );
     setSelectedStrategies((prev) => {
       const pruned = new Set([...prev].filter((v) => allowed.has(v)));
       return pruned.size === prev.size ? prev : pruned;
     });
-  }, [mode]);
+  }, [form.mode]);
 
   function toggleStrategy(value: string) {
     setSelectedStrategies((prev) => {
@@ -173,7 +199,7 @@ export function ScannerForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    const symbols = symbolsText
+    const symbols = form.symbolsText
       .split(/[,\s]+/)
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
@@ -187,27 +213,33 @@ export function ScannerForm({
       errors.push("At least one strategy type is required.");
     }
 
-    const maxSymbols = mode === "advanced" ? 25 : 5;
-    const maxStrategies = mode === "advanced" ? 14 : 6;
+    const maxSymbols = form.mode === "advanced" ? 25 : 5;
+    const maxStrategies = form.mode === "advanced" ? 14 : 6;
     if (symbols.length > maxSymbols) {
-      errors.push(`${mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxSymbols} symbols.`);
+      errors.push(`${form.mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxSymbols} symbols.`);
     }
     if (selectedStrategies.size > maxStrategies) {
-      errors.push(`${mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxStrategies} strategies.`);
+      errors.push(`${form.mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxStrategies} strategies.`);
     }
 
-    if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
+    if (!form.startDate) {
+      errors.push("Start date is required.");
+    }
+    if (!form.endDate) {
+      errors.push("End date is required.");
+    }
+    if (form.startDate && form.endDate && new Date(form.startDate) >= new Date(form.endDate)) {
       errors.push("Start date must be before end date.");
     }
 
     const numericChecks: Array<{ label: string; value: number; min: number; max?: number; integer?: boolean }> = [
-      { label: "Target DTE", value: Number(targetDte), min: 7, max: 365, integer: true },
-      { label: "DTE tolerance", value: Number(dteTolerance), min: 0, max: 60, integer: true },
-      { label: "Max holding days", value: Number(maxHolding), min: 1, max: 120, integer: true },
-      { label: "Account size", value: Number(accountSize), min: 100 },
-      { label: "Risk %", value: Number(riskPct), min: 0.1, max: 100 },
-      { label: "Commission", value: Number(commission), min: 0 },
-      { label: "Max recommendations", value: Number(maxRecs), min: 1, max: 30, integer: true },
+      { label: "Target DTE", value: Number(form.targetDte), min: 7, max: 365, integer: true },
+      { label: "DTE tolerance", value: Number(form.dteTolerance), min: 0, max: 60, integer: true },
+      { label: "Max holding days", value: Number(form.maxHolding), min: 1, max: 120, integer: true },
+      { label: "Account size", value: Number(form.accountSize), min: 100 },
+      { label: "Risk %", value: Number(form.riskPct), min: 0.1, max: 100 },
+      { label: "Commission", value: Number(form.commission), min: 0 },
+      { label: "Max recommendations", value: Number(form.maxRecs), min: 1, max: 30, integer: true },
     ];
     for (const check of numericChecks) {
       if (!Number.isFinite(check.value) || check.value < check.min || (check.max !== undefined && check.value > check.max)) {
@@ -224,9 +256,9 @@ export function ScannerForm({
     }
 
     const entryRules: CreateScannerJobRequest["rule_sets"][0]["entry_rules"] = [];
-    if (rsiEnabled) {
-      const rsiThresholdNum = Number(rsiThreshold);
-      const rsiPeriodNum = Number(rsiPeriod);
+    if (form.rsiEnabled) {
+      const rsiThresholdNum = Number(form.rsiThreshold);
+      const rsiPeriodNum = Number(form.rsiPeriod);
       if (!Number.isFinite(rsiThresholdNum) || rsiThresholdNum < 0 || rsiThresholdNum > 100) {
         setStatus("error");
         setErrorMessage("RSI threshold must be a number between 0 and 100.");
@@ -239,7 +271,7 @@ export function ScannerForm({
       }
       entryRules.push({
         type: "rsi" as const,
-        operator: rsiOperator as "lt" | "lte" | "gt" | "gte",
+        operator: form.rsiOperator as "lt" | "lte" | "gt" | "gte",
         threshold: rsiThresholdNum,
         period: rsiPeriodNum,
       });
@@ -252,20 +284,20 @@ export function ScannerForm({
     }
 
     const payload: CreateScannerJobRequest = {
-      name: name.trim() || null,
-      mode,
+      name: form.name.trim() || null,
+      mode: form.mode,
       symbols,
       strategy_types: Array.from(selectedStrategies) as StrategyType[],
-      rule_sets: [{ name: ruleSetName.trim() || "Default", entry_rules: entryRules }],
-      start_date: startDate,
-      end_date: endDate,
-      target_dte: Number(targetDte),
-      dte_tolerance_days: Number(dteTolerance),
-      max_holding_days: Number(maxHolding),
-      account_size: Number(accountSize),
-      risk_per_trade_pct: Number(riskPct),
-      commission_per_contract: Number(commission),
-      max_recommendations: Number(maxRecs),
+      rule_sets: [{ name: form.ruleSetName.trim() || "Default", entry_rules: entryRules }],
+      start_date: form.startDate,
+      end_date: form.endDate,
+      target_dte: Number(form.targetDte),
+      dte_tolerance_days: Number(form.dteTolerance),
+      max_holding_days: Number(form.maxHolding),
+      account_size: Number(form.accountSize),
+      risk_per_trade_pct: Number(form.riskPct),
+      commission_per_contract: Number(form.commission),
+      max_recommendations: Number(form.maxRecs),
       refresh_daily: false,
       refresh_priority: 50,
       idempotency_key: crypto.randomUUID(),
@@ -293,7 +325,7 @@ export function ScannerForm({
   }
 
   return (
-    <form className="space-y-6" onSubmit={handleSubmit}>
+    <form className="space-y-6" noValidate onSubmit={handleSubmit} aria-label="Scanner configuration">
       {errorMessage && isPlanLimitError(errorCode) ? (
         <UpgradePrompt message={errorMessage} />
       ) : errorMessage ? (
@@ -311,27 +343,27 @@ export function ScannerForm({
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="scanName">Scan name (optional)</Label>
-              <Input id="scanName" maxLength={120} placeholder="e.g. Weekly momentum scan" value={name} onChange={(e) => setName(e.target.value)} />
+              <Input id="scanName" maxLength={120} placeholder="e.g. Weekly momentum scan" value={form.name} onChange={(e) => setField("name", e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="scanMode">Scanner mode</Label>
               <Select
                 id="scanMode"
-                value={mode}
+                value={form.mode}
                 options={scannerModes.map((m) => ({ value: m, label: m === "basic" ? "Basic" : "Advanced" }))}
-                onChange={(e) => setMode(e.target.value as ScannerMode)}
+                onChange={(e) => setField("mode", e.target.value as ScannerMode)}
               />
             </div>
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="symbols">Symbols (comma-separated)</Label>
-            <Input id="symbols" maxLength={500} placeholder="SPY, QQQ, AAPL, MSFT" value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} />
+            <Input id="symbols" maxLength={500} placeholder="SPY, QQQ, AAPL, MSFT" value={form.symbolsText} onChange={(e) => setField("symbolsText", e.target.value)} />
           </div>
 
           <div className="space-y-2">
             <Label>Strategy types</Label>
-            {mode === "advanced" ? (
+            {form.mode === "advanced" ? (
               <div className="space-y-4">
                 {ADVANCED_STRATEGY_GROUPS.map((group) => (
                   <div key={group.category}>
@@ -387,7 +419,7 @@ export function ScannerForm({
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="ruleSetName">Rule set name</Label>
-            <Input id="ruleSetName" maxLength={120} placeholder="RSI oversold" value={ruleSetName} onChange={(e) => setRuleSetName(e.target.value)} />
+            <Input id="ruleSetName" maxLength={120} placeholder="RSI oversold" value={form.ruleSetName} onChange={(e) => setField("ruleSetName", e.target.value)} />
           </div>
 
           <div className="rounded-xl border border-border/70 p-4">
@@ -397,28 +429,28 @@ export function ScannerForm({
                 <p className="text-sm text-muted-foreground">Trigger entries when RSI crosses a threshold.</p>
               </div>
               <label className="inline-flex items-center gap-2 text-sm font-medium">
-                <input type="checkbox" className="h-4 w-4 rounded border-input" checked={rsiEnabled} onChange={(e) => setRsiEnabled(e.target.checked)} />
+                <input type="checkbox" className="h-4 w-4 rounded border-input" checked={form.rsiEnabled} onChange={(e) => setField("rsiEnabled", e.target.checked)} />
                 Enabled
               </label>
             </div>
-            {rsiEnabled ? (
+            {form.rsiEnabled ? (
               <div className="mt-4 grid gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="rsiOp">Operator</Label>
-                  <Select id="rsiOp" value={rsiOperator} options={[
+                  <Select id="rsiOp" value={form.rsiOperator} options={[
                     { value: "lt", label: "Less than" },
                     { value: "lte", label: "≤" },
                     { value: "gt", label: "Greater than" },
                     { value: "gte", label: "≥" },
-                  ]} onChange={(e) => setRsiOperator(e.target.value)} />
+                  ]} onChange={(e) => setField("rsiOperator", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="rsiThresh">Threshold</Label>
-                  <Input id="rsiThresh" inputMode="decimal" value={rsiThreshold} onChange={(e) => setRsiThreshold(e.target.value)} />
+                  <Input id="rsiThresh" inputMode="decimal" value={form.rsiThreshold} onChange={(e) => setField("rsiThreshold", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="rsiPer">Period</Label>
-                  <Input id="rsiPer" inputMode="numeric" value={rsiPeriod} onChange={(e) => setRsiPeriod(e.target.value)} />
+                  <Input id="rsiPer" inputMode="numeric" value={form.rsiPeriod} onChange={(e) => setField("rsiPeriod", e.target.value)} />
                 </div>
               </div>
             ) : null}
@@ -434,42 +466,42 @@ export function ScannerForm({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="scanStart">Start date</Label>
-              <Input id="scanStart" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <Input id="scanStart" type="date" value={form.startDate} onChange={(e) => setField("startDate", e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="scanEnd">End date</Label>
-              <Input id="scanEnd" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <Input id="scanEnd" type="date" value={form.endDate} onChange={(e) => setField("endDate", e.target.value)} />
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
             <div className="space-y-2">
               <Label htmlFor="scanDte">Target DTE</Label>
-              <Input id="scanDte" inputMode="numeric" value={targetDte} onChange={(e) => setTargetDte(e.target.value)} />
+              <Input id="scanDte" inputMode="numeric" value={form.targetDte} onChange={(e) => setField("targetDte", e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="scanDteTol">DTE tolerance</Label>
-              <Input id="scanDteTol" inputMode="numeric" value={dteTolerance} onChange={(e) => setDteTolerance(e.target.value)} />
+              <Input id="scanDteTol" inputMode="numeric" value={form.dteTolerance} onChange={(e) => setField("dteTolerance", e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="scanHold">Max hold</Label>
-              <Input id="scanHold" inputMode="numeric" value={maxHolding} onChange={(e) => setMaxHolding(e.target.value)} />
+              <Input id="scanHold" inputMode="numeric" value={form.maxHolding} onChange={(e) => setField("maxHolding", e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="scanAcct">Account</Label>
-              <Input id="scanAcct" inputMode="decimal" value={accountSize} onChange={(e) => setAccountSize(e.target.value)} />
+              <Input id="scanAcct" inputMode="decimal" value={form.accountSize} onChange={(e) => setField("accountSize", e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="scanRisk">Risk %</Label>
-              <Input id="scanRisk" inputMode="decimal" value={riskPct} onChange={(e) => setRiskPct(e.target.value)} />
+              <Input id="scanRisk" inputMode="decimal" value={form.riskPct} onChange={(e) => setField("riskPct", e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="scanComm">Commission</Label>
-              <Input id="scanComm" inputMode="decimal" value={commission} onChange={(e) => setCommission(e.target.value)} />
+              <Input id="scanComm" inputMode="decimal" value={form.commission} onChange={(e) => setField("commission", e.target.value)} />
             </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="scanMaxRecs">Max recommendations</Label>
-            <Input id="scanMaxRecs" inputMode="numeric" className="max-w-32" value={maxRecs} onChange={(e) => setMaxRecs(e.target.value)} />
+            <Input id="scanMaxRecs" inputMode="numeric" className="max-w-32" value={form.maxRecs} onChange={(e) => setField("maxRecs", e.target.value)} />
             <p className="text-xs text-muted-foreground">1 to 30. Top-ranked combinations returned after evaluation.</p>
           </div>
         </CardContent>

@@ -52,6 +52,9 @@ def create_scan(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> ScannerJobResponse:
+    if not settings.feature_scanner_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Scanner is temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="scans:create",
         actor_key=str(user.id),

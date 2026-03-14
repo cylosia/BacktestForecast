@@ -66,11 +66,20 @@ def _check_check_constraints(engine) -> list[str]:
 
 
 def main() -> int:
-    settings = get_settings()
+    try:
+        settings = get_settings()
+    except Exception as exc:
+        print(f"ERROR: failed to load settings: {exc}", file=sys.stderr)
+        return 1
+
     url = settings.database_url
 
     alembic_cfg = Config(str(_ROOT / "alembic.ini"))
-    command.upgrade(alembic_cfg, "head")
+    try:
+        command.upgrade(alembic_cfg, "head")
+    except Exception as exc:
+        print(f"ERROR: alembic upgrade head failed: {exc}", file=sys.stderr)
+        return 1
 
     engine = create_engine(url)
     try:
@@ -80,6 +89,9 @@ def main() -> int:
 
         default_issues = _check_server_defaults(engine)
         constraint_issues = _check_check_constraints(engine)
+    except Exception as exc:
+        print(f"ERROR: schema comparison failed: {exc}", file=sys.stderr)
+        return 1
     finally:
         engine.dispose()
 

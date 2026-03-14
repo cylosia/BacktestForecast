@@ -29,16 +29,30 @@ from apps.api.app.routers import (
     templates,
 )
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppError, RateLimitError
+from backtestforecast.errors import AppError, FeatureLockedError, QuotaExceededError, RateLimitError
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
 from backtestforecast.observability.logging import RequestContextMiddleware
-from backtestforecast.observability.metrics import PrometheusMiddleware, metrics_response
+from backtestforecast.observability.metrics import API_ERRORS_TOTAL, PrometheusMiddleware, metrics_response
 from backtestforecast.security.http import ApiSecurityHeadersMiddleware, RequestBodyLimitMiddleware
 
 settings = get_settings()
 configure_logging(settings)
 logger = get_logger("api")
+
+if settings.sentry_dsn:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.app_env,
+            traces_sample_rate=settings.sentry_traces_sample_rate,
+            send_default_pii=False,
+        )
+        logger.info("sentry.initialized", environment=settings.app_env)
+    except Exception:
+        logger.warning("sentry.init_failed", exc_info=True)
 
 _is_dev = settings.app_env in ("development", "test")
 
@@ -56,15 +70,34 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
             "startup.clerk_audience_missing",
             hint="CLERK_AUDIENCE is not set; JWT audience verification is disabled in development.",
         )
+
+    logger.info("lifespan.startup_complete")
     yield
+    logger.info("lifespan.shutdown_started")
+
     from apps.api.app.routers.events import shutdown_async_redis
 
     await shutdown_async_redis()
+
+    from backtestforecast.events import _shutdown_redis as _shutdown_sync_redis
+
+    _shutdown_sync_redis()
+
+    from backtestforecast.db.session import _get_engine
+
+    try:
+        _get_engine().dispose()
+        logger.info("lifespan.db_engine_disposed")
+    except Exception:
+        logger.warning("lifespan.db_engine_dispose_failed", exc_info=True)
+
+    logger.info("lifespan.shutdown_complete")
 
 
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
+    description="BacktestForecast API — options backtesting, scanning, forecasting, and portfolio analysis.",
     openapi_url="/openapi.json" if _is_dev else None,
     docs_url="/docs" if _is_dev else None,
     redoc_url="/redoc" if _is_dev else None,
@@ -78,6 +111,7 @@ def _custom_openapi():
     schema = get_openapi(
         title=app.title,
         version=app.version,
+        description=app.description,
         routes=app.routes,
     )
     schema["components"] = schema.get("components", {})
@@ -107,28 +141,20 @@ def _custom_openapi():
         "required": ["error"],
     }
     schema["components"]["schemas"]["ErrorEnvelope"] = error_schema
+    _error_ref = {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}
+    _error_content = {"content": {"application/json": _error_ref}}
     for path_obj in schema.get("paths", {}).values():
         for method, operation in path_obj.items():
             if not isinstance(operation, dict):
                 continue
-            operation.setdefault("responses", {})
-            operation["responses"]["422"] = {
-                "description": "Validation Error",
-                "content": {
-                    "application/json": {
-                        "schema": {"$ref": "#/components/schemas/ErrorEnvelope"},
-                    },
-                },
-            }
+            responses = operation.setdefault("responses", {})
+            responses.setdefault("401", {"description": "Authentication required or session expired.", **_error_content})
+            responses.setdefault("403", {"description": "Insufficient permissions or feature locked.", **_error_content})
+            responses.setdefault("422", {"description": "Validation error — request payload did not match the expected schema.", **_error_content})
+            responses.setdefault("429", {"description": "Rate limit exceeded. See Retry-After header.", **_error_content})
+            responses.setdefault("500", {"description": "Unexpected server error.", **_error_content})
             if method in ("get", "delete"):
-                operation["responses"].setdefault("404", {
-                    "description": "Resource not found",
-                    "content": {
-                        "application/json": {
-                            "schema": {"$ref": "#/components/schemas/ErrorEnvelope"},
-                        },
-                    },
-                })
+                responses.setdefault("404", {"description": "Resource not found.", **_error_content})
 
     app.openapi_schema = schema
     return schema
@@ -143,7 +169,9 @@ app.add_middleware(
     allow_origins=settings.web_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With", "Accept"],
+    expose_headers=["X-Request-ID", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
+    max_age=600,
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
 app.add_middleware(RequestContextMiddleware)
@@ -176,10 +204,20 @@ def _error_payload(request: Request, *, code: str, message: str) -> dict[str, ob
 
 @app.exception_handler(AppError)
 def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    API_ERRORS_TOTAL.labels(code=exc.code).inc()
     logger.warning("api.error", code=exc.code, status_code=exc.status_code, message=exc.message)
+    payload = _error_payload(request, code=exc.code, message=exc.message)
+    if isinstance(exc, (QuotaExceededError, FeatureLockedError)):
+        extra: dict[str, str] = {}
+        if hasattr(exc, "current_tier"):
+            extra["current_tier"] = exc.current_tier
+        if hasattr(exc, "required_tier"):
+            extra["required_tier"] = exc.required_tier
+        if extra:
+            payload["error"]["detail"] = extra  # type: ignore[index]
     response = JSONResponse(
         status_code=exc.status_code,
-        content=_error_payload(request, code=exc.code, message=exc.message),
+        content=payload,
     )
     request_id = getattr(request.state, "request_id", None)
     if request_id:
@@ -190,6 +228,7 @@ def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
             response.headers["Retry-After"] = str(max(info.reset_at - int(time.time()), 1))
             response.headers["X-RateLimit-Limit"] = str(info.limit)
             response.headers["X-RateLimit-Remaining"] = str(info.remaining)
+            response.headers["X-RateLimit-Reset"] = str(info.reset_at)
     return response
 
 
@@ -232,6 +271,7 @@ def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSO
 
 @app.exception_handler(Exception)
 def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    API_ERRORS_TOTAL.labels(code="internal_server_error").inc()
     logger.exception("api.unhandled_exception", exc_info=exc)
     response = JSONResponse(
         status_code=500,
@@ -293,7 +333,7 @@ def dlq_status(request: Request) -> Response:
             for raw in recent_raw:
                 try:
                     recent.append(json.loads(raw))
-                except Exception:
+                except (ValueError, TypeError, UnicodeDecodeError):
                     recent.append({"raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)})
             return JSONResponse(content={"depth": depth, "recent": recent})
         finally:

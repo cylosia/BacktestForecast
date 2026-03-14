@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import desc, func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, noload, selectinload
 
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade
 
@@ -44,11 +44,29 @@ class BacktestRunRepository:
         offset: int = 0,
         created_since: datetime | None = None,
     ) -> list[BacktestRun]:
-        stmt = select(BacktestRun).where(BacktestRun.user_id == user_id)
+        stmt = (
+            select(BacktestRun)
+            .where(BacktestRun.user_id == user_id)
+            .options(
+                noload(BacktestRun.trades),
+                noload(BacktestRun.equity_points),
+            )
+        )
         if created_since is not None:
             stmt = stmt.where(BacktestRun.created_at >= created_since)
         stmt = stmt.order_by(desc(BacktestRun.created_at)).offset(offset).limit(limit)
         return list(self.session.scalars(stmt))
+
+    def count_for_user(
+        self,
+        user_id: UUID,
+        *,
+        created_since: datetime | None = None,
+    ) -> int:
+        stmt = select(func.count(BacktestRun.id)).where(BacktestRun.user_id == user_id)
+        if created_since is not None:
+            stmt = stmt.where(BacktestRun.created_at >= created_since)
+        return int(self.session.scalar(stmt) or 0)
 
     def count_for_user_created_between(
         self,

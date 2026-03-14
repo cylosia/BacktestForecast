@@ -61,7 +61,9 @@ export function CheckoutButton({
       setStatus("error");
       setMessage(nextMessage);
     } finally {
-      setStatus((prev) => (prev === "loading" ? "idle" : prev));
+      if (document.visibilityState !== "hidden") {
+        setStatus((prev) => (prev === "loading" ? "idle" : prev));
+      }
     }
   }
 
