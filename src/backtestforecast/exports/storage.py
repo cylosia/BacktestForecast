@@ -57,13 +57,22 @@ class DatabaseStorage:
 
 
 def _retry(fn, max_attempts=3, base_delay=0.5):
+    from botocore.exceptions import ClientError, EndpointConnectionError, ConnectionClosedError
     for attempt in range(max_attempts):
         try:
             return fn()
-        except Exception:
+        except (EndpointConnectionError, ConnectionClosedError, OSError):
             if attempt == max_attempts - 1:
                 raise
             time.sleep(base_delay * (2 ** attempt))
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code in ("RequestTimeout", "RequestTimeoutException", "SlowDown", "InternalError", "ServiceUnavailable"):
+                if attempt == max_attempts - 1:
+                    raise
+                time.sleep(base_delay * (2 ** attempt))
+            else:
+                raise
 
 
 class S3Storage:
@@ -118,11 +127,16 @@ class S3Storage:
             raise
 
     def exists(self, storage_key: str) -> bool:
-        try:
+        def _head():
             self._client.head_object(Bucket=self._bucket, Key=storage_key)
+        try:
+            _retry(_head)
             return True
-        except Exception:
-            return False
+        except Exception as e:
+            from botocore.exceptions import ClientError
+            if isinstance(e, ClientError) and e.response["Error"]["Code"] == "404":
+                return False
+            raise
 
 
 def get_export_storage(settings: Settings) -> ExportStorage:

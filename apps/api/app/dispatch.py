@@ -47,7 +47,12 @@ def dispatch_celery_task(
             headers=headers if headers else None,
         )
         job.celery_task_id = result.id
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception(f"{log_event}.enqueued_but_commit_failed", celery_task_id=result.id, **task_kwargs)
+            return
         logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)
     except (OSError, ConnectionError, KombuError, KombuOperationalError):
         logger.exception(f"{log_event}.enqueue_failed", **task_kwargs)

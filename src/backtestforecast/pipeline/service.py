@@ -132,7 +132,7 @@ class NightlyPipelineService:
         stale = list(self.session.scalars(
             select(NightlyPipelineRun).where(
                 NightlyPipelineRun.trade_date == trade_date,
-                NightlyPipelineRun.status == "running",
+                NightlyPipelineRun.status.in_(["running", "queued"]),
             )
         ))
         for s in stale:
@@ -264,6 +264,7 @@ class NightlyPipelineService:
                 "pairs_generated": run.pairs_generated,
                 "quick_backtests_run": run.quick_backtests_run,
                 "full_backtests_run": run.full_backtests_run,
+                "recommendations_produced": run.recommendations_produced,
             }
             self.session.rollback()
             run = self.session.get(NightlyPipelineRun, _run_id)

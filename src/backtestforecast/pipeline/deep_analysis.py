@@ -168,6 +168,9 @@ class SymbolDeepAnalysisService:
             if existing is not None:
                 return existing
 
+        self.session.execute(
+            select(User).where(User.id == user.id).with_for_update()
+        )
         active_count = self.session.scalar(
             select(func.count()).select_from(SymbolAnalysis).where(
                 SymbolAnalysis.user_id == user.id,
@@ -442,7 +445,11 @@ class SymbolDeepAnalysisService:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_cell, item): item for item in work_items}
             for future in as_completed(futures):
-                cell = future.result()
+                try:
+                    cell = future.result()
+                except Exception:
+                    logger.warning("deep_analysis.landscape_future_failed", exc_info=True)
+                    continue
                 if cell is not None:
                     cells.append(cell)
 
@@ -480,7 +487,10 @@ class SymbolDeepAnalysisService:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_candidate, c): c for c in candidates}
             for future in as_completed(futures):
-                backtest_results.append(future.result())
+                try:
+                    backtest_results.append(future.result())
+                except Exception:
+                    logger.warning("deep_analysis.deep_dive_future_failed", exc_info=True)
 
         cell_order = {id(c): idx for idx, c in enumerate(candidates)}
         backtest_results.sort(key=lambda pair: cell_order.get(id(pair[0]), 0))

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
@@ -114,6 +114,11 @@ export function ScannerForm({
 }) {
   const router = useRouter();
   const { getToken } = useAuth();
+  const submitAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => { submitAbortRef.current?.abort(); };
+  }, []);
 
   const defaultMode: ScannerMode = scannerModes.includes("advanced") ? "advanced" : "basic";
 
@@ -272,7 +277,8 @@ export function ScannerForm({
       const token = await getToken();
       if (!token) throw new Error("Session expired.");
 
-      const job = await createScannerJob(token, payload);
+      submitAbortRef.current = new AbortController();
+      const job = await createScannerJob(token, payload, submitAbortRef.current.signal);
       router.push(`/app/scanner/${job.id}`);
       router.refresh();
     } catch (error) {

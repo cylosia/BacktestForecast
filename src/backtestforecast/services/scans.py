@@ -210,12 +210,17 @@ class ScanService:
 
         bundle_cache = self._prepare_bundles(payload, warnings)
         historical_cache = self._batch_historical_performance(payload, job.created_at)
+        scan_start = _time.monotonic()
 
         for symbol in payload.symbols:
             for strategy in payload.strategy_types:
                 for rule_set in payload.rule_sets:
                     if not is_strategy_rule_set_compatible(strategy.value, rule_set.entry_rules):
                         continue
+
+                    if _time.monotonic() - scan_start > 540:
+                        warnings.append({"type": "timeout", "message": "Scan time limit approaching; remaining candidates were skipped."})
+                        break
 
                     request = CreateBacktestRunRequest(
                         symbol=symbol,

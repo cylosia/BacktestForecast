@@ -5,12 +5,7 @@ from datetime import UTC, datetime
 from enum import Enum
 
 from backtestforecast.errors import FeatureLockedError, ValidationError
-
-
-class PlanTier(str, Enum):
-    FREE = "free"
-    PRO = "pro"
-    PREMIUM = "premium"
+from backtestforecast.schemas.common import PlanTier
 
 
 class BillingInterval(str, Enum):

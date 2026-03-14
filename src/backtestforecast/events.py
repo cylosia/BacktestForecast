@@ -70,24 +70,34 @@ def publish_job_status(
     channel = f"job:{job_type}:{job_id}:status"
     payload = json.dumps({"status": status, "job_id": str(job_id), **(metadata or {})})
 
-    for attempt in range(2):
-        try:
-            client = _get_redis()
-            client.publish(channel, payload)
-            return
-        except RedisError:
-            if attempt == 0:
-                _reset_redis()
-                continue
-            logger.error(
-                "events.publish_failed",
-                channel=channel,
-                status=status,
-                job_type=job_type,
-                job_id=str(job_id),
-                exc_info=True,
-            )
-            _fallback_persist_status(job_type, job_id, status)
+    try:
+        for attempt in range(2):
+            try:
+                client = _get_redis()
+                client.publish(channel, payload)
+                return
+            except RedisError:
+                if attempt == 0:
+                    _reset_redis()
+                    continue
+                logger.error(
+                    "events.publish_failed",
+                    channel=channel,
+                    status=status,
+                    job_type=job_type,
+                    job_id=str(job_id),
+                    exc_info=True,
+                )
+                _fallback_persist_status(job_type, job_id, status)
+    except Exception:
+        logger.error(
+            "events.publish_unexpected_failure",
+            channel=channel,
+            status=status,
+            job_type=job_type,
+            job_id=str(job_id),
+            exc_info=True,
+        )
 
 
 _JOB_TYPE_MODEL_MAP: dict[str, str] = {

@@ -38,8 +38,7 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     redbeat_redis_url=settings.redis_url,
     # visibility_timeout must exceed the longest task's hard time_limit
-    # (currently pipeline.nightly_scan at 1860s) to prevent re-delivery
-    # of tasks that are still running.  4200s = 70 minutes.
+    # to prevent re-delivery of tasks that are still running.  4200s = 70 min.
     broker_transport_options={"visibility_timeout": 4200},
 )
 

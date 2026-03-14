@@ -14,6 +14,7 @@ class SymbolAnalysisRepository:
 
     def add(self, analysis: SymbolAnalysis) -> None:
         self.session.add(analysis)
+        self.session.flush()
 
     def get_by_idempotency_key(self, user_id: UUID, idempotency_key: str) -> SymbolAnalysis | None:
         stmt = select(SymbolAnalysis).where(

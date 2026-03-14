@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml README.md /app/
-COPY apps /app/apps
+COPY apps/worker /app/apps/worker
 COPY src /app/src
 
 RUN pip install --upgrade pip && pip install .

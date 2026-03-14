@@ -17,7 +17,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: "backend-and-web"
+          running-workflow-name: cd
+          check-regexp: "backend-and-web|postgres-integration|migration-check|container-smoke|trivy-scan|secret-scanning|dependency-audit|codeql-sast"
           wait-interval: 15
           allowed-conclusions: success
 

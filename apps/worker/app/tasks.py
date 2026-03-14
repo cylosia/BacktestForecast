@@ -55,11 +55,13 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                 exc=str(exc),
             )
             try:
-                from redis import Redis
                 import json
                 from backtestforecast.config import get_settings
-                r = Redis.from_url(get_settings().redis_url, socket_timeout=5)
-                r.lpush("bff:dead_letter_queue", json.dumps({
+                redis_conn = self.app.backend.client if hasattr(self.app, 'backend') and hasattr(self.app.backend, 'client') else None
+                if redis_conn is None:
+                    from redis import Redis
+                    redis_conn = Redis.from_url(get_settings().redis_url, socket_timeout=5)
+                redis_conn.lpush("bff:dead_letter_queue", json.dumps({
                     "task_name": self.name,
                     "task_id": task_id,
                     "args": [str(a) for a in (args or [])],
@@ -67,7 +69,6 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                     "retries": self.request.retries,
                     "error": str(exc),
                 }))
-                r.close()
                 DLQ_MESSAGES_TOTAL.labels(task_name=self.name).inc()
             except Exception:
                 logger.warning("task.dlq_persist_failed", exc_info=True)
@@ -210,6 +211,10 @@ def nightly_scan_pipeline(
                 lock.release()
             except Exception:
                 pass
+            try:
+                redis_client.close()
+            except Exception:
+                pass
     finally:
         try:
             executor.close()
@@ -244,7 +249,12 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
             .where(model_cls.id == obj_id, model_cls.celery_task_id.is_(None))
             .values(celery_task_id=expected_task_id)
         )
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.warning("validate_task_ownership.commit_failed", model=model_cls.__name__, obj_id=str(obj_id), exc_info=True)
+            return True
         if result.rowcount == 0:
             return False
         session.refresh(obj)
@@ -259,14 +269,11 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="backtests.run").inc()
             logger.info("backtests.run.duplicate_delivery", run_id=run_id, task_id=self.request.id)
             return {"status": "skipped", "run_id": run_id, "reason": "duplicate_delivery"}
-        try:
-            publish_job_status("backtest", UUID(run_id), "running")
-        except Exception:
-            logger.warning("publish_job_status.failed", job_id=run_id, exc_info=True)
         run_obj = session.get(BacktestRun, UUID(run_id))
         if run_obj is None:
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
             return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
+        publish_job_status("backtest", UUID(run_id), "running")
         user = session.get(User, run_obj.user_id)
         if user is None:
             run_obj.status = "failed"
@@ -317,7 +324,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 "backtest", UUID(run_id), "failed",
                 metadata={"error_code": "time_limit_exceeded"},
             )
-            return {"status": "failed", "run_id": run_id, "error_code": "time_limit_exceeded"}
+            raise
         except Exception as exc:  # pragma: no cover
             session.rollback()
             try:
@@ -343,7 +350,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                     "backtest", UUID(run_id), "failed",
                     metadata={"error_code": "max_retries_exceeded"},
                 )
-                return {"status": "failed", "run_id": run_id, "error_code": "max_retries_exceeded"}
+                raise
         finally:
             try:
                 service.close()
@@ -367,14 +374,11 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="exports.generate").inc()
             logger.info("exports.generate.duplicate_delivery", export_job_id=export_job_id, task_id=self.request.id)
             return {"status": "skipped", "export_job_id": export_job_id, "reason": "duplicate_delivery"}
-        try:
-            publish_job_status("export", UUID(export_job_id), "running")
-        except Exception:
-            logger.warning("publish_job_status.failed", job_id=export_job_id, exc_info=True)
         ej = session.get(ExportJobModel, UUID(export_job_id))
         if ej is None:
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
             return {"status": "failed", "export_job_id": export_job_id, "error_code": "not_found"}
+        publish_job_status("export", UUID(export_job_id), "running")
         user = session.get(User, ej.user_id)
         if user is None:
             ej.status = "failed"
@@ -401,6 +405,15 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             job = service.execute_export_by_id(UUID(export_job_id))
         except AppError as exc:
             session.rollback()
+            ej_obj = session.get(ExportJobModel, UUID(export_job_id))
+            if ej_obj is not None and ej_obj.status in ("queued", "running"):
+                ej_obj.status = "failed"
+                ej_obj.error_code = exc.code
+                ej_obj.error_message = str(exc.message)
+                try:
+                    session.commit()
+                except Exception:
+                    session.rollback()
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
             publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": exc.code})
             return {
@@ -428,7 +441,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                 "export", UUID(export_job_id), "failed",
                 metadata={"error_code": "time_limit_exceeded"},
             )
-            return {"status": "failed", "export_job_id": export_job_id, "error_code": "time_limit_exceeded"}
+            raise
         except Exception as exc:  # pragma: no cover
             session.rollback()
             try:
@@ -453,7 +466,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                     "export", UUID(export_job_id), "failed",
                     metadata={"error_code": "max_retries_exceeded"},
                 )
-                return {"status": "failed", "export_job_id": export_job_id, "error_code": "max_retries_exceeded"}
+                raise
         finally:
             try:
                 service.close()
@@ -502,17 +515,15 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="analysis.deep_symbol").inc()
                 logger.info("analysis.deep_symbol.duplicate_delivery", analysis_id=analysis_id, task_id=self.request.id)
                 return {"status": "skipped", "analysis_id": analysis_id, "reason": "duplicate_delivery"}
-            try:
-                publish_job_status("analysis", UUID(analysis_id), "running")
-            except Exception:
-                logger.warning("publish_job_status.failed", job_id=analysis_id, exc_info=True)
             sa_obj = session.get(SymbolAnalysis, UUID(analysis_id))
             if sa_obj is None:
                 CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
                 return {"status": "failed", "analysis_id": analysis_id, "error_code": "not_found"}
+            publish_job_status("analysis", UUID(analysis_id), "running")
             user = session.get(User, sa_obj.user_id)
             if user is None:
                 sa_obj.status = "failed"
+                sa_obj.error_code = "entitlement_revoked"
                 sa_obj.error_message = "User account not found."
                 session.commit()
                 publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
@@ -520,6 +531,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
             policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
             if not policy.forecasting_access:
                 sa_obj.status = "failed"
+                sa_obj.error_code = "entitlement_revoked"
                 sa_obj.error_message = "Your plan no longer supports this operation."
                 session.commit()
                 publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
@@ -534,6 +546,15 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 result = service.execute_analysis(UUID(analysis_id))
             except AppError as exc:
                 session.rollback()
+                sa_fail = session.get(SymbolAnalysis, UUID(analysis_id))
+                if sa_fail is not None and sa_fail.status in ("queued", "running"):
+                    sa_fail.status = "failed"
+                    sa_fail.error_code = exc.code
+                    sa_fail.error_message = str(exc.message)
+                    try:
+                        session.commit()
+                    except Exception:
+                        session.rollback()
                 CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
                 publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": exc.code})
                 return {
@@ -548,6 +569,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 analysis = session.get(_SA, UUID(analysis_id))
                 if analysis is not None and analysis.status in ("queued", "running"):
                     analysis.status = "failed"
+                    analysis.error_code = "time_limit_exceeded"
                     analysis.error_message = "Analysis exceeded the time limit."
                     from datetime import UTC, datetime as _dt_stl
                     analysis.completed_at = _dt_stl.now(UTC)
@@ -561,11 +583,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     "analysis", UUID(analysis_id), "failed",
                     metadata={"error_code": "time_limit_exceeded"},
                 )
-                return {
-                    "status": "failed",
-                    "analysis_id": analysis_id,
-                    "error_code": "time_limit_exceeded",
-                }
+                raise
             except Exception as exc:
                 session.rollback()
                 try:
@@ -589,11 +607,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                         "analysis", UUID(analysis_id), "failed",
                         metadata={"error_code": "max_retries_exceeded"},
                     )
-                    return {
-                        "status": "failed",
-                        "analysis_id": analysis_id,
-                        "error_code": "max_retries_exceeded",
-                    }
+                    raise
 
             effective_status = "succeeded" if result.status == "succeeded" else "failed"
             CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status=effective_status).inc()
@@ -621,14 +635,11 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="scans.run_job").inc()
             logger.info("scans.run_job.duplicate_delivery", job_id=job_id, task_id=self.request.id)
             return {"status": "skipped", "job_id": job_id, "reason": "duplicate_delivery"}
-        try:
-            publish_job_status("scan", UUID(job_id), "running")
-        except Exception:
-            logger.warning("publish_job_status.failed", job_id=job_id, exc_info=True)
         sj = session.get(ScannerJobModel, UUID(job_id))
         if sj is None:
             CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
             return {"status": "failed", "job_id": job_id, "error_code": "not_found"}
+        publish_job_status("scan", UUID(job_id), "running")
         user = session.get(User, sj.user_id)
         if user is None:
             sj.status = "failed"
@@ -651,6 +662,15 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             job = service.run_job(UUID(job_id))
         except AppError as exc:
             session.rollback()
+            sj_obj = session.get(ScannerJobModel, UUID(job_id))
+            if sj_obj is not None and sj_obj.status in ("queued", "running"):
+                sj_obj.status = "failed"
+                sj_obj.error_code = exc.code
+                sj_obj.error_message = str(exc.message)
+                try:
+                    session.commit()
+                except Exception:
+                    session.rollback()
             CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
             publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": exc.code})
             return {
@@ -678,7 +698,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                 "scan", UUID(job_id), "failed",
                 metadata={"error_code": "time_limit_exceeded"},
             )
-            return {"status": "failed", "job_id": job_id, "error_code": "time_limit_exceeded"}
+            raise
         except Exception as exc:  # pragma: no cover
             session.rollback()
             try:
@@ -703,7 +723,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                     "scan", UUID(job_id), "failed",
                     metadata={"error_code": "max_retries_exceeded"},
                 )
-                return {"status": "failed", "job_id": job_id, "error_code": "max_retries_exceeded"}
+                raise
         finally:
             try:
                 service.close()
@@ -720,7 +740,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         }
 
 
-@celery_app.task(name="scans.refresh_prioritized")
+@celery_app.task(name="scans.refresh_prioritized", soft_time_limit=300, time_limit=360)
 def refresh_prioritized_scans() -> dict[str, int]:
     from sqlalchemy import update as sa_update
 
@@ -766,7 +786,7 @@ def refresh_prioritized_scans() -> dict[str, int]:
     }
 
 
-@celery_app.task(name="maintenance.reap_stale_jobs")
+@celery_app.task(name="maintenance.reap_stale_jobs", soft_time_limit=300, time_limit=360)
 def reap_stale_jobs(stale_minutes: int = 30) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
     from datetime import UTC, datetime, timedelta
@@ -862,6 +882,11 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 )
             )
             session.commit()
+            for rid in stale_running_ids:
+                try:
+                    publish_job_status("backtest", rid, "failed", metadata={"error_code": "stale_running"})
+                except Exception:
+                    pass
         counts["stale_running_backtests"] = len(stale_running_ids)
 
         stale_exports_stmt = (
@@ -915,6 +940,11 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 )
             )
             session.commit()
+            for eid in stale_running_export_ids:
+                try:
+                    publish_job_status("export", eid, "failed", metadata={"error_code": "stale_running"})
+                except Exception:
+                    pass
         counts["stale_running_exports"] = len(stale_running_export_ids)
 
         stale_scans_stmt = (
@@ -968,6 +998,11 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 )
             )
             session.commit()
+            for sid in stale_running_scan_ids:
+                try:
+                    publish_job_status("scan", sid, "failed", metadata={"error_code": "stale_running"})
+                except Exception:
+                    pass
         counts["stale_running_scans"] = len(stale_running_scan_ids)
 
         stale_analyses_stmt = (
@@ -1021,13 +1056,22 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 )
             )
             session.commit()
+            for aid in stale_running_analysis_ids:
+                try:
+                    publish_job_status("analysis", aid, "failed", metadata={"error_code": "stale_running"})
+                except Exception:
+                    pass
         counts["stale_running_analyses"] = len(stale_running_analysis_ids)
 
+        from sqlalchemy import or_
         stale_running_pipeline_stmt = (
             select(NightlyPipelineRun.id)
             .where(
                 NightlyPipelineRun.status == "running",
-                NightlyPipelineRun.created_at < cutoff,
+                or_(
+                    NightlyPipelineRun.started_at.isnot(None) & (NightlyPipelineRun.started_at < cutoff),
+                    NightlyPipelineRun.started_at.is_(None) & (NightlyPipelineRun.created_at < cutoff),
+                ),
             )
             .limit(50)
         )

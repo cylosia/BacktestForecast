@@ -249,7 +249,7 @@ jobs:
   e2e-tests:
     # Requires CLERK_TESTING_TOKEN repository secret for Clerk-authenticated E2E flows.
     # Set this in GitHub > Settings > Secrets > Actions to enable this job.
-    if: ${{ secrets.CLERK_TESTING_TOKEN != '' }}
+    if: secrets.CLERK_TESTING_TOKEN != ''
     runs-on: ubuntu-latest
     env:
       CI: true
@@ -332,11 +332,11 @@ jobs:
           load: true
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: backtestforecast-api:trivy
           format: table
-          exit-code: 0
+          exit-code: 1
           severity: CRITICAL,HIGH
 
   secret-scanning:

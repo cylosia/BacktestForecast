@@ -47,9 +47,11 @@ DECIMAL_QUANT = Decimal("0.0001")
 def to_decimal(value: float | Decimal) -> Decimal:
     if isinstance(value, Decimal):
         if not value.is_finite():
+            logger.warning("to_decimal.non_finite_value", value=str(value))
             return Decimal("0")
         return value.quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
     if not math.isfinite(value):
+        logger.warning("to_decimal.non_finite_value", value=str(value))
         return Decimal("0")
     return Decimal(str(value)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 
@@ -319,10 +321,10 @@ class BacktestService:
 
         if len(request.run_ids) > limit:
             if feature_policy.tier.value == "premium":
-                raise FeatureLockedError(
-                    f"Your plan allows comparing up to {limit} runs at a time. "
+                raise QuotaExceededError(
+                    f"You can compare up to {limit} runs at a time. "
                     f"You requested {len(request.run_ids)}.",
-                    required_tier="premium",
+                    current_tier="premium",
                 )
             raise FeatureLockedError(
                 f"Your {feature_policy.tier.value} plan allows comparing up to {limit} runs at a time. "
@@ -398,7 +400,7 @@ class BacktestService:
         )
         if feature_policy.monthly_backtest_quota is None:
             return
-        used_this_month = self._current_month_backtest_count(user)
+        used_this_month = self._current_month_backtest_count(locked_user)
         if used_this_month >= feature_policy.monthly_backtest_quota:
             raise QuotaExceededError(
                 f"The {feature_policy.tier.value} plan allows "
@@ -550,5 +552,5 @@ class BacktestService:
             error_message=run.error_message,
             summary=self._summary_response(run),
             trades=[BacktestTradeResponse.model_validate(trade) for trade in run.trades[:trade_limit]],
-            equity_curve=[EquityCurvePointResponse.model_validate(point) for point in run.equity_points],
+            equity_curve=[EquityCurvePointResponse.model_validate(point) for point in run.equity_points[:10_000]],
         )

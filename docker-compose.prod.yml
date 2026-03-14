@@ -39,6 +39,10 @@ services:
     env_file: .env.prod
     environment:
       REQUEST_MAX_BODY_BYTES: ${REQUEST_MAX_BODY_BYTES:-1048576}
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/live || exit 1"]
       interval: 15s
@@ -81,6 +85,11 @@ services:
         condition: service_healthy
     ports:
       - "${WEB_PORT:-3000}:3000"
+    env_file: .env.prod
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
 volumes:
   postgres_data:

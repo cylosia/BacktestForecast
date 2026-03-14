@@ -90,9 +90,21 @@ def stripe_webhook(
             ip_address=ip_address,
         )
     except Exception as exc:
-        from backtestforecast.errors import AuthenticationError as _AuthErr, AppError as _AppErr
+        from backtestforecast.errors import (
+            AuthenticationError as _AuthErr,
+            AppError as _AppErr,
+            ExternalServiceError as _ExtErr,
+        )
         if isinstance(exc, _AuthErr):
             raise
+        if isinstance(exc, _ExtErr):
+            _webhook_logger.exception(
+                "webhook.transient_error", code=exc.code, ip=ip_address, request_id=request_id,
+            )
+            return JSONResponse(  # type: ignore[return-value]
+                status_code=500,
+                content={"error": {"code": exc.code, "message": "Transient error; Stripe should retry."}},
+            )
         if isinstance(exc, _AppErr):
             _webhook_logger.warning(
                 "webhook.deterministic_error", code=exc.code, ip=ip_address, request_id=request_id,

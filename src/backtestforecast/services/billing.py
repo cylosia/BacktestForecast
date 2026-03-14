@@ -190,27 +190,34 @@ class BillingService:
                 STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
                 return {"status": "duplicate", "event_type": event_type}
             self.session.flush()
-        except IntegrityError:
+        except IntegrityError as ie:
             self.session.rollback()
-            logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
-            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
-            return {"status": "duplicate", "event_type": event_type}
+            if "uq_audit_events_" in str(getattr(ie, "orig", ie)):
+                logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
+                STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
+                return {"status": "duplicate", "event_type": event_type}
+            logger.exception("billing.webhook.integrity_error", event_id=event_id, event_type=event_type)
+            raise
 
         data_object = event["data"]["object"]
         user: User | None = None
 
-        if event_type == "checkout.session.completed":
-            user = self._sync_checkout_session(data_object)
-        elif event_type in {
-            "customer.subscription.created",
-            "customer.subscription.updated",
-            "customer.subscription.deleted",
-            "customer.subscription.paused",
-            "customer.subscription.resumed",
-        }:
-            user = self._sync_subscription(data_object)
-        else:
-            logger.info("billing.webhook.ignored", event_type=event_type)
+        try:
+            if event_type == "checkout.session.completed":
+                user = self._sync_checkout_session(data_object)
+            elif event_type in {
+                "customer.subscription.created",
+                "customer.subscription.updated",
+                "customer.subscription.deleted",
+                "customer.subscription.paused",
+                "customer.subscription.resumed",
+            }:
+                user = self._sync_subscription(data_object)
+            else:
+                logger.info("billing.webhook.ignored", event_type=event_type)
+        except ExternalServiceError:
+            self.session.rollback()
+            raise
 
         self.session.commit()
         STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ok").inc()
@@ -395,7 +402,8 @@ class BillingService:
             return price_id, BillingInterval.MONTHLY.value
         if interval == "year":
             return price_id, BillingInterval.YEARLY.value
-        return price_id, interval
+        logger.warning("billing.unknown_interval", interval=interval, price_id=price_id)
+        return price_id, None
 
     def _resolve_return_url(self, return_path: str | None) -> str:
         return resolve_return_url(self.settings.app_public_url, return_path)

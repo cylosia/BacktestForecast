@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PlanTier, normalize_plan_tier
-from backtestforecast.errors import ConflictError, NotFoundError, QuotaExceededError
+from backtestforecast.errors import ConflictError, NotFoundError, QuotaExceededError, ValidationError
 from backtestforecast.models import BacktestTemplate, User
 from backtestforecast.repositories.templates import BacktestTemplateRepository
 from backtestforecast.schemas.templates import (
@@ -40,6 +40,8 @@ class BacktestTemplateService:
         self.repository = BacktestTemplateRepository(session)
 
     def create(self, user: User, request: CreateTemplateRequest) -> TemplateResponse:
+        from sqlalchemy.exc import IntegrityError
+
         self._enforce_template_limit(user)
         config_data = request.config.model_dump(mode="json")
 
@@ -51,7 +53,11 @@ class BacktestTemplateService:
             config_json=config_data,
         )
         self.repository.add(template)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            raise ValidationError(f"A template named '{request.name}' already exists.")
         self.session.refresh(template)
         return self._to_response(template)
 
@@ -72,7 +78,12 @@ class BacktestTemplateService:
         return self._to_response(template)
 
     def update(self, user: User, template_id: UUID, request: UpdateTemplateRequest) -> TemplateResponse:
-        template = self.repository.get_for_user(template_id, user.id)
+        template = self.session.scalar(
+            select(BacktestTemplate).where(
+                BacktestTemplate.id == template_id,
+                BacktestTemplate.user_id == user.id,
+            ).with_for_update()
+        )
         if template is None:
             raise NotFoundError("Template not found.")
 
@@ -90,7 +101,12 @@ class BacktestTemplateService:
             template.strategy_type = request.config.strategy_type.value
             template.config_json = request.config.model_dump(mode="json")
 
-        self.session.commit()
+        from sqlalchemy.exc import IntegrityError
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            raise ValidationError(f"A template named '{request.name or template.name}' already exists.")
         self.session.refresh(template)
         return self._to_response(template)
 

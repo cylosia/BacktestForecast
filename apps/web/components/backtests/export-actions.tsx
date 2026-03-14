@@ -74,8 +74,11 @@ export function ExportActions({
           const anchor = document.createElement("a");
           anchor.href = blobUrl;
           anchor.download = fileName;
+          anchor.style.display = "none";
+          document.body.appendChild(anchor);
           anchor.click();
-          window.URL.revokeObjectURL(blobUrl);
+          document.body.removeChild(anchor);
+          setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
           return;
         }
 
@@ -119,8 +122,11 @@ export function ExportActions({
         const anchor = document.createElement("a");
         anchor.href = blobUrl;
         anchor.download = exportJob.file_name;
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
         anchor.click();
-        window.URL.revokeObjectURL(blobUrl);
+        document.body.removeChild(anchor);
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
       } else {
         await pollAndDownload(token, exportJob.id, exportJob.file_name, controller.signal);
       }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { AlertTriangle, Loader2 } from "lucide-react";
@@ -43,6 +43,11 @@ export function BacktestForm({
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
+  const submitAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => { submitAbortRef.current?.abort(); };
+  }, []);
 
   useEffect(() => {
     if (!initialTemplateId) return;
@@ -87,7 +92,8 @@ export function BacktestForm({
         throw new Error("Your session token could not be loaded. Please sign in again.");
       }
 
-      const run = await createBacktestRun(token, validation.payload);
+      submitAbortRef.current = new AbortController();
+      const run = await createBacktestRun(token, validation.payload, submitAbortRef.current.signal);
       setStatus("success");
       setServerMessage("Backtest queued. Opening run details...");
       router.push(`/app/backtests/${run.id}`);
@@ -143,6 +149,8 @@ export function BacktestForm({
         <UpgradePrompt message={serverMessage} />
       ) : serverMessage ? (
         <div
+          id="backtest-form-feedback"
+          role={status === "error" ? "alert" : "status"}
           className={`rounded-xl border p-4 text-sm ${
             status === "error"
               ? "border-destructive/40 bg-destructive/5 text-destructive"

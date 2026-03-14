@@ -205,7 +205,7 @@ async def backtest_events(
     return EventSourceResponse(
         _event_stream(channel, request),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
     )
 
 
@@ -224,7 +224,7 @@ async def scan_events(
     return EventSourceResponse(
         _event_stream(channel, request),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
     )
 
 
@@ -243,7 +243,7 @@ async def export_events(
     return EventSourceResponse(
         _event_stream(channel, request),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
     )
 
 
@@ -262,5 +262,5 @@ async def analysis_events(
     return EventSourceResponse(
         _event_stream(channel, request),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
     )

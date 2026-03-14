@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -21,14 +21,24 @@ export function MobileNav({ items }: { items: NavItem[] }) {
     setOpen(false);
   }, [pathname]);
 
+  const navRef = useRef<HTMLElement>(null);
+
+  const close = useCallback(() => setOpen(false), []);
+
   useEffect(() => {
     if (open) {
       document.body.style.overflow = "hidden";
+      const handleKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") close();
+      };
+      document.addEventListener("keydown", handleKey);
+      navRef.current?.querySelector<HTMLElement>("button, a")?.focus();
       return () => {
         document.body.style.overflow = "";
+        document.removeEventListener("keydown", handleKey);
       };
     }
-  }, [open]);
+  }, [open, close]);
 
   return (
     <div className="md:hidden">
@@ -49,6 +59,7 @@ export function MobileNav({ items }: { items: NavItem[] }) {
             aria-hidden
           />
           <nav
+            ref={navRef}
             className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col gap-1 overflow-y-auto bg-background p-4 shadow-lg animate-in slide-in-from-left duration-200"
             aria-label="Mobile navigation"
           >

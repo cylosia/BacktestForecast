@@ -97,10 +97,17 @@ def get_export_status(
 )
 def download_export(
     export_job_id: UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
 ) -> Response:
+    get_rate_limiter().check(
+        bucket="exports:download",
+        actor_key=str(user.id),
+        limit=settings.export_create_rate_limit * 3,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     export_job = ExportService(db).get_export_for_download(
         user,
         export_job_id,
@@ -112,9 +119,14 @@ def download_export(
     mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
 
     content = export_job.content_bytes
-    headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
-    if content is not None:
-        headers["Content-Length"] = str(len(content))
+    if content is None:
+        from backtestforecast.errors import NotFoundError
+        raise NotFoundError("Export file is not available.")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{safe_name}"',
+        "Content-Length": str(len(content)),
+    }
 
     def _chunk_bytes(data: bytes, chunk_size: int = 65536) -> Generator[bytes, None, None]:
         offset = 0

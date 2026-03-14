@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from backtestforecast.billing.entitlements import ScannerMode
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import JobStatus, PlanTier
+from backtestforecast.schemas.common import JobStatus, PlanTier, sanitize_error_message
 from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
@@ -181,6 +181,8 @@ class ScannerJobResponse(BaseModel):
     completed_at: datetime | None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
 class ScannerJobListResponse(BaseModel):

@@ -41,13 +41,14 @@ export function CheckoutButton({
         throw new Error("The checkout URL was not returned. Please try again.");
       }
       const allowed = ["https://checkout.stripe.com", "https://billing.stripe.com"];
+      let parsedOrigin: string;
       try {
-        const origin = new URL(result.checkout_url).origin;
-        if (!allowed.some((a) => origin.startsWith(a))) {
-          throw new Error("Unexpected checkout URL origin.");
-        }
+        parsedOrigin = new URL(result.checkout_url).origin;
       } catch {
         throw new Error("Invalid checkout URL received.");
+      }
+      if (!allowed.includes(parsedOrigin)) {
+        throw new Error("Unexpected checkout URL origin.");
       }
       window.location.href = result.checkout_url;
     } catch (error) {

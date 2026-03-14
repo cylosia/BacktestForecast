@@ -74,9 +74,16 @@ def create_backtest(
 @router.post("/compare", response_model=CompareBacktestsResponse)
 def compare_backtests(
     payload: CompareBacktestsRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CompareBacktestsResponse:
+    get_rate_limiter().check(
+        bucket="backtests:compare",
+        actor_key=str(user.id),
+        limit=settings.backtest_create_rate_limit * 2,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     service = BacktestService(db)
     return service.compare_runs(user, payload)
 

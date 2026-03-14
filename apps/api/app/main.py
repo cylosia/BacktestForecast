@@ -53,6 +53,7 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
+    openapi_url="/openapi.json" if _is_dev else None,
     docs_url="/docs" if _is_dev else None,
     redoc_url="/redoc" if _is_dev else None,
     lifespan=_lifespan,
@@ -130,7 +131,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.web_cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With"],
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)

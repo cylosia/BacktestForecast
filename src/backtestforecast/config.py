@@ -221,7 +221,6 @@ class Settings(BaseSettings):
         "forecast_rate_limit", "daily_picks_rate_limit",
         "rate_limit_memory_max_keys",
         "sse_rate_limit", "sse_redis_max_connections",
-        "db_pool_max_overflow",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:

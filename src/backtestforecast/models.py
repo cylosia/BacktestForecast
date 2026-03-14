@@ -407,7 +407,11 @@ class NightlyPipelineRun(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     stage_details_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
     recommendations: Mapped[list["DailyRecommendation"]] = relationship(
         back_populates="pipeline_run", cascade="all, delete-orphan"
@@ -430,8 +434,8 @@ class DailyRecommendation(Base):
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
-    strategy_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    regime_labels: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    regime_labels: Mapped[list[str]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
     close_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     target_dte: Mapped[int] = mapped_column(Integer, nullable=False)
     config_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
@@ -448,6 +452,7 @@ class SymbolAnalysis(Base):
         Index("ix_symbol_analyses_user_created", "user_id", "created_at"),
         Index("ix_symbol_analyses_symbol", "symbol"),
         Index("ix_symbol_analyses_status_created", "status", "created_at"),
+        Index("ix_symbol_analyses_celery_task_id", "celery_task_id"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_symbol_analyses_user_idempotency"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
@@ -472,7 +477,7 @@ class SymbolAnalysis(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

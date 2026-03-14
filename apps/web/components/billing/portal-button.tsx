@@ -28,13 +28,14 @@ export function PortalButton({ children }: { children: React.ReactNode }) {
         throw new Error("The billing portal URL was not returned. Please try again.");
       }
       const allowed = ["https://billing.stripe.com", "https://checkout.stripe.com"];
+      let parsedOrigin: string;
       try {
-        const origin = new URL(result.portal_url).origin;
-        if (!allowed.some((a) => origin.startsWith(a))) {
-          throw new Error("Unexpected portal URL origin.");
-        }
+        parsedOrigin = new URL(result.portal_url).origin;
       } catch {
         throw new Error("Invalid portal URL received.");
+      }
+      if (!allowed.includes(parsedOrigin)) {
+        throw new Error("Unexpected portal URL origin.");
       }
       window.location.href = result.portal_url;
     } catch (error) {

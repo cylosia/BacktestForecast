@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import JobStatus, PlanTier
+from backtestforecast.schemas.common import JobStatus, PlanTier, sanitize_error_message
 
 SYMBOL_ALLOWED_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
 
@@ -504,7 +504,7 @@ class BacktestSummaryResponse(BaseModel):
 
 
 class BacktestTradeResponse(BaseModel):
-    id: UUID
+    id: UUID | None = None
     option_ticker: str
     strategy_type: str
     underlying_symbol: str
@@ -585,6 +585,8 @@ class BacktestRunStatusResponse(BaseModel):
     completed_at: datetime | None = None
     error_code: str | None = None
     error_message: str | None = None
+
+    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
 class BacktestRunListResponse(BaseModel):

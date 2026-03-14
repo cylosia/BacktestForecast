@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import ExportFormat
+from backtestforecast.schemas.common import sanitize_error_message
 
 
 class CreateExportRequest(BaseModel):
@@ -19,6 +20,8 @@ class CreateExportRequest(BaseModel):
 
 
 class ExportJobResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
     id: UUID
     run_id: UUID
     export_format: str
@@ -29,6 +32,8 @@ class ExportJobResponse(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
+
+    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
     started_at: datetime | None = None
     completed_at: datetime | None = None
     expires_at: datetime | None = None

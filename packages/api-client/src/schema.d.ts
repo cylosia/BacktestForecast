@@ -578,7 +578,7 @@ export interface components {
             /** Configs Tested */
             configs_tested: number;
             /** Created At */
-            created_at: string;
+            created_at?: string | null;
             /** Duration Seconds */
             duration_seconds?: number | null;
             /** Error Message */
@@ -587,7 +587,10 @@ export interface components {
             forecast?: {
                 [key: string]: unknown;
             } | null;
-            /** Id */
+            /**
+             * Id
+             * Format: uuid
+             */
             id: string;
             /** Landscape */
             landscape?: components["schemas"]["LandscapeCell"][] | null;
@@ -619,12 +622,15 @@ export interface components {
             /** Configs Tested */
             configs_tested: number;
             /** Created At */
-            created_at: string;
+            created_at?: string | null;
             /** Duration Seconds */
             duration_seconds?: number | null;
             /** Error Message */
             error_message?: string | null;
-            /** Id */
+            /**
+             * Id
+             * Format: uuid
+             */
             id: string;
             /** Stage */
             stage: string;
@@ -918,11 +924,8 @@ export interface components {
             gross_pnl: string;
             /** Holding Period Days */
             holding_period_days: number;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
+            /** Id */
+            id?: string | null;
             /** Net Pnl */
             net_pnl: string;
             /** Option Ticker */
@@ -1562,7 +1565,7 @@ export interface components {
          * JobStatus
          * @enum {string}
          */
-        JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
         /** LandscapeCell */
         LandscapeCell: {
             /** Config */
@@ -2377,15 +2380,6 @@ export interface operations {
                     "application/json": components["schemas"]["AnalysisSummaryResponse"];
                 };
             };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2545,15 +2539,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BacktestRunDetailResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -3279,7 +3264,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: string;
+                        [key: string]: string | boolean;
                     };
                 };
             };
@@ -3367,15 +3352,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScannerJobResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -3579,15 +3555,6 @@ export interface operations {
                     "application/json": components["schemas"]["TemplateResponse"];
                 };
             };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3705,15 +3672,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TemplateResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Validation Error */

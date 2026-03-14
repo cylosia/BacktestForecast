@@ -17,6 +17,7 @@
           "completed_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -30,8 +31,16 @@
             "type": "integer"
           },
           "created_at": {
-            "title": "Created At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
           },
           "duration_seconds": {
             "anyOf": [
@@ -68,6 +77,7 @@
             "title": "Forecast"
           },
           "id": {
+            "format": "uuid",
             "title": "Id",
             "type": "string"
           },
@@ -137,8 +147,7 @@
           "stage",
           "strategies_tested",
           "configs_tested",
-          "top_results_count",
-          "created_at"
+          "top_results_count"
         ],
         "title": "AnalysisDetailResponse",
         "type": "object"
@@ -175,6 +184,7 @@
           "completed_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -188,8 +198,16 @@
             "type": "integer"
           },
           "created_at": {
-            "title": "Created At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
           },
           "duration_seconds": {
             "anyOf": [
@@ -214,6 +232,7 @@
             "title": "Error Message"
           },
           "id": {
+            "format": "uuid",
             "title": "Id",
             "type": "string"
           },
@@ -245,8 +264,7 @@
           "stage",
           "strategies_tested",
           "configs_tested",
-          "top_results_count",
-          "created_at"
+          "top_results_count"
         ],
         "title": "AnalysisSummaryResponse",
         "type": "object"
@@ -904,9 +922,16 @@
             "type": "integer"
           },
           "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
           },
           "net_pnl": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -936,7 +961,6 @@
           }
         },
         "required": [
-          "id",
           "option_ticker",
           "strategy_type",
           "underlying_symbol",
@@ -2564,7 +2588,8 @@
           "running",
           "succeeded",
           "failed",
-          "cancelled"
+          "cancelled",
+          "expired"
         ],
         "title": "JobStatus",
         "type": "string"
@@ -4594,16 +4619,6 @@
             },
             "description": "Successful Response"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "422": {
             "content": {
               "application/json": {
@@ -4871,16 +4886,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Resource not found"
           },
           "422": {
             "content": {
@@ -6137,7 +6142,14 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": {
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
                   },
                   "title": "Response Get Meta V1 Meta Get",
                   "type": "object"
@@ -6283,16 +6295,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Resource not found"
           },
           "422": {
             "content": {
@@ -6619,16 +6621,6 @@
             },
             "description": "Successful Response"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
           "422": {
             "content": {
               "application/json": {
@@ -6824,16 +6816,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Resource not found"
           },
           "422": {
             "content": {

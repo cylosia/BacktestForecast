@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 
-from prometheus_client import Counter, Gauge, Histogram, generate_latest
+from prometheus_client import Counter, Histogram, generate_latest
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -69,7 +69,7 @@ DUPLICATE_TASK_EXECUTION_TOTAL = Counter(
 
 REDIS_RATE_LIMIT_FALLBACK_TOTAL = Counter(
     "redis_rate_limit_fallback_total",
-    "Times rate-limiting fell back to allow-all due to Redis unavailability",
+    "Times rate-limiting fell back to in-memory counters due to Redis unavailability",
     ["bucket"],
 )
 

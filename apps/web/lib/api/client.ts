@@ -25,10 +25,12 @@ import type {
 export async function createBacktestRun(
   token: string,
   payload: CreateBacktestRunRequest,
+  signal?: AbortSignal,
 ): Promise<BacktestRunDetailResponse> {
   return apiRequest<BacktestRunDetailResponse>("/v1/backtests", token, {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   });
 }
 
@@ -36,14 +38,14 @@ export async function fetchBacktestRun(
   token: string,
   runId: string,
 ): Promise<BacktestRunDetailResponse> {
-  return apiRequest<BacktestRunDetailResponse>(`/v1/backtests/${runId}`, token);
+  return apiRequest<BacktestRunDetailResponse>(`/v1/backtests/${encodeURIComponent(runId)}`, token);
 }
 
 export async function fetchBacktestRunStatus(
   token: string,
   runId: string,
 ): Promise<BacktestRunStatusResponse> {
-  return apiRequest<BacktestRunStatusResponse>(`/v1/backtests/${runId}/status`, token);
+  return apiRequest<BacktestRunStatusResponse>(`/v1/backtests/${encodeURIComponent(runId)}/status`, token);
 }
 
 export async function compareBacktests(
@@ -87,14 +89,14 @@ export async function createExport(
 }
 
 export async function downloadExport(token: string, exportJobId: string): Promise<Response> {
-  return apiDownload(`/v1/exports/${exportJobId}`, token);
+  return apiDownload(`/v1/exports/${encodeURIComponent(exportJobId)}`, token);
 }
 
 export async function fetchExportStatus(
   token: string,
   exportJobId: string,
 ): Promise<ExportJobResponse> {
-  return apiRequest<ExportJobResponse>(`/v1/exports/${exportJobId}/status`, token);
+  return apiRequest<ExportJobResponse>(`/v1/exports/${encodeURIComponent(exportJobId)}/status`, token);
 }
 
 export async function createTemplate(
@@ -112,14 +114,14 @@ export async function updateTemplate(
   templateId: string,
   payload: UpdateTemplateRequest,
 ): Promise<TemplateResponse> {
-  return apiRequest<TemplateResponse>(`/v1/templates/${templateId}`, token, {
+  return apiRequest<TemplateResponse>(`/v1/templates/${encodeURIComponent(templateId)}`, token, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
 export async function deleteTemplate(token: string, templateId: string): Promise<void> {
-  await apiRequest<void>(`/v1/templates/${templateId}`, token, {
+  await apiRequest<void>(`/v1/templates/${encodeURIComponent(templateId)}`, token, {
     method: "DELETE",
   });
 }
@@ -131,10 +133,12 @@ export async function fetchTemplates(token: string): Promise<TemplateListRespons
 export async function createScannerJob(
   token: string,
   payload: CreateScannerJobRequest,
+  signal?: AbortSignal,
 ): Promise<ScannerJobResponse> {
   return apiRequest<ScannerJobResponse>("/v1/scans", token, {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   });
 }
 
@@ -142,7 +146,7 @@ export async function fetchScannerJob(
   token: string,
   jobId: string,
 ): Promise<ScannerJobResponse> {
-  return apiRequest<ScannerJobResponse>(`/v1/scans/${jobId}`, token);
+  return apiRequest<ScannerJobResponse>(`/v1/scans/${encodeURIComponent(jobId)}`, token);
 }
 
 export async function fetchScannerRecommendations(
@@ -182,12 +186,12 @@ export async function fetchAnalysisStatus(
   token: string,
   analysisId: string,
 ): Promise<SymbolAnalysisSummary> {
-  return apiRequest<SymbolAnalysisSummary>(`/v1/analysis/${analysisId}/status`, token);
+  return apiRequest<SymbolAnalysisSummary>(`/v1/analysis/${encodeURIComponent(analysisId)}/status`, token);
 }
 
 export async function fetchAnalysisFull(
   token: string,
   analysisId: string,
 ): Promise<SymbolAnalysisFullResponse> {
-  return apiRequest<SymbolAnalysisFullResponse>(`/v1/analysis/${analysisId}`, token);
+  return apiRequest<SymbolAnalysisFullResponse>(`/v1/analysis/${encodeURIComponent(analysisId)}`, token);
 }
