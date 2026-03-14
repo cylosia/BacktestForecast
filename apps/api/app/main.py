@@ -122,7 +122,7 @@ app.add_middleware(
     allow_origins=settings.web_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With"],
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
 app.add_middleware(RequestContextMiddleware)
@@ -179,11 +179,14 @@ def request_validation_handler(request: Request, exc: RequestValidationError) ->
     logger.warning("api.request_validation_error", errors=sanitized)
     response = JSONResponse(
         status_code=422,
-        content=_error_payload(
-            request,
-            code="request_validation_error",
-            message="The request payload did not match the expected schema.",
-        ),
+        content={
+            "error": {
+                "code": "request_validation_error",
+                "message": "The request payload did not match the expected schema.",
+                "request_id": getattr(request.state, "request_id", None),
+                "details": sanitized,
+            }
+        },
     )
     request_id = getattr(request.state, "request_id", None)
     if request_id:
@@ -222,20 +225,16 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
     return response
 
 
-if settings.app_env != "test":
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics(request: Request) -> Response:
+    if settings.app_env in ("production", "staging"):
+        import hmac as _hmac
 
-    @app.get("/metrics", include_in_schema=False)
-    def prometheus_metrics(request: Request) -> Response:
-        # Auth is enforced only in production/staging; dev environments
-        # intentionally allow unauthenticated scraping for local debugging.
-        if settings.app_env in ("production", "staging"):
-            import hmac as _hmac
-
-            auth = request.headers.get("Authorization", "")
-            token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-            if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
-                return JSONResponse(status_code=403, content={"error": "forbidden"})
-        return metrics_response()
+        auth = request.headers.get("Authorization", "")
+        token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+        if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
+            return JSONResponse(status_code=403, content={"error": "forbidden"})
+    return metrics_response()
 
 
 @app.get("/")

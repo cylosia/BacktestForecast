@@ -193,6 +193,52 @@ jobs:
       - name: Audit JS dependencies (pnpm audit)
         run: pnpm audit --prod
 
+  migration-check:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src:.
+      APP_ENV: test
+      LOG_JSON: false
+      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_migrate
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: backtest_migrate
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Run alembic upgrade head
+        run: alembic upgrade head
+
+      - name: Verify no model-migration drift
+        run: alembic check
+
+      - name: Verify alembic downgrade chain
+        run: |
+          alembic downgrade base
+          alembic upgrade head
+
   e2e-tests:
     if: ${{ secrets.CLERK_TESTING_TOKEN != '' }}
     runs-on: ubuntu-latest

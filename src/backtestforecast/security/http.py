@@ -49,6 +49,9 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
         return response
 
 
+API_VERSION = "0.1.0"
+
+
 class ApiSecurityHeadersMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, app_env: str | None = None) -> None:  # type: ignore[no-untyped-def]
         super().__init__(app)
@@ -65,6 +68,7 @@ class ApiSecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         response.headers.setdefault("Cache-Control", "no-store")
+        response.headers["X-API-Version"] = API_VERSION
         if self._is_production:
             response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
         return response

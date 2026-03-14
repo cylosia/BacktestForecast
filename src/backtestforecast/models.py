@@ -32,7 +32,7 @@ class User(Base):
     __table_args__ = (
         CheckConstraint(
             "plan_tier IN ('free', 'pro', 'premium')",
-            name="valid_plan_tier",
+            name="ck_users_valid_plan_tier",
         ),
     )
 
@@ -70,7 +70,7 @@ class BacktestRun(Base):
         UniqueConstraint("user_id", "idempotency_key", name="uq_backtest_runs_user_idempotency_key"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
-            name="valid_run_status",
+            name="ck_backtest_runs_valid_run_status",
         ),
     )
 
@@ -225,7 +225,7 @@ class ScannerJob(Base):
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
-            name="valid_job_status",
+            name="ck_scanner_jobs_valid_job_status",
         ),
     )
 
@@ -312,7 +312,7 @@ class ExportJob(Base):
         Index("ix_export_jobs_expires_at", "expires_at"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')",
-            name="valid_export_status",
+            name="ck_export_jobs_valid_export_status",
         ),
     )
 
@@ -386,7 +386,7 @@ class NightlyPipelineRun(Base):
         ),
         CheckConstraint(
             "status IN ('running', 'succeeded', 'failed')",
-            name="valid_pipeline_status",
+            name="ck_nightly_pipeline_runs_valid_pipeline_status",
         ),
     )
 
@@ -449,7 +449,7 @@ class SymbolAnalysis(Base):
         UniqueConstraint("user_id", "idempotency_key", name="uq_symbol_analyses_user_idempotency"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
-            name="valid_analysis_status",
+            name="ck_symbol_analyses_valid_analysis_status",
         ),
     )
 

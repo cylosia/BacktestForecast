@@ -1060,3 +1060,30 @@ def test_export_not_visible_to_other_user(
         client.get("/v1/me", headers=auth_headers)
         resp = client.get(f"/v1/exports/{export_id}/status", headers=auth_headers)
         assert resp.status_code == 404
+
+
+# ===========================================================================
+# 16. SSE endpoint smoke (no NameError)
+# ===========================================================================
+
+
+def test_sse_endpoints_do_not_crash(
+    client, auth_headers, db_session, immediate_backtest_execution, immediate_export_execution, _fake_celery,
+):
+    """Verify SSE endpoints respond without a NameError for valid resources.
+
+    The key assertion is that the server returns 200 (stream starts), not 500.
+    For non-existent resources it returns 404 (already tested above).
+    """
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    run_id = _create_backtest(client, auth_headers)["id"]
+    resp = client.get(f"/v1/events/backtests/{run_id}", headers=auth_headers)
+    assert resp.status_code == 200, f"SSE backtest endpoint returned {resp.status_code} instead of 200"
+
+    export = client.post("/v1/exports", json={"run_id": run_id, "format": "csv"}, headers=auth_headers)
+    assert export.status_code == 202
+    export_id = export.json()["id"]
+    resp = client.get(f"/v1/events/exports/{export_id}", headers=auth_headers)
+    assert resp.status_code == 200, f"SSE export endpoint returned {resp.status_code} instead of 200"

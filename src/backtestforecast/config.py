@@ -174,6 +174,10 @@ class Settings(BaseSettings):
     analysis_rate_limit_window_seconds: int = 3600
     forecast_rate_limit: int = 6
     daily_picks_rate_limit: int = 30
+    sse_rate_limit: int = 30
+    sse_redis_max_connections: int = 50
+    sse_redis_socket_timeout: float = 10.0
+    sse_redis_connect_timeout: float = 5.0
     rate_limit_window_seconds: int = 60
 
     pipeline_max_workers: int = Field(default=20, ge=1, le=64)
@@ -281,7 +285,7 @@ class Settings(BaseSettings):
             from urllib.parse import urlparse, urlunparse
 
             parsed = urlparse(self.redis_url)
-            if not parsed.password:
+            if not parsed.password and parsed.hostname:
                 self.redis_url = urlunparse(
                     parsed._replace(netloc=f":{urllib.parse.quote(self.redis_password, safe='')}@{parsed.hostname}" + (f":{parsed.port}" if parsed.port else ""))
                 )
@@ -302,8 +306,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments must not allow wildcard CORS origins.")
             if "default" in self.ip_hash_salt.lower() or "change" in self.ip_hash_salt.lower():
                 raise ValueError("Production-like environments must use a custom IP_HASH_SALT.")
-            if not self.metrics_token:
-                raise ValueError("Production-like environments require METRICS_TOKEN to be set.")
+            if not self.metrics_token or not self.metrics_token.strip():
+                raise ValueError("Production-like environments require METRICS_TOKEN to be set and non-blank.")
             if not self.redis_password:
                 raise ValueError("Production-like environments require a non-empty REDIS_PASSWORD.")
             if not self.clerk_audience:

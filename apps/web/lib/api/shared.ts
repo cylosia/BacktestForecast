@@ -11,6 +11,19 @@ export interface ApiErrorPayload {
 const API_BASE = env.apiBaseUrl.replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSignal): AbortSignal {
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([userSignal, timeoutSignal]);
+  }
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  for (const sig of [userSignal, timeoutSignal]) {
+    if (sig.aborted) { controller.abort(); return controller.signal; }
+    sig.addEventListener("abort", onAbort, { once: true });
+  }
+  return controller.signal;
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -62,7 +75,7 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
       headers: buildHeaders(token, init),
       cache: init?.cache ?? "no-store",
       signal: init?.signal
-        ? AbortSignal.any([init.signal, controller.signal])
+        ? combinedSignal(init.signal, controller.signal)
         : controller.signal,
     });
 
@@ -122,7 +135,7 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
       headers: buildHeaders(token, init),
       cache: "no-store",
       signal: init?.signal
-        ? AbortSignal.any([init.signal, controller.signal])
+        ? combinedSignal(init.signal, controller.signal)
         : controller.signal,
     });
 

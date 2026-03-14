@@ -18,12 +18,12 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES, STRATEGY_REGISTRY
-from backtestforecast.errors import ConfigurationError, DataUnavailableError, NotFoundError
+from backtestforecast.errors import ConfigurationError, DataUnavailableError, NotFoundError, QuotaExceededError
 from backtestforecast.schemas.json_shapes import (
     _REGIME_REQUIRED_KEYS,
     validate_json_shape,
@@ -167,6 +167,17 @@ class SymbolDeepAnalysisService:
             existing = self._repo.get_by_idempotency_key(user.id, idempotency_key)
             if existing is not None:
                 return existing
+
+        active_count = self.session.scalar(
+            select(func.count()).select_from(SymbolAnalysis).where(
+                SymbolAnalysis.user_id == user.id,
+                SymbolAnalysis.status.in_(["queued", "running"]),
+            )
+        )
+        if active_count is not None and active_count >= 3:
+            raise QuotaExceededError(
+                "You already have 3 analyses in progress. Please wait for them to complete."
+            )
 
         analysis = SymbolAnalysis(
             user_id=user.id,

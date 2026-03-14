@@ -31,3 +31,4 @@ class ExportJobResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    expires_at: datetime | None = None

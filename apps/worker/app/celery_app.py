@@ -1,10 +1,14 @@
+import structlog
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_shutting_down
 from kombu import Queue
 from redbeat import RedBeatSchedulerEntry  # noqa: F401 — registers the custom scheduler
 
 from backtestforecast.config import get_settings
 from backtestforecast.observability import configure_logging
+
+_shutdown_logger = structlog.get_logger("worker.lifecycle")
 
 settings = get_settings()
 configure_logging(settings)
@@ -72,3 +76,13 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),
     },
 }
+
+
+@worker_shutting_down.connect
+def _on_worker_shutdown(sig, how, exitcode, **kwargs):  # type: ignore[no-untyped-def]
+    _shutdown_logger.info(
+        "worker.shutting_down",
+        signal=str(sig),
+        how=how,
+        exitcode=exitcode,
+    )

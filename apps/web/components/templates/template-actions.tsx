@@ -33,6 +33,7 @@ export function TemplateActions({
     try {
       const token = await getToken();
       if (!token) {
+        setError("Authentication expired. Please reload.");
         setDeleting(false);
         return;
       }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 
-from prometheus_client import Counter, Histogram, generate_latest
+from prometheus_client import Counter, Gauge, Histogram, generate_latest
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -71,6 +71,18 @@ REDIS_RATE_LIMIT_FALLBACK_TOTAL = Counter(
     "redis_rate_limit_fallback_total",
     "Times rate-limiting fell back to allow-all due to Redis unavailability",
     ["bucket"],
+)
+
+DLQ_MESSAGES_TOTAL = Counter(
+    "dlq_messages_total",
+    "Total messages sent to the dead-letter queue",
+    ["task_name"],
+)
+
+CIRCUIT_BREAKER_TRIPS_TOTAL = Counter(
+    "circuit_breaker_trips_total",
+    "Total circuit breaker trips (closed -> open transitions)",
+    ["service"],
 )
 
 

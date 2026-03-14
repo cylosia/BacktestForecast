@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Body, Depends, Header, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
@@ -17,6 +19,7 @@ from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.billing import BillingService
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+_webhook_logger = structlog.get_logger("api.billing.webhook")
 
 
 @router.post("/checkout-session", response_model=CheckoutSessionResponse)
@@ -79,9 +82,19 @@ def stripe_webhook(
         limit=60,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    return BillingService(db).handle_webhook(
-        payload,
-        signature,
-        request_id=request_id,
-        ip_address=ip_address,
-    )
+    try:
+        return BillingService(db).handle_webhook(
+            payload,
+            signature,
+            request_id=request_id,
+            ip_address=ip_address,
+        )
+    except Exception as exc:
+        from backtestforecast.errors import AuthenticationError as _AuthErr
+        if isinstance(exc, _AuthErr):
+            raise
+        _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
+        return JSONResponse(  # type: ignore[return-value]
+            status_code=422,
+            content={"error": {"code": "webhook_processing_failed", "message": "Webhook could not be processed."}},
+        )

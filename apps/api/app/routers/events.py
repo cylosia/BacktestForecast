@@ -32,24 +32,32 @@ SSE_HEARTBEAT_SECONDS = 15
 
 _async_redis_pool = None
 _async_redis_lock = asyncio.Lock()
+_async_redis_last_ping: float = 0.0
+
+_REDIS_PING_INTERVAL = 60.0
 
 
 async def _get_async_redis():
     """Return a lazily-initialised shared async Redis connection pool.
 
-    Validates pool health via ``ping()`` before reuse; recreates on failure.
+    Validates pool health via ``ping()`` at most once every 60 s; recreates on
+    failure.
     """
     from redis.exceptions import RedisError
 
-    global _async_redis_pool
+    import time as _time
+
+    global _async_redis_pool, _async_redis_last_ping
+    now = _time.monotonic()
+    if _async_redis_pool is not None and (now - _async_redis_last_ping) < _REDIS_PING_INTERVAL:
+        return _async_redis_pool
     if _async_redis_pool is not None:
         try:
             await _async_redis_pool.ping()
+            _async_redis_last_ping = now
         except (RedisError, OSError):
             logger.warning("sse.redis_pool_stale", action="recreating")
             _async_redis_pool = None
-    if _async_redis_pool is not None:
-        return _async_redis_pool
     async with _async_redis_lock:
         if _async_redis_pool is not None:
             return _async_redis_pool
@@ -59,16 +67,16 @@ async def _get_async_redis():
         _async_redis_pool = aioredis.from_url(
             settings.redis_url,
             decode_responses=True,
-            max_connections=50,
-            socket_timeout=10.0,
-            socket_connect_timeout=5.0,
+            max_connections=settings.sse_redis_max_connections,
+            socket_timeout=settings.sse_redis_socket_timeout,
+            socket_connect_timeout=settings.sse_redis_connect_timeout,
         )
     return _async_redis_pool
 
 
 async def _invalidate_async_redis() -> None:
     """Close and discard the shared pool so it is recreated on next request."""
-    global _async_redis_pool
+    global _async_redis_pool, _async_redis_last_ping
     async with _async_redis_lock:
         if _async_redis_pool is not None:
             try:
@@ -76,14 +84,28 @@ async def _invalidate_async_redis() -> None:
             except Exception:
                 pass
             _async_redis_pool = None
+            _async_redis_last_ping = 0.0
 
 
 async def shutdown_async_redis() -> None:
     """Close the shared async Redis pool. Called from app lifespan shutdown."""
-    global _async_redis_pool
-    if _async_redis_pool is not None:
-        await _async_redis_pool.aclose()
-        _async_redis_pool = None
+    global _async_redis_pool, _async_redis_last_ping
+    async with _async_redis_lock:
+        if _async_redis_pool is not None:
+            await _async_redis_pool.aclose()
+            _async_redis_pool = None
+            _async_redis_last_ping = 0.0
+
+
+def _check_sse_rate(user_id: UUID) -> None:
+    """Enforce a per-user rate limit on SSE connection attempts."""
+    settings = get_settings()
+    get_rate_limiter().check(
+        bucket="events:sse",
+        actor_key=str(user_id),
+        limit=settings.sse_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
 
 
 def _verify_ownership(db: Session, model: type, resource_id: UUID, user_id: UUID) -> None:
@@ -93,28 +115,44 @@ def _verify_ownership(db: Session, model: type, resource_id: UUID, user_id: UUID
         raise NotFoundError("Resource not found.")
 
 
-async def _subscribe_redis(channel: str) -> AsyncGenerator[str | None, None]:
+async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGenerator[str | None, None]:
     """Subscribe to a Redis Pub/Sub channel and yield messages.
 
     Yields ``None`` when no message arrives within the heartbeat window so
     callers can check deadlines / disconnections during quiet periods.
+    Automatically retries subscription up to *max_reconnects* times on
+    transient Redis errors.
     """
-    pool = await _get_async_redis()
-    pubsub = pool.pubsub()
-    await pubsub.subscribe(channel)
-    try:
-        while True:
-            message = await pubsub.get_message(
-                ignore_subscribe_messages=True,
-                timeout=SSE_HEARTBEAT_SECONDS,
-            )
-            if message and message["type"] == "message":
-                yield message["data"]
-            else:
-                yield None
-    finally:
-        await pubsub.unsubscribe(channel)
-        await pubsub.close()
+    from redis.exceptions import RedisError
+
+    for attempt in range(max_reconnects + 1):
+        pool = await _get_async_redis()
+        pubsub = pool.pubsub()
+        try:
+            await pubsub.subscribe(channel)
+            while True:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=SSE_HEARTBEAT_SECONDS,
+                )
+                if message and message["type"] == "message":
+                    yield message["data"]
+                else:
+                    yield None
+        except (RedisError, OSError):
+            if attempt < max_reconnects:
+                logger.warning("sse.redis_subscription_retry", channel=channel, attempt=attempt + 1)
+                await _invalidate_async_redis()
+                await asyncio.sleep(1)
+                continue
+            raise
+        finally:
+            try:
+                await pubsub.unsubscribe(channel)
+                await pubsub.close()
+            except Exception:
+                pass
+        break
 
 
 async def _event_stream(
@@ -150,6 +188,7 @@ async def backtest_events(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> EventSourceResponse:
+    _check_sse_rate(user.id)
     _verify_ownership(db, BacktestRun, run_id, user.id)
     db.close()
     channel = f"job:backtest:{run_id}:status"
@@ -157,6 +196,7 @@ async def backtest_events(
     return EventSourceResponse(
         _event_stream(channel, request),
         ping=SSE_HEARTBEAT_SECONDS,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
 
@@ -175,6 +215,7 @@ async def scan_events(
     return EventSourceResponse(
         _event_stream(channel, request),
         ping=SSE_HEARTBEAT_SECONDS,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
 
@@ -193,6 +234,7 @@ async def export_events(
     return EventSourceResponse(
         _event_stream(channel, request),
         ping=SSE_HEARTBEAT_SECONDS,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
 
@@ -211,4 +253,5 @@ async def analysis_events(
     return EventSourceResponse(
         _event_stream(channel, request),
         ping=SSE_HEARTBEAT_SECONDS,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )

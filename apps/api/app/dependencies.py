@@ -25,10 +25,15 @@ def _get_trusted_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Networ
     global _trusted_networks
     if _trusted_networks is None:
         raw = get_settings().trusted_proxy_cidrs
-        _trusted_networks = [
-            ipaddress.ip_network(cidr.strip(), strict=False) for cidr in raw.split(",") if cidr.strip()
-        ]
+        entries = [cidr.strip() for cidr in raw.split(",") if cidr.strip()]
+        _trusted_networks = [ipaddress.ip_network(cidr, strict=False) for cidr in entries]
     return _trusted_networks
+
+
+def reset_trusted_networks() -> None:
+    """Clear cached networks so they are re-read from settings on next call."""
+    global _trusted_networks
+    _trusted_networks = None
 
 
 def _is_trusted_proxy(host: str | None) -> bool:

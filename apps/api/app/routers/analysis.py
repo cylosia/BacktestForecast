@@ -6,7 +6,6 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user
@@ -21,15 +20,11 @@ from backtestforecast.schemas.analysis import (
     AnalysisDetailResponse,
     AnalysisListResponse,
     AnalysisSummaryResponse,
+    CreateAnalysisRequest,
 )
 from backtestforecast.security import get_rate_limiter
 
 _SYMBOL_RE = re.compile(r"^[A-Za-z]{1,10}$")
-
-
-class CreateAnalysisRequest(BaseModel):
-    symbol: str = Field(min_length=1, max_length=10)
-    idempotency_key: str | None = Field(default=None, max_length=80)
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 settings = get_settings()

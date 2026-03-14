@@ -134,12 +134,16 @@ class BacktestService:
         self.session.refresh(run)
         return run
 
-    def set_celery_task_id(self, run_id: UUID, task_id: str) -> None:
-        """Attach the Celery task ID after dispatch."""
-        run = self.run_repository.get_by_id(run_id, for_update=True)
-        if run is not None and run.status == "queued":
-            run.celery_task_id = task_id
-            self.session.commit()
+    def set_celery_task_id(self, run_id: UUID, celery_task_id: str) -> bool:
+        """Attach the Celery task ID after dispatch. Returns True if the update succeeded."""
+        from sqlalchemy import update
+        result = self.session.execute(
+            update(BacktestRun)
+            .where(BacktestRun.id == run_id, BacktestRun.status == "queued")
+            .values(celery_task_id=celery_task_id)
+        )
+        self.session.commit()
+        return result.rowcount > 0
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:
         """Execute the backtest for a previously enqueued run. Called by the Celery worker."""
@@ -190,6 +194,12 @@ class BacktestService:
     def create_and_run(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
         """Synchronous create-and-run. Preserved for tests or fallback."""
         self._enforce_backtest_quota(user)
+
+        if request.idempotency_key:
+            existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
+            if existing is not None:
+                return existing
+
         run = BacktestRun(
             user_id=user.id,
             status="running",

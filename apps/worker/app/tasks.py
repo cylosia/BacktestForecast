@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 import structlog
 from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
@@ -13,6 +17,7 @@ from backtestforecast.events import publish_job_status
 from backtestforecast.observability.metrics import (
     BACKTEST_RUNS_TOTAL,
     CELERY_TASKS_TOTAL,
+    DLQ_MESSAGES_TOTAL,
     DUPLICATE_TASK_EXECUTION_TOTAL,
 )
 from backtestforecast.services.backtests import BacktestService
@@ -20,6 +25,45 @@ from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
 
 logger = structlog.get_logger("worker.tasks")
+
+
+class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
+    """Base class for Celery tasks that persists failure metadata to a Redis
+    dead-letter list (``bff:dead_letter_queue``) when all retries are exhausted.
+
+    Usage: set ``base=BaseTaskWithDLQ`` in ``@celery_app.task(...)`` decorators.
+    Failed tasks are JSON-serialised and left-pushed so operators can inspect
+    or replay them via ``LRANGE bff:dead_letter_queue 0 -1``.
+    """
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        super().on_failure(exc, task_id, args, kwargs, einfo)
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "task.dead_letter",
+                task_name=self.name,
+                task_id=task_id,
+                args=args,
+                retries=self.request.retries,
+                exc=str(exc),
+            )
+            try:
+                from redis import Redis
+                import json
+                from backtestforecast.config import get_settings
+                r = Redis.from_url(get_settings().redis_url, socket_timeout=5)
+                r.lpush("bff:dead_letter_queue", json.dumps({
+                    "task_name": self.name,
+                    "task_id": task_id,
+                    "args": [str(a) for a in (args or [])],
+                    "kwargs": {k: str(v) for k, v in (kwargs or {}).items()},
+                    "retries": self.request.retries,
+                    "error": str(exc),
+                }))
+                r.close()
+                DLQ_MESSAGES_TOTAL.labels(task_name=self.name).inc()
+            except Exception:
+                logger.warning("task.dlq_persist_failed", exc_info=True)
 
 
 @celery_app.task(name="maintenance.ping")
@@ -51,7 +95,7 @@ def _find_pipeline_run(session, model_cls, run, trade_date):
     return session.scalar(stmt)
 
 
-@celery_app.task(name="pipeline.nightly_scan", bind=True, max_retries=1, soft_time_limit=1800, time_limit=1860)
+@celery_app.task(name="pipeline.nightly_scan", base=BaseTaskWithDLQ, bind=True, max_retries=1, soft_time_limit=1800, time_limit=1860)
 def nightly_scan_pipeline(
     self,
     symbols: list[str] | None = None,
@@ -91,44 +135,36 @@ def nightly_scan_pipeline(
 
         trade_date = datetime.now(ZoneInfo("America/New_York")).date()
 
-        with SessionLocal() as session:
-            service = NightlyPipelineService(
-                session,
-                market_data_fetcher=market_data,
-                backtest_executor=executor,
-                forecaster=forecaster,
-            )
-            run = None
-            try:
-                run = service.run_pipeline(
-                    trade_date=trade_date,
-                    symbols=symbols,
-                    max_recommendations=max_recommendations,
+        from redis import Redis
+        lock_key = f"bff:pipeline:{trade_date.isoformat()}"
+        redis_client = Redis.from_url(settings.redis_url, socket_timeout=5)
+        lock = redis_client.lock(lock_key, timeout=2100, blocking=False)
+        if not lock.acquire():
+            logger.info("pipeline.already_locked", trade_date=str(trade_date))
+            return {"status": "skipped", "reason": "locked"}
+
+        try:
+            with SessionLocal() as session:
+                service = NightlyPipelineService(
+                    session,
+                    market_data_fetcher=market_data,
+                    backtest_executor=executor,
+                    forecaster=forecaster,
                 )
-            except SoftTimeLimitExceeded:
-                session.rollback()
-                logger.warning("pipeline.time_limit_exceeded", trade_date=str(trade_date))
-                run_obj = _find_pipeline_run(session, NightlyPipelineRun, run, trade_date)
-                if run_obj is not None and run_obj.status == "running":
-                    run_obj.status = "failed"
-                    run_obj.error_message = "Pipeline exceeded the time limit."
-                    run_obj.completed_at = datetime.now(UTC)
-                    try:
-                        session.commit()
-                    except Exception:
-                        session.rollback()
-                CELERY_TASKS_TOTAL.labels(task_name="pipeline.nightly_scan", status="failed").inc()
-                raise
-            except Exception as exc:
-                session.rollback()
-                logger.exception("pipeline.task_failed", trade_date=str(trade_date))
+                run = None
                 try:
-                    raise self.retry(exc=exc, countdown=300)
-                except MaxRetriesExceededError:
+                    run = service.run_pipeline(
+                        trade_date=trade_date,
+                        symbols=symbols,
+                        max_recommendations=max_recommendations,
+                    )
+                except SoftTimeLimitExceeded:
+                    session.rollback()
+                    logger.warning("pipeline.time_limit_exceeded", trade_date=str(trade_date))
                     run_obj = _find_pipeline_run(session, NightlyPipelineRun, run, trade_date)
                     if run_obj is not None and run_obj.status == "running":
                         run_obj.status = "failed"
-                        run_obj.error_message = "Pipeline failed after maximum retries (max_retries_exceeded)."
+                        run_obj.error_message = "Pipeline exceeded the time limit."
                         run_obj.completed_at = datetime.now(UTC)
                         try:
                             session.commit()
@@ -136,15 +172,37 @@ def nightly_scan_pipeline(
                             session.rollback()
                     CELERY_TASKS_TOTAL.labels(task_name="pipeline.nightly_scan", status="failed").inc()
                     raise
+                except Exception as exc:
+                    session.rollback()
+                    logger.exception("pipeline.task_failed", trade_date=str(trade_date))
+                    try:
+                        raise self.retry(exc=exc, countdown=300)
+                    except MaxRetriesExceededError:
+                        run_obj = _find_pipeline_run(session, NightlyPipelineRun, run, trade_date)
+                        if run_obj is not None and run_obj.status == "running":
+                            run_obj.status = "failed"
+                            run_obj.error_message = "Pipeline failed after maximum retries (max_retries_exceeded)."
+                            run_obj.completed_at = datetime.now(UTC)
+                            try:
+                                session.commit()
+                            except Exception:
+                                session.rollback()
+                        CELERY_TASKS_TOTAL.labels(task_name="pipeline.nightly_scan", status="failed").inc()
+                        raise
 
-            effective_status = "succeeded" if run.status == "succeeded" else "failed"
-            CELERY_TASKS_TOTAL.labels(task_name="pipeline.nightly_scan", status=effective_status).inc()
-            return {
-                "status": run.status,
-                "run_id": str(run.id),
-                "recommendations": run.recommendations_produced,
-                "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
-            }
+                effective_status = "succeeded" if run.status == "succeeded" else "failed"
+                CELERY_TASKS_TOTAL.labels(task_name="pipeline.nightly_scan", status=effective_status).inc()
+                return {
+                    "status": run.status,
+                    "run_id": str(run.id),
+                    "recommendations": run.recommendations_produced,
+                    "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
+                }
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
     finally:
         try:
             executor.close()
@@ -156,8 +214,17 @@ def nightly_scan_pipeline(
             logger.exception("client.close_failed")
 
 
-def _validate_task_ownership(session, model_cls, obj_id: UUID, expected_task_id: str | None) -> bool:
-    """Return True if this Celery delivery owns the job, False if it's a duplicate."""
+def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, expected_task_id: str | None) -> bool:
+    """Return True if this Celery delivery owns the job, False if it's a duplicate.
+
+    When the DB record has no ``celery_task_id`` yet (API failed to set it, or
+    the job was created before that feature), we atomically claim ownership by
+    writing our task ID with a ``WHERE celery_task_id IS NULL`` guard.  If
+    another worker already claimed it, the UPDATE affects zero rows and we
+    treat this delivery as a duplicate.
+    """
+    from sqlalchemy import update
+
     if expected_task_id is None:
         return True
     obj = session.get(model_cls, obj_id)
@@ -165,22 +232,31 @@ def _validate_task_ownership(session, model_cls, obj_id: UUID, expected_task_id:
         return True
     stored = getattr(obj, "celery_task_id", None)
     if stored is None:
+        result = session.execute(
+            update(model_cls)
+            .where(model_cls.id == obj_id, model_cls.celery_task_id.is_(None))
+            .values(celery_task_id=expected_task_id)
+        )
+        session.commit()
+        if result.rowcount == 0:
+            return False
+        session.refresh(obj)
         return True
     return stored == expected_task_id
 
 
-@celery_app.task(name="backtests.run", bind=True, max_retries=2, soft_time_limit=300, time_limit=330)
+@celery_app.task(name="backtests.run", base=BaseTaskWithDLQ, bind=True, max_retries=2, soft_time_limit=300, time_limit=330)
 def run_backtest(self, run_id: str) -> dict[str, str]:
-    try:
-        publish_job_status("backtest", UUID(run_id), "running")
-    except Exception:
-        logger.warning("publish_job_status.failed", job_id=run_id, exc_info=True)
     with SessionLocal() as session:
         from backtestforecast.models import BacktestRun, User
         if not _validate_task_ownership(session, BacktestRun, UUID(run_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="backtests.run").inc()
             logger.info("backtests.run.duplicate_delivery", run_id=run_id, task_id=self.request.id)
             return {"status": "skipped", "run_id": run_id, "reason": "duplicate_delivery"}
+        try:
+            publish_job_status("backtest", UUID(run_id), "running")
+        except Exception:
+            logger.warning("publish_job_status.failed", job_id=run_id, exc_info=True)
         run_obj = session.get(BacktestRun, UUID(run_id))
         if run_obj is None:
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
@@ -282,41 +358,43 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         }
 
 
-@celery_app.task(name="exports.generate", bind=True, max_retries=2, soft_time_limit=120, time_limit=150)
+@celery_app.task(name="exports.generate", base=BaseTaskWithDLQ, bind=True, max_retries=2, soft_time_limit=120, time_limit=150)
 def generate_export(self, export_job_id: str) -> dict[str, str | int]:
-    try:
-        publish_job_status("export", UUID(export_job_id), "running")
-    except Exception:
-        logger.warning("publish_job_status.failed", job_id=export_job_id, exc_info=True)
     with SessionLocal() as session:
         from backtestforecast.models import ExportJob as ExportJobModel, User
         if not _validate_task_ownership(session, ExportJobModel, UUID(export_job_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="exports.generate").inc()
             logger.info("exports.generate.duplicate_delivery", export_job_id=export_job_id, task_id=self.request.id)
             return {"status": "skipped", "export_job_id": export_job_id, "reason": "duplicate_delivery"}
+        try:
+            publish_job_status("export", UUID(export_job_id), "running")
+        except Exception:
+            logger.warning("publish_job_status.failed", job_id=export_job_id, exc_info=True)
         ej = session.get(ExportJobModel, UUID(export_job_id))
-        if ej is not None:
-            user = session.get(User, ej.user_id)
-            if user is None:
-                ej.status = "failed"
-                ej.error_code = "entitlement_revoked"
-                ej.error_message = "User account not found."
-                session.commit()
-                publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
-                return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
-            from backtestforecast.billing.entitlements import ExportFormat as _EF
-            policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-            try:
-                requested_format = _EF(ej.export_format)
-            except ValueError:
-                requested_format = None
-            if not policy.export_formats or (requested_format is not None and requested_format not in policy.export_formats):
-                ej.status = "failed"
-                ej.error_code = "entitlement_revoked"
-                ej.error_message = f"Your plan no longer supports {ej.export_format} export."
-                session.commit()
-                publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
-                return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
+        if ej is None:
+            CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
+            return {"status": "failed", "export_job_id": export_job_id, "error_code": "not_found"}
+        user = session.get(User, ej.user_id)
+        if user is None:
+            ej.status = "failed"
+            ej.error_code = "entitlement_revoked"
+            ej.error_message = "User account not found."
+            session.commit()
+            publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
+        from backtestforecast.billing.entitlements import ExportFormat as _EF
+        policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        try:
+            requested_format = _EF(ej.export_format)
+        except ValueError:
+            requested_format = None
+        if not policy.export_formats or (requested_format is not None and requested_format not in policy.export_formats):
+            ej.status = "failed"
+            ej.error_code = "entitlement_revoked"
+            ej.error_message = f"Your plan no longer supports {ej.export_format} export."
+            session.commit()
+            publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "export_job_id": export_job_id, "error_code": "entitlement_revoked"}
         service = ExportService(session)
         try:
             job = service.execute_export_by_id(UUID(export_job_id))
@@ -397,7 +475,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
         }
 
 
-@celery_app.task(name="analysis.deep_symbol", bind=True, max_retries=1, soft_time_limit=600, time_limit=660)
+@celery_app.task(name="analysis.deep_symbol", base=BaseTaskWithDLQ, bind=True, max_retries=1, soft_time_limit=600, time_limit=660)
 def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
     """Execute a single-symbol deep analysis."""
     from backtestforecast.config import get_settings
@@ -412,10 +490,6 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
     from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
     from backtestforecast.services.backtest_execution import BacktestExecutionService as _BES
 
-    try:
-        publish_job_status("analysis", UUID(analysis_id), "running")
-    except Exception:
-        logger.warning("publish_job_status.failed", job_id=analysis_id, exc_info=True)
     settings = get_settings()
     client = MassiveClient(api_key=settings.massive_api_key)
     shared_mds = MarketDataService(client)
@@ -431,16 +505,22 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="analysis.deep_symbol").inc()
                 logger.info("analysis.deep_symbol.duplicate_delivery", analysis_id=analysis_id, task_id=self.request.id)
                 return {"status": "skipped", "analysis_id": analysis_id, "reason": "duplicate_delivery"}
+            try:
+                publish_job_status("analysis", UUID(analysis_id), "running")
+            except Exception:
+                logger.warning("publish_job_status.failed", job_id=analysis_id, exc_info=True)
             sa_obj = session.get(SymbolAnalysis, UUID(analysis_id))
-            if sa_obj is not None:
-                user = session.get(User, sa_obj.user_id)
-                if user is None:
-                    sa_obj.status = "failed"
-                    sa_obj.error_message = "User account not found."
-                    session.commit()
-                    publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
-                    return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
-                policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+            if sa_obj is None:
+                CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
+                return {"status": "failed", "analysis_id": analysis_id, "error_code": "not_found"}
+            user = session.get(User, sa_obj.user_id)
+            if user is None:
+                sa_obj.status = "failed"
+                sa_obj.error_message = "User account not found."
+                session.commit()
+                publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
+            policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
                 if not policy.forecasting_access:
                     sa_obj.status = "failed"
                     sa_obj.error_message = "Your plan no longer supports this operation."
@@ -537,37 +617,39 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
             logger.exception("client.close_failed")
 
 
-@celery_app.task(name="scans.run_job", bind=True, max_retries=3, soft_time_limit=600, time_limit=660)
+@celery_app.task(name="scans.run_job", base=BaseTaskWithDLQ, bind=True, max_retries=3, soft_time_limit=600, time_limit=660)
 def run_scan_job(self, job_id: str) -> dict[str, str | int]:
-    try:
-        publish_job_status("scan", UUID(job_id), "running")
-    except Exception:
-        logger.warning("publish_job_status.failed", job_id=job_id, exc_info=True)
     with SessionLocal() as session:
         from backtestforecast.models import ScannerJob as ScannerJobModel, User
         if not _validate_task_ownership(session, ScannerJobModel, UUID(job_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="scans.run_job").inc()
             logger.info("scans.run_job.duplicate_delivery", job_id=job_id, task_id=self.request.id)
             return {"status": "skipped", "job_id": job_id, "reason": "duplicate_delivery"}
+        try:
+            publish_job_status("scan", UUID(job_id), "running")
+        except Exception:
+            logger.warning("publish_job_status.failed", job_id=job_id, exc_info=True)
         sj = session.get(ScannerJobModel, UUID(job_id))
-        if sj is not None:
-            user = session.get(User, sj.user_id)
-            if user is None:
-                sj.status = "failed"
-                sj.error_code = "entitlement_revoked"
-                sj.error_message = "User account not found."
-                session.commit()
-                publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
-                return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
-            policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-            mode_requires_advanced = sj.mode == "advanced"
-            if not policy.basic_scanner_access or (mode_requires_advanced and not policy.advanced_scanner_access):
-                sj.status = "failed"
-                sj.error_code = "entitlement_revoked"
-                sj.error_message = f"Your plan no longer supports {sj.mode} scanner mode."
-                session.commit()
-                publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
-                return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
+        if sj is None:
+            CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
+            return {"status": "failed", "job_id": job_id, "error_code": "not_found"}
+        user = session.get(User, sj.user_id)
+        if user is None:
+            sj.status = "failed"
+            sj.error_code = "entitlement_revoked"
+            sj.error_message = "User account not found."
+            session.commit()
+            publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
+        policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        mode_requires_advanced = sj.mode == "advanced"
+        if not policy.basic_scanner_access or (mode_requires_advanced and not policy.advanced_scanner_access):
+            sj.status = "failed"
+            sj.error_code = "entitlement_revoked"
+            sj.error_message = f"Your plan no longer supports {sj.mode} scanner mode."
+            session.commit()
+            publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         service = ScanService(session)
         try:
             job = service.run_job(UUID(job_id))
@@ -657,23 +739,22 @@ def refresh_prioritized_scans() -> dict[str, int]:
         service = ScanService(session)
         try:
             jobs = service.create_scheduled_refresh_jobs(limit=25)
-            job_ids = [job.id for job in jobs]
-            session.commit()
+            committed_jobs = list(jobs)
 
-            for job_id in job_ids:
+            for job in committed_jobs:
                 try:
-                    result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job_id)})
+                    result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
                     session.execute(
                         sa_update(ScannerJob)
-                        .where(ScannerJob.id == job_id)
+                        .where(ScannerJob.id == job.id)
                         .values(celery_task_id=result.id)
                     )
                     session.commit()
                     dispatched += 1
                 except Exception:
-                    logger.exception("refresh.dispatch_failed", job_id=str(job_id))
+                    logger.exception("refresh.dispatch_failed", job_id=str(job.id))
                     session.rollback()
-                    job_obj = session.get(ScannerJob, job_id)
+                    job_obj = session.get(ScannerJob, job.id)
                     if job_obj is not None and job_obj.status == "queued":
                         job_obj.status = "failed"
                         job_obj.error_code = "enqueue_failed"

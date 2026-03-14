@@ -19,6 +19,8 @@ def dispatch_celery_task(
     queue: str,
     log_event: str,
     logger: structlog.stdlib.BoundLogger,
+    request_id: str | None = None,
+    traceparent: str | None = None,
 ) -> None:
     """Dispatch a Celery task for a newly created job.
 
@@ -33,8 +35,17 @@ def dispatch_celery_task(
     if job.status != "queued" or job.celery_task_id is not None:
         return
 
+    headers: dict[str, str] = {}
+    if request_id:
+        headers["request_id"] = request_id
+    if traceparent:
+        headers["traceparent"] = traceparent
+
     try:
-        result = celery_app.send_task(task_name, kwargs=task_kwargs, queue=queue)
+        result = celery_app.send_task(
+            task_name, kwargs=task_kwargs, queue=queue,
+            headers=headers if headers else None,
+        )
         job.celery_task_id = result.id
         db.commit()
         logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)

@@ -68,6 +68,11 @@ class AnalysisDetailResponse(AnalysisSummaryResponse):
     forecast: dict[str, Any] | None = None
 
 
+class CreateAnalysisRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=10)
+    idempotency_key: str | None = Field(default=None, max_length=80)
+
+
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisSummaryResponse]
 
@@ -122,3 +127,4 @@ class PipelineHistoryItemResponse(BaseModel):
 
 class PipelineHistoryResponse(BaseModel):
     items: list[PipelineHistoryItemResponse]
+    next_cursor: str | None = None

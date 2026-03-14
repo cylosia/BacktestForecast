@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import time
 from typing import Protocol
 from uuid import UUID
 
 import structlog
 
 from backtestforecast.config import Settings
+from backtestforecast.errors import ConfigurationError
 
 logger = structlog.get_logger("exports.storage")
 
@@ -41,9 +43,9 @@ class DatabaseStorage:
         return str(export_job_id)
 
     def get(self, storage_key: str) -> bytes:
-        raise NotImplementedError(
-            "DatabaseStorage.get should not be called directly; "
-            "content is read via the ExportJob ORM column."
+        raise RuntimeError(
+            "DatabaseStorage.get() must not be called directly. "
+            "Content is accessed via the ExportJob.content_bytes ORM column."
         )
 
     def delete(self, storage_key: str) -> None:
@@ -54,6 +56,16 @@ class DatabaseStorage:
         return True
 
 
+def _retry(fn, max_attempts=3, base_delay=0.5):
+    for attempt in range(max_attempts):
+        try:
+            return fn()
+        except Exception:
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep(base_delay * (2 ** attempt))
+
+
 class S3Storage:
     """Stores export content in an S3-compatible object store."""
 
@@ -61,6 +73,8 @@ class S3Storage:
         import boto3  # type: ignore[import-untyped]
 
         self._bucket = settings.s3_bucket or ""
+        if not self._bucket:
+            raise ConfigurationError("S3_BUCKET must be set when using S3 storage.")
         self._prefix = "exports/"
         self._client = boto3.client(
             "s3",
@@ -73,21 +87,31 @@ class S3Storage:
     def _object_key(self, export_job_id: UUID, file_name: str) -> str:
         return f"{self._prefix}{export_job_id}/{file_name}"
 
+    def _guess_content_type(self, file_name: str) -> str:
+        ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+        return {
+            "csv": "text/csv",
+            "json": "application/json",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "pdf": "application/pdf",
+        }.get(ext, "application/octet-stream")
+
     def put(self, export_job_id: UUID, content: bytes, file_name: str) -> str:
         key = self._object_key(export_job_id, file_name)
-        self._client.put_object(Bucket=self._bucket, Key=key, Body=content)
+        content_type = self._guess_content_type(file_name)
+        _retry(lambda: self._client.put_object(Bucket=self._bucket, Key=key, Body=content, ContentType=content_type))
         logger.info("s3.put", bucket=self._bucket, key=key, size=len(content))
         return key
 
     def get(self, storage_key: str) -> bytes:
-        resp = self._client.get_object(Bucket=self._bucket, Key=storage_key)
+        resp = _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
         data: bytes = resp["Body"].read()
         logger.info("s3.get", bucket=self._bucket, key=storage_key, size=len(data))
         return data
 
     def delete(self, storage_key: str) -> None:
         try:
-            self._client.delete_object(Bucket=self._bucket, Key=storage_key)
+            _retry(lambda: self._client.delete_object(Bucket=self._bucket, Key=storage_key))
             logger.info("s3.delete", bucket=self._bucket, key=storage_key)
         except Exception:
             logger.warning("s3.delete_failed", bucket=self._bucket, key=storage_key, exc_info=True)

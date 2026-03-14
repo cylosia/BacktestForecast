@@ -540,6 +540,10 @@ class ScanService:
         payload: CreateScannerJobRequest,
         warnings: list[dict[str, Any]],
     ) -> dict[str, HistoricalDataBundle]:
+        if not payload.symbols:
+            raise ValidationError("At least one symbol is required.")
+        if not payload.rule_sets:
+            raise ValidationError("At least one rule set is required.")
         all_rules = [rule for rule_set in payload.rule_sets for rule in rule_set.entry_rules]
         if not all_rules:
             logger.warning("prepare_bundles_fallback_rules", msg="No entry rules aggregated from rule_sets; using fallback RSI rule for warmup calculation")

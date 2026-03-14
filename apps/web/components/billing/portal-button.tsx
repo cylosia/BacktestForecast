@@ -24,6 +24,9 @@ export function PortalButton({ children }: { children: React.ReactNode }) {
       const result = await createPortalSession(token, {
         return_path: "/app/settings/billing",
       });
+      if (!result.portal_url) {
+        throw new Error("The billing portal URL was not returned. Please try again.");
+      }
       window.location.href = result.portal_url;
     } catch (error) {
       const nextMessage =

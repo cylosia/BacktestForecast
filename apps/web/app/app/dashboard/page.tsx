@@ -137,7 +137,7 @@ export default async function DashboardPage() {
           <CardHeader>
             <CardTitle>Recent runs</CardTitle>
             <CardDescription>
-              History depth is currently limited to {user.features.history_item_limit} items{user.features.history_days ? ` / ${user.features.history_days} days` : ""} for this plan.
+              History depth is currently limited to {user.features?.history_item_limit ?? 50} items{user.features?.history_days ? ` / ${user.features.history_days} days` : ""} for this plan.
             </CardDescription>
           </CardHeader>
           <CardContent>

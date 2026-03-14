@@ -178,14 +178,14 @@ export default async function BacktestDetailPage({
           </Card>
         </div>
 
-        {run.warnings.length > 0 ? (
+        {(run.warnings ?? []).length > 0 ? (
           <Card>
             <CardHeader>
               <CardTitle>Warnings</CardTitle>
               <CardDescription>Messages surfaced by the backend during execution.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {run.warnings.map((warning, index) => (
+              {(run.warnings ?? []).map((warning, index) => (
                 <div key={`${run.id}-warning-${index}`} className="rounded-xl border border-border/70 p-4 text-sm">
                   <pre className="whitespace-pre-wrap break-words text-muted-foreground">
                     {JSON.stringify(warning, null, 2)}

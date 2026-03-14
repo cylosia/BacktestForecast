@@ -861,3 +861,125 @@ def test_run_deep_analysis_rejects_no_forecasting(mock_session_local, mock_publi
 
     assert result["status"] == "failed"
     assert result["error_code"] == "entitlement_revoked"
+
+
+# ---------------------------------------------------------------------------
+# _validate_task_ownership
+# ---------------------------------------------------------------------------
+
+
+def test_validate_task_ownership_claims_when_stored_is_none(db_session, db_session_factory):
+    """When celery_task_id is None, the first caller claims it; a second caller is rejected."""
+    import apps.worker.app.tasks as tasks_module
+
+    user = _create_user(db_session)
+
+    run = BacktestRun(
+        user_id=user.id,
+        symbol="AAPL",
+        strategy_type="long_call",
+        status="queued",
+        celery_task_id=None,
+        date_from=date(2024, 1, 1),
+        date_to=date(2024, 3, 31),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        input_snapshot_json={},
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+    run_id = run.id
+
+    claimed = tasks_module._validate_task_ownership(db_session, BacktestRun, run_id, "task-A")
+    assert claimed is True
+
+    db_session.expire_all()
+    refreshed = db_session.get(BacktestRun, run_id)
+    assert refreshed.celery_task_id == "task-A"
+
+    rejected = tasks_module._validate_task_ownership(db_session, BacktestRun, run_id, "task-B")
+    assert rejected is False
+
+
+def test_validate_task_ownership_rejects_mismatch(db_session, db_session_factory):
+    """When celery_task_id is already set, a different task_id is rejected."""
+    import apps.worker.app.tasks as tasks_module
+
+    user = _create_user(db_session)
+
+    run = BacktestRun(
+        user_id=user.id,
+        symbol="MSFT",
+        strategy_type="long_call",
+        status="queued",
+        celery_task_id="task-A",
+        date_from=date(2024, 1, 1),
+        date_to=date(2024, 3, 31),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        input_snapshot_json={},
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+
+    result = tasks_module._validate_task_ownership(db_session, BacktestRun, run.id, "task-B")
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# SoftTimeLimitExceeded handling
+# ---------------------------------------------------------------------------
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_backtest_soft_time_limit(mock_session_local, mock_publish):
+    """SoftTimeLimitExceeded marks the run as failed and does NOT retry."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from apps.worker.app.tasks import run_backtest
+
+    mock_service = MagicMock()
+    mock_service.execute_run_by_id.side_effect = SoftTimeLimitExceeded("time limit")
+    mock_service.close = MagicMock()
+
+    mock_run = MagicMock()
+    mock_run.user_id = uuid4()
+    mock_run.status = "running"
+
+    mock_user = MagicMock()
+    mock_user.plan_tier = "pro"
+    mock_user.subscription_status = "active"
+    mock_user.subscription_current_period_end = None
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "BacktestRun":
+            return mock_run
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    with patch("apps.worker.app.tasks.BacktestService", return_value=mock_service):
+        result = run_backtest(str(uuid4()))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "time_limit_exceeded"
+    mock_service.close.assert_called_once()

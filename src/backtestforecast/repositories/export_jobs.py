@@ -51,6 +51,7 @@ class ExportJobRepository:
         return list(self.session.scalars(stmt))
 
     def list_expired_for_cleanup(self, before: datetime, limit: int) -> list[ExportJob]:
+        from sqlalchemy import asc
         stmt = (
             select(ExportJob)
             .where(
@@ -59,6 +60,7 @@ class ExportJobRepository:
                 ExportJob.storage_key.isnot(None),
             )
             .options(defer(ExportJob.content_bytes))
+            .order_by(asc(ExportJob.created_at))
             .limit(limit)
         )
         return list(self.session.scalars(stmt))

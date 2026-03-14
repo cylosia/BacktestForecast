@@ -6,25 +6,39 @@ import { strategyLabel } from "@/lib/backtests/format";
 import type { BacktestFormValues } from "@/lib/backtests/validation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> {
-  const config = template.config as unknown as TemplateConfig;
+export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> | null {
+  const config = template.config as Record<string, unknown> | undefined;
+  if (!config || typeof config !== "object") return null;
+  const requiredFields = [
+    "strategy_type",
+    "target_dte",
+    "dte_tolerance_days",
+    "max_holding_days",
+    "account_size",
+    "risk_per_trade_pct",
+    "commission_per_contract",
+  ] as const;
+  for (const field of requiredFields) {
+    if (!(field in config)) return null;
+  }
+  const typed = config as unknown as TemplateConfig;
   const patch: Partial<BacktestFormValues> = {
-    strategyType: config.strategy_type as BacktestFormValues["strategyType"],
-    targetDte: String(config.target_dte),
-    dteToleranceDays: String(config.dte_tolerance_days),
-    maxHoldingDays: String(config.max_holding_days),
-    accountSize: String(config.account_size),
-    riskPerTradePct: String(config.risk_per_trade_pct),
-    commissionPerContract: String(config.commission_per_contract),
+    strategyType: typed.strategy_type as BacktestFormValues["strategyType"],
+    targetDte: String(typed.target_dte),
+    dteToleranceDays: String(typed.dte_tolerance_days),
+    maxHoldingDays: String(typed.max_holding_days),
+    accountSize: String(typed.account_size),
+    riskPerTradePct: String(typed.risk_per_trade_pct),
+    commissionPerContract: String(typed.commission_per_contract),
     rsiEnabled: false,
     movingAverageEnabled: false,
   };
 
-  if (config.default_symbol) {
-    patch.symbol = config.default_symbol;
+  if (typed.default_symbol) {
+    patch.symbol = typed.default_symbol;
   }
 
-  for (const rule of config.entry_rules ?? []) {
+  for (const rule of typed.entry_rules ?? []) {
     if (rule.type === "rsi") {
       patch.rsiEnabled = true;
       patch.rsiOperator = rule.operator as BacktestFormValues["rsiOperator"];
@@ -67,7 +81,10 @@ export function TemplatePicker({
               key={template.id}
               type="button"
               className="inline-flex items-center gap-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-              onClick={() => onApply(templateToFormValues(template))}
+              onClick={() => {
+                const patch = templateToFormValues(template);
+                if (patch) onApply(patch);
+              }}
             >
               <FileText className="h-3.5 w-3.5 text-muted-foreground" />
               <span>{template.name}</span>

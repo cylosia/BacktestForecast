@@ -48,7 +48,8 @@ export function BacktestForm({
     if (!initialTemplateId) return;
     const match = templates.find((t) => t.id === initialTemplateId);
     if (match) {
-      setValues((current) => ({ ...current, ...templateToFormValues(match) }));
+      const patch = templateToFormValues(match);
+      if (patch) setValues((current) => ({ ...current, ...patch }));
     }
   }, [initialTemplateId, templates]);
 

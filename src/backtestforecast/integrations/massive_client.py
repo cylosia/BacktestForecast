@@ -13,6 +13,7 @@ import structlog
 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import ConfigurationError, ExternalServiceError
+from backtestforecast.observability.metrics import CIRCUIT_BREAKER_TRIPS_TOTAL
 from backtestforecast.market_data.types import (
     DailyBar,
     OptionContractRecord,
@@ -28,30 +29,55 @@ MAX_PAGINATION_PAGES = 100
 
 class _CircuitBreaker:
     """Simple circuit breaker: opens after ``threshold`` consecutive failures,
-    stays open for ``cooldown`` seconds, then transitions to half-open."""
+    stays open for ``cooldown`` seconds, then transitions to half-open.
 
-    def __init__(self, threshold: int = 5, cooldown: float = 60.0) -> None:
+    In the half-open state exactly one probe request is allowed through.
+    If the probe succeeds the circuit resets to closed; if it fails the
+    cooldown timer restarts.
+    """
+
+    def __init__(self, threshold: int = 5, cooldown: float = 30.0) -> None:
         self._threshold = threshold
         self._cooldown = cooldown
         self._failure_count = 0
         self._opened_at: float | None = None
+        self._half_open = False
+        self._probe_in_flight = False
 
     def record_success(self) -> None:
         self._failure_count = 0
         self._opened_at = None
+        self._half_open = False
+        self._probe_in_flight = False
 
     def record_failure(self) -> None:
         self._failure_count += 1
-        if self._failure_count >= self._threshold:
+        was_closed = self._opened_at is None
+        if self._half_open or self._failure_count >= self._threshold:
             self._opened_at = time.time()
+            self._half_open = False
+            self._probe_in_flight = False
+            if was_closed:
+                CIRCUIT_BREAKER_TRIPS_TOTAL.labels(service="massive_api").inc()
+
+    def allow_request(self) -> bool:
+        """Return True if a request should be attempted, False to reject."""
+        if self._opened_at is None:
+            return True
+        elapsed = time.time() - self._opened_at
+        if elapsed <= self._cooldown:
+            return False
+        if not self._half_open:
+            self._half_open = True
+            self._probe_in_flight = False
+        if self._probe_in_flight:
+            return False
+        self._probe_in_flight = True
+        return True
 
     @property
     def is_open(self) -> bool:
-        if self._opened_at is None:
-            return False
-        if time.time() - self._opened_at > self._cooldown:
-            return False
-        return True
+        return not self.allow_request()
 
 
 class MassiveClient:
@@ -66,7 +92,7 @@ class MassiveClient:
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.Client(timeout=self.timeout)
-        self._circuit = _CircuitBreaker(threshold=5, cooldown=60.0)
+        self._circuit = _CircuitBreaker(threshold=5, cooldown=30.0)
 
     def close(self) -> None:
         self._http.close()
@@ -445,6 +471,7 @@ class AsyncMassiveClient:
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.AsyncClient(timeout=self.timeout)
+        self._circuit = _CircuitBreaker(threshold=5, cooldown=30.0)
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -622,6 +649,9 @@ class AsyncMassiveClient:
         return rows
 
     async def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self._circuit.is_open:
+            raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
+
         url = path if path.startswith("http") else f"{self.base_url}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"}
         retryable_message: str | None = None
@@ -630,6 +660,7 @@ class AsyncMassiveClient:
             try:
                 response = await self._http.get(url, params=params, headers=headers)
             except httpx.HTTPError as exc:
+                self._circuit.record_failure()
                 retryable_message = "Massive request failed due to a network error."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, None)
@@ -641,12 +672,14 @@ class AsyncMassiveClient:
             if response.status_code == 404:
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
+                self._circuit.record_failure()
                 retryable_message = "Massive rate limit reached. Retry later."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, response.headers.get("Retry-After"))
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 500:
+                self._circuit.record_failure()
                 retryable_message = "Massive is currently unavailable."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, response.headers.get("Retry-After"))
@@ -664,6 +697,7 @@ class AsyncMassiveClient:
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )
 
+            self._circuit.record_success()
             data = response.json()
             if not isinstance(data, dict):
                 raise ExternalServiceError("Massive returned an unexpected response payload.")

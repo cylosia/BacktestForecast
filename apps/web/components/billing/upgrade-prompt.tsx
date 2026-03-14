@@ -25,7 +25,7 @@ export function UpgradePrompt({
       className={`rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm ${className ?? ""}`}
     >
       <div className="flex items-start gap-3">
-        <Sparkles className="mt-0.5 h-4 w-4 text-primary" />
+        <Sparkles aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
         <div className="flex-1 space-y-3">
           <div>
             <p className="font-medium text-primary">Plan limit reached</p>

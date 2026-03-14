@@ -55,15 +55,8 @@ def build_summary(
     max_consecutive_wins, max_consecutive_losses = _compute_streaks(trades)
 
     recovery_factor: float | None = None
-    if max_drawdown_pct > 0 and equity_curve:
-        running_peak = max(starting_equity, equity_curve[0].equity)
-        max_drawdown_dollars = 0.0
-        for point in equity_curve:
-            if point.equity > running_peak:
-                running_peak = point.equity
-            dd_dollars = running_peak - point.equity
-            if dd_dollars > max_drawdown_dollars:
-                max_drawdown_dollars = dd_dollars
+    if max_drawdown_pct > 0 and starting_equity > 0:
+        max_drawdown_dollars = max_drawdown_pct / 100.0 * starting_equity
         if max_drawdown_dollars > 0:
             recovery_factor = total_net_pnl / max_drawdown_dollars
 

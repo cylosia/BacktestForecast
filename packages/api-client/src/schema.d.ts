@@ -1296,6 +1296,8 @@ export interface components {
             started_at?: string | null;
             /** Status */
             status: string;
+            /** Expires At */
+            expires_at?: string | null;
         };
         /** FeatureAccessResponse */
         FeatureAccessResponse: {

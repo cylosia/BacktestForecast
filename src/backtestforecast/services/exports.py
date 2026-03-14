@@ -206,6 +206,7 @@ class ExportService:
                 logger.info(
                     "cleanup.expired",
                     export_job_id=str(job.id),
+                    expires_at=str(job.expires_at) if job.expires_at else None,
                 )
 
             self.session.commit()
@@ -270,7 +271,18 @@ class ExportService:
         if use_db_content and not export_job.content_bytes:
             raise NotFoundError("Export content is not available.")
         if not use_db_content and export_job.storage_key:
-            export_job.content_bytes = self._storage.get(export_job.storage_key)
+            try:
+                export_job.content_bytes = self._storage.get(export_job.storage_key)
+            except Exception:
+                logger.exception(
+                    "export.download_storage_error",
+                    export_job_id=str(export_job.id),
+                    storage_key=export_job.storage_key,
+                )
+                raise AppError(
+                    code="storage_unavailable",
+                    message="Export file is temporarily unavailable.",
+                )
         if not export_job.content_bytes:
             raise NotFoundError("Export content is not available.")
         self.audit.record_always(
@@ -492,4 +504,5 @@ class ExportService:
             created_at=job.created_at,
             started_at=job.started_at,
             completed_at=job.completed_at,
+            expires_at=job.expires_at,
         )

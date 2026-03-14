@@ -146,7 +146,7 @@ export function StrategySelector({
               {group.strategies.map((strategy) => (
                 <option key={strategy.strategy_type} value={strategy.strategy_type}>
                   {strategy.label}
-                  {strategy.min_tier !== "free" ? ` (${strategy.min_tier})` : ""}
+                  {(strategy.min_tier ?? "free") !== "free" ? ` (${strategy.min_tier})` : ""}
                 </option>
               ))}
             </optgroup>

@@ -84,3 +84,20 @@ class TestAzpEnforcement:
         token = _make_token(private_pem, {})
         principal = verifier.verify_bearer_token(token)
         assert principal.clerk_user_id is not None
+
+
+class TestExpiredAndMalformedTokens:
+    def test_expired_token_raises_error(self, rsa_keys):
+        """A JWT with exp in the past must raise AuthenticationError."""
+        private_pem, public_pem = rsa_keys
+        verifier = _make_verifier(public_pem, authorized_parties="")
+        token = _make_token(private_pem, {"exp": int(time.time()) - 3600})
+        with pytest.raises(AuthenticationError):
+            verifier.verify_bearer_token(token)
+
+    def test_malformed_token_raises_error(self, rsa_keys):
+        """Garbage string as a token must raise AuthenticationError."""
+        _private_pem, public_pem = rsa_keys
+        verifier = _make_verifier(public_pem, authorized_parties="")
+        with pytest.raises(AuthenticationError):
+            verifier.verify_bearer_token("this-is-not-a-jwt")

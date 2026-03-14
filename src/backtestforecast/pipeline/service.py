@@ -164,6 +164,7 @@ class NightlyPipelineService:
                 return succeeded
             raise
         self.session.refresh(run)
+        _run_id = run.id
 
         try:
             # Stage 1: Universe screening
@@ -265,9 +266,9 @@ class NightlyPipelineService:
                 "full_backtests_run": run.full_backtests_run,
             }
             self.session.rollback()
-            run = self.session.get(NightlyPipelineRun, run.id)
+            run = self.session.get(NightlyPipelineRun, _run_id)
             if run is None:
-                logger.error("pipeline.failure_handler_missing_run", run_id=str(run_id) if "run_id" in dir() else "unknown")
+                logger.error("pipeline.failure_handler_missing_run", run_id=str(_run_id))
                 raise
             run.stage = failing_stage
             for attr, value in counters.items():

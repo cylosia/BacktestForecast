@@ -113,9 +113,19 @@ def _fallback_persist_status(job_type: str, job_id: UUID, status: str) -> None:
         if model_cls is None:
             return
 
+        _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
         with SessionLocal() as session:
             obj = session.get(model_cls, job_id)
             if obj is not None and hasattr(obj, "status"):
+                if obj.status in _TERMINAL_STATUSES:
+                    logger.info(
+                        "events.fallback_skipped_terminal",
+                        job_type=job_type,
+                        job_id=str(job_id),
+                        current_status=obj.status,
+                        requested_status=status,
+                    )
+                    return
                 obj.status = status
                 session.commit()
                 logger.info(

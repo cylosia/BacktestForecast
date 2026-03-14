@@ -60,9 +60,9 @@ export function ForecastLookup() {
       setErrorMessage("Enter a ticker symbol.");
       return;
     }
-    if (!/^[A-Z]{1,10}$/.test(normalizedTicker)) {
+    if (!/^[A-Z]{1,5}(\.[A-Z]{1,5})?$/.test(normalizedTicker)) {
       setStatus("error");
-      setErrorMessage("Ticker must be 1–10 alphabetic characters.");
+      setErrorMessage("Ticker must be 1–5 letters, optionally followed by a dot and 1–5 letters (e.g. BRK.B).");
       return;
     }
 
@@ -118,7 +118,7 @@ export function ForecastLookup() {
                   maxLength={16}
                   placeholder="SPY"
                   value={ticker}
-                  onChange={(e) => setTicker(e.target.value.toUpperCase())}
+                  onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z.]/g, ""))}
                 />
               </div>
               <div className="space-y-2">
