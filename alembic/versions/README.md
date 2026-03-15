@@ -1,63 +1,55 @@
 # Alembic Migrations
 
-This directory contains all Alembic migration scripts for the BacktestForecast database schema.
+This directory contains the Alembic migration scripts for the BacktestForecast database schema.
 
-## Migration Consolidation Plan
+## Baseline Migration
 
-As of March 2026 there are 26 migration files in this directory. For **new environments**
-(fresh databases), running the full migration chain from `0001` through `0026` is slow and
-fragile — intermediate migrations may reference columns or constraints that later migrations
-alter or drop.
+The schema is defined in a single baseline migration (`20260315_0001_baseline.py`) that
+creates all 12 tables, indexes, CHECK constraints, and the `set_updated_at()` trigger
+function with per-table triggers.
 
-### Recommended approach
+This baseline was consolidated on 2026-03-15 from 36 incremental migrations
+(`0001`–`0036`) that were created during initial development. Since the application
+had not yet been deployed to production, no stamping or archival was necessary — the
+old migrations were simply replaced.
 
-1. **Create a baseline migration** that captures the current `head` schema as a single
-   `CREATE TABLE` / `CREATE INDEX` script. Use `alembic revision --autogenerate` against
-   a freshly-migrated database, then manually clean the generated output.
+## Adding New Migrations
 
-2. **Stamp existing databases** with the baseline revision so they skip it:
-   ```
-   alembic stamp <baseline_revision>
-   ```
+All future migrations should branch from `20260315_0001`:
 
-3. **Keep the old migrations** in a sub-directory (e.g. `_archived/`) for audit trail
-   purposes but exclude them from the active chain by removing their `down_revision`
-   links.
+```bash
+alembic revision --autogenerate -m "describe your change"
+```
 
-4. All **future migrations** should branch from the new baseline revision.
+Verify the generated output matches your ORM model changes, then test both directions:
 
-### When to execute
+```bash
+# Forward
+alembic upgrade head
 
-This consolidation should be performed once the schema has stabilised after launch and
-before onboarding any new environments (CI runners, staging clones, etc.) that would
-otherwise need to replay the full chain.
+# Backward (on a throwaway database)
+alembic downgrade base
+```
 
-### Important
+## Tables
 
-- Do **not** drop old migrations from version control — they serve as an audit record.
-- Verify the consolidated baseline against `alembic check` to ensure no model drift.
-- Test both `upgrade head` and `downgrade base` on a throwaway database before merging.
+| Table | Description |
+|-------|-------------|
+| `users` | Clerk-authenticated users with Stripe billing |
+| `backtest_runs` | Async backtest job lifecycle and results |
+| `backtest_trades` | Individual trades from completed backtests |
+| `backtest_equity_points` | Daily equity curve points per backtest |
+| `backtest_templates` | Saved backtest configurations |
+| `scanner_jobs` | Market scanning job lifecycle |
+| `scanner_recommendations` | Ranked results from completed scans |
+| `export_jobs` | PDF/CSV export lifecycle and storage |
+| `audit_events` | Append-only event log for compliance |
+| `nightly_pipeline_runs` | Automated nightly screening pipeline |
+| `daily_recommendations` | Ranked picks from the nightly pipeline |
+| `symbol_analyses` | Deep single-symbol analysis jobs |
 
-## Migration-specific notes
+## Trigger
 
-### Migration 0009 — NULL `subject_id` deduplication
-
-Migration 0009 adds a unique constraint on audit events. As part of the upgrade
-it **deletes duplicate rows where `subject_id` IS NULL** so the constraint can be
-applied cleanly. This is intentional data loss for rows that were already
-duplicates with no subject association. If you need to preserve those rows for
-forensic purposes, export them before running `alembic upgrade` past this
-revision.
-
-### Migration 0024 — JSON → JSONB conversion of `regime_labels`
-
-Migration 0024 changes the `regime_labels` column from `JSON` to `JSONB`. On
-PostgreSQL this is an in-place rewrite (`ALTER COLUMN ... TYPE JSONB USING
-column::jsonb`). Key considerations:
-
-- The `ALTER` acquires an `ACCESS EXCLUSIVE` lock on the table for the duration
-  of the rewrite. For large tables, schedule the migration during a maintenance
-  window.
-- Any application code that relied on key-ordering guarantees of JSON (insertion
-  order) should be reviewed, as JSONB does not preserve key order.
-- Downgrade reverts to `JSON`, which is a safe cast direction.
+The `set_updated_at()` PostgreSQL trigger function is applied to all tables with an
+`updated_at` column. It fires `BEFORE UPDATE` and sets `updated_at = NOW()`,
+ensuring accuracy even for direct SQL updates that bypass the ORM's `onupdate`.
