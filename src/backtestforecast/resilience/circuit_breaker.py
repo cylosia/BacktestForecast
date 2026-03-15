@@ -45,7 +45,11 @@ class CircuitBreaker:
 
     @property
     def is_open(self) -> bool:
-        """True when the circuit is not fully closed (OPEN or HALF_OPEN)."""
+        """True when the circuit is not fully closed (OPEN or HALF_OPEN).
+
+        Does NOT trigger the OPEN -> HALF_OPEN recovery transition.
+        Use ``allow_request()`` for gating decisions.
+        """
         with self._lock:
             return self._state != CircuitState.CLOSED
 

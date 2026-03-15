@@ -74,6 +74,7 @@ class BacktestRunRepository:
         *,
         start_inclusive: datetime,
         end_exclusive: datetime,
+        exclude_error_codes: tuple[str, ...] = ("enqueue_failed",),
     ) -> int:
         stmt = select(func.count(BacktestRun.id)).where(
             BacktestRun.user_id == user_id,
@@ -81,6 +82,10 @@ class BacktestRunRepository:
             BacktestRun.created_at < end_exclusive,
             BacktestRun.status.notin_(("failed", "cancelled")),
         )
+        if exclude_error_codes:
+            stmt = stmt.where(
+                (BacktestRun.error_code.is_(None)) | (BacktestRun.error_code.notin_(exclude_error_codes))
+            )
         return int(self.session.scalar(stmt) or 0)
 
     def get_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRun | None:

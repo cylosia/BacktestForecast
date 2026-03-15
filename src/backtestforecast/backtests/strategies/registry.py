@@ -65,6 +65,8 @@ BULLISH_STRATEGIES: frozenset[str] = frozenset({
     "poor_mans_covered_call",
     "collar",
     "diagonal_spread",
+    "naked_put",
+    "ratio_call_backspread",
 })
 
 BEARISH_STRATEGIES: frozenset[str] = frozenset({
@@ -73,6 +75,7 @@ BEARISH_STRATEGIES: frozenset[str] = frozenset({
     "bear_call_credit_spread",
     "synthetic_put",
     "ratio_put_backspread",
+    "naked_call",
 })
 
 NEUTRAL_STRATEGIES: frozenset[str] = frozenset({
@@ -87,6 +90,7 @@ NEUTRAL_STRATEGIES: frozenset[str] = frozenset({
     "double_diagonal",
     "covered_strangle",
     "jade_lizard",
+    "reverse_conversion",
 })
 
 STRATEGY_REGISTRY: dict[str, StrategyDefinition] = {

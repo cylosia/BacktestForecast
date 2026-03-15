@@ -82,7 +82,9 @@ export function BacktestForm({
     if (!validation.payload) {
       setStatus("error");
       setErrorCode(undefined);
-      setServerMessage("Please fix the highlighted inputs and try again.");
+      setServerMessage(
+        validation.errors.form ?? "Please fix the highlighted inputs and try again."
+      );
       return;
     }
 

@@ -163,12 +163,12 @@ class BacktestService:
         if run is None:
             raise NotFoundError("Backtest run not found.")
 
-        if run.status != "queued":
+        if run.status not in ("queued", "running"):
             return run
 
         rows = self.session.execute(
             sa_update(BacktestRun)
-            .where(BacktestRun.id == run_id, BacktestRun.status == "queued")
+            .where(BacktestRun.id == run_id, BacktestRun.status.in_(["queued", "running"]))
             .values(status="running", started_at=datetime.now(UTC))
         )
         self.session.commit()

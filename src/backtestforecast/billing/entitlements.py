@@ -29,7 +29,7 @@ class ScannerMode(str, Enum):
 
 PAID_STATUSES = {"active", "trialing"}
 PAST_DUE_GRACE_DAYS = 7
-INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete_expired", "paused"}
+INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete", "incomplete_expired", "paused"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,7 +184,12 @@ def normalize_plan_tier(
                 period_end=str(subscription_current_period_end),
             )
             return PlanTier.FREE
-        # Within grace window — fall through to normal tier resolution
+        # Within grace window — skip the period-end check and resolve tier directly
+        if plan_tier == PlanTier.PREMIUM.value:
+            return PlanTier.PREMIUM
+        if plan_tier == PlanTier.PRO.value:
+            return PlanTier.PRO
+        return PlanTier.FREE
     elif subscription_status is not None and subscription_status not in PAID_STATUSES:
         _logger.warning(
             "normalize_plan_tier.unknown_subscription_status",

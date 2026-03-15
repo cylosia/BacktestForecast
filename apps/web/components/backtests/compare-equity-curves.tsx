@@ -85,7 +85,7 @@ export function CompareEquityCurves({
                   style={{ backgroundColor: COLORS[index % COLORS.length] }}
                 />
                 <span className="text-muted-foreground">
-                  {String.fromCharCode(65 + runs.indexOf(run))} {run.symbol}
+                  {String.fromCharCode(65 + index)} {run.symbol}
                 </span>
               </div>
             ))}
@@ -142,7 +142,7 @@ export function CompareEquityCurves({
                   className="h-2 w-4 rounded-sm"
                   style={{ backgroundColor: COLORS[index % COLORS.length] }}
                 />
-                {String.fromCharCode(65 + runs.indexOf(run))} ending
+                {String.fromCharCode(65 + index)} ending
               </div>
               <p className="mt-1 font-medium">{formatCurrency(run.summary.ending_equity)}</p>
             </div>

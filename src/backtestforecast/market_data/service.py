@@ -249,9 +249,9 @@ class MarketDataService:
                 self._bars_cache.move_to_end(cache_key)
                 return self._bars_cache[cache_key]
         finally:
+            inflight_event.set()
             with self._bars_cache_lock:
                 self._bars_inflight.pop(cache_key, None)
-            inflight_event.set()
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
 

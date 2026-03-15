@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,8 @@ from backtestforecast.schemas.templates import (
     TemplateResponse,
     UpdateTemplateRequest,
 )
+
+logger = structlog.get_logger("services.templates")
 
 TEMPLATE_LIMITS: dict[PlanTier, int | None] = {
     PlanTier.FREE: 3,
@@ -68,8 +71,14 @@ class BacktestTemplateService:
         templates = self.repository.list_for_user(user.id, limit=limit, offset=offset)
         total = self.repository.count_for_user(user.id)
         template_limit = _resolve_template_limit(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        items = []
+        for t in templates:
+            try:
+                items.append(self._to_response(t))
+            except Exception:
+                logger.warning("templates.invalid_template_skipped", template_id=str(t.id))
         return TemplateListResponse(
-            items=[self._to_response(t) for t in templates],
+            items=items,
             total=total,
             template_limit=template_limit,
         )

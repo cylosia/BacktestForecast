@@ -88,10 +88,11 @@ def ping_database() -> None:
 def _invalidate_db_caches() -> None:
     """Dispose the current engine and clear cached singletons so fresh
     settings (e.g. rotated credentials) take effect on next access."""
-    try:
-        _get_engine().dispose()
-    except Exception:
-        pass
+    if _get_engine.cache_info().currsize > 0:
+        try:
+            _get_engine().dispose()
+        except Exception:
+            pass
     _get_engine.cache_clear()
     _get_session_factory.cache_clear()
 

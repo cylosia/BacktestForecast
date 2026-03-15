@@ -57,7 +57,7 @@ class TemplateResponse(BaseModel):
     id: UUID
     name: str
     description: str | None
-    strategy_type: StrategyType
+    strategy_type: str
     config: TemplateConfig = Field(alias="config_json")
     created_at: datetime
     updated_at: datetime

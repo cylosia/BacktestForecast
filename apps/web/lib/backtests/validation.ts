@@ -139,6 +139,12 @@ export function validateBacktestForm(values: BacktestFormValues): {
     }
   }
 
+  const targetDte = parseNumber(values.targetDte);
+  const dteTol = parseNumber(values.dteToleranceDays);
+  if (!errors.dteToleranceDays && !errors.targetDte && targetDte > 0 && dteTol >= targetDte) {
+    errors.dteToleranceDays = "DTE tolerance must be less than target DTE.";
+  }
+
   const entryRules: CreateBacktestRunRequest["entry_rules"] = [];
 
   if (values.rsiEnabled) {

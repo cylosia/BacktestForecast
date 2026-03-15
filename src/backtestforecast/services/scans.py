@@ -160,7 +160,7 @@ class ScanService:
         job = self.repository.get(job_id, for_update=True)
         if job is None:
             raise NotFoundError("Scanner job not found.")
-        if job.status != "queued":
+        if job.status not in ("queued", "running"):
             logger.info("scan.run_job_skipped", job_id=str(job_id), status=job.status)
             return job
 

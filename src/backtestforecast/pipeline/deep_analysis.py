@@ -214,7 +214,7 @@ class SymbolDeepAnalysisService:
         )
         if analysis is None:
             raise NotFoundError("Symbol analysis not found.")
-        if analysis.status != "queued":
+        if analysis.status not in ("queued", "running"):
             logger.info("deep_analysis.execute_skipped", analysis_id=str(analysis_id), status=analysis.status)
             return analysis
 
