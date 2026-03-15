@@ -84,6 +84,8 @@ class BacktestRun(Base):
         CheckConstraint("commission_per_contract >= 0", name="ck_backtest_runs_commission_nonneg"),
         CheckConstraint("date_from < date_to", name="ck_backtest_runs_date_order"),
         CheckConstraint("max_holding_days >= 1", name="ck_backtest_runs_holding_days_positive"),
+        CheckConstraint("target_dte >= 0", name="ck_backtest_runs_target_dte_nonneg"),
+        CheckConstraint("dte_tolerance_days >= 0", name="ck_backtest_runs_dte_tolerance_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -108,27 +110,27 @@ class BacktestRun(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    trade_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    win_rate: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"))
-    total_roi_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"))
-    average_win_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
-    average_loss_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
-    average_holding_period_days: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"))
-    average_dte_at_open: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"))
-    max_drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"))
-    total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
-    total_net_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
-    starting_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
-    ending_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
+    trade_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    win_rate: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_roi_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_win_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_loss_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_holding_period_days: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_dte_at_open: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    max_drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_net_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    starting_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    ending_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
     profit_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     payoff_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
-    expectancy: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
+    expectancy: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
     sharpe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     sortino_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     cagr_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     calmar_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
-    max_consecutive_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    max_consecutive_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_consecutive_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_consecutive_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     recovery_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -154,6 +156,7 @@ class BacktestTrade(Base):
     __table_args__ = (
         Index("ix_backtest_trades_run_entry_date", "run_id", "entry_date"),
         UniqueConstraint("run_id", "entry_date", "option_ticker", name="uq_backtest_trades_dedup"),
+        CheckConstraint("quantity > 0", name="ck_backtest_trades_quantity_positive"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -260,6 +263,9 @@ class ScannerJob(Base):
             "job_kind IN ('manual', 'refresh', 'nightly')",
             name="ck_scanner_jobs_valid_job_kind",
         ),
+        CheckConstraint("candidate_count >= 0", name="ck_scanner_jobs_candidate_count_nonneg"),
+        CheckConstraint("evaluated_candidate_count >= 0", name="ck_scanner_jobs_evaluated_count_nonneg"),
+        CheckConstraint("recommendation_count >= 0", name="ck_scanner_jobs_recommendation_count_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -308,6 +314,7 @@ class ScannerRecommendation(Base):
     __table_args__ = (
         UniqueConstraint("scanner_job_id", "rank", name="uq_scanner_recommendations_job_rank"),
         Index("ix_scanner_recommendations_lookup", "symbol", "strategy_type", "rule_set_hash"),
+        CheckConstraint("rank >= 1", name="ck_scanner_recommendations_rank_positive"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -329,6 +336,9 @@ class ScannerRecommendation(Base):
     forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     ranking_features_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
     job: Mapped["ScannerJob"] = relationship(back_populates="recommendations")
 
@@ -347,6 +357,10 @@ class ExportJob(Base):
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')",
             name="ck_export_jobs_valid_export_status",
+        ),
+        CheckConstraint(
+            "status != 'succeeded' OR content_bytes IS NOT NULL OR storage_key IS NOT NULL",
+            name="ck_export_jobs_succeeded_has_storage",
         ),
     )
 
@@ -462,6 +476,7 @@ class DailyRecommendation(Base):
         UniqueConstraint("pipeline_run_id", "rank", name="uq_daily_recs_pipeline_rank"),
         Index("ix_daily_recs_trade_date", "trade_date"),
         Index("ix_daily_recs_symbol_strategy", "symbol", "strategy_type"),
+        CheckConstraint("rank >= 1", name="ck_daily_recommendations_rank_positive"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -498,6 +513,9 @@ class SymbolAnalysis(Base):
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="ck_symbol_analyses_valid_analysis_status",
         ),
+        CheckConstraint("strategies_tested >= 0", name="ck_symbol_analyses_strategies_tested_nonneg"),
+        CheckConstraint("configs_tested >= 0", name="ck_symbol_analyses_configs_tested_nonneg"),
+        CheckConstraint("top_results_count >= 0", name="ck_symbol_analyses_top_results_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
