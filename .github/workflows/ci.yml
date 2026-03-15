@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   backend-and-web:
@@ -180,7 +180,7 @@ jobs:
 
   dependency-audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     env:
       PYTHONPATH: src:.
     steps:
@@ -328,7 +328,7 @@ jobs:
 
   codeql-sast:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
       security-events: write
     steps:
@@ -345,7 +345,7 @@ jobs:
 
   trivy-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     needs: container-smoke
     steps:
       - name: Checkout
@@ -362,6 +362,7 @@ jobs:
           tags: backtestforecast-api:trivy
           push: false
           load: true
+          cache-from: type=gha
 
       - name: Build Worker image for scanning
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4  # v6.15.0
@@ -371,6 +372,7 @@ jobs:
           tags: backtestforecast-worker:trivy
           push: false
           load: true
+          cache-from: type=gha
 
       - name: Run Trivy on API image
         uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2  # 0.28.0
@@ -396,6 +398,7 @@ jobs:
           tags: backtestforecast-web:trivy
           push: false
           load: true
+          cache-from: type=gha
           build-args: |
             NEXT_PUBLIC_APP_URL=http://localhost:3000
             NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
@@ -411,7 +414,7 @@ jobs:
 
   secret-scanning:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -425,7 +428,7 @@ jobs:
 
   container-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

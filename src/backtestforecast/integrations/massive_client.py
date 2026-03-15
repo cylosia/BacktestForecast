@@ -344,8 +344,10 @@ class MassiveClient:
                 raise ExternalServiceError(retryable_message) from exc
 
             if response.status_code in {401, 403}:
+                self._circuit.record_failure()
                 raise ExternalServiceError("Massive rejected the request. Verify API key and entitlements.")
             if response.status_code == 404:
+                self._circuit.record_failure()
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
                 self._circuit.record_failure()
@@ -369,6 +371,7 @@ class MassiveClient:
                     detail=response.text[:500],
                     url=safe_url,
                 )
+                self._circuit.record_failure()
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )
@@ -617,8 +620,10 @@ class AsyncMassiveClient:
                 raise ExternalServiceError(retryable_message) from exc
 
             if response.status_code in {401, 403}:
+                self._circuit.record_failure()
                 raise ExternalServiceError("Massive rejected the request. Verify API key and entitlements.")
             if response.status_code == 404:
+                self._circuit.record_failure()
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
                 self._circuit.record_failure()
@@ -642,6 +647,7 @@ class AsyncMassiveClient:
                     detail=response.text[:500],
                     url=safe_url,
                 )
+                self._circuit.record_failure()
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )

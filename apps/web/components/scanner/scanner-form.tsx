@@ -249,6 +249,10 @@ export function ScannerForm({
       }
     }
 
+    if (Number(form.dteTolerance) >= Number(form.targetDte)) {
+      errors.push("DTE tolerance must be less than target DTE.");
+    }
+
     if (errors.length > 0) {
       setStatus("error");
       setErrorMessage(errors.length === 1 ? errors[0] : errors.map((e, i) => `${i + 1}. ${e}`).join("\n"));

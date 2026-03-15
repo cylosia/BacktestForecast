@@ -175,6 +175,18 @@ BILLING_EVENTS_TOTAL = Counter(
     ["event_type"],
 )
 
+REDIS_CONNECTION_ERRORS_TOTAL = Counter(
+    "redis_connection_errors_total",
+    "Total Redis connection errors",
+    ["operation"],
+)
+
+NIGHTLY_PIPELINE_RUNS_TOTAL = Counter(
+    "nightly_pipeline_runs_total",
+    "Total nightly pipeline runs by status",
+    ["status"],
+)
+
 
 _RE_UUID = re.compile(
     r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"

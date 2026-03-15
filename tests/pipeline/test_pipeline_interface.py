@@ -14,11 +14,6 @@ import pytest
 class TestPipelineServiceInterface:
     """Verify NightlyPipelineService has expected methods."""
 
-    def test_service_class_exists(self):
-        from backtestforecast.pipeline.service import NightlyPipelineService
-
-        assert NightlyPipelineService is not None
-
     def test_run_pipeline_method_exists(self):
         from backtestforecast.pipeline.service import NightlyPipelineService
 

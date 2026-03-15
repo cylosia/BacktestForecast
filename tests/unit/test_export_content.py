@@ -62,17 +62,9 @@ class TestCsvSanitizeCell:
 class TestExportServiceInterface:
     """Verify ExportService has the expected methods."""
 
-    def test_execute_export_method_exists(self):
-        assert hasattr(ExportService, "execute_export_by_id")
-
-    def test_cleanup_method_exists(self):
-        assert hasattr(ExportService, "cleanup_expired_exports")
-
-    def test_enqueue_export_method_exists(self):
-        assert hasattr(ExportService, "enqueue_export")
-
-    def test_get_export_status_method_exists(self):
-        assert hasattr(ExportService, "get_export_status")
-
-    def test_get_export_for_download_method_exists(self):
-        assert hasattr(ExportService, "get_export_for_download")
+    @pytest.mark.parametrize("method", [
+        "execute_export_by_id", "cleanup_expired_exports", "enqueue_export",
+        "get_export_status", "get_export_for_download",
+    ])
+    def test_export_service_has_method(self, method):
+        assert hasattr(ExportService, method)

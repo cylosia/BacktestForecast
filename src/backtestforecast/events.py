@@ -74,6 +74,8 @@ def publish_job_status(
     """
     from redis.exceptions import RedisError
 
+    from backtestforecast.observability.metrics import REDIS_CONNECTION_ERRORS_TOTAL
+
     channel = f"job:{job_type}:{job_id}:status"
     _RESERVED_KEYS = {"status", "job_id"}
     safe_meta = {k: v for k, v in (metadata or {}).items() if k not in _RESERVED_KEYS}
@@ -86,6 +88,7 @@ def publish_job_status(
                 client.publish(channel, payload)
                 return
             except RedisError:
+                REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="publish").inc()
                 if attempt == 0:
                     _reset_redis()
                     continue

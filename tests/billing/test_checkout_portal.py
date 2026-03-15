@@ -44,7 +44,15 @@ class TestCheckoutPriceLookup:
     def test_price_lookup_empty_when_unconfigured(self):
         from backtestforecast.config import Settings
 
-        settings = Settings()
+        settings = Settings(
+            stripe_secret_key=None,
+            stripe_webhook_secret=None,
+            stripe_pro_monthly_price_id=None,
+            stripe_pro_yearly_price_id=None,
+            stripe_premium_monthly_price_id=None,
+            stripe_premium_yearly_price_id=None,
+            _env_file=None,
+        )
         lookup = settings.stripe_price_lookup
         assert isinstance(lookup, dict)
         assert len(lookup) == 0
@@ -52,7 +60,15 @@ class TestCheckoutPriceLookup:
     def test_stripe_billing_enabled_requires_keys(self):
         from backtestforecast.config import Settings
 
-        settings = Settings()
+        settings = Settings(
+            stripe_secret_key=None,
+            stripe_webhook_secret=None,
+            stripe_pro_monthly_price_id=None,
+            stripe_pro_yearly_price_id=None,
+            stripe_premium_monthly_price_id=None,
+            stripe_premium_yearly_price_id=None,
+            _env_file=None,
+        )
         assert settings.stripe_billing_enabled is False
 
     def test_stripe_billing_enabled_with_full_config(self):

@@ -26,7 +26,7 @@ from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from backtestforecast.pipeline.regime import RegimeSnapshot, classify_regime
 from backtestforecast.config import get_settings
-from backtestforecast.observability.metrics import DUPLICATE_NIGHTLY_RUNS_TOTAL
+from backtestforecast.observability.metrics import DUPLICATE_NIGHTLY_RUNS_TOTAL, NIGHTLY_PIPELINE_RUNS_TOTAL
 from backtestforecast.pipeline.strategy_map import (
     DEFAULT_PARAM_GRID,
     strategies_for_regime,
@@ -260,6 +260,7 @@ class NightlyPipelineService:
 
             run.recommendations_produced = len(final_ranked)
             run.status = "succeeded"
+            NIGHTLY_PIPELINE_RUNS_TOTAL.labels(status="succeeded").inc()
             run.completed_at = datetime.now(UTC)
             run.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
             self.session.commit()
@@ -292,6 +293,7 @@ class NightlyPipelineService:
             for attr, value in counters.items():
                 setattr(run, attr, value)
             run.status = "failed"
+            NIGHTLY_PIPELINE_RUNS_TOTAL.labels(status="failed").inc()
             run.error_message = "Pipeline execution failed. See logs for details."
             run.completed_at = datetime.now(UTC)
             run.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))

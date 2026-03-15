@@ -32,7 +32,7 @@ test.describe("Smoke Tests", () => {
     page,
   }) => {
     await page.goto("/app/backtests");
-    await page.waitForURL(/sign-in|clerk/);
+    await page.waitForURL(/sign-in|clerk/, { timeout: 10000 });
   });
 
   test("sign-in page is accessible", async ({ page }) => {

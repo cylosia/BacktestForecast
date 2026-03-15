@@ -328,10 +328,14 @@ class OptionsBacktestEngine:
     ) -> tuple[TradeResult, float]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
         exit_commission = self._option_commission_total(position, config.commission_per_contract)
-        exit_gross_notional = sum(abs(leg.last_mid * 100.0) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
+        option_exit_notional = sum(abs(leg.last_mid * 100.0) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
+        stock_exit_notional = sum(abs(leg.last_price * leg.share_quantity_per_unit) for leg in position.stock_legs) * position.quantity if position.stock_legs else 0.0
+        exit_gross_notional = option_exit_notional + stock_exit_notional
         exit_slippage = exit_gross_notional * (config.slippage_pct / 100.0)
         entry_value_per_unit = self._entry_value_per_unit(position)
-        entry_gross_notional = sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
+        option_entry_notional = sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
+        stock_entry_notional = sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in position.stock_legs) * position.quantity if position.stock_legs else 0.0
+        entry_gross_notional = option_entry_notional + stock_entry_notional
         entry_slippage = entry_gross_notional * (config.slippage_pct / 100.0)
         cash_delta = exit_value - exit_commission - exit_slippage
         exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0

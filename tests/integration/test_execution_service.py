@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -52,34 +52,32 @@ def test_execution_service_produces_valid_summary(mock_massive_client):
 
     market_data = MarketDataService(mock_massive_client)
 
-    # Patch option chain data to return synthetic chains
-    with patch.object(market_data, "_fetch_option_chain", return_value=[]):
-        service = BacktestExecutionService(market_data_service=market_data)
+    service = BacktestExecutionService(market_data_service=market_data)
 
-        request = CreateBacktestRunRequest(
-            symbol="AAPL",
-            strategy_type="long_call",
-            start_date="2024-01-02",
-            end_date="2024-06-28",
-            target_dte=30,
-            dte_tolerance_days=5,
-            max_holding_days=21,
-            account_size=Decimal("10000"),
-            risk_per_trade_pct=Decimal("2"),
-            commission_per_contract=Decimal("0.65"),
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2024-01-02",
+        end_date="2024-06-28",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=21,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("2"),
+        commission_per_contract=Decimal("0.65"),
+    )
+
+    # This tests the WIRING — that the service correctly transforms
+    # the request into a BacktestConfig and passes it to the engine.
+    # The actual execution may produce zero trades (no option chains)
+    # but should not crash.
+    try:
+        result = service.execute_request(request)
+        assert result is not None
+        assert hasattr(result, "summary")
+        assert result.summary.starting_equity > 0
+    except Exception as e:
+        # If it fails, it should be a data issue, not a wiring issue
+        assert "option" in str(e).lower() or "chain" in str(e).lower() or "bar" in str(e).lower(), (
+            f"Unexpected wiring error: {e}"
         )
-
-        # This tests the WIRING — that the service correctly transforms
-        # the request into a BacktestConfig and passes it to the engine.
-        # The actual execution may produce zero trades (no option chains)
-        # but should not crash.
-        try:
-            result = service.execute(request)
-            assert result is not None
-            assert hasattr(result, "summary")
-            assert result.summary.starting_equity > 0
-        except Exception as e:
-            # If it fails, it should be a data issue, not a wiring issue
-            assert "option" in str(e).lower() or "chain" in str(e).lower() or "bar" in str(e).lower(), (
-                f"Unexpected wiring error: {e}"
-            )

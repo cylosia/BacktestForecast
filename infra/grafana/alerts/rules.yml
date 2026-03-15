@@ -44,9 +44,12 @@ groups:
 
       - alert: HighHTTPErrorRate
         expr: |
-          sum(rate(http_requests_total{status=~"5.."}[5m]))
-          / sum(rate(http_requests_total[5m]))
-          > 0.05
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m]))
+            > 0.05
+          )
+          and sum(rate(http_requests_total[5m])) > 0.01
         for: 3m
         labels:
           severity: critical
@@ -159,7 +162,7 @@ groups:
 
       - alert: DatabasePoolExhaustion
         expr: |
-          db_pool_checked_out / on() db_pool_size > 0.8
+          db_pool_checked_out / db_pool_size > 0.8
         for: 5m
         labels:
           severity: warning

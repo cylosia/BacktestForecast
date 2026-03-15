@@ -28,8 +28,10 @@ def test_scan_service_limits_recommendations():
 
     from backtestforecast.services.scans import ScanService
 
-    # Verify the service class has the expected interface
-    assert hasattr(ScanService, "run_job"), "ScanService should have run_job method"
+    sig = inspect.signature(ScanService.run_job)
+    params = list(sig.parameters.keys())
+    assert "self" in params
+    assert "job_id" in params
 
 
 def test_scan_service_handles_single_symbol_failure():
@@ -39,35 +41,41 @@ def test_scan_service_handles_single_symbol_failure():
         pytest.skip("DATABASE_URL required")
 
     from backtestforecast.services.scans import ScanService
-    assert hasattr(ScanService, "run_job"), "ScanService should have run_job method"
+
+    sig = inspect.signature(ScanService.run_job)
+    assert sig.return_annotation is not inspect.Parameter.empty
 
 
 class TestScanServiceInterface:
     """Verify ScanService has the expected interface and contracts."""
 
-    def test_run_job_method_exists(self):
-        from backtestforecast.services.scans import ScanService
-        assert hasattr(ScanService, "run_job")
-
-    def test_run_job_accepts_job_id(self):
+    def test_run_job_signature(self):
+        """Verify run_job has the expected parameters and return annotation."""
         from backtestforecast.services.scans import ScanService
         sig = inspect.signature(ScanService.run_job)
         params = list(sig.parameters.keys())
         assert "self" in params
         assert "job_id" in params
-
-    def test_run_job_returns_annotation(self):
-        """Verify run_job has a return type annotation."""
-        from backtestforecast.services.scans import ScanService
-        sig = inspect.signature(ScanService.run_job)
         assert sig.return_annotation is not inspect.Parameter.empty
 
-    def test_create_job_method_exists(self):
+    def test_create_job_signature(self):
+        """Verify create_job has expected parameters."""
         from backtestforecast.services.scans import ScanService
-        assert hasattr(ScanService, "create_job")
+        sig = inspect.signature(ScanService.create_job)
+        params = list(sig.parameters.keys())
+        assert "self" in params
 
-    def test_max_recommendations_respected(self):
-        """Verify that the service respects max_recommendations cap."""
+    def test_constructor_accepts_optional_deps(self):
+        """Verify ScanService constructor accepts session, execution_service and forecaster."""
+        from backtestforecast.services.scans import ScanService
+        sig = inspect.signature(ScanService.__init__)
+        params = list(sig.parameters.keys())
+        assert "session" in params
+        assert "execution_service" in params
+        assert "forecaster" in params
+
+    def test_can_instantiate_with_mock_session(self):
+        """Verify the service can be constructed with a mock session."""
         from backtestforecast.services.scans import ScanService
         mock_session = MagicMock()
         try:
@@ -76,18 +84,8 @@ class TestScanServiceInterface:
         except TypeError:
             pass
 
-    def test_constructor_accepts_optional_deps(self):
-        """Verify ScanService constructor accepts execution_service and forecaster."""
-        from backtestforecast.services.scans import ScanService
-        sig = inspect.signature(ScanService.__init__)
-        params = list(sig.parameters.keys())
-        assert "session" in params
-        assert "execution_service" in params
-        assert "forecaster" in params
-
     def test_context_manager_protocol(self):
         """Verify ScanService supports the context manager protocol."""
         from backtestforecast.services.scans import ScanService
-        assert hasattr(ScanService, "__enter__")
-        assert hasattr(ScanService, "__exit__")
-        assert hasattr(ScanService, "close")
+        for method in ("__enter__", "__exit__", "close"):
+            assert hasattr(ScanService, method), f"Missing {method}"
