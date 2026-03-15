@@ -31,7 +31,11 @@ export default async function BacktestDetailPage({
   const { runId } = await params;
 
   try {
-    const [run, user] = await Promise.all([getBacktestRun(runId), getCurrentUser()]);
+    const [runResult, userResult] = await Promise.allSettled([getBacktestRun(runId), getCurrentUser()]);
+    if (runResult.status === "rejected") throw runResult.reason;
+    if (userResult.status === "rejected") throw userResult.reason;
+    const run = runResult.value;
+    const user = userResult.value;
     const isComplete = isTerminalStatus(run.status);
 
     return (

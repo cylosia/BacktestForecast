@@ -213,9 +213,13 @@ def _error_payload(request: Request, *, code: str, message: str) -> dict[str, ob
 
 @app.exception_handler(AppError)
 def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    from backtestforecast.errors import ConfigurationError as _CfgErr
     API_ERRORS_TOTAL.labels(code=exc.code).inc()
-    logger.warning("api.error", code=exc.code, status_code=exc.status_code, message=exc.message)
-    payload = _error_payload(request, code=exc.code, message=exc.message)
+    is_cfg_err = isinstance(exc, _CfgErr)
+    log_message = "[redacted]" if is_cfg_err else exc.message
+    logger.warning("api.error", code=exc.code, status_code=exc.status_code, message=log_message)
+    safe_message = "An internal configuration error occurred." if is_cfg_err else exc.message
+    payload = _error_payload(request, code=exc.code, message=safe_message)
     if isinstance(exc, (QuotaExceededError, FeatureLockedError)):
         extra: dict[str, str] = {}
         if hasattr(exc, "current_tier"):

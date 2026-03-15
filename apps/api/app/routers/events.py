@@ -34,6 +34,24 @@ SSE_MAX_CONNECTIONS_PROCESS = 200
 _SSE_CONN_KEY_PREFIX = "sse:connections:"
 _SSE_CONN_TTL = 600
 
+import threading as _threading
+
+_sse_process_connections = 0
+_sse_process_lock = _threading.Lock()
+
+
+def _sse_process_inc() -> None:
+    global _sse_process_connections
+    with _sse_process_lock:
+        _sse_process_connections += 1
+
+
+def _sse_process_dec() -> None:
+    global _sse_process_connections
+    with _sse_process_lock:
+        _sse_process_connections = max(0, _sse_process_connections - 1)
+
+
 _async_redis_pool = None
 _async_redis_lock = asyncio.Lock()
 _async_redis_last_ping: float = 0.0
@@ -245,14 +263,16 @@ async def _event_stream(
     """
     from redis.exceptions import RedisError
 
-    current = ACTIVE_SSE_CONNECTIONS._value.get()
-    if current >= SSE_MAX_CONNECTIONS_PROCESS:
-        yield {"event": "error", "data": "Server connection limit reached. Please try again later."}
-        yield {"event": "done", "data": "stream_ended"}
-        return
+    with _sse_process_lock:
+        if _sse_process_connections >= SSE_MAX_CONNECTIONS_PROCESS:
+            yield {"event": "error", "data": "Server connection limit reached. Please try again later."}
+            yield {"event": "done", "data": "stream_ended"}
+            return
+        _sse_process_connections += 1
 
     acquired = await _acquire_sse_slot(user_id)
     if not acquired:
+        _sse_process_dec()
         yield {"event": "error", "data": "Too many active event streams. Close other tabs and retry."}
         yield {"event": "done", "data": "stream_ended"}
         return
@@ -269,14 +289,14 @@ async def _event_stream(
                 break
             if data is not None:
                 yield {"event": "status", "data": data}
+        yield {"event": "done", "data": "stream_ended"}
     except (RedisError, OSError) as exc:
         logger.warning("sse.redis_error", channel=channel, error=str(exc))
         yield {"event": "error", "data": "Event stream unavailable. Please poll for status instead."}
     finally:
+        _sse_process_dec()
         ACTIVE_SSE_CONNECTIONS.dec()
         await _release_sse_slot(user_id)
-
-    yield {"event": "done", "data": "stream_ended"}
 
 
 @router.get("/backtests/{run_id}", responses=_SSE_RESPONSES)

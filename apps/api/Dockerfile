@@ -18,7 +18,8 @@ RUN pip install --upgrade pip && pip install ".[s3]"
 FROM python:3.12-slim AS runner
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
 
 WORKDIR /app
 
@@ -26,7 +27,8 @@ COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /build /app
 
-RUN addgroup --system app && adduser --system --ingroup app app
+RUN addgroup --system app && adduser --system --ingroup app app \
+    && mkdir -p /tmp/prometheus_multiproc && chown app:app /tmp/prometheus_multiproc
 USER app
 
 EXPOSE 8000
@@ -34,4 +36,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; r = urllib.request.urlopen('http://localhost:8000/health/live'); exit(0 if r.getcode() == 200 else 1)"
 
-CMD ["uvicorn", "apps.api.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers"]
+CMD ["uvicorn", "apps.api.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--timeout-graceful-shutdown", "30"]

@@ -62,6 +62,7 @@ export function ExportActions({
   const blobUrlsRef = useRef<string[]>([]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       abortRef.current?.abort();

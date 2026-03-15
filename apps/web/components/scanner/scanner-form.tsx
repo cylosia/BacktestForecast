@@ -116,6 +116,7 @@ export function ScannerForm({
   const router = useRouter();
   const { getToken } = useAuth();
   const submitAbortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     return () => { submitAbortRef.current?.abort(); };
@@ -199,6 +200,7 @@ export function ScannerForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submittingRef.current) return;
 
     const symbols = parseSymbols(form.symbolsText);
 
@@ -274,6 +276,7 @@ export function ScannerForm({
     setStatus("submitting");
     setErrorMessage(null);
     setErrorCode(undefined);
+    submittingRef.current = true;
 
     try {
       const token = await getToken();
@@ -290,6 +293,7 @@ export function ScannerForm({
       setStatus("error");
       setErrorMessage(msg);
       setErrorCode(code);
+      submittingRef.current = false;
     }
   }
 

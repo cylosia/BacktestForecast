@@ -272,17 +272,21 @@ export function SymbolAnalysisLauncher() {
     maxAttempts: MAX_POLLS,
   });
 
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   useEffect(() => {
+    if (phaseRef.current !== "polling") return;
     if (pollingStatus === "timeout") {
       setPhase("error");
       setErrorMessage("Analysis is still running but taking longer than expected. You can close this page and check your analysis history later.");
-    } else if (pollingStatus === "error" && phase === "polling") {
+    } else if (pollingStatus === "error") {
       setPhase("error");
       setErrorMessage((prev) => prev || "Status check failed. Please try again.");
     }
-  }, [pollingStatus, phase]);
+  }, [pollingStatus]);
 
   useEffect(() => {
+    lifecycleAbortRef.current = new AbortController();
     return () => {
       abortRef.current?.abort();
       lifecycleAbortRef.current.abort();
@@ -347,7 +351,7 @@ export function SymbolAnalysisLauncher() {
 
   return (
     <div className="space-y-6">
-      <form className="space-y-4" onSubmit={handleSubmit}>
+      <form className="space-y-4" onSubmit={handleSubmit} aria-label="Symbol analysis">
         <Card>
           <CardHeader>
             <CardTitle>Analyze a symbol</CardTitle>

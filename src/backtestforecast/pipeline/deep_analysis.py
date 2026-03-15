@@ -546,8 +546,11 @@ class SymbolDeepAnalysisService:
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
-        cell_order = {id(c): idx for idx, c in enumerate(candidates)}
-        backtest_results.sort(key=lambda pair: cell_order.get(id(pair[0]), 0))
+        cell_order: dict[int, int] = {}
+        for idx, c in enumerate(candidates):
+            c._stable_order = idx  # type: ignore[attr-defined]
+            cell_order[idx] = idx
+        backtest_results.sort(key=lambda pair: getattr(pair[0], "_stable_order", 0))
 
         results: list[TopResult] = []
         for rank_idx, (cell, full) in enumerate(backtest_results, start=1):

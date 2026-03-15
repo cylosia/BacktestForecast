@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.models import SymbolAnalysis
 
+_MAX_PAGE_SIZE = 200
+
 
 class SymbolAnalysisRepository:
     def __init__(self, session: Session) -> None:
@@ -39,6 +41,6 @@ class SymbolAnalysisRepository:
             .where(SymbolAnalysis.user_id == user_id)
             .order_by(desc(SymbolAnalysis.created_at))
             .offset(offset)
-            .limit(limit)
+            .limit(min(limit, _MAX_PAGE_SIZE))
         )
         return list(self.session.scalars(stmt))

@@ -915,8 +915,8 @@ def refresh_prioritized_scans(self) -> dict[str, int]:
 _S3_ORPHAN_MAX_DELETIONS = 500
 
 
-@celery_app.task(name="maintenance.reconcile_s3_orphans", base=BaseTaskWithDLQ, ignore_result=True, soft_time_limit=3600, time_limit=3660)
-def reconcile_s3_orphans() -> None:
+@celery_app.task(name="maintenance.reconcile_s3_orphans", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=0, soft_time_limit=3600, time_limit=3660)
+def reconcile_s3_orphans(self) -> None:
     """Remove S3 objects that have no corresponding ExportJob in the database."""
     logger.info("s3_orphan_reconciliation_started")
     try:
@@ -975,9 +975,18 @@ def reap_stale_jobs(self, stale_minutes: int = 30) -> dict[str, int]:
 
     from backtestforecast.config import get_settings
     from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SymbolAnalysis
-    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL
+    from backtestforecast.observability.metrics import CELERY_WORKERS_ONLINE, JOBS_STUCK_REDISPATCHED_TOTAL
 
     settings = get_settings()
+
+    try:
+        _count_redis = Redis.from_url(settings.redis_url, socket_timeout=5)
+        heartbeat_keys = _count_redis.keys("worker:heartbeat:*")
+        CELERY_WORKERS_ONLINE.set(len(heartbeat_keys))
+        _count_redis.close()
+    except Exception:
+        pass
+
     redis = None
     lock = None
     lock_acquired = False
@@ -1358,7 +1367,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                     if stale_task_id:
                         try:
                             result_obj = celery_app.AsyncResult(stale_task_id)
-                            task_alive = result_obj.state in ("PENDING", "STARTED", "RETRY")
+                            task_alive = result_obj.state in ("STARTED", "RETRY", "RECEIVED")
                         except Exception:
                             pass
                     if not task_alive:
@@ -1382,3 +1391,37 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         logger.info("reaper.redispatched", counts=counts, total=total)
 
     return counts
+
+
+@celery_app.task(
+    name="maintenance.cleanup_audit_events",
+    base=BaseTaskWithDLQ,
+    bind=True,
+    ignore_result=True,
+    max_retries=0,
+    soft_time_limit=600,
+    time_limit=660,
+)
+def cleanup_audit_events(self) -> dict:  # type: ignore[override]
+    """Delete old high-volume audit events (e.g. export.downloaded) to prevent unbounded growth."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import delete
+    from backtestforecast.db.session import SessionLocal
+    from backtestforecast.models import AuditEvent
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    high_volume_types = ("export.downloaded",)
+    deleted = 0
+    with SessionLocal() as session:
+        for event_type in high_volume_types:
+            result = session.execute(
+                delete(AuditEvent)
+                .where(
+                    AuditEvent.event_type == event_type,
+                    AuditEvent.created_at < cutoff,
+                )
+            )
+            deleted += result.rowcount
+        session.commit()
+    logger.info("audit.cleanup_complete", deleted=deleted, cutoff=cutoff.isoformat())
+    return {"deleted": deleted}

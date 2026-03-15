@@ -122,6 +122,7 @@ def stripe_webhook(
             AuthenticationError as _AuthErr,
             AppError as _AppErr,
             ExternalServiceError as _ExtErr,
+            NotFoundError as _NotFoundErr,
         )
         if isinstance(exc, _AuthErr):
             _webhook_logger.warning(
@@ -130,6 +131,14 @@ def stripe_webhook(
             raise HTTPException(
                 status_code=400,
                 detail={"code": "signature_verification_failed", "message": "Invalid webhook signature."},
+            )
+        if isinstance(exc, _NotFoundErr):
+            _webhook_logger.warning(
+                "webhook.user_not_found", code=exc.code, ip=ip_address, request_id=request_id,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"code": exc.code, "message": "Transient data issue; Stripe should retry."},
             )
         if isinstance(exc, _ExtErr):
             _webhook_logger.exception(

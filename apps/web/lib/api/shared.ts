@@ -72,6 +72,7 @@ async function handleKnownStatus(response: Response): Promise<void> {
   if (response.status === 401 && typeof window !== "undefined") {
     const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
     window.location.href = `/sign-in?redirect_url=${returnTo}`;
+    await new Promise<never>(() => {});
   }
 
   throw new ApiError(

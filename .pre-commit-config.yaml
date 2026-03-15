@@ -35,7 +35,8 @@ repos:
           - "sse-starlette>=2.0"
           - "prometheus-client>=0.21"
         args: ["--config-file=pyproject.toml"]
-        pass_filenames: false
+        pass_filenames: true
+        files: '\.py$'
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.21.2

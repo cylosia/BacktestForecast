@@ -19,7 +19,6 @@ import type {
   SymbolAnalysisSummary,
   TemplateListResponse,
   TemplateResponse,
-  UpdateTemplateRequest,
 } from "@backtestforecast/api-client";
 
 export async function createBacktestRun(
@@ -116,17 +115,6 @@ export async function createTemplate(
 ): Promise<TemplateResponse> {
   return apiRequest<TemplateResponse>("/v1/templates", token, {
     method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function updateTemplate(
-  token: string,
-  templateId: string,
-  payload: UpdateTemplateRequest,
-): Promise<TemplateResponse> {
-  return apiRequest<TemplateResponse>(`/v1/templates/${encodeURIComponent(templateId)}`, token, {
-    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }

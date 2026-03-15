@@ -120,9 +120,10 @@ class S3Storage:
     @staticmethod
     def _sanitize_file_name(file_name: str) -> str:
         import posixpath
+        import re
         name = posixpath.basename(file_name.replace("\\", "/"))
         name = name.lstrip(".")
-        name = name.replace('"', '').replace('\r', '').replace('\n', '')
+        name = re.sub(r'[\x00-\x1f\x7f"\\]', '', name)
         return name or "export"
 
     def _object_key(self, export_job_id: UUID, file_name: str) -> str:

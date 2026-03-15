@@ -347,7 +347,6 @@ class MassiveClient:
                 self._circuit.record_failure()
                 raise ExternalServiceError("Massive rejected the request. Verify API key and entitlements.")
             if response.status_code == 404:
-                self._circuit.record_failure()
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
                 self._circuit.record_failure()
@@ -601,7 +600,7 @@ class AsyncMassiveClient:
         return rows
 
     async def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        if not self._circuit.allow_request():
+        if not await self._circuit.allow_request_async():
             raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
 
         url = path if path.startswith("http") else f"{self.base_url}{path}"
@@ -612,7 +611,7 @@ class AsyncMassiveClient:
             try:
                 response = await self._http.get(url, params=params, headers=headers)
             except httpx.HTTPError as exc:
-                self._circuit.record_failure()
+                await self._circuit.record_failure_async()
                 retryable_message = "Massive request failed due to a network error."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, None)
@@ -620,20 +619,19 @@ class AsyncMassiveClient:
                 raise ExternalServiceError(retryable_message) from exc
 
             if response.status_code in {401, 403}:
-                self._circuit.record_failure()
+                await self._circuit.record_failure_async()
                 raise ExternalServiceError("Massive rejected the request. Verify API key and entitlements.")
             if response.status_code == 404:
-                self._circuit.record_failure()
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
-                self._circuit.record_failure()
+                await self._circuit.record_failure_async()
                 retryable_message = "Massive rate limit reached. Retry later."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, response.headers.get("Retry-After"))
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 500:
-                self._circuit.record_failure()
+                await self._circuit.record_failure_async()
                 retryable_message = "Massive is currently unavailable."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, response.headers.get("Retry-After"))
@@ -647,12 +645,12 @@ class AsyncMassiveClient:
                     detail=response.text[:500],
                     url=safe_url,
                 )
-                self._circuit.record_failure()
+                await self._circuit.record_failure_async()
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )
 
-            self._circuit.record_success()
+            await self._circuit.record_success_async()
             data = response.json()
             if not isinstance(data, dict):
                 raise ExternalServiceError("Massive returned an unexpected response payload.")

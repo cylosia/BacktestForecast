@@ -60,12 +60,13 @@ function daysAgo(days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function isFiniteNumber(value: string): boolean {
-  if (!value.trim()) {
-    return false;
-  }
+const NUMERIC_RE = /^-?\d+(\.\d+)?$/;
 
-  return Number.isFinite(Number(value));
+function isFiniteNumber(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (!NUMERIC_RE.test(trimmed)) return false;
+  return Number.isFinite(Number(trimmed));
 }
 
 function parseNumber(value: string): number {
@@ -87,15 +88,21 @@ export function validateBacktestForm(values: BacktestFormValues): {
     errors.symbol = "Symbol may only contain letters, digits, dots, slashes, or ^.";
   }
 
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
   if (!values.startDate || !values.startDate.trim()) {
     errors.startDate = "Start date is required.";
+  } else if (!datePattern.test(values.startDate) || Number.isNaN(Date.parse(values.startDate))) {
+    errors.startDate = "Start date must be a valid date (YYYY-MM-DD).";
   }
 
   if (!values.endDate || !values.endDate.trim()) {
     errors.endDate = "End date is required.";
+  } else if (!datePattern.test(values.endDate) || Number.isNaN(Date.parse(values.endDate))) {
+    errors.endDate = "End date must be a valid date (YYYY-MM-DD).";
   }
 
-  if (values.startDate?.trim() && values.endDate?.trim() && values.startDate >= values.endDate) {
+  if (!errors.startDate && !errors.endDate && values.startDate >= values.endDate) {
     errors.endDate = "End date must be later than start date.";
   }
 

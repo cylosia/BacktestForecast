@@ -10,6 +10,8 @@ from backtestforecast.observability import get_logger
 
 logger = get_logger("events")
 
+_RESERVED_PAYLOAD_KEYS = frozenset({"v", "status", "job_id"})
+
 _redis_client = None
 _redis_lock = threading.Lock()
 _atexit_registered = False
@@ -77,9 +79,8 @@ def publish_job_status(
     from backtestforecast.observability.metrics import REDIS_CONNECTION_ERRORS_TOTAL
 
     channel = f"job:{job_type}:{job_id}:status"
-    _RESERVED_KEYS = {"status", "job_id"}
-    safe_meta = {k: v for k, v in (metadata or {}).items() if k not in _RESERVED_KEYS}
-    payload = json.dumps({"status": status, "job_id": str(job_id), **safe_meta})
+    safe_meta = {k: v for k, v in (metadata or {}).items() if k not in _RESERVED_PAYLOAD_KEYS}
+    payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), **safe_meta})
 
     try:
         for attempt in range(2):

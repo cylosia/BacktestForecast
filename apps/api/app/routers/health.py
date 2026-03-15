@@ -6,31 +6,59 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from backtestforecast.config import get_settings
+from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.db.session import ping_database
 from backtestforecast.security.rate_limits import ping_redis
 
 router = APIRouter(tags=["health"])
 
 
+_broker_redis = None
+_broker_redis_lock = Lock()
+
+
+def _invalidate_broker_redis() -> None:
+    global _broker_redis
+    with _broker_redis_lock:
+        client = _broker_redis
+        _broker_redis = None
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+register_invalidation_callback(_invalidate_broker_redis)
+
+
 def _ping_broker_redis() -> bool:
     """Ping the Celery broker Redis (distinct from the rate-limit/cache Redis)."""
+    global _broker_redis
     try:
         from redis import Redis
-        settings = get_settings()
-        r = Redis.from_url(settings.redis_url, socket_timeout=2.0, socket_connect_timeout=2.0)
-        try:
-            return bool(r.ping())
-        finally:
-            r.close()
+        with _broker_redis_lock:
+            if _broker_redis is None:
+                settings = get_settings()
+                _broker_redis = Redis.from_url(
+                    settings.redis_url,
+                    socket_timeout=2.0,
+                    socket_connect_timeout=2.0,
+                )
+        return bool(_broker_redis.ping())
     except Exception:
+        with _broker_redis_lock:
+            if _broker_redis is not None:
+                try:
+                    _broker_redis.close()
+                except Exception:
+                    pass
+                _broker_redis = None
         return False
 
-_health_window: deque[float] = deque()
-_health_lock = Lock()
-# Per-worker (in-process) limit — not a global cluster-wide rate limit.
-# Each Uvicorn/Gunicorn worker enforces this independently.
 _HEALTH_MAX_RPM = 120
+_health_window: deque[float] = deque(maxlen=_HEALTH_MAX_RPM + 50)
+_health_lock = Lock()
 
 HEALTH_VERSION = "0.1.0"
 
@@ -68,13 +96,22 @@ def ready(request: Request) -> JSONResponse:
             content["broker"] = "up" if broker_up else "down"
         return JSONResponse(status_code=503, content=content)
 
+    if not broker_up:
+        content = {"status": "degraded", "version": HEALTH_VERSION}
+        if settings.app_env not in ("production", "staging"):
+            content["environment"] = settings.app_env
+            content["database"] = "up"
+            content["redis"] = "up" if redis_up else "down"
+            content["broker"] = "down"
+        return JSONResponse(status_code=503, content=content)
+
     if not redis_up and settings.rate_limit_fail_closed:
         content = {"status": "unavailable", "version": HEALTH_VERSION}
         if settings.app_env not in ("production", "staging"):
             content["environment"] = settings.app_env
             content["database"] = "up"
             content["redis"] = "down"
-            content["broker"] = "up" if broker_up else "down"
+            content["broker"] = "up"
             content["rate_limit_mode"] = "fail_closed"
         return JSONResponse(status_code=503, content=content)
 

@@ -42,8 +42,10 @@ class AuditEventRepository:
         high-volume event types.
         """
         if event.subject_id is not None:
-            combined = f"{event.subject_id}:{uuid4()}"
-            event.subject_id = combined[:255]
+            suffix = f":{uuid4()}"
+            max_base = 255 - len(suffix)
+            base = str(event.subject_id)[:max_base]
+            event.subject_id = f"{base}{suffix}"
         nested = self.session.begin_nested()
         self.session.add(event)
         try:

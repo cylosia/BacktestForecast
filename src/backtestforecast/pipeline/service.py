@@ -416,12 +416,7 @@ class NightlyPipelineService:
                 sample_factor = min(trade_count / 10.0, 1.0)
                 score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
 
-                # NOTE: Survivorship bias — candidates with score <= 0 are filtered
-                # out entirely. This means the pipeline only surfaces historically
-                # profitable configurations, which may overstate expected future
-                # performance. This is a known limitation documented in
-                # docs/known-limitations.md.
-                if score <= 0:
+                if score < 0:
                     return None
 
                 return QuickBacktestResult(

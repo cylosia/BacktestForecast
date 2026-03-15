@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, defer
 
 from backtestforecast.models import ExportJob
 
+_MAX_PAGE_SIZE = 200
+
 
 class ExportJobRepository:
     def __init__(self, session: Session) -> None:
@@ -46,7 +48,7 @@ class ExportJobRepository:
             .where(ExportJob.user_id == user_id)
             .options(defer(ExportJob.content_bytes))
             .order_by(desc(ExportJob.created_at))
-            .limit(limit)
+            .limit(min(limit, _MAX_PAGE_SIZE))
         )
         return list(self.session.scalars(stmt))
 

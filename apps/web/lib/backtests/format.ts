@@ -23,7 +23,8 @@ const percentFormatter = new Intl.NumberFormat("en-US", {
 export function toNumber(value: NumericValue | null | undefined): number {
   if (value == null || value === "") return NaN;
   const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : NaN;
+  if (!Number.isFinite(n)) return NaN;
+  return n === 0 ? 0 : n;
 }
 
 export function formatCurrency(value: NumericValue | null | undefined): string {
@@ -42,12 +43,6 @@ export function formatNumber(value: NumericValue | null | undefined): string {
   const n = toNumber(value);
   if (Number.isNaN(n)) return "—";
   return numberFormatter.format(n);
-}
-
-export function formatRatio(value: NumericValue | null | undefined): string {
-  const n = toNumber(value);
-  if (Number.isNaN(n)) return "—";
-  return `${percentFormatter.format(n * 100)}%`;
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {

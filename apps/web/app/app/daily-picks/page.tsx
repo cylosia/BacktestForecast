@@ -22,9 +22,9 @@ function regimeColor(regime: string): string {
   }
 }
 
-function asNumericRecord(value: unknown): Record<string, number> {
+function asNumericRecord(value: unknown): Record<string, number | null | undefined> {
   if (value != null && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, number>;
+    return value as Record<string, number | null | undefined>;
   }
   return {};
 }

@@ -322,7 +322,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: playwright-report
+          name: playwright-report-ci
           path: apps/web/playwright-report/
           retention-days: 7
 
@@ -444,6 +444,7 @@ jobs:
           context: .
           file: apps/api/Dockerfile
           tags: backtestforecast-api:ci
+          load: true
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -454,6 +455,7 @@ jobs:
           context: .
           file: apps/worker/Dockerfile
           tags: backtestforecast-worker:ci
+          load: true
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -464,6 +466,7 @@ jobs:
           context: .
           file: apps/web/Dockerfile
           tags: backtestforecast-web:ci
+          load: true
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -474,3 +477,19 @@ jobs:
             NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
             NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app/dashboard
             NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app/dashboard
+
+      - name: Verify API container starts
+        run: |
+          docker run -d --name ci-api -p 8000:8000 \
+            -e DATABASE_URL=sqlite:///tmp/test.db \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            -e APP_ENV=test \
+            backtestforecast-api:ci
+          sleep 5
+          docker logs ci-api
+          curl --fail --silent --max-time 5 http://localhost:8000/health/live || {
+            echo "API container failed to start"
+            docker logs ci-api
+            exit 1
+          }
+          docker stop ci-api

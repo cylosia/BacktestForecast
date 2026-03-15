@@ -144,6 +144,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
           placeholder="e.g. Conservative SPY Long Call"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSave(); } }}
         />
       </div>
 
@@ -155,6 +156,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
           placeholder="Brief note about this configuration"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
         />
       </div>
 

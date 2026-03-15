@@ -457,7 +457,7 @@ class ScanService:
                 status="queued",
                 mode=source.mode,
                 plan_tier_snapshot=owner.plan_tier,
-                job_kind="scheduled_refresh",
+                job_kind="refresh",
                 request_hash=source.request_hash,
                 refresh_key=refresh_key,
                 refresh_daily=source.refresh_daily,

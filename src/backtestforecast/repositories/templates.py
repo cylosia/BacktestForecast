@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.models import BacktestTemplate
 
+_MAX_PAGE_SIZE = 200
+
 
 class BacktestTemplateRepository:
     def __init__(self, session: Session) -> None:
@@ -32,7 +34,7 @@ class BacktestTemplateRepository:
             .where(BacktestTemplate.user_id == user_id)
             .order_by(desc(BacktestTemplate.updated_at))
             .offset(offset)
-            .limit(limit)
+            .limit(min(limit, _MAX_PAGE_SIZE))
         )
         return list(self.session.scalars(stmt))
 

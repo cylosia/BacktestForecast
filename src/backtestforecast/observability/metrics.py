@@ -123,6 +123,11 @@ ACTIVE_SSE_CONNECTIONS = Gauge(
     "Number of currently active SSE connections",
 )
 
+CELERY_WORKERS_ONLINE = Gauge(
+    "celery_workers_online",
+    "Number of Celery workers reporting via heartbeat",
+)
+
 CACHE_HITS_TOTAL = Counter(
     "cache_hits_total",
     "Cache lookups that returned a hit",
@@ -294,8 +299,22 @@ def _refresh_pool_gauges() -> None:
 
 
 def metrics_response() -> Response:
+    import os
+
     _refresh_pool_gauges()
+
+    prom_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if prom_dir:
+        from prometheus_client import CollectorRegistry
+        from prometheus_client.multiprocess import MultiProcessCollector
+
+        registry = CollectorRegistry()
+        MultiProcessCollector(registry)
+        content = generate_latest(registry)
+    else:
+        content = generate_latest()
+
     return Response(
-        content=generate_latest(),
+        content=content,
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )

@@ -1,10 +1,18 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
   title: "BacktestForecast.com",
   description: "Historical options backtesting for retail traders.",
+  openGraph: {
+    title: "BacktestForecast.com",
+    description: "Historical options backtesting for retail traders.",
+    type: "website",
+  },
 };
 
 // TODO: Add dark mode toggle. Dark mode variants (dark:...) are defined
@@ -15,7 +23,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={inter.className}>
       <body className="min-h-screen bg-background text-foreground antialiased">
         <a
           href="#main-content"

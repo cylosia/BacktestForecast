@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, noload, selectinload
 
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade
 
+_MAX_PAGE_SIZE = 200
+
 
 class BacktestRunRepository:
     def __init__(self, session: Session) -> None:
@@ -18,7 +20,8 @@ class BacktestRunRepository:
         self.session.flush()
         return run
 
-    def get_by_id(self, run_id: UUID, *, for_update: bool = False) -> BacktestRun | None:
+    def get_by_id_unfiltered(self, run_id: UUID, *, for_update: bool = False) -> BacktestRun | None:
+        """Fetch by PK without ownership filter. WORKER-ONLY — never call from API routes."""
         stmt = select(BacktestRun).where(BacktestRun.id == run_id)
         if for_update:
             stmt = stmt.with_for_update()
@@ -54,7 +57,7 @@ class BacktestRunRepository:
         )
         if created_since is not None:
             stmt = stmt.where(BacktestRun.created_at >= created_since)
-        stmt = stmt.order_by(desc(BacktestRun.created_at)).offset(offset).limit(limit)
+        stmt = stmt.order_by(desc(BacktestRun.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 
     def count_for_user(
@@ -138,3 +141,58 @@ class BacktestRunRepository:
             .limit(limit)
         )
         return list(self.session.scalars(stmt))
+
+    def get_trades_for_runs(
+        self, run_ids: list[UUID], *, limit_per_run: int = 10_000, user_id: UUID,
+    ) -> dict[UUID, list[BacktestTrade]]:
+        if not run_ids:
+            return {}
+        from sqlalchemy import func as sa_func
+        from sqlalchemy.orm import aliased
+        row_num = sa_func.row_number().over(
+            partition_by=BacktestTrade.run_id,
+            order_by=BacktestTrade.entry_date,
+        ).label("rn")
+        sub = (
+            select(BacktestTrade.id, row_num)
+            .join(BacktestRun, BacktestTrade.run_id == BacktestRun.id)
+            .where(BacktestTrade.run_id.in_(run_ids), BacktestRun.user_id == user_id)
+            .subquery()
+        )
+        stmt = (
+            select(BacktestTrade)
+            .join(sub, BacktestTrade.id == sub.c.id)
+            .where(sub.c.rn <= limit_per_run)
+            .order_by(BacktestTrade.run_id, BacktestTrade.entry_date)
+        )
+        result: dict[UUID, list[BacktestTrade]] = {rid: [] for rid in run_ids}
+        for trade in self.session.scalars(stmt):
+            result[trade.run_id].append(trade)
+        return result
+
+    def get_equity_points_for_runs(
+        self, run_ids: list[UUID], *, limit_per_run: int = 10_000, user_id: UUID,
+    ) -> dict[UUID, list[BacktestEquityPoint]]:
+        if not run_ids:
+            return {}
+        from sqlalchemy import func as sa_func
+        row_num = sa_func.row_number().over(
+            partition_by=BacktestEquityPoint.run_id,
+            order_by=BacktestEquityPoint.trade_date,
+        ).label("rn")
+        sub = (
+            select(BacktestEquityPoint.id, row_num)
+            .join(BacktestRun, BacktestEquityPoint.run_id == BacktestRun.id)
+            .where(BacktestEquityPoint.run_id.in_(run_ids), BacktestRun.user_id == user_id)
+            .subquery()
+        )
+        stmt = (
+            select(BacktestEquityPoint)
+            .join(sub, BacktestEquityPoint.id == sub.c.id)
+            .where(sub.c.rn <= limit_per_run)
+            .order_by(BacktestEquityPoint.run_id, BacktestEquityPoint.trade_date)
+        )
+        result: dict[UUID, list[BacktestEquityPoint]] = {rid: [] for rid in run_ids}
+        for pt in self.session.scalars(stmt):
+            result[pt.run_id].append(pt)
+        return result

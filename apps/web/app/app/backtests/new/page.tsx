@@ -10,12 +10,18 @@ export default async function NewBacktestPage({
   searchParams: Promise<{ template?: string }>;
 }) {
   try {
-    const [user, templateData, catalog, params] = await Promise.all([
+    const [userRes, templateRes, catalogRes, params] = await Promise.allSettled([
       getCurrentUser(),
       getTemplates(),
       getStrategyCatalog(),
       searchParams,
     ]);
+    if (userRes.status === "rejected") throw userRes.reason;
+    if (templateRes.status === "rejected") throw templateRes.reason;
+    const user = userRes.value;
+    const templateData = templateRes.value;
+    const catalog = catalogRes.status === "fulfilled" ? catalogRes.value : undefined;
+    const resolvedParams = params.status === "fulfilled" ? params.value : {};
     const quota = buildBacktestQuota(user);
 
     return (
@@ -24,16 +30,16 @@ export default async function NewBacktestPage({
           <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Manual backtest</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">Create a new backtest</h1>
           <p className="mt-2 max-w-2xl text-muted-foreground">
-            Choose from {catalog.total_strategies} strategies across single-leg, spreads, multi-leg,
-            and income categories. Apply a template to pre-fill the form.
+            {catalog ? `Choose from ${catalog.total_strategies} strategies across single-leg, spreads, multi-leg, and income categories.` : "Choose a strategy and configure your backtest."}
+            {" "}Apply a template to pre-fill the form.
           </p>
         </div>
 
         <BacktestForm
           quota={quota}
           templates={templateData.items}
-          catalogGroups={catalog.groups}
-          initialTemplateId={params.template}
+          catalogGroups={catalog?.groups}
+          initialTemplateId={resolvedParams.template}
         />
       </div>
     );

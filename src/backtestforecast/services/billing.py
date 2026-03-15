@@ -194,7 +194,7 @@ class BillingService:
                 logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
                 STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
                 return {"status": "duplicate", "event_type": event_type}
-            self.session.commit()
+            self.session.flush()
         except IntegrityError as ie:
             self.session.rollback()
             if "uq_audit_events_" in str(getattr(ie, "orig", ie)):
@@ -368,6 +368,9 @@ class BillingService:
         self.session.add(user)
         self.session.flush()
 
+        if effective_tier == PlanTier.FREE.value and old_state.get("plan_tier") != PlanTier.FREE.value:
+            self._cancel_in_flight_jobs(user.id)
+
         try:
             log_billing_event(
                 user_id=user.id,
@@ -379,7 +382,7 @@ class BillingService:
         except Exception:
             logger.warning("billing.log_event_failed", user_id=str(user.id), exc_info=True)
 
-        self.audit.record(
+        self.audit.record_always(
             event_type="billing.subscription.synced",
             subject_type="stripe_subscription",
             subject_id=subscription_id,
@@ -399,6 +402,22 @@ class BillingService:
             plan_tier=effective_tier,
             status=status,
         )
+
+    def _cancel_in_flight_jobs(self, user_id: UUID) -> None:
+        """Cancel queued/running jobs when a user's subscription is revoked."""
+        from sqlalchemy import update as sa_update
+        from backtestforecast.models import BacktestRun, ScannerJob, ExportJob, SymbolAnalysis
+        _ACTIVE = ("queued", "running")
+        cancelled = 0
+        for model_cls in (BacktestRun, ScannerJob, ExportJob, SymbolAnalysis):
+            result = self.session.execute(
+                sa_update(model_cls)
+                .where(model_cls.user_id == user_id, model_cls.status.in_(_ACTIVE))
+                .values(status="cancelled")
+            )
+            cancelled += result.rowcount
+        if cancelled > 0:
+            logger.info("billing.in_flight_jobs_cancelled", user_id=str(user_id), count=cancelled)
 
     def _get_or_create_customer(self, user: User) -> str:
         if user.stripe_customer_id:
@@ -420,6 +439,10 @@ class BillingService:
         )
         self.session.flush()
         if result.rowcount == 0:
+            try:
+                client.customers.delete(customer.id)
+            except Exception:
+                logger.warning("billing.orphan_customer_cleanup_failed", customer_id=customer.id)
             self.session.refresh(user)
             return user.stripe_customer_id
         return customer.id

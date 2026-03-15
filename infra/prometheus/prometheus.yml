@@ -8,7 +8,7 @@ rule_files:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: []
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   - job_name: "backtestforecast-api"
@@ -16,6 +16,12 @@ scrape_configs:
     scheme: http
     static_configs:
       - targets: ["api:8000"]
-    # The /metrics endpoint requires METRICS_TOKEN in production.
-    # Uncomment and set the bearer token when running in production:
-    # bearer_token: "<METRICS_TOKEN>"
+    # In production, set METRICS_TOKEN secret and uncomment the line below:
+    bearer_token_file: /etc/prometheus/secrets/metrics_token
+
+  - job_name: "backtestforecast-worker"
+    metrics_path: /metrics
+    scheme: http
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["worker:9090"]

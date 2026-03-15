@@ -43,7 +43,8 @@ export function CompareEquityCurves({
 
   for (const run of nonEmptyRuns) {
     for (const point of run.equity_curve) {
-      const eq = toNumber(point.equity);
+      const raw = toNumber(point.equity);
+      const eq = Number.isFinite(raw) ? raw : 0;
       if (eq < globalMin) globalMin = eq;
       if (eq > globalMax) globalMax = eq;
     }
@@ -52,20 +53,22 @@ export function CompareEquityCurves({
     }
   }
 
+  if (!Number.isFinite(globalMin)) globalMin = 0;
+  if (!Number.isFinite(globalMax)) globalMax = 0;
   const range = globalMax - globalMin || 1;
 
-  // X-axis uses index-based positioning (not date-aligned) since runs
-  // may span different date ranges. Each run fills the full chart width.
   function toPath(run: BacktestRunDetailResponse): string {
     const points = run.equity_curve;
     const count = points.length;
     return points
       .map((point, index) => {
+        const raw = toNumber(point.equity);
+        const eq = Number.isFinite(raw) ? raw : 0;
         const x = PADDING_X + (index / Math.max(count - 1, 1)) * (WIDTH - PADDING_X * 2);
         const y =
           HEIGHT -
           PADDING_Y -
-          ((toNumber(point.equity) - globalMin) / range) * (HEIGHT - PADDING_Y * 2);
+          ((eq - globalMin) / range) * (HEIGHT - PADDING_Y * 2);
         return `${index === 0 ? "M" : "L"} ${x} ${y}`;
       })
       .join(" ");

@@ -10,6 +10,7 @@ groups:
           severity: warning
         annotations:
           summary: "Reaper re-dispatched >5 stuck jobs in 10 minutes"
+          runbook_url: "https://docs.internal/runbooks/stuck-jobs"
           description: >-
             The job reaper has re-dispatched {{ $value }} stale jobs in the
             last 10 minutes.  Investigate worker health and queue depth.
@@ -27,6 +28,7 @@ groups:
           severity: critical
         annotations:
           summary: "Celery task failure rate >10%"
+          runbook_url: "https://docs.internal/runbooks/task-failure-rate"
           description: >-
             More than 10% of Celery tasks are failing.  Check worker logs.
 
@@ -38,6 +40,7 @@ groups:
           severity: warning
         annotations:
           summary: "Audit dedupe constraint hit >20 times in 15 minutes"
+          runbook_url: "https://docs.internal/runbooks/audit-dedupe"
           description: >-
             Unusually high duplicate audit event insertion attempts.
             May indicate duplicate webhook deliveries or retry storms.
@@ -55,6 +58,7 @@ groups:
           severity: critical
         annotations:
           summary: "HTTP 5xx error rate >5%"
+          runbook_url: "https://docs.internal/runbooks/http-error-rate"
           description: >-
             More than 5% of HTTP requests are returning server errors.
 
@@ -68,6 +72,7 @@ groups:
           severity: warning
         annotations:
           summary: "P95 HTTP latency >5 seconds"
+          runbook_url: "https://docs.internal/runbooks/high-latency"
           description: >-
             API response time at p95 has exceeded 5 seconds.
 
@@ -79,6 +84,7 @@ groups:
           severity: warning
         annotations:
           summary: "Celery queue depth >100 for {{ $labels.queue }}"
+          runbook_url: "https://docs.internal/runbooks/queue-depth"
           description: >-
             Queue {{ $labels.queue }} has {{ $value }} pending messages.
             Workers may be under-provisioned or stuck.
@@ -90,6 +96,7 @@ groups:
           severity: warning
         annotations:
           summary: "Dead letter queue has {{ $value }} items"
+          runbook_url: "https://docs.internal/runbooks/dead-letter-queue"
           description: "The DLQ has had items for >15 minutes. Check /admin/dlq for details."
 
       - alert: DLQDepthHigh
@@ -100,6 +107,7 @@ groups:
           severity: critical
         annotations:
           summary: "Dead-letter queue depth >10"
+          runbook_url: "https://docs.internal/runbooks/dead-letter-queue"
           description: >-
             {{ $value }} messages in the dead-letter queue.  Tasks are
             exhausting retries.  Review DLQ contents via /admin/dlq.
@@ -112,6 +120,7 @@ groups:
           severity: critical
         annotations:
           summary: "Circuit breaker open for {{ $labels.service }}"
+          runbook_url: "https://docs.internal/runbooks/circuit-breaker"
           description: >-
             The circuit breaker for {{ $labels.service }} has been open
             for over 2 minutes.  Downstream service may be unavailable.
@@ -129,6 +138,7 @@ groups:
           severity: warning
         annotations:
           summary: "Backtest job failure rate >10%"
+          runbook_url: "https://docs.internal/runbooks/backtest-failures"
           description: >-
             More than 10% of backtest runs are failing over the last 15 minutes.
 
@@ -145,6 +155,7 @@ groups:
           severity: warning
         annotations:
           summary: "Scan job failure rate >10%"
+          runbook_url: "https://docs.internal/runbooks/scan-failures"
           description: >-
             More than 10% of scan jobs are failing over the last 15 minutes.
 
@@ -156,6 +167,7 @@ groups:
           severity: warning
         annotations:
           summary: "Active SSE connections >500"
+          runbook_url: "https://docs.internal/runbooks/sse-connections"
           description: >-
             {{ $value }} active SSE connections.  This may exhaust
             file descriptors or Redis pub/sub capacity.
@@ -168,6 +180,7 @@ groups:
           severity: warning
         annotations:
           summary: "Database connection pool >80% utilised"
+          runbook_url: "https://docs.internal/runbooks/db-pool"
           description: >-
             Connection pool is nearing capacity.  Consider increasing
             DB_POOL_SIZE or DB_POOL_MAX_OVERFLOW.
@@ -180,27 +193,30 @@ groups:
           severity: critical
         annotations:
           summary: "Redis connection failures detected"
+          runbook_url: "https://docs.internal/runbooks/redis-connectivity"
           description: >-
             Multiple Redis connection errors in the last 5 minutes.
             Rate limiting, caching, and task brokering may be degraded.
 
       - alert: NoWorkersOnline
-        expr: sum(celery_workers_online) == 0 or absent(celery_workers_online) == 1
+        expr: celery_workers_online == 0 or absent(celery_workers_online)
         for: 2m
         labels:
           severity: critical
         annotations:
           summary: "No Celery workers are online — all background jobs are stalled"
+          runbook_url: "https://docs.internal/runbooks/no-workers"
 
       - alert: NightlyPipelineMissing
         expr: |
           increase(nightly_pipeline_runs_total[26h]) == 0
-          or absent(increase(nightly_pipeline_runs_total[26h])) == 1
+          or absent(nightly_pipeline_runs_total)
         for: 30m
         labels:
           severity: critical
         annotations:
           summary: "Nightly pipeline has not started in the last 26 hours"
+          runbook_url: "https://docs.internal/runbooks/nightly-pipeline"
 
       - alert: NightlyPipelineFailed
         expr: |
@@ -210,6 +226,21 @@ groups:
           severity: warning
         annotations:
           summary: "Nightly pipeline run failed"
+          runbook_url: "https://docs.internal/runbooks/nightly-pipeline"
           description: >-
             A nightly pipeline run has failed.  Users may see stale
             daily picks and market analysis data.
+
+      - alert: ExpiredExportsNotCleaned
+        expr: |
+          increase(export_jobs_total{status="expired"}[24h]) == 0
+          and sum(export_jobs_total{status="succeeded"}) > 0
+        for: 25h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Expired exports are not being cleaned up"
+          runbook_url: "https://docs.internal/runbooks/export-cleanup"
+          description: >-
+            No exports have been transitioned to 'expired' in the last 24 hours
+            despite active export jobs. Check the reconcile_s3_orphans task.

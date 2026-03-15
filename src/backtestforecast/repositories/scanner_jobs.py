@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, noload, selectinload
 
 from backtestforecast.models import ScannerJob, ScannerRecommendation
 
+_MAX_PAGE_SIZE = 200
+
 
 class ScannerJobRepository:
     def __init__(self, session: Session) -> None:
@@ -25,7 +27,7 @@ class ScannerJobRepository:
             .options(noload(ScannerJob.recommendations))
             .order_by(desc(ScannerJob.created_at))
             .offset(offset)
-            .limit(limit)
+            .limit(min(limit, _MAX_PAGE_SIZE))
         )
         return list(self.session.scalars(stmt))
 

@@ -76,6 +76,7 @@ celery_app.conf.task_routes = {
     "exports.generate": {"queue": "exports"},
     "pipeline.nightly_scan": {"queue": "pipeline"},
     "analysis.deep_symbol": {"queue": "research"},
+    "maintenance.cleanup_audit_events": {"queue": "maintenance"},
 }
 
 # RedBeat loads these entries on first run and stores them in Redis.
@@ -99,6 +100,10 @@ celery_app.conf.beat_schedule = {
         "task": "maintenance.reconcile_s3_orphans",
         "schedule": crontab(hour=3, minute=30),
     },
+    "cleanup-audit-events-weekly": {
+        "task": "maintenance.cleanup_audit_events",
+        "schedule": crontab(hour=2, minute=0, day_of_week=0),
+    },
 }
 
 
@@ -119,9 +124,77 @@ def _clear_task_context(task_id, task, *args, **kwargs):  # type: ignore[no-unty
     structlog.contextvars.clear_contextvars()
 
 
+def _start_worker_metrics_server() -> None:
+    """Start a lightweight HTTP server to expose Prometheus metrics from the worker process."""
+    import os
+    import threading
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+
+    port = int(os.environ.get("WORKER_METRICS_PORT", "9090"))
+
+    class _MetricsHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/metrics":
+                from prometheus_client import generate_latest
+                body = generate_latest()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            pass
+
+    server = HTTPServer(("0.0.0.0", port), _MetricsHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    _shutdown_logger.info("worker.metrics_server_started", port=port)
+
+
+_worker_heartbeat_key: str | None = None
+_heartbeat_thread = None
+
+
+def _start_heartbeat_loop() -> None:
+    """Set a TTL key in Redis every 30s so the reaper can count live workers."""
+    import os
+    import threading
+    import time
+
+    global _worker_heartbeat_key
+    pid = os.getpid()
+    hostname = os.environ.get("HOSTNAME", f"worker-{pid}")
+    _worker_heartbeat_key = f"worker:heartbeat:{hostname}:{pid}"
+
+    def _loop() -> None:
+        from redis import Redis
+        while True:
+            try:
+                r = Redis.from_url(settings.redis_url, socket_timeout=5)
+                r.setex(_worker_heartbeat_key, 90, "1")
+                r.close()
+            except Exception:
+                pass
+            time.sleep(30)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+
+
 @worker_ready.connect
 def _on_worker_ready(**kwargs):  # type: ignore[no-untyped-def]
     _shutdown_logger.info("worker.ready")
+    try:
+        _start_heartbeat_loop()
+    except Exception:
+        _shutdown_logger.warning("worker.heartbeat_failed", exc_info=True)
+    try:
+        _start_worker_metrics_server()
+    except Exception:
+        _shutdown_logger.warning("worker.metrics_server_failed", exc_info=True)
 
 
 @worker_shutting_down.connect
@@ -137,6 +210,14 @@ def _on_worker_shutting_down(sig, how, exitcode, **kwargs):  # type: ignore[no-u
 @worker_shutdown.connect
 def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
     _shutdown_logger.info("worker.shutdown_cleanup_started")
+    if _worker_heartbeat_key:
+        try:
+            from redis import Redis
+            r = Redis.from_url(settings.redis_url, socket_timeout=5)
+            r.delete(_worker_heartbeat_key)
+            r.close()
+        except Exception:
+            pass
     try:
         from backtestforecast.db.session import _get_engine
 

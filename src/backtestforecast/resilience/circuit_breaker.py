@@ -1,11 +1,12 @@
 """Simple circuit breaker for external API calls."""
 from __future__ import annotations
 
+import asyncio
 import time
 import threading
 from enum import Enum
 
-from backtestforecast.observability.metrics import CIRCUIT_BREAKER_TRIPS_TOTAL
+from backtestforecast.observability.metrics import CIRCUIT_BREAKER_STATE, CIRCUIT_BREAKER_TRIPS_TOTAL
 
 
 class CircuitState(Enum):
@@ -53,12 +54,17 @@ class CircuitBreaker:
         with self._lock:
             return self._state != CircuitState.CLOSED
 
+    def _update_state_gauge(self) -> None:
+        state_val = {CircuitState.CLOSED: 0, CircuitState.HALF_OPEN: 1, CircuitState.OPEN: 2}
+        CIRCUIT_BREAKER_STATE.labels(service=self.name).set(state_val.get(self._state, 0))
+
     def record_success(self) -> None:
         with self._lock:
             self._failure_count = 0
             self._state = CircuitState.CLOSED
             self._half_open_calls = 0
             self._probe_in_flight = False
+            self._update_state_gauge()
 
     def record_failure(self) -> None:
         with self._lock:
@@ -73,6 +79,7 @@ class CircuitBreaker:
                 self._probe_in_flight = False
             if was_closed and self._state == CircuitState.OPEN:
                 CIRCUIT_BREAKER_TRIPS_TOTAL.labels(service=self.name).inc()
+            self._update_state_gauge()
 
     def allow_request(self) -> bool:
         with self._lock:
@@ -100,3 +107,14 @@ class CircuitBreaker:
             self._last_failure_time = None
             self._half_open_calls = 0
             self._probe_in_flight = False
+            self._update_state_gauge()
+
+    async def allow_request_async(self) -> bool:
+        """Non-blocking version of allow_request for async callers."""
+        return await asyncio.to_thread(self.allow_request)
+
+    async def record_success_async(self) -> None:
+        await asyncio.to_thread(self.record_success)
+
+    async def record_failure_async(self) -> None:
+        await asyncio.to_thread(self.record_failure)

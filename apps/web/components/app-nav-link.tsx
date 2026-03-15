@@ -15,7 +15,10 @@ export function AppNavLink({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const isActive = pathname === href || (href !== "/app" && pathname.startsWith(href + "/"));
+  const isExact = pathname === href;
+  const isChildRoute = !isExact && href !== "/app" && pathname.startsWith(href + "/");
+  const childSegment = isChildRoute ? pathname.slice(href.length + 1).split("/")[0] : "";
+  const isActive = isExact || (isChildRoute && childSegment !== "new" && childSegment !== "compare");
 
   return (
     <Link

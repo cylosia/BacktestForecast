@@ -159,7 +159,7 @@ class BacktestService:
         """Execute the backtest for a previously enqueued run. Called by the Celery worker."""
         from sqlalchemy import update as sa_update
 
-        run = self.run_repository.get_by_id(run_id, for_update=True)
+        run = self.run_repository.get_by_id_unfiltered(run_id, for_update=True)
         if run is None:
             raise NotFoundError("Backtest run not found.")
 
@@ -217,7 +217,7 @@ class BacktestService:
         finally:
             self.session.expire_all()
 
-        stored = self.run_repository.get_by_id(run.id)
+        stored = self.run_repository.get_by_id_unfiltered(run.id)
         if stored is None:
             raise NotFoundError("Backtest run was executed but could not be reloaded.")
         return stored
@@ -399,12 +399,15 @@ class BacktestService:
 
         ordered = [run_map[rid] for rid in request.run_ids]
         trade_limit = 10_000
+        all_run_ids = [r.id for r in ordered]
+        trades_by_run = self.run_repository.get_trades_for_runs(all_run_ids, limit_per_run=trade_limit, user_id=user.id)
+        equity_by_run = self.run_repository.get_equity_points_for_runs(all_run_ids, limit_per_run=EQUITY_CURVE_LIMIT, user_id=user.id)
         return CompareBacktestsResponse(
             items=[
                 self._to_detail_response(
                     run,
-                    trades=self.run_repository.get_trades_for_run(run.id, limit=trade_limit, user_id=user.id),
-                    equity_points=self.run_repository.get_equity_points_for_run(run.id, limit=EQUITY_CURVE_LIMIT, user_id=user.id),
+                    trades=trades_by_run.get(run.id, []),
+                    equity_points=equity_by_run.get(run.id, []),
                 )
                 for run in ordered
             ],

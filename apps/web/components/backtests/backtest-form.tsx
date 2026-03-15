@@ -44,6 +44,7 @@ export function BacktestForm({
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
   const submitAbortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     return () => { submitAbortRef.current?.abort(); };
@@ -66,6 +67,8 @@ export function BacktestForm({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (submittingRef.current) return;
 
     if (quota.reached) {
       setStatus("error");
@@ -91,6 +94,7 @@ export function BacktestForm({
     setStatus("submitting");
     setServerMessage(null);
     setErrorCode(undefined);
+    submittingRef.current = true;
 
     try {
       const token = await getToken();
@@ -116,11 +120,19 @@ export function BacktestForm({
       setStatus("error");
       setServerMessage(message);
       setErrorCode(code);
+    } finally {
+      submittingRef.current = false;
     }
   }
 
   function updateValues(patch: Partial<BacktestFormValues>) {
     setValues((current) => ({ ...current, ...patch }));
+    setErrors({});
+    if (status === "error") {
+      setStatus("idle");
+      setServerMessage(null);
+      setErrorCode(undefined);
+    }
   }
 
   return (

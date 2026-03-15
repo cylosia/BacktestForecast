@@ -349,6 +349,21 @@ class OptionsBacktestEngine:
         total_commissions = position.entry_commission_total + exit_commission
         total_slippage = entry_slippage + exit_slippage
         net_pnl = gross_pnl - total_commissions - total_slippage
+        for name, val in [("gross_pnl", gross_pnl), ("net_pnl", net_pnl), ("exit_value_per_unit", exit_value_per_unit)]:
+            if not math.isfinite(val):
+                logger.warning("engine.non_finite_trade_value", field=name, value=str(val), ticker=position.display_ticker)
+        if not math.isfinite(gross_pnl):
+            gross_pnl = 0.0
+        if not math.isfinite(net_pnl):
+            net_pnl = 0.0
+        if not math.isfinite(exit_value_per_unit):
+            exit_value_per_unit = 0.0
+        if not math.isfinite(total_commissions):
+            total_commissions = 0.0
+        if not math.isfinite(total_slippage):
+            total_slippage = 0.0
+        if not math.isfinite(cash_delta):
+            cash_delta = 0.0
         expiration_date = position.scheduled_exit_date or (
             max(leg.expiration_date for leg in position.option_legs)
             if position.option_legs

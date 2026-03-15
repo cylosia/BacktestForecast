@@ -21,9 +21,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
 
-    database_url: str = "postgresql+psycopg://backtestforecast:backtestforecast@localhost:5432/backtestforecast"
-    redis_url: str = "redis://localhost:6379/0"
-    redis_password: str | None = None
+    database_url: str = Field(
+        default="postgresql+psycopg://backtestforecast:backtestforecast@localhost:5432/backtestforecast",
+        repr=False,
+    )
+    redis_url: str = Field(default="redis://localhost:6379/0", repr=False)
+    redis_password: str | None = Field(default=None, repr=False)
     # Separate Redis URL for non-broker usage (rate limiting, SSE pub/sub, caching).
     # Defaults to redis_url when not set.  In production, point this at a dedicated
     # Redis instance or database number to isolate cache/SSE traffic from Celery broker traffic.
@@ -305,8 +308,11 @@ class Settings(BaseSettings):
 
     @property
     def web_cors_origins(self) -> list[str]:
+        raw = self.web_cors_origins_raw.strip()
+        if not raw:
+            return []
         origins: list[str] = []
-        for origin in self.web_cors_origins_raw.split(","):
+        for origin in raw.split(","):
             origin = origin.strip()
             if not origin:
                 continue
@@ -314,6 +320,11 @@ class Settings(BaseSettings):
                 logger.warning("Skipping invalid CORS origin (must start with http:// or https://): %s", origin)
                 continue
             origins.append(origin)
+        if not origins and raw:
+            raise ValueError(
+                f"WEB_CORS_ORIGINS_RAW is set to '{raw}' but all entries were invalid. "
+                "Each origin must start with http:// or https://, or be '*'."
+            )
         return origins
 
     @property
@@ -344,8 +355,8 @@ class Settings(BaseSettings):
 
     # Model validators run in definition order:
     # 1. apply_env_overrides — merges env-var CSV overrides
-    # 2. default_redis_cache_url — fills redis_cache_url from redis_url
-    # 3. validate_redis_consistency — injects password into URL
+    # 2. validate_redis_consistency — injects password into both redis_url and redis_cache_url
+    # 3. default_redis_cache_url — fills redis_cache_url from redis_url (after password injection)
     # 4. validate_production_security — enforces production invariants
     # Adding new validators? Place them before validate_production_security
     # so their effects are visible to the security checks.
@@ -358,22 +369,28 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def default_redis_cache_url(self) -> "Settings":
-        if not self.redis_cache_url:
-            self.redis_cache_url = self.redis_url
-        return self
-
-    @model_validator(mode="after")
     def validate_redis_consistency(self) -> "Settings":
-        if self.redis_password and "://:@" not in self.redis_url and "@" not in self.redis_url:
+        if self.redis_password:
             import urllib.parse
             from urllib.parse import urlparse, urlunparse
 
-            parsed = urlparse(self.redis_url)
-            if not parsed.password and parsed.hostname:
-                self.redis_url = urlunparse(
-                    parsed._replace(netloc=f":{urllib.parse.quote(self.redis_password, safe='')}@{parsed.hostname}" + (f":{parsed.port}" if parsed.port else ""))
-                )
+            for attr in ("redis_url", "redis_cache_url"):
+                url = getattr(self, attr, None)
+                if not url:
+                    continue
+                parsed = urlparse(url)
+                encoded_pw = urllib.parse.quote(self.redis_password, safe='')
+                host_part = parsed.hostname or "localhost"
+                if parsed.port:
+                    host_part = f"{host_part}:{parsed.port}"
+                new_netloc = f":{encoded_pw}@{host_part}"
+                setattr(self, attr, urlunparse(parsed._replace(netloc=new_netloc)))
+        return self
+
+    @model_validator(mode="after")
+    def default_redis_cache_url(self) -> "Settings":
+        if not self.redis_cache_url:
+            self.redis_cache_url = self.redis_url
         return self
 
     @model_validator(mode="after")

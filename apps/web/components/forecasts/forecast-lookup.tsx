@@ -55,6 +55,7 @@ export function ForecastLookup() {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       abortRef.current?.abort();
@@ -115,7 +116,7 @@ export function ForecastLookup() {
 
   return (
     <div className="space-y-6">
-      <form className="space-y-4" onSubmit={handleSubmit}>
+      <form className="space-y-4" onSubmit={handleSubmit} aria-label="Forecast lookup">
         <Card>
           <CardHeader>
             <CardTitle>Forecast lookup</CardTitle>
