@@ -9,10 +9,42 @@ Create Date: 2026-03-15
 """
 from __future__ import annotations
 
+import uuid
+
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.types import CHAR, TypeDecorator
 
-from backtestforecast.db.types import GUID, JSON_VARIANT
+
+class GUID(TypeDecorator[uuid.UUID]):
+    """Frozen copy of backtestforecast.db.types.GUID for migration stability."""
+
+    impl = CHAR(36)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):  # type: ignore[override]
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(PG_UUID(as_uuid=True))
+        return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect):  # type: ignore[override]
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value if dialect.name == "postgresql" else str(value)
+        coerced = uuid.UUID(str(value))
+        return coerced if dialect.name == "postgresql" else str(coerced)
+
+    def process_result_value(self, value, dialect):  # type: ignore[override]
+        if value is None or isinstance(value, uuid.UUID):
+            return value
+        return uuid.UUID(str(value))
+
+
+JSON_VARIANT = JSON().with_variant(JSONB, "postgresql")
 
 revision = "20260315_0001"
 down_revision = None
@@ -46,7 +78,7 @@ def upgrade() -> None:
         sa.Column("subscription_status", sa.String(32), nullable=True),
         sa.Column("subscription_billing_interval", sa.String(16), nullable=True),
         sa.Column("subscription_current_period_end", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("cancel_at_period_end", sa.Boolean(), nullable=False),
+        sa.Column("cancel_at_period_end", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("plan_updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -69,8 +101,8 @@ def upgrade() -> None:
         sa.Column("account_size", sa.Numeric(18, 4), nullable=False),
         sa.Column("risk_per_trade_pct", sa.Numeric(10, 4), nullable=False),
         sa.Column("commission_per_contract", sa.Numeric(18, 4), nullable=False),
-        sa.Column("input_snapshot_json", JSON_VARIANT, nullable=False),
-        sa.Column("warnings_json", JSON_VARIANT, nullable=False),
+        sa.Column("input_snapshot_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("warnings_json", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
         sa.Column("engine_version", sa.String(32), nullable=False),
         sa.Column("data_source", sa.String(32), nullable=False),
         sa.Column("idempotency_key", sa.String(80), nullable=True),
@@ -161,7 +193,7 @@ def upgrade() -> None:
         sa.Column("total_commissions", sa.Numeric(18, 4), nullable=False),
         sa.Column("entry_reason", sa.String(128), nullable=False),
         sa.Column("exit_reason", sa.String(128), nullable=False),
-        sa.Column("detail_json", JSON_VARIANT, nullable=False),
+        sa.Column("detail_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.UniqueConstraint("run_id", "entry_date", "option_ticker", name="uq_backtest_trades_dedup"),
         sa.CheckConstraint("quantity > 0", name="ck_backtest_trades_quantity_positive"),
     )
@@ -188,7 +220,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(120), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("strategy_type", sa.String(32), nullable=False),
-        sa.Column("config_json", JSON_VARIANT, nullable=False),
+        sa.Column("config_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("user_id", "name", name="uq_backtest_templates_user_name"),
@@ -219,8 +251,8 @@ def upgrade() -> None:
         sa.Column("candidate_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("evaluated_candidate_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("recommendation_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("request_snapshot_json", JSON_VARIANT, nullable=False),
-        sa.Column("warnings_json", JSON_VARIANT, nullable=False),
+        sa.Column("request_snapshot_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("warnings_json", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
         sa.Column("ranking_version", sa.String(32), nullable=False),
         sa.Column("engine_version", sa.String(32), nullable=False),
         sa.Column("celery_task_id", sa.String(64), nullable=True),
@@ -294,14 +326,14 @@ def upgrade() -> None:
         sa.Column("strategy_type", sa.String(32), nullable=False),
         sa.Column("rule_set_name", sa.String(120), nullable=False),
         sa.Column("rule_set_hash", sa.String(64), nullable=False),
-        sa.Column("request_snapshot_json", JSON_VARIANT, nullable=False),
-        sa.Column("summary_json", JSON_VARIANT, nullable=False),
-        sa.Column("warnings_json", JSON_VARIANT, nullable=False),
-        sa.Column("trades_json", JSON_VARIANT, nullable=False),
-        sa.Column("equity_curve_json", JSON_VARIANT, nullable=False),
-        sa.Column("historical_performance_json", JSON_VARIANT, nullable=False),
-        sa.Column("forecast_json", JSON_VARIANT, nullable=False),
-        sa.Column("ranking_features_json", JSON_VARIANT, nullable=False),
+        sa.Column("request_snapshot_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("summary_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("warnings_json", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
+        sa.Column("trades_json", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
+        sa.Column("equity_curve_json", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
+        sa.Column("historical_performance_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("forecast_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("ranking_features_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("scanner_job_id", "rank", name="uq_scanner_recommendations_job_rank"),
@@ -378,7 +410,7 @@ def upgrade() -> None:
         sa.Column("subject_type", sa.String(64), nullable=False),
         sa.Column("subject_id", sa.String(255), nullable=True),
         sa.Column("ip_hash", sa.String(128), nullable=True),
-        sa.Column("metadata_json", JSON_VARIANT, nullable=False),
+        sa.Column("metadata_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("event_type", "subject_type", "subject_id", name="uq_audit_events_dedup"),
     )
@@ -400,17 +432,17 @@ def upgrade() -> None:
         sa.Column("id", GUID(), primary_key=True),
         sa.Column("trade_date", sa.Date(), nullable=False),
         sa.Column("status", sa.String(32), nullable=False, server_default="running"),
-        sa.Column("stage", sa.String(32), nullable=False),
-        sa.Column("symbols_screened", sa.Integer(), nullable=False),
-        sa.Column("symbols_after_screen", sa.Integer(), nullable=False),
-        sa.Column("pairs_generated", sa.Integer(), nullable=False),
-        sa.Column("quick_backtests_run", sa.Integer(), nullable=False),
-        sa.Column("full_backtests_run", sa.Integer(), nullable=False),
-        sa.Column("recommendations_produced", sa.Integer(), nullable=False),
+        sa.Column("stage", sa.String(32), nullable=False, server_default="universe_screen"),
+        sa.Column("symbols_screened", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("symbols_after_screen", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("pairs_generated", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("quick_backtests_run", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("full_backtests_run", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("recommendations_produced", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("duration_seconds", sa.Numeric(10, 2), nullable=True),
         sa.Column("celery_task_id", sa.String(64), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
-        sa.Column("stage_details_json", JSON_VARIANT, nullable=False),
+        sa.Column("stage_details_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -454,12 +486,12 @@ def upgrade() -> None:
         sa.Column("score", sa.Numeric(18, 6), nullable=False),
         sa.Column("symbol", sa.String(32), nullable=False),
         sa.Column("strategy_type", sa.String(32), nullable=False),
-        sa.Column("regime_labels", JSON_VARIANT, nullable=False),
+        sa.Column("regime_labels", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
         sa.Column("close_price", sa.Numeric(18, 4), nullable=False),
         sa.Column("target_dte", sa.Integer(), nullable=False),
-        sa.Column("config_snapshot_json", JSON_VARIANT, nullable=False),
-        sa.Column("summary_json", JSON_VARIANT, nullable=False),
-        sa.Column("forecast_json", JSON_VARIANT, nullable=False),
+        sa.Column("config_snapshot_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("summary_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("forecast_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("pipeline_run_id", "rank", name="uq_daily_recs_pipeline_rank"),
         sa.CheckConstraint("rank >= 1", name="ck_daily_recommendations_rank_positive"),
@@ -478,15 +510,15 @@ def upgrade() -> None:
         sa.Column("user_id", GUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("symbol", sa.String(32), nullable=False),
         sa.Column("status", sa.String(32), nullable=False, server_default="queued"),
-        sa.Column("stage", sa.String(32), nullable=False),
+        sa.Column("stage", sa.String(32), nullable=False, server_default="pending"),
         sa.Column("close_price", sa.Numeric(18, 4), nullable=True),
-        sa.Column("regime_json", JSON_VARIANT, nullable=False),
-        sa.Column("landscape_json", JSON_VARIANT, nullable=False),
-        sa.Column("top_results_json", JSON_VARIANT, nullable=False),
-        sa.Column("forecast_json", JSON_VARIANT, nullable=False),
-        sa.Column("strategies_tested", sa.Integer(), nullable=False),
-        sa.Column("configs_tested", sa.Integer(), nullable=False),
-        sa.Column("top_results_count", sa.Integer(), nullable=False),
+        sa.Column("regime_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("landscape_json", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
+        sa.Column("top_results_json", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
+        sa.Column("forecast_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("strategies_tested", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("configs_tested", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("top_results_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("duration_seconds", sa.Numeric(10, 2), nullable=True),
         sa.Column("error_code", sa.String(64), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
