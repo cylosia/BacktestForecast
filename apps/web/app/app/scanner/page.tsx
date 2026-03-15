@@ -80,7 +80,7 @@ export default async function ScannerPage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tracking-tight">
-              {jobs ? jobs.items.length : "—"}
+              {jobs ? (jobs.items.length >= 20 ? "20+" : jobs.items.length) : "—"}
             </p>
           </CardContent>
         </Card>

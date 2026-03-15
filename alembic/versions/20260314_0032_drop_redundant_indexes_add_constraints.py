@@ -6,6 +6,9 @@ Fixes:
 - Add CHECK constraints on scanner_jobs.mode and scanner_jobs.job_kind
 - Add missing composite indexes declared in models
 
+NOTE: For production, consider running CREATE INDEX CONCURRENTLY manually
+to avoid blocking writes.
+
 Revision ID: 20260314_0032
 Revises: 20260314_0031
 Create Date: 2026-03-14
@@ -68,6 +71,7 @@ def upgrade() -> None:
         "symbol_analyses",
         ["status", "celery_task_id", "created_at"],
     )
+    op.drop_index("ix_nightly_pipeline_runs_cursor", table_name="nightly_pipeline_runs", if_exists=True)
     op.create_index(
         op.f("ix_nightly_pipeline_runs_cursor"),
         "nightly_pipeline_runs",

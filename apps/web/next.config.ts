@@ -42,6 +42,18 @@ const nextConfig: NextConfig = {
             // remains necessary to avoid breaking inline scripts.
             value: `default-src 'self'; script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.dev https://*.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.dev https://*.clerk.com ${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}; frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://*.stripe.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; upgrade-insecure-requests${process.env.CSP_REPORT_URI ? `; report-uri ${process.env.CSP_REPORT_URI}; report-to csp-endpoint` : ""}`.replace(/\s+/g, " ").trim(),
           },
+          ...(process.env.CSP_REPORT_URI
+            ? [
+                {
+                  key: "Report-To",
+                  value: JSON.stringify({
+                    group: "csp-endpoint",
+                    max_age: 86400,
+                    endpoints: [{ url: process.env.CSP_REPORT_URI }],
+                  }),
+                },
+              ]
+            : []),
         ],
       },
     ];

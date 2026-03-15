@@ -1,16 +1,20 @@
 import { describe, it, expect } from "vitest";
+import { isTerminalStatus, statusLabel } from "@/lib/backtests/format";
 
 type BacktestRunSummary = {
   id: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  status: string;
   created_at: string;
   symbol: string;
 };
 
-const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
-
-function getLatestRun(runs: BacktestRunSummary[]): BacktestRunSummary | null {
-  const terminal = runs.filter((r) => TERMINAL_STATUSES.has(r.status));
+/**
+ * Mirrors the dashboard page logic:
+ *   `history.find((r) => r.status === "succeeded") ?? null`
+ * but generalized to use isTerminalStatus for filtering.
+ */
+function getLatestTerminalRun(runs: BacktestRunSummary[]): BacktestRunSummary | null {
+  const terminal = runs.filter((r) => isTerminalStatus(r.status));
   if (terminal.length === 0) return null;
   return terminal.sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
@@ -24,10 +28,11 @@ describe("dashboard latestRun filter", () => {
       { id: "2", status: "succeeded", created_at: "2025-03-13T10:00:00Z", symbol: "MSFT" },
       { id: "3", status: "failed", created_at: "2025-03-12T10:00:00Z", symbol: "TSLA" },
     ];
-    const result = getLatestRun(runs);
+    const result = getLatestTerminalRun(runs);
     expect(result).not.toBeNull();
     expect(result!.id).toBe("2");
     expect(result!.status).toBe("succeeded");
+    expect(statusLabel(result!.status)).toBe("Completed");
   });
 
   it("returns null when all runs are non-terminal", () => {
@@ -35,12 +40,14 @@ describe("dashboard latestRun filter", () => {
       { id: "1", status: "queued", created_at: "2025-03-14T10:00:00Z", symbol: "AAPL" },
       { id: "2", status: "running", created_at: "2025-03-13T10:00:00Z", symbol: "MSFT" },
     ];
-    const result = getLatestRun(runs);
+    expect(isTerminalStatus("queued")).toBe(false);
+    expect(isTerminalStatus("running")).toBe(false);
+    const result = getLatestTerminalRun(runs);
     expect(result).toBeNull();
   });
 
   it("returns null for an empty array", () => {
-    const result = getLatestRun([]);
+    const result = getLatestTerminalRun([]);
     expect(result).toBeNull();
   });
 
@@ -49,7 +56,7 @@ describe("dashboard latestRun filter", () => {
       { id: "1", status: "failed", created_at: "2025-03-10T10:00:00Z", symbol: "AAPL" },
       { id: "2", status: "succeeded", created_at: "2025-03-12T10:00:00Z", symbol: "MSFT" },
     ];
-    const result = getLatestRun(runs);
+    const result = getLatestTerminalRun(runs);
     expect(result!.id).toBe("2");
   });
 
@@ -58,7 +65,19 @@ describe("dashboard latestRun filter", () => {
       { id: "1", status: "running", created_at: "2025-03-14T23:59:59Z", symbol: "SPY" },
       { id: "2", status: "succeeded", created_at: "2025-03-14T10:00:00Z", symbol: "QQQ" },
     ];
-    const result = getLatestRun(runs);
+    const result = getLatestTerminalRun(runs);
     expect(result!.id).toBe("2");
+  });
+
+  it("includes expired and cancelled as terminal statuses", () => {
+    expect(isTerminalStatus("expired")).toBe(true);
+    expect(isTerminalStatus("cancelled")).toBe(true);
+
+    const runs: BacktestRunSummary[] = [
+      { id: "1", status: "expired", created_at: "2025-03-14T10:00:00Z", symbol: "AAPL" },
+    ];
+    const result = getLatestTerminalRun(runs);
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe("1");
   });
 });

@@ -394,7 +394,7 @@ class CreateBacktestRunRequest(BaseModel):
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
-    idempotency_key: str | None = Field(default=None, max_length=80)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=80)
     custom_legs: list[CustomLegDefinition] | None = Field(default=None, max_length=8)
     slippage_pct: float = Field(default=0.0, ge=0.0, le=5.0, description="Slippage percentage applied to entry and exit prices.")
     strategy_overrides: StrategyOverrides | None = Field(

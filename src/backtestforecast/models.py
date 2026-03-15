@@ -146,7 +146,10 @@ class BacktestRun(Base):
 
 class BacktestTrade(Base):
     __tablename__ = "backtest_trades"
-    __table_args__ = (Index("ix_backtest_trades_run_entry_date", "run_id", "entry_date"),)
+    __table_args__ = (
+        Index("ix_backtest_trades_run_entry_date", "run_id", "entry_date"),
+        UniqueConstraint("run_id", "entry_date", "option_ticker", name="uq_backtest_trades_dedup"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(

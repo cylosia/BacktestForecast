@@ -59,7 +59,7 @@ export default async function BillingSettingsPage() {
               </div>
               <div className="rounded-xl border border-border/70 p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Cancel at period end</p>
-                <p className="mt-2 font-medium">{user.cancel_at_period_end ? "Yes" : "No"}</p>
+                <p className="mt-2 font-medium">{user.subscription_status ? (user.cancel_at_period_end ? "Yes" : "No") : "n/a"}</p>
               </div>
             </div>
           </CardContent>

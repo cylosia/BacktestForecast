@@ -86,11 +86,13 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
 markers = [
     "smoke: full-stack smoke tests (run with pytest -m smoke)",
     "integration: tests that require a running database",
     "e2e: end-to-end tests",
     "slow: long-running tests",
+    "asyncio: async tests (registered by pytest-asyncio)",
 ]
 filterwarnings = [
     "error",

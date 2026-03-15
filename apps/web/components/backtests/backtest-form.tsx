@@ -62,7 +62,7 @@ export function BacktestForm({
     }
   }, [initialTemplateId, templates]);
 
-  const submitDisabled = useMemo(() => quota.reached || status === "submitting", [quota.reached, status]);
+  const submitDisabled = useMemo(() => quota.reached || status === "submitting" || status === "success", [quota.reached, status]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -103,7 +103,7 @@ export function BacktestForm({
       const run = await createBacktestRun(token, validation.payload, submitAbortRef.current.signal);
       setStatus("success");
       setServerMessage("Backtest queued. Opening run details...");
-      router.push(`/app/backtests/${run.id}`);
+      router.replace(`/app/backtests/${run.id}`);
     } catch (error) {
       const message =
         error instanceof ApiError

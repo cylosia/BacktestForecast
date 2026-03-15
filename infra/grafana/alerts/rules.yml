@@ -16,9 +16,12 @@ groups:
 
       - alert: HighTaskFailureRate
         expr: |
-          sum(rate(celery_tasks_total{status="failed"}[5m]))
-          / sum(rate(celery_tasks_total[5m]))
-          > 0.1
+          (
+            sum(rate(celery_tasks_total{status="failed"}[5m]))
+            / sum(rate(celery_tasks_total[5m]))
+            > 0.1
+          )
+          and sum(rate(celery_tasks_total[5m])) > 0.01
         for: 5m
         labels:
           severity: critical
@@ -112,29 +115,35 @@ groups:
 
       - alert: BacktestJobFailureRate
         expr: |
-          sum(rate(backtest_runs_total{status="failed"}[15m]))
-          / sum(rate(backtest_runs_total[15m]))
-          > 0.25
+          (
+            sum(rate(backtest_runs_total{status="failed"}[15m]))
+            / sum(rate(backtest_runs_total[15m]))
+            > 0.10
+          )
+          and sum(rate(backtest_runs_total[15m])) > 0.01
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Backtest job failure rate >25%"
+          summary: "Backtest job failure rate >10%"
           description: >-
-            More than 25% of backtest runs are failing over the last 15 minutes.
+            More than 10% of backtest runs are failing over the last 15 minutes.
 
       - alert: ScanJobFailureRate
         expr: |
-          sum(rate(scan_jobs_total{status="failed"}[15m]))
-          / sum(rate(scan_jobs_total[15m]))
-          > 0.25
+          (
+            sum(rate(scan_jobs_total{status="failed"}[15m]))
+            / sum(rate(scan_jobs_total[15m]))
+            > 0.10
+          )
+          and sum(rate(scan_jobs_total[15m])) > 0.01
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Scan job failure rate >25%"
+          summary: "Scan job failure rate >10%"
           description: >-
-            More than 25% of scan jobs are failing over the last 15 minutes.
+            More than 10% of scan jobs are failing over the last 15 minutes.
 
       - alert: HighSSEConnections
         expr: |
@@ -147,3 +156,39 @@ groups:
           description: >-
             {{ $value }} active SSE connections.  This may exhaust
             file descriptors or Redis pub/sub capacity.
+
+      - alert: DatabasePoolExhaustion
+        expr: |
+          db_pool_checked_out / on() db_pool_size > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool >80% utilised"
+          description: >-
+            Connection pool is nearing capacity.  Consider increasing
+            DB_POOL_SIZE or DB_POOL_MAX_OVERFLOW.
+
+      - alert: RedisConnectivityFailure
+        expr: |
+          increase(redis_connection_errors_total[5m]) > 3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis connection failures detected"
+          description: >-
+            Multiple Redis connection errors in the last 5 minutes.
+            Rate limiting, caching, and task brokering may be degraded.
+
+      - alert: NightlyPipelineFailed
+        expr: |
+          increase(nightly_pipeline_runs_total{status="failed"}[24h]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nightly pipeline run failed"
+          description: >-
+            A nightly pipeline run has failed.  Users may see stale
+            daily picks and market analysis data.

@@ -314,7 +314,7 @@ export function ScannerForm({
       submitAbortRef.current?.abort();
       submitAbortRef.current = new AbortController();
       const job = await createScannerJob(token, payload, submitAbortRef.current.signal);
-      router.push(`/app/scanner/${job.id}`);
+      router.replace(`/app/scanner/${job.id}`);
     } catch (error) {
       const msg = error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Scan could not be created.";
       const code = error instanceof ApiError ? error.code : undefined;

@@ -514,7 +514,8 @@ class BacktestService:
         run.recovery_factor = to_decimal(summary.recovery_factor) if summary.recovery_factor is not None else None
 
         for trade in execution_result.trades:
-            validate_json_shape(trade.detail_json, "BacktestTrade.detail_json", required_keys=_TRADE_DETAIL_REQUIRED_KEYS)
+            if not validate_json_shape(trade.detail_json, "BacktestTrade.detail_json", required_keys=_TRADE_DETAIL_REQUIRED_KEYS):
+                logger.warning("backtests.malformed_trade_detail_json", option_ticker=trade.option_ticker, keys=list(trade.detail_json.keys()) if trade.detail_json else [])
             run.trades.append(
                 BacktestTrade(
                     option_ticker=trade.option_ticker,

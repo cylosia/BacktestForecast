@@ -1,59 +1,77 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
-/**
- * Tests that the polling pattern passes AbortSignal to fetchers and
- * that signals are properly managed across poll cycles.
- */
+vi.mock("@/lib/env", () => ({
+  env: {
+    appUrl: "http://localhost:3000",
+    apiBaseUrl: "http://localhost:8000",
+    clerkPublishableKey: "pk_test_fake",
+  },
+}));
 
-describe("poller AbortSignal contract", () => {
-  it("passes an AbortSignal to the fetcher callback", async () => {
-    let receivedSignal: AbortSignal | undefined;
+import { ApiError, combinedSignal } from "@/lib/api/shared";
 
-    const controller = new AbortController();
-    const fetcher = async (signal: AbortSignal) => {
-      receivedSignal = signal;
-      return { status: "done" };
-    };
-
-    await fetcher(controller.signal);
-
-    expect(receivedSignal).toBeDefined();
-    expect(receivedSignal).toBeInstanceOf(AbortSignal);
+describe("ApiError classification for polling", () => {
+  it("stores status, code, and requestId on construction", () => {
+    const err = new ApiError("Session expired", 401, "authentication_error", "req-123");
+    expect(err.message).toBe("Session expired");
+    expect(err.status).toBe(401);
+    expect(err.code).toBe("authentication_error");
+    expect(err.requestId).toBe("req-123");
+    expect(err.name).toBe("ApiError");
   });
 
-  it("signal can be aborted to cancel in-flight requests", () => {
-    const controller = new AbortController();
-    expect(controller.signal.aborted).toBe(false);
-
-    controller.abort();
-    expect(controller.signal.aborted).toBe(true);
+  it("is an instance of Error", () => {
+    const err = new ApiError("fail", 500);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(ApiError);
   });
 
-  it("creates a fresh signal for each poll cycle", async () => {
+  it("401 and 403 are treated as auth errors by the poller", () => {
+    const authStatuses = [401, 403];
+    for (const status of authStatuses) {
+      const err = new ApiError("auth failure", status);
+      expect(err.status === 401 || err.status === 403).toBe(true);
+    }
+  });
+
+  it("other status codes are retryable by the poller", () => {
+    for (const status of [400, 404, 429, 500, 502, 503]) {
+      const err = new ApiError("fail", status);
+      expect(err.status === 401 || err.status === 403).toBe(false);
+    }
+  });
+
+  it("timeout errors have status 0 and code 'timeout'", () => {
+    const err = new ApiError("The request timed out.", 0, "timeout");
+    expect(err.status).toBe(0);
+    expect(err.code).toBe("timeout");
+  });
+});
+
+describe("poller abort signal via combinedSignal", () => {
+  it("aborting either source signal propagates to the combined signal", () => {
+    const userAc = new AbortController();
+    const timeoutAc = new AbortController();
+    const { signal, cleanup } = combinedSignal(userAc.signal, timeoutAc.signal);
+
+    expect(signal.aborted).toBe(false);
+    userAc.abort();
+    expect(signal.aborted).toBe(true);
+    cleanup();
+  });
+
+  it("each poll cycle gets an independent combined signal", () => {
     const signals: AbortSignal[] = [];
 
     for (let i = 0; i < 3; i++) {
-      const controller = new AbortController();
-      signals.push(controller.signal);
-      controller.abort();
+      const userAc = new AbortController();
+      const timeoutAc = new AbortController();
+      const { signal, cleanup } = combinedSignal(userAc.signal, timeoutAc.signal);
+      signals.push(signal);
+      cleanup();
     }
 
-    const uniqueSignals = new Set(signals);
-    expect(uniqueSignals.size).toBe(signals.length);
-  });
-
-  it("previous signal is aborted before creating a new one", async () => {
-    let previousController: AbortController | null = null;
-    const abortedStates: boolean[] = [];
-
-    for (let i = 0; i < 3; i++) {
-      previousController?.abort();
-      if (previousController) {
-        abortedStates.push(previousController.signal.aborted);
-      }
-      previousController = new AbortController();
-    }
-
-    expect(abortedStates).toEqual([true, true]);
+    const unique = new Set(signals);
+    expect(unique.size).toBe(3);
   });
 });

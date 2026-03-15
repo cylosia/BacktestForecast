@@ -165,7 +165,7 @@ class Settings(BaseSettings):
     ip_hash_salt: str = Field(default="backtestforecast-default-ip-salt-change-me")
 
     db_pool_size: int = 5
-    db_pool_max_overflow: int = Field(default=10, ge=0)
+    db_pool_max_overflow: int = Field(default=10, ge=1)
     db_pool_recycle: int = 1800
 
     trusted_proxy_cidrs: str = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
@@ -240,6 +240,7 @@ class Settings(BaseSettings):
         "forecast_rate_limit", "daily_picks_rate_limit",
         "rate_limit_memory_max_keys",
         "sse_rate_limit", "sse_redis_max_connections",
+        "scan_timeout_seconds",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
@@ -256,6 +257,14 @@ class Settings(BaseSettings):
             raise ValueError(f"Value must be >= 0.1, got {v}")
         return v
 
+    @field_validator("sentry_traces_sample_rate")
+    @classmethod
+    def validate_sample_rate(cls, value: float) -> float:
+        v = float(value)
+        if v < 0.0 or v > 1.0:
+            raise ValueError(f"sentry_traces_sample_rate must be between 0.0 and 1.0, got {v}")
+        return v
+
     @field_validator("massive_max_retries")
     @classmethod
     def validate_retry_count(cls, value: int) -> int:
@@ -265,6 +274,22 @@ class Settings(BaseSettings):
     @classmethod
     def validate_retry_backoff(cls, value: float) -> float:
         return max(float(value), 0.0)
+
+    @field_validator("risk_free_rate")
+    @classmethod
+    def validate_risk_free_rate(cls, value: float) -> float:
+        v = float(value)
+        if v < 0.0 or v > 0.20:
+            raise ValueError(f"risk_free_rate must be between 0.0 and 0.20, got {v}")
+        return v
+
+    @field_validator("api_port", "web_port")
+    @classmethod
+    def validate_port_range(cls, value: int) -> int:
+        v = int(value)
+        if v < 1 or v > 65535:
+            raise ValueError(f"Port must be between 1 and 65535, got {v}")
+        return v
 
     @field_validator("ip_hash_salt")
     @classmethod
@@ -278,7 +303,19 @@ class Settings(BaseSettings):
 
     @property
     def web_cors_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.web_cors_origins_raw.split(",") if origin.strip()]
+        import logging
+
+        logger = logging.getLogger(__name__)
+        origins: list[str] = []
+        for origin in self.web_cors_origins_raw.split(","):
+            origin = origin.strip()
+            if not origin:
+                continue
+            if origin != "*" and not origin.startswith("http://") and not origin.startswith("https://"):
+                logger.warning("Skipping invalid CORS origin (must start with http:// or https://): %s", origin)
+                continue
+            origins.append(origin)
+        return origins
 
     @property
     def api_allowed_hosts(self) -> list[str]:
@@ -398,7 +435,11 @@ def get_settings() -> Settings:
 
 
 def invalidate_settings() -> None:
-    """Clear cached settings so the next ``get_settings()`` creates a fresh instance."""
+    """Clear cached settings so the next ``get_settings()`` creates a fresh instance.
+
+    Called during graceful reload or secret rotation.  Currently invoked only
+    via the /admin/reload endpoint (when enabled) or programmatically in tests.
+    """
     global _settings_cache
     with _settings_lock:
         _settings_cache = None

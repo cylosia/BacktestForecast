@@ -5,11 +5,27 @@ test.describe("Smoke Tests", () => {
     await page.goto("/");
     await expect(page).toHaveTitle(/BacktestForecast/i);
     await expect(page.locator("body")).toBeVisible();
+
+    // Header and navigation
+    const header = page.locator("header").first();
+    await expect(header).toBeVisible();
+    const nav = header.getByRole("link");
+    expect(await nav.count()).toBeGreaterThanOrEqual(1);
+
+    // Hero section with CTA
+    const heading = page.getByRole("heading", { level: 1 });
+    await expect(heading).toBeVisible();
+    const ctaLink = page.getByRole("link", { name: /get started|sign up|try/i }).first();
+    await expect(ctaLink).toBeVisible({ timeout: 5000 });
   });
 
   test("pricing page is accessible", async ({ page }) => {
     await page.goto("/pricing");
     await expect(page.locator("body")).toBeVisible();
+
+    // Pricing page has its own heading
+    const heading = page.getByRole("heading", { level: 1 });
+    await expect(heading).toBeVisible();
   });
 
   test("unauthenticated user is redirected from app routes", async ({
@@ -56,5 +72,20 @@ test.describe("Smoke Tests", () => {
   test("dashboard redirects unauthenticated user", async ({ page }) => {
     await page.goto("/app/dashboard");
     await page.waitForURL(/sign-in|clerk/, { timeout: 10000 });
+  });
+
+  test("scanner route redirects unauthenticated user", async ({ page }) => {
+    await page.goto("/app/scanner");
+    await page.waitForURL(/sign-in|clerk/, { timeout: 10000 });
+  });
+
+  test("landing page navigation links work", async ({ page }) => {
+    await page.goto("/");
+    const pricingLink = page.getByRole("link", { name: /pricing/i }).first();
+    await expect(pricingLink).toBeVisible();
+
+    await pricingLink.click();
+    await expect(page).toHaveURL(/pricing/);
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   });
 });

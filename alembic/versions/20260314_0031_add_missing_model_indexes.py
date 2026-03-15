@@ -14,6 +14,9 @@ and filtered queries.  CREATE INDEX CONCURRENTLY is not used here because
 Alembic runs inside a transaction by default; for zero-downtime deploys,
 run each statement manually with CONCURRENTLY outside a transaction.
 
+NOTE: For production, consider running CREATE INDEX CONCURRENTLY manually
+to avoid blocking writes.
+
 Revision ID: 20260314_0031
 Revises: 20260314_0030
 Create Date: 2026-03-14

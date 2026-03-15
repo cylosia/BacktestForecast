@@ -16,6 +16,7 @@ export function PortalButton({ children }: { children: React.ReactNode }) {
     setStatus("loading");
     setMessage(null);
 
+    let redirecting = false;
     try {
       const token = await getToken();
       if (!token) {
@@ -37,6 +38,7 @@ export function PortalButton({ children }: { children: React.ReactNode }) {
       if (!allowed.includes(parsedOrigin)) {
         throw new Error("Unexpected portal URL origin.");
       }
+      redirecting = true;
       window.location.href = result.portal_url;
     } catch (error) {
       const nextMessage =
@@ -48,7 +50,9 @@ export function PortalButton({ children }: { children: React.ReactNode }) {
       setStatus("error");
       setMessage(nextMessage);
     } finally {
-      setStatus((prev) => (prev === "loading" ? "idle" : prev));
+      if (!redirecting) {
+        setStatus((prev) => (prev === "loading" ? "idle" : prev));
+      }
     }
   }
 

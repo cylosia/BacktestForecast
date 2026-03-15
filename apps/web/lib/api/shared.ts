@@ -11,7 +11,7 @@ export interface ApiErrorPayload {
 const API_BASE = env.apiBaseUrl.replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+export function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
   if (typeof AbortSignal.any === "function") {
     return { signal: AbortSignal.any([userSignal, timeoutSignal]), cleanup: () => {} };
   }

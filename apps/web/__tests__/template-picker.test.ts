@@ -1,102 +1,103 @@
 import { describe, it, expect } from "vitest";
+import {
+  templateToFormValues,
+  isValidTemplateConfig,
+} from "@/lib/templates/parse";
+import type { TemplateResponse } from "@backtestforecast/api-client";
 
-/**
- * Tests that template picker correctly reads config from the
- * `config_json` key (matching DB column / API alias) rather
- * than a hypothetical `config` key.
- */
-
-interface TemplateConfig {
-  strategy_type: string;
-  target_dte: number;
-  dte_tolerance_days: number;
-  max_holding_days: number;
-  account_size: number;
-  risk_per_trade_pct: number;
-  commission_per_contract: number;
-  entry_rules: unknown[];
-}
-
-interface TemplateResponse {
-  id: string;
-  name: string;
-  description: string | null;
-  strategy_type: string;
-  config_json: TemplateConfig;
-  created_at: string;
-  updated_at: string;
-}
-
-const mockTemplates: TemplateResponse[] = [
-  {
-    id: "tmpl-1",
-    name: "Conservative CSP",
-    description: null,
+const VALID_TEMPLATE: TemplateResponse = {
+  id: "tmpl-1",
+  name: "Conservative CSP",
+  description: null,
+  strategy_type: "cash_secured_put",
+  config_json: {
     strategy_type: "cash_secured_put",
-    config_json: {
-      strategy_type: "cash_secured_put",
-      target_dte: 45,
-      dte_tolerance_days: 10,
-      max_holding_days: 30,
-      account_size: 50000,
-      risk_per_trade_pct: 2,
-      commission_per_contract: 0.65,
-      entry_rules: [],
-    },
-    created_at: "2025-01-01T00:00:00Z",
-    updated_at: "2025-01-01T00:00:00Z",
+    target_dte: 45,
+    dte_tolerance_days: 10,
+    max_holding_days: 30,
+    account_size: 50000,
+    risk_per_trade_pct: 2,
+    commission_per_contract: 0.65,
+    entry_rules: [],
   },
-  {
-    id: "tmpl-2",
-    name: "Aggressive Iron Condor",
-    description: "Higher risk",
-    strategy_type: "iron_condor",
-    config_json: {
-      strategy_type: "iron_condor",
-      target_dte: 21,
-      dte_tolerance_days: 5,
-      max_holding_days: 14,
-      account_size: 25000,
-      risk_per_trade_pct: 5,
-      commission_per_contract: 0.5,
-      entry_rules: [],
-    },
-    created_at: "2025-02-01T00:00:00Z",
-    updated_at: "2025-02-15T00:00:00Z",
-  },
-];
+  created_at: "2025-01-01T00:00:00Z",
+  updated_at: "2025-01-01T00:00:00Z",
+};
 
-describe("template picker config_json", () => {
-  it("reads config from config_json key, not config", () => {
-    const template = mockTemplates[0];
-    expect(template).toHaveProperty("config_json");
-    expect(template).not.toHaveProperty("config");
-    expect(template.config_json.strategy_type).toBe("cash_secured_put");
+describe("isValidTemplateConfig", () => {
+  it("returns true for a valid config object", () => {
+    expect(isValidTemplateConfig(VALID_TEMPLATE.config_json)).toBe(true);
   });
 
-  it("applies all config_json fields correctly", () => {
-    const config = mockTemplates[0].config_json;
-    expect(config.strategy_type).toBe("cash_secured_put");
-    expect(config.target_dte).toBe(45);
-    expect(config.dte_tolerance_days).toBe(10);
-    expect(config.max_holding_days).toBe(30);
-    expect(config.account_size).toBe(50000);
-    expect(config.risk_per_trade_pct).toBe(2);
-    expect(config.commission_per_contract).toBe(0.65);
+  it("returns false for null", () => {
+    expect(isValidTemplateConfig(null)).toBe(false);
+  });
+
+  it("returns false for a config missing required fields", () => {
+    expect(isValidTemplateConfig({ strategy_type: "long_call" })).toBe(false);
+  });
+
+  it("accepts string account_size (API returns Decimal as string)", () => {
+    const config = { ...VALID_TEMPLATE.config_json, account_size: "50000" };
+    expect(isValidTemplateConfig(config)).toBe(true);
+  });
+});
+
+describe("templateToFormValues", () => {
+  it("reads config from config_json key and maps to form values", () => {
+    const patch = templateToFormValues(VALID_TEMPLATE);
+    expect(patch).not.toBeNull();
+    expect(patch!.strategyType).toBe("cash_secured_put");
+    expect(patch!.targetDte).toBe("45");
+    expect(patch!.dteToleranceDays).toBe("10");
+    expect(patch!.maxHoldingDays).toBe("30");
+    expect(patch!.accountSize).toBe("50000");
+    expect(patch!.riskPerTradePct).toBe("2");
+    expect(patch!.commissionPerContract).toBe("0.65");
+  });
+
+  it("disables RSI and MA by default when template has no entry rules", () => {
+    const patch = templateToFormValues(VALID_TEMPLATE);
+    expect(patch!.rsiEnabled).toBe(false);
+    expect(patch!.movingAverageEnabled).toBe(false);
+  });
+
+  it("enables RSI when template has an RSI entry rule", () => {
+    const template: TemplateResponse = {
+      ...VALID_TEMPLATE,
+      config_json: {
+        ...VALID_TEMPLATE.config_json,
+        entry_rules: [{ type: "rsi", operator: "lt", threshold: 30, period: 14 }],
+      },
+    };
+    const patch = templateToFormValues(template);
+    expect(patch!.rsiEnabled).toBe(true);
+    expect(patch!.rsiOperator).toBe("lt");
+    expect(patch!.rsiThreshold).toBe("30");
+    expect(patch!.rsiPeriod).toBe("14");
   });
 
   it("replaces form values when switching templates", () => {
-    const first = mockTemplates[0].config_json;
-    const second = mockTemplates[1].config_json;
-
-    expect(first.strategy_type).toBe("cash_secured_put");
-    expect(second.strategy_type).toBe("iron_condor");
-    expect(second.target_dte).toBe(21);
-    expect(first.target_dte).not.toBe(second.target_dte);
+    const secondTemplate: TemplateResponse = {
+      ...VALID_TEMPLATE,
+      id: "tmpl-2",
+      strategy_type: "iron_condor",
+      config_json: {
+        ...VALID_TEMPLATE.config_json,
+        strategy_type: "iron_condor",
+        target_dte: 21,
+      },
+    };
+    const first = templateToFormValues(VALID_TEMPLATE);
+    const second = templateToFormValues(secondTemplate);
+    expect(first!.strategyType).toBe("cash_secured_put");
+    expect(second!.strategyType).toBe("iron_condor");
+    expect(first!.targetDte).not.toBe(second!.targetDte);
   });
 
-  it("handles template with no entry_rules gracefully", () => {
-    const template = mockTemplates[0];
-    expect(template.config_json.entry_rules).toEqual([]);
+  it("returns null for a template with invalid config_json", () => {
+    const bad = { ...VALID_TEMPLATE, config_json: {} as never };
+    const patch = templateToFormValues(bad);
+    expect(patch).toBeNull();
   });
 });

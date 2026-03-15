@@ -84,11 +84,11 @@ export default function PricingPage() {
 
               {plan.monthly ? (
                 <div className="space-y-3">
-                  <CheckoutButton billingInterval={plan.monthly.billingInterval} tier={plan.monthly.tier}>
+                  <CheckoutButton className="w-full" billingInterval={plan.monthly.billingInterval} tier={plan.monthly.tier}>
                     Start monthly plan
                   </CheckoutButton>
                   {plan.yearly ? (
-                    <CheckoutButton billingInterval={plan.yearly.billingInterval} tier={plan.yearly.tier}>
+                    <CheckoutButton className="w-full" billingInterval={plan.yearly.billingInterval} tier={plan.yearly.tier}>
                       Start yearly plan
                     </CheckoutButton>
                   ) : null}

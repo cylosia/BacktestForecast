@@ -140,6 +140,7 @@ class OptionsBacktestEngine:
                         ev_per_unit = self._entry_value_per_unit(candidate)
                         contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
                         commission_per_unit = config.commission_per_contract * contracts_per_unit
+                        gross_notional_per_unit = sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in candidate.option_legs)
                         quantity = self._resolve_position_size(
                             available_cash=cash,
                             account_size=config.account_size,
@@ -149,6 +150,7 @@ class OptionsBacktestEngine:
                             entry_cost_per_unit=abs(ev_per_unit),
                             commission_per_unit=commission_per_unit,
                             slippage_pct=config.slippage_pct,
+                            gross_notional_per_unit=gross_notional_per_unit,
                         )
                         if quantity <= 0:
                             self._add_warning_once(
@@ -163,7 +165,6 @@ class OptionsBacktestEngine:
                             candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
                             entry_commission = self._option_commission_total(candidate, config.commission_per_contract)
                             candidate.entry_commission_total = entry_commission
-                            gross_notional_per_unit = sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in candidate.option_legs)
                             slippage_cost = gross_notional_per_unit * quantity * (config.slippage_pct / 100.0)
                             cash -= (ev_per_unit * quantity) + entry_commission + slippage_cost
                             position = candidate
@@ -176,6 +177,9 @@ class OptionsBacktestEngine:
 
             if position is not None:
                 position_value = self._current_position_value(position, bar.close_price)
+                if not math.isfinite(position_value):
+                    logger.warning("engine.nan_position_value", ticker=position.display_ticker, bar_date=str(bar.trade_date))
+                    position_value = 0.0
 
             equity = cash + position_value
             peak_equity = max(peak_equity, equity)
@@ -294,6 +298,7 @@ class OptionsBacktestEngine:
         entry_cost_per_unit: float = 0.0,
         commission_per_unit: float = 0.0,
         slippage_pct: float = 0.0,
+        gross_notional_per_unit: float = 0.0,
     ) -> int:
         if capital_required_per_unit <= 0:
             return 0
@@ -304,7 +309,7 @@ class OptionsBacktestEngine:
         if effective_risk <= 0:
             return 0
         by_risk = int(risk_budget // effective_risk)
-        slippage_per_unit = entry_cost_per_unit * (slippage_pct / 100.0)
+        slippage_per_unit = (gross_notional_per_unit if gross_notional_per_unit > 0 else entry_cost_per_unit) * (slippage_pct / 100.0)
         cash_per_unit = max(capital_required_per_unit, entry_cost_per_unit) + commission_per_unit + slippage_per_unit
         if cash_per_unit <= 0:
             return 0
