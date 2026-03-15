@@ -20,7 +20,9 @@ export function PortalButton({ children }: { children: React.ReactNode }) {
     try {
       const token = await getToken();
       if (!token) {
-        throw new Error("Your session token could not be loaded. Please sign in again.");
+        redirecting = true;
+        window.location.href = `/sign-in?redirect_url=${encodeURIComponent(window.location.pathname)}`;
+        return;
       }
       const result = await createPortalSession(token, {
         return_path: "/app/settings/billing",

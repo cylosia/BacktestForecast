@@ -54,6 +54,8 @@ export function CompareEquityCurves({
 
   const range = globalMax - globalMin || 1;
 
+  // X-axis uses index-based positioning (not date-aligned) since runs
+  // may span different date ranges. Each run fills the full chart width.
   function toPath(run: BacktestRunDetailResponse): string {
     const points = run.equity_curve;
     const count = points.length;

@@ -31,6 +31,20 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
@@ -68,6 +82,11 @@ jobs:
       - name: Install API dependencies
         run: pip install -e ".[s3]"
 
+      - name: Run database migrations
+        run: alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
+
       - name: Start API server
         run: |
           uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000 &
@@ -75,7 +94,7 @@ jobs:
         env:
           PYTHONPATH: src:.
           APP_ENV: test
-          DATABASE_URL: sqlite://
+          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
           LOG_JSON: "false"
 
       - name: Start web app and run Playwright tests

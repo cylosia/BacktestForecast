@@ -19,7 +19,8 @@ export function EquityCurveChart({ points }: { points: EquityCurvePointResponse[
     );
   }
 
-  const equityValues = points.map((point) => toNumber(point.equity));
+  const rawValues = points.map((point) => toNumber(point.equity));
+  const equityValues = rawValues.map(v => Number.isFinite(v) ? v : 0);
   let minEquity = Infinity;
   let maxEquity = -Infinity;
   for (const v of equityValues) {
@@ -28,14 +29,14 @@ export function EquityCurveChart({ points }: { points: EquityCurvePointResponse[
   }
   const range = maxEquity - minEquity || 1;
 
-  const chartPoints = points.map((point, index) => {
+  const chartPoints = points.map((_point, index) => {
     const x =
       PADDING_X +
       (index / Math.max(points.length - 1, 1)) * (WIDTH - PADDING_X * 2);
     const y =
       HEIGHT -
       PADDING_Y -
-      ((toNumber(point.equity) - minEquity) / range) * (HEIGHT - PADDING_Y * 2);
+      ((equityValues[index] - minEquity) / range) * (HEIGHT - PADDING_Y * 2);
 
     return { x, y };
   });

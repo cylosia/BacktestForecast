@@ -57,10 +57,18 @@ class RequestBodyLimitMiddleware:
                         raise _BodyTooLarge()
                 return message
 
+            response_started = False
+            original_send = send
+            async def tracked_send(message: Message) -> None:
+                nonlocal response_started
+                if message["type"] == "http.response.start":
+                    response_started = True
+                await original_send(message)
             try:
-                await self.app(scope, limited_receive, send)
+                await self.app(scope, limited_receive, tracked_send)
             except _BodyTooLarge:
-                await self._send_413(scope, send)
+                if not response_started:
+                    await self._send_413(scope, send)
             return
 
         await self.app(scope, receive, send)

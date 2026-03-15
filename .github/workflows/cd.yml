@@ -89,8 +89,25 @@ jobs:
             NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app/dashboard
             NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app/dashboard
 
-  post-deploy-smoke:
+  deploy:
     needs: build-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Deploy to production
+        run: |
+          if [ -z "${{ secrets.DEPLOY_COMMAND }}" ]; then
+            echo "::warning::DEPLOY_COMMAND secret is not set. Skipping deployment."
+            echo "Images have been pushed. Deploy manually or configure DEPLOY_COMMAND."
+            exit 0
+          fi
+          bash -c "${{ secrets.DEPLOY_COMMAND }}"
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+
+  post-deploy-smoke:
+    needs: deploy
     runs-on: ubuntu-latest
     if: vars.API_PRODUCTION_URL != ''
     steps:
@@ -124,7 +141,7 @@ jobs:
           ROLLBACK_TAG: ${{ vars.ROLLBACK_TAG }}
           API_URL: ${{ vars.API_PRODUCTION_URL }}
           REPO: ghcr.io/${{ github.repository }}
-          DEPLOY_COMMAND: ${{ vars.DEPLOY_COMMAND }}
+          DEPLOY_COMMAND: ${{ secrets.DEPLOY_COMMAND }}
         run: |
           echo "::error::Smoke check failed — rolling back to known-good tag: ${ROLLBACK_TAG}"
           set -euo pipefail

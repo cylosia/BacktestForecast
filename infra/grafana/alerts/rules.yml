@@ -162,7 +162,7 @@ groups:
 
       - alert: DatabasePoolExhaustion
         expr: |
-          db_pool_checked_out / db_pool_size > 0.8
+          db_pool_checked_out / (db_pool_size + db_pool_max_overflow) > 0.8
         for: 5m
         labels:
           severity: warning
@@ -183,6 +183,24 @@ groups:
           description: >-
             Multiple Redis connection errors in the last 5 minutes.
             Rate limiting, caching, and task brokering may be degraded.
+
+      - alert: NoWorkersOnline
+        expr: sum(celery_workers_online) == 0 or absent(celery_workers_online) == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Celery workers are online — all background jobs are stalled"
+
+      - alert: NightlyPipelineMissing
+        expr: |
+          increase(nightly_pipeline_runs_total[26h]) == 0
+          or absent(increase(nightly_pipeline_runs_total[26h])) == 1
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nightly pipeline has not started in the last 26 hours"
 
       - alert: NightlyPipelineFailed
         expr: |

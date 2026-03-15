@@ -8,6 +8,7 @@ import { createScannerJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import type { CreateScannerJobRequest, ScannerMode, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
+import { parseSymbols, validateScannerForm } from "@/lib/scanner/validation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -170,7 +171,7 @@ export function ScannerForm({
     new Set(["long_call", "long_put"]),
   );
 
-  const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
 
@@ -199,59 +200,22 @@ export function ScannerForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    const symbols = form.symbolsText
-      .split(/[,\s]+/)
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
+    const symbols = parseSymbols(form.symbolsText);
 
-    const errors: string[] = [];
-
-    if (symbols.length === 0) {
-      errors.push("At least one symbol is required.");
-    }
-    if (selectedStrategies.size === 0) {
-      errors.push("At least one strategy type is required.");
-    }
-
-    const maxSymbols = form.mode === "advanced" ? 25 : 5;
-    const maxStrategies = form.mode === "advanced" ? 14 : 6;
-    if (symbols.length > maxSymbols) {
-      errors.push(`${form.mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxSymbols} symbols.`);
-    }
-    if (selectedStrategies.size > maxStrategies) {
-      errors.push(`${form.mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxStrategies} strategies.`);
-    }
-
-    if (!form.startDate) {
-      errors.push("Start date is required.");
-    }
-    if (!form.endDate) {
-      errors.push("End date is required.");
-    }
-    if (form.startDate && form.endDate && new Date(form.startDate) >= new Date(form.endDate)) {
-      errors.push("Start date must be before end date.");
-    }
-
-    const numericChecks: Array<{ label: string; value: number; min: number; max?: number; integer?: boolean }> = [
-      { label: "Target DTE", value: Number(form.targetDte), min: 7, max: 365, integer: true },
-      { label: "DTE tolerance", value: Number(form.dteTolerance), min: 0, max: 60, integer: true },
-      { label: "Max holding days", value: Number(form.maxHolding), min: 1, max: 120, integer: true },
-      { label: "Account size", value: Number(form.accountSize), min: 100 },
-      { label: "Risk %", value: Number(form.riskPct), min: 0.1, max: 100 },
-      { label: "Commission", value: Number(form.commission), min: 0 },
-      { label: "Max recommendations", value: Number(form.maxRecs), min: 1, max: 30, integer: true },
-    ];
-    for (const check of numericChecks) {
-      if (!Number.isFinite(check.value) || check.value < check.min || (check.max !== undefined && check.value > check.max)) {
-        errors.push(`${check.label} must be a number between ${check.min} and ${check.max ?? "∞"}.`);
-      } else if (check.integer && !Number.isInteger(check.value)) {
-        errors.push(`${check.label} must be a whole number.`);
-      }
-    }
-
-    if (Number(form.dteTolerance) >= Number(form.targetDte)) {
-      errors.push("DTE tolerance must be less than target DTE.");
-    }
+    const errors = validateScannerForm({
+      mode: form.mode,
+      symbolsText: form.symbolsText,
+      selectedStrategies,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      targetDte: form.targetDte,
+      dteTolerance: form.dteTolerance,
+      maxHolding: form.maxHolding,
+      accountSize: form.accountSize,
+      riskPct: form.riskPct,
+      commission: form.commission,
+      maxRecs: form.maxRecs,
+    });
 
     if (errors.length > 0) {
       setStatus("error");
@@ -318,6 +282,7 @@ export function ScannerForm({
       submitAbortRef.current?.abort();
       submitAbortRef.current = new AbortController();
       const job = await createScannerJob(token, payload, submitAbortRef.current.signal);
+      setStatus("success");
       router.replace(`/app/scanner/${job.id}`);
     } catch (error) {
       const msg = error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Scan could not be created.";
@@ -512,12 +477,14 @@ export function ScannerForm({
       </Card>
 
       <div className="flex justify-end">
-        <Button disabled={status === "submitting"} size="lg" type="submit">
+        <Button disabled={status === "submitting" || status === "success"} size="lg" type="submit">
           {status === "submitting" ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
               Launching scan...
             </>
+          ) : status === "success" ? (
+            "Scan launched — redirecting…"
           ) : (
             "Launch scan"
           )}

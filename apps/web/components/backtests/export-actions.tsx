@@ -84,8 +84,9 @@ export function ExportActions({
   );
 
   const pollAndDownload = useCallback(
-    async (token: string, exportJobId: string, fileName: string, signal: AbortSignal) => {
+    async (initialToken: string, exportJobId: string, fileName: string, signal: AbortSignal) => {
       let consecutiveErrors = 0;
+      let currentToken = initialToken;
       for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(resolve, POLL_INTERVAL_MS);
@@ -93,25 +94,42 @@ export function ExportActions({
         }).catch(() => {});
         if (signal.aborted || !mountedRef.current) return;
 
+        if (attempt > 0 && attempt % 10 === 0) {
+          const refreshed = await getToken();
+          if (refreshed) currentToken = refreshed;
+        }
+
         let result;
         try {
-          result = await fetchExportStatus(token, exportJobId, signal);
+          result = await fetchExportStatus(currentToken, exportJobId, signal);
           consecutiveErrors = 0;
         } catch (err) {
           if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-            throw err;
+            const refreshed = await getToken();
+            if (refreshed) {
+              currentToken = refreshed;
+              try {
+                result = await fetchExportStatus(currentToken, exportJobId, signal);
+                consecutiveErrors = 0;
+              } catch {
+                throw err;
+              }
+            } else {
+              throw err;
+            }
+          } else {
+            consecutiveErrors++;
+            if (consecutiveErrors >= 3) {
+              throw new Error("Export status check failed repeatedly. Please try again.");
+            }
+            continue;
           }
-          consecutiveErrors++;
-          if (consecutiveErrors >= 3) {
-            throw new Error("Export status check failed repeatedly. Please try again.");
-          }
-          continue;
         }
 
         if (signal.aborted || !mountedRef.current) return;
 
         if (result.status === "succeeded") {
-          await fetchAndDownload(token, exportJobId, fileName, signal);
+          await fetchAndDownload(currentToken, exportJobId, fileName, signal);
           return;
         }
 
@@ -121,7 +139,7 @@ export function ExportActions({
       }
       throw new Error("Export is still processing. Please try downloading from the history later.");
     },
-    [fetchAndDownload],
+    [fetchAndDownload, getToken],
   );
 
   async function handleExport(format: ExportFormat) {
@@ -142,7 +160,7 @@ export function ExportActions({
       const exportJob = await createExport(token, {
         run_id: runId,
         format,
-        idempotency_key: `${runId}:${format}`,
+        idempotency_key: `${runId}:${format}:${Date.now()}`,
       }, controller.signal);
 
       if (controller.signal.aborted) return;

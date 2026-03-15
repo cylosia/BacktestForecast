@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import type { ExportFormat } from "@backtestforecast/api-client";
 import { getBacktestRun, getCurrentUser } from "@/lib/api/server";
+import { ApiError } from "@/lib/api/shared";
 import {
   formatCurrency,
   formatDate,
@@ -182,10 +183,12 @@ export default async function BacktestDetailPage({
             </CardHeader>
             <CardContent className="space-y-3">
               {(run.warnings ?? []).map((warning, index) => (
-                <div key={`${run.id}-warning-${index}`} className="rounded-xl border border-border/70 p-4 text-sm">
-                  <pre className="whitespace-pre-wrap break-words text-muted-foreground">
-                    {JSON.stringify(warning, null, 2)}
-                  </pre>
+                <div key={`${run.id}-warning-${index}`} className="rounded-xl border border-border/70 p-4 text-sm text-muted-foreground">
+                  {typeof warning === "string"
+                    ? warning
+                    : typeof warning === "object" && warning !== null && "message" in warning
+                      ? String((warning as Record<string, unknown>).message)
+                      : "Warning details unavailable."}
                 </div>
               ))}
             </CardContent>
@@ -213,7 +216,7 @@ export default async function BacktestDetailPage({
       </div>
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Backtest detail could not be loaded.";
+    const message = error instanceof ApiError ? error.message : "This page could not be loaded. Please try again.";
 
     return (
       <div className="space-y-6">

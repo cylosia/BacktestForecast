@@ -46,36 +46,21 @@ def upgrade() -> None:
         "job_kind IN ('manual', 'refresh', 'nightly')",
     )
 
-    op.create_index(
-        op.f("ix_backtest_runs_status_celery_created"),
-        "backtest_runs",
-        ["status", "celery_task_id", "created_at"],
-    )
-    op.create_index(
-        op.f("ix_export_jobs_status_celery_created"),
-        "export_jobs",
-        ["status", "celery_task_id", "created_at"],
-    )
-    op.create_index(
-        op.f("ix_export_jobs_status_expires_at"),
-        "export_jobs",
-        ["status", "expires_at"],
-    )
-    op.create_index(
-        op.f("ix_scanner_jobs_status_celery_created"),
-        "scanner_jobs",
-        ["status", "celery_task_id", "created_at"],
-    )
-    op.create_index(
-        op.f("ix_symbol_analyses_status_celery_created"),
-        "symbol_analyses",
-        ["status", "celery_task_id", "created_at"],
-    )
+    for idx_name, tbl, cols in [
+        ("ix_backtest_runs_status_celery_created", "backtest_runs", ["status", "celery_task_id", "created_at"]),
+        ("ix_export_jobs_status_celery_created", "export_jobs", ["status", "celery_task_id", "created_at"]),
+        ("ix_export_jobs_status_expires_at", "export_jobs", ["status", "expires_at"]),
+        ("ix_scanner_jobs_status_celery_created", "scanner_jobs", ["status", "celery_task_id", "created_at"]),
+        ("ix_symbol_analyses_status_celery_created", "symbol_analyses", ["status", "celery_task_id", "created_at"]),
+    ]:
+        op.drop_index(op.f(idx_name), table_name=tbl, if_exists=True)
+        op.create_index(op.f(idx_name), tbl, cols)
+
     op.drop_index("ix_nightly_pipeline_runs_cursor", table_name="nightly_pipeline_runs", if_exists=True)
     op.create_index(
         op.f("ix_nightly_pipeline_runs_cursor"),
         "nightly_pipeline_runs",
-        ["created_at"],
+        ["created_at", "id"],
     )
 
 

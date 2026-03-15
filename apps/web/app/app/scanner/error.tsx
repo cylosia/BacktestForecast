@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 export default function ScannerError({ error, reset }: { error: Error; reset: () => void }) {
   const displayMessage =
-    error instanceof Error && error.message.length < 200
+    error != null && typeof error === "object" && "status" in error && typeof (error as any).message === "string" && (error as any).message.length < 200
       ? error.message
       : "An unexpected error occurred. Please try again or contact support.";
 

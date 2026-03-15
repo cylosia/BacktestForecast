@@ -42,7 +42,8 @@ dev = [
   "time-machine>=2.16,<3.0",
   "respx>=0.22,<1.0",
   "ruff>=0.7,<1.0",
-  "mypy>=1.13,<2.0"
+  "mypy>=1.13,<2.0",
+  "locust>=2.29,<3.0"
 ]
 
 [tool.setuptools]

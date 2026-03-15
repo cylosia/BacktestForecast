@@ -1,86 +1,146 @@
 import { describe, it, expect } from "vitest";
+import {
+  parseSymbols,
+  validateScannerForm,
+  type ScannerFormInput,
+} from "@/lib/scanner/validation";
 
-describe("scanner form validation", () => {
+function validInput(overrides: Partial<ScannerFormInput> = {}): ScannerFormInput {
+  return {
+    mode: "basic",
+    symbolsText: "SPY, QQQ, AAPL",
+    selectedStrategies: new Set(["long_call"]),
+    startDate: "2024-01-01",
+    endDate: "2025-01-01",
+    targetDte: "30",
+    dteTolerance: "5",
+    maxHolding: "10",
+    accountSize: "10000",
+    riskPct: "2",
+    commission: "0.65",
+    maxRecs: "10",
+    ...overrides,
+  };
+}
+
+describe("parseSymbols", () => {
+  it("returns empty array for whitespace-only input", () => {
+    expect(parseSymbols("   ")).toEqual([]);
+  });
+
+  it("parses comma-separated symbols and uppercases them", () => {
+    expect(parseSymbols("spy, qqq, aapl")).toEqual(["SPY", "QQQ", "AAPL"]);
+  });
+
+  it("handles space-separated symbols", () => {
+    expect(parseSymbols("SPY QQQ")).toEqual(["SPY", "QQQ"]);
+  });
+
+  it("handles mixed delimiters and extra whitespace", () => {
+    expect(parseSymbols("  spy,  qqq  aapl , msft ")).toEqual([
+      "SPY",
+      "QQQ",
+      "AAPL",
+      "MSFT",
+    ]);
+  });
+});
+
+describe("validateScannerForm", () => {
+  it("returns no errors for valid input", () => {
+    expect(validateScannerForm(validInput())).toEqual([]);
+  });
+
   it("requires at least one symbol", () => {
-    const symbolsText = "   ";
-    const symbols = symbolsText
-      .split(/[,\s]+/)
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
-    expect(symbols.length).toBe(0);
-  });
-
-  it("parses comma-separated symbols correctly", () => {
-    const symbolsText = "SPY, QQQ, AAPL";
-    const symbols = symbolsText
-      .split(/[,\s]+/)
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
-    expect(symbols).toEqual(["SPY", "QQQ", "AAPL"]);
-  });
-
-  it("validates DTE tolerance < target DTE", () => {
-    const targetDte = 30;
-    const dteTolerance = 35;
-    expect(dteTolerance >= targetDte).toBe(true);
-  });
-
-  it("accepts DTE tolerance less than target DTE", () => {
-    const targetDte = 30;
-    const dteTolerance = 5;
-    expect(dteTolerance < targetDte).toBe(true);
-  });
-
-  it("rejects negative account size", () => {
-    const accountSize = -1000;
-    expect(accountSize < 100).toBe(true);
-  });
-
-  it("rejects account size below minimum", () => {
-    const min = 100;
-    const accountSize = 50;
-    expect(accountSize < min).toBe(true);
-  });
-
-  it("requires start date before end date", () => {
-    const start = new Date("2025-01-01");
-    const end = new Date("2024-01-01");
-    expect(start >= end).toBe(true);
-  });
-
-  it("enforces basic mode symbol limit", () => {
-    const maxSymbols = 5;
-    const symbols = ["SPY", "QQQ", "AAPL", "MSFT", "GOOG", "AMZN"];
-    expect(symbols.length > maxSymbols).toBe(true);
-  });
-
-  it("enforces advanced mode symbol limit", () => {
-    const maxSymbols = 25;
-    const symbols = Array.from({ length: 26 }, (_, i) => `SYM${i}`);
-    expect(symbols.length > maxSymbols).toBe(true);
+    const errors = validateScannerForm(validInput({ symbolsText: "   " }));
+    expect(errors).toContain("At least one symbol is required.");
   });
 
   it("requires at least one strategy type", () => {
-    const selectedStrategies = new Set<string>();
-    expect(selectedStrategies.size).toBe(0);
+    const errors = validateScannerForm(
+      validInput({ selectedStrategies: new Set() }),
+    );
+    expect(errors).toContain("At least one strategy type is required.");
   });
 
-  it("validates target DTE range", () => {
-    const targetDte = 3;
-    const min = 7;
-    const max = 365;
-    expect(targetDte < min || targetDte > max).toBe(true);
+  it("enforces basic mode symbol limit of 5", () => {
+    const errors = validateScannerForm(
+      validInput({ symbolsText: "SPY, QQQ, AAPL, MSFT, GOOG, AMZN" }),
+    );
+    expect(errors).toContain(
+      "Basic mode allows at most 5 symbols.",
+    );
   });
 
-  it("validates risk percent range", () => {
-    const riskPct = 0.05;
-    const min = 0.1;
-    expect(riskPct < min).toBe(true);
+  it("enforces advanced mode symbol limit of 25", () => {
+    const symbols = Array.from({ length: 26 }, (_, i) => `SYM${i}`).join(",");
+    const errors = validateScannerForm(
+      validInput({ mode: "advanced", symbolsText: symbols }),
+    );
+    expect(errors).toContain(
+      "Advanced mode allows at most 25 symbols.",
+    );
   });
 
-  it("validates max recommendations range", () => {
-    const maxRecs = 31;
-    const max = 30;
-    expect(maxRecs > max).toBe(true);
+  it("requires start date before end date", () => {
+    const errors = validateScannerForm(
+      validInput({ startDate: "2025-01-01", endDate: "2024-01-01" }),
+    );
+    expect(errors).toContain("Start date must be before end date.");
+  });
+
+  it("rejects same start and end date", () => {
+    const errors = validateScannerForm(
+      validInput({ startDate: "2025-01-01", endDate: "2025-01-01" }),
+    );
+    expect(errors).toContain("Start date must be before end date.");
+  });
+
+  it("rejects DTE tolerance >= target DTE", () => {
+    const errors = validateScannerForm(
+      validInput({ targetDte: "30", dteTolerance: "35" }),
+    );
+    expect(errors).toContain("DTE tolerance must be less than target DTE.");
+  });
+
+  it("rejects negative account size", () => {
+    const errors = validateScannerForm(validInput({ accountSize: "-1000" }));
+    expect(errors.some((e) => e.includes("Account size"))).toBe(true);
+  });
+
+  it("rejects account size below minimum of 100", () => {
+    const errors = validateScannerForm(validInput({ accountSize: "50" }));
+    expect(errors.some((e) => e.includes("Account size"))).toBe(true);
+  });
+
+  it("validates target DTE range (7-365)", () => {
+    const errors = validateScannerForm(validInput({ targetDte: "3" }));
+    expect(errors.some((e) => e.includes("Target DTE"))).toBe(true);
+  });
+
+  it("validates risk percent minimum of 0.1", () => {
+    const errors = validateScannerForm(validInput({ riskPct: "0.05" }));
+    expect(errors.some((e) => e.includes("Risk %"))).toBe(true);
+  });
+
+  it("validates max recommendations cap of 30", () => {
+    const errors = validateScannerForm(validInput({ maxRecs: "31" }));
+    expect(errors.some((e) => e.includes("Max recommendations"))).toBe(true);
+  });
+
+  it("rejects non-integer target DTE", () => {
+    const errors = validateScannerForm(validInput({ targetDte: "30.5" }));
+    expect(errors).toContain("Target DTE must be a whole number.");
+  });
+
+  it("accepts valid advanced mode input", () => {
+    const errors = validateScannerForm(
+      validInput({
+        mode: "advanced",
+        symbolsText: "SPY, QQQ",
+        selectedStrategies: new Set(["iron_condor"]),
+      }),
+    );
+    expect(errors).toEqual([]);
   });
 });

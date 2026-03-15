@@ -9,6 +9,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 export { isValidTemplateConfig, templateToFormValues } from "@/lib/templates/parse";
 
+// NOTE: Templates are not filtered by the user's plan tier. A template
+// saved on a higher tier may reference strategies unavailable on the
+// current plan. The backtest form's strategy selector enforces access.
 export function TemplatePicker({
   templates,
   onApply,

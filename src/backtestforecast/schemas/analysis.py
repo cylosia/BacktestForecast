@@ -31,7 +31,7 @@ class AnalysisSummaryResponse(BaseModel):
 
 
 class RegimeDetail(BaseModel):
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
     regimes: list[str] = Field(default_factory=list)
     rsi_14: float | None = None
     ema_8: float | None = None
@@ -45,7 +45,7 @@ class RegimeDetail(BaseModel):
 
 
 class LandscapeCell(BaseModel):
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
     strategy_type: str
     strategy_label: str = ""
     target_dte: int = 0
@@ -58,7 +58,7 @@ class LandscapeCell(BaseModel):
 
 
 class AnalysisTopResult(BaseModel):
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
     rank: int = 0
     strategy_type: str = ""
     strategy_label: str = ""
@@ -80,7 +80,7 @@ class AnalysisDetailResponse(AnalysisSummaryResponse):
 
 class CreateAnalysisRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=16)
-    idempotency_key: str | None = Field(default=None, max_length=80)
+    idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
 
 
 class AnalysisListResponse(BaseModel):
@@ -108,7 +108,7 @@ class PipelineStatsResponse(BaseModel):
 
 class DailyPickSummary(BaseModel):
     """Known keys produced by the backtest engine for daily pick summaries."""
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
     trade_count: int = 0
     win_rate: float = 0.0
     total_roi_pct: float = 0.0
@@ -121,7 +121,7 @@ class DailyPickSummary(BaseModel):
 
 class DailyPickForecast(BaseModel):
     """Known keys produced by the forecaster for daily pick forecasts."""
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
     expected_return_median_pct: float | None = None
     positive_outcome_rate_pct: float | None = None
     analog_count: int | None = None

@@ -122,6 +122,7 @@ class S3Storage:
         import posixpath
         name = posixpath.basename(file_name.replace("\\", "/"))
         name = name.lstrip(".")
+        name = name.replace('"', '').replace('\r', '').replace('\n', '')
         return name or "export"
 
     def _object_key(self, export_job_id: UUID, file_name: str) -> str:

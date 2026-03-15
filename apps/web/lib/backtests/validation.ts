@@ -110,9 +110,9 @@ export function validateBacktestForm(values: BacktestFormValues): {
     { key: "targetDte", min: 7, max: 365, integer: true, label: "Target DTE" },
     { key: "dteToleranceDays", min: 0, max: 60, integer: true, label: "DTE tolerance" },
     { key: "maxHoldingDays", min: 1, max: 120, integer: true, label: "Max holding days" },
-    { key: "accountSize", min: 100, label: "Account size" },
+    { key: "accountSize", min: 100, max: 100_000_000, label: "Account size" },
     { key: "riskPerTradePct", min: 0, max: 100, exclusiveMin: true, label: "Risk per trade" },
-    { key: "commissionPerContract", min: 0, label: "Commission per contract" },
+    { key: "commissionPerContract", min: 0, max: 1000, label: "Commission per contract" },
   ];
 
   for (const check of numericChecks) {

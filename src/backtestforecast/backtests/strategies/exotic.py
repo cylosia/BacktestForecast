@@ -118,6 +118,11 @@ class JadeLizardStrategy(StrategyDefinition):
                 "call_long_strike": call_long_strike,
                 "total_credit": total_credit,
                 "upside_risk": upside_risk,
+                "legs": [
+                    {"asset_type": "option", "ticker": sp.ticker, "side": "short", "contract_type": "put", "strike_price": put_strike, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": spq.mid_price},
+                    {"asset_type": "option", "ticker": sc.ticker, "side": "short", "contract_type": "call", "strike_price": call_short_strike, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": scq.mid_price},
+                    {"asset_type": "option", "ticker": lc.ticker, "side": "long", "contract_type": "call", "strike_price": call_long_strike, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": lcq.mid_price},
+                ],
             },
         )
 
@@ -188,6 +193,9 @@ class IronButterflyStrategy(StrategyDefinition):
             call_wing - center_strike,
             center_strike - put_wing,
         )
+
+        if credit < 0:
+            return None
 
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([long_put.ticker, short_put.ticker, short_call.ticker, long_call.ticker]),

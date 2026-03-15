@@ -9,6 +9,8 @@ WORKDIR /build
 COPY pyproject.toml README.md /build/
 COPY apps/worker /build/apps/worker
 COPY src /build/src
+COPY alembic /build/alembic
+COPY alembic.ini /build/alembic.ini
 
 # For reproducible builds, use: pip install --constraint constraints.txt ".[s3]"
 RUN pip install --upgrade pip && pip install ".[s3]"

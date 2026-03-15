@@ -79,6 +79,11 @@ class BacktestRun(Base):
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="valid_run_status",
         ),
+        CheckConstraint("account_size > 0", name="ck_backtest_runs_account_positive"),
+        CheckConstraint("risk_per_trade_pct > 0 AND risk_per_trade_pct <= 100", name="ck_backtest_runs_risk_pct_range"),
+        CheckConstraint("commission_per_contract >= 0", name="ck_backtest_runs_commission_nonneg"),
+        CheckConstraint("date_from < date_to", name="ck_backtest_runs_date_order"),
+        CheckConstraint("max_holding_days >= 1", name="ck_backtest_runs_holding_days_positive"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -412,7 +417,7 @@ class NightlyPipelineRun(Base):
         Index("ix_nightly_pipeline_runs_status", "status"),
         Index("ix_nightly_pipeline_runs_date_status", "trade_date", "status"),
         Index("ix_nightly_pipeline_runs_status_created", "status", "created_at"),
-        Index("ix_nightly_pipeline_runs_cursor", "created_at"),
+        Index("ix_nightly_pipeline_runs_cursor", "created_at", "id"),
         Index(
             "uq_pipeline_runs_succeeded_trade_date",
             "trade_date",

@@ -86,6 +86,9 @@ class RateLimiter:
             if redis is not None:
                 count, current_bucket = self._check_redis(namespaced, window_seconds)
         except RedisError:
+            with self._redis_lock:
+                self._redis = None
+                self._redis_retry_after = time.time() + 30.0
             REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="rate_limit").inc()
             REDIS_RATE_LIMIT_FALLBACK_TOTAL.labels(bucket=bucket).inc()
             logger.warning("rate_limiter.redis_fallback", key=bucket, exc_info=True)
@@ -122,6 +125,9 @@ class RateLimiter:
                 return False
             return bool(redis.ping())
         except RedisError:
+            with self._redis_lock:
+                self._redis = None
+                self._redis_retry_after = time.time() + 30.0
             REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="ping").inc()
             return False
 

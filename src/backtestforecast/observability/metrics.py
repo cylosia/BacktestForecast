@@ -99,6 +99,7 @@ DB_POOL_SIZE = Gauge("db_pool_size", "Database connection pool size")
 DB_POOL_CHECKED_IN = Gauge("db_pool_checked_in", "Database connections available in the pool")
 DB_POOL_CHECKED_OUT = Gauge("db_pool_checked_out", "Database connections currently in use")
 DB_POOL_OVERFLOW = Gauge("db_pool_overflow", "Database connections in overflow")
+DB_POOL_MAX_OVERFLOW = Gauge("db_pool_max_overflow", "Maximum pool overflow connections configured")
 
 S3_STREAM_OPEN = Gauge("s3_stream_open", "Number of currently open S3 body streams")
 
@@ -187,6 +188,25 @@ NIGHTLY_PIPELINE_RUNS_TOTAL = Counter(
     ["status"],
 )
 
+DB_STATEMENT_TIMEOUTS_TOTAL = Counter(
+    "db_statement_timeouts_total",
+    "Total PostgreSQL QueryCanceled exceptions due to statement_timeout",
+    ["task_name"],
+)
+
+EXTERNAL_API_REQUESTS_TOTAL = Counter(
+    "external_api_requests_total",
+    "Total external API requests (Massive, Stripe) by service and result",
+    ["service", "result"],
+)
+
+EXTERNAL_API_LATENCY_SECONDS = Histogram(
+    "external_api_latency_seconds",
+    "Latency of external API calls in seconds",
+    ["service"],
+    buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+)
+
 
 _RE_UUID = re.compile(
     r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -261,12 +281,14 @@ class PrometheusMiddleware:
 def _refresh_pool_gauges() -> None:
     """Update DB pool gauges from the engine's live pool statistics."""
     try:
+        from backtestforecast.config import get_settings
         from backtestforecast.db.session import get_pool_stats
         stats = get_pool_stats()
         DB_POOL_SIZE.set(stats["pool_size"])
         DB_POOL_CHECKED_IN.set(stats["checked_in"])
         DB_POOL_CHECKED_OUT.set(stats["checked_out"])
         DB_POOL_OVERFLOW.set(stats["overflow"])
+        DB_POOL_MAX_OVERFLOW.set(stats.get("max_overflow", get_settings().db_pool_max_overflow))
     except Exception:
         pass
 

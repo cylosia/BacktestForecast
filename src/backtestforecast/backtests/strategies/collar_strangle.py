@@ -66,6 +66,8 @@ class CollarStrategy(StrategyDefinition):
         net_option_cost = (pq.mid_price - cq.mid_price) * 100.0
         capital = collar_margin(bar.close_price) + max(net_option_cost, 0.0)
         max_loss = max((bar.close_price - put_strike) * 100.0 + net_option_cost, 0.0)
+        max_profit = max((call_strike - bar.close_price) * 100.0 - net_option_cost, 0.0)
+        entry_package_market_value = bar.close_price * 100.0 + net_option_cost
 
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([config.symbol, short_call.ticker, long_put.ticker]),
@@ -83,7 +85,7 @@ class CollarStrategy(StrategyDefinition):
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
             max_loss_per_unit=max_loss,
-            max_profit_per_unit=max((call_strike - bar.close_price) * 100.0 - net_option_cost, 0.0),
+            max_profit_per_unit=max_profit,
             detail_json={
                 "legs": [
                     {
@@ -113,7 +115,17 @@ class CollarStrategy(StrategyDefinition):
                         "quantity_per_unit": 1,
                         "entry_mid": pq.mid_price,
                     },
-                ]
+                ],
+                "assumptions": [
+                    "Collar enters by purchasing 100 shares, selling one OTM call, and buying one OTM put.",
+                    "Stock commissions are assumed to be zero in this slice;"
+                    " only option commission_per_contract is charged.",
+                    "Combined position is exited at option expiration, max_holding_days, or backtest end.",
+                ],
+                "capital_required_per_unit": capital,
+                "max_loss_per_unit": max_loss,
+                "max_profit_per_unit": max_profit,
+                "entry_package_market_value": entry_package_market_value,
             },
         )
 
@@ -159,7 +171,9 @@ class CoveredStrangleStrategy(StrategyDefinition):
 
         credit = (cq.mid_price + pq.mid_price) * 100.0
         capital = covered_strangle_margin(bar.close_price, put_strike, pq.mid_price)
-        max_loss = (bar.close_price * 100.0) + (put_strike * 100.0) - credit
+        max_loss = max((bar.close_price * 100.0) + (put_strike * 100.0) - credit, 0.0)
+        max_profit = max((call_strike - bar.close_price) * 100.0, 0.0) + credit
+        entry_package_market_value = bar.close_price * 100.0 - credit
 
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([config.symbol, short_call.ticker, short_put.ticker]),
@@ -177,7 +191,7 @@ class CoveredStrangleStrategy(StrategyDefinition):
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
             max_loss_per_unit=max_loss,
-            max_profit_per_unit=max((call_strike - bar.close_price) * 100.0, 0.0) + credit,
+            max_profit_per_unit=max_profit,
             detail_json={
                 "legs": [
                     {
@@ -208,6 +222,16 @@ class CoveredStrangleStrategy(StrategyDefinition):
                         "entry_mid": pq.mid_price,
                     },
                 ],
+                "assumptions": [
+                    "Covered strangle enters by purchasing 100 shares, selling one OTM call, and selling one OTM put.",
+                    "Stock commissions are assumed to be zero in this slice;"
+                    " only option commission_per_contract is charged.",
+                    "Combined position is exited at option expiration, max_holding_days, or backtest end.",
+                ],
+                "capital_required_per_unit": capital,
+                "max_loss_per_unit": max_loss,
+                "max_profit_per_unit": max_profit,
+                "entry_package_market_value": entry_package_market_value,
             },
         )
 

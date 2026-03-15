@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { compareBacktests } from "@/lib/api/server";
+import { ApiError } from "@/lib/api/shared";
 import {
   formatCurrency,
   formatDate,
@@ -67,6 +68,8 @@ const METRIC_ROWS: Array<{
   { label: "Ending equity", key: "ending_equity", format: safeCurrency, higherIsBetter: true },
 ];
 
+// max_drawdown_pct is stored as a positive magnitude (e.g. 5 means -5% drawdown),
+// so higherIsBetter: false correctly selects the smallest (best) drawdown.
 function bestIndex(runs: BacktestRunDetailResponse[], key: keyof BacktestSummaryResponse, higherIsBetter: boolean): number {
   let best = -1;
   let bestVal = 0;
@@ -268,7 +271,7 @@ export default async function ComparePage({
       </div>
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Comparison could not be loaded.";
+    const message = error instanceof ApiError ? error.message : "This page could not be loaded. Please try again.";
 
     return (
       <div className="space-y-6">

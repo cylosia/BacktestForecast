@@ -93,6 +93,9 @@ def stripe_webhook(
         window_seconds=settings.rate_limit_window_seconds,
     )
 
+    # Informational only — this list is incomplete and NOT a security control.
+    # Webhook authenticity is verified by Stripe signature validation above.
+    # These IPs are logged to aid debugging; non-matching IPs are NOT rejected.
     known_stripe_cidrs = [
         "54.187.174.169/32", "54.187.205.235/32", "54.187.216.72/32",
         "54.241.31.99/32", "54.241.31.102/32", "54.241.34.107/32",

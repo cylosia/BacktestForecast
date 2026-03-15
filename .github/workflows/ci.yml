@@ -46,7 +46,7 @@ jobs:
         run: python -m mypy src apps --ignore-missing-imports
 
       - name: Run Python tests
-        run: pytest -q
+        run: pytest -q -m "not integration" --ignore=tests/integration
 
       - name: Check service close() methods
         run: python scripts/check_service_close.py
@@ -348,6 +348,8 @@ jobs:
     timeout-minutes: 30
     needs: container-smoke
     steps:
+      # NOTE: These images are rebuilt here rather than reused from container-smoke.
+      # For optimization, consider using docker save/load via artifacts.
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 

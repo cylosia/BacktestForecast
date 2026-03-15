@@ -109,6 +109,11 @@ class ScannerJobRepository:
         before: datetime,
         limit: int = 200,
     ) -> list[tuple[ScannerRecommendation, datetime | None]]:
+        """Fetch historical recommendations across ALL users for aggregate signal analysis.
+
+        This intentionally crosses user boundaries to build platform-wide signal history.
+        Do not expose raw ScannerRecommendation objects to end users.
+        """
         stmt = (
             select(ScannerRecommendation, ScannerJob.completed_at)
             .join(ScannerJob, ScannerRecommendation.scanner_job_id == ScannerJob.id)
@@ -132,6 +137,11 @@ class ScannerJobRepository:
         before: datetime,
         limit_per_key: int = 200,
     ) -> dict[tuple[str, str, str], list[tuple[ScannerRecommendation, datetime | None]]]:
+        """Fetch historical recommendations across ALL users for aggregate signal analysis.
+
+        This intentionally crosses user boundaries to build platform-wide signal history.
+        Do not expose raw ScannerRecommendation objects to end users.
+        """
         if not keys:
             return {}
         col_triple = tuple_(
@@ -145,7 +155,7 @@ class ScannerJobRepository:
                 ScannerRecommendation.strategy_type,
                 ScannerRecommendation.rule_set_hash,
             ],
-            order_by=desc(ScannerJob.completed_at),
+            order_by=(desc(ScannerJob.completed_at), desc(ScannerRecommendation.id)),
         ).label("rn")
         subq = (
             select(

@@ -38,6 +38,9 @@ def upgrade() -> None:
     )
     op.add_column("backtest_runs", sa.Column("recovery_factor", sa.Numeric(10, 4), nullable=True))
 
+    for col in ["expectancy", "max_consecutive_wins", "max_consecutive_losses"]:
+        op.alter_column("backtest_runs", col, server_default=None)
+
 
 def downgrade() -> None:
     op.drop_column("backtest_runs", "recovery_factor")

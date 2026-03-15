@@ -20,8 +20,9 @@ export function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSign
     userSignal.removeEventListener("abort", onAbort);
     timeoutSignal.removeEventListener("abort", onAbort);
   };
-  const onAbort = () => {
-    controller.abort();
+  const onAbort = (event: Event) => {
+    const signal = event.target as AbortSignal;
+    controller.abort(signal.reason);
     detach();
   };
   for (const sig of [userSignal, timeoutSignal]) {
@@ -67,6 +68,12 @@ async function handleKnownStatus(response: Response): Promise<void> {
   } catch {
     payload = undefined;
   }
+
+  if (response.status === 401 && typeof window !== "undefined") {
+    const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/sign-in?redirect_url=${returnTo}`;
+  }
+
   throw new ApiError(
     payload?.error?.message ?? fallback.message,
     response.status,

@@ -29,6 +29,7 @@ _SSE_RESPONSES = {
 SSE_TIMEOUT_SECONDS = 300
 SSE_HEARTBEAT_SECONDS = 15
 SSE_MAX_CONNECTIONS_PER_USER = 10
+SSE_MAX_CONNECTIONS_PROCESS = 200
 
 _SSE_CONN_KEY_PREFIX = "sse:connections:"
 _SSE_CONN_TTL = 600
@@ -213,7 +214,7 @@ async def _acquire_sse_slot(user_id: UUID) -> bool:
         return int(result) == 1
     except Exception:
         logger.warning("sse.acquire_slot_redis_error", user_id=str(user_id), exc_info=True)
-        return False
+        return True  # Fail-open: allow SSE connections during Redis outages
 
 
 async def _release_sse_slot(user_id: UUID) -> None:
@@ -235,8 +236,20 @@ async def _event_stream(
     request: Request,
     user_id: UUID,
 ) -> AsyncGenerator[dict[str, str], None]:
-    """Wrap Redis subscription in SSE event format with heartbeats and timeout."""
+    """Wrap Redis subscription in SSE event format with heartbeats and timeout.
+
+    NOTE: The frontend currently uses polling (``usePolling``) exclusively for
+    real-time updates.  This SSE infrastructure exists as a future upgrade path
+    to reduce polling overhead.  It is fully functional but has no active
+    frontend consumers.
+    """
     from redis.exceptions import RedisError
+
+    current = ACTIVE_SSE_CONNECTIONS._value.get()
+    if current >= SSE_MAX_CONNECTIONS_PROCESS:
+        yield {"event": "error", "data": "Server connection limit reached. Please try again later."}
+        yield {"event": "done", "data": "stream_ended"}
+        return
 
     acquired = await _acquire_sse_slot(user_id)
     if not acquired:

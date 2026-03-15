@@ -12,6 +12,20 @@ from backtestforecast.security.rate_limits import ping_redis
 
 router = APIRouter(tags=["health"])
 
+
+def _ping_broker_redis() -> bool:
+    """Ping the Celery broker Redis (distinct from the rate-limit/cache Redis)."""
+    try:
+        from redis import Redis
+        settings = get_settings()
+        r = Redis.from_url(settings.redis_url, socket_timeout=2.0, socket_connect_timeout=2.0)
+        try:
+            return bool(r.ping())
+        finally:
+            r.close()
+    except Exception:
+        return False
+
 _health_window: deque[float] = deque()
 _health_lock = Lock()
 # Per-worker (in-process) limit — not a global cluster-wide rate limit.
@@ -37,6 +51,7 @@ def ready(request: Request) -> JSONResponse:
         _health_window.append(now)
     settings = get_settings()
     redis_up = ping_redis()
+    broker_up = _ping_broker_redis()
 
     db_up = True
     try:
@@ -50,22 +65,33 @@ def ready(request: Request) -> JSONResponse:
             content["environment"] = settings.app_env
             content["database"] = "down"
             content["redis"] = "up" if redis_up else "degraded"
+            content["broker"] = "up" if broker_up else "down"
+        return JSONResponse(status_code=503, content=content)
+
+    if not redis_up and settings.rate_limit_fail_closed:
+        content = {"status": "unavailable", "version": HEALTH_VERSION}
+        if settings.app_env not in ("production", "staging"):
+            content["environment"] = settings.app_env
+            content["database"] = "up"
+            content["redis"] = "down"
+            content["broker"] = "up" if broker_up else "down"
+            content["rate_limit_mode"] = "fail_closed"
         return JSONResponse(status_code=503, content=content)
 
     if redis_up:
         rl_mode = "redis"
-    elif settings.rate_limit_fail_closed:
-        rl_mode = "fail_closed"
     else:
         rl_mode = "in_memory_fallback"
 
+    all_ok = redis_up and broker_up
     payload: dict[str, str] = {
-        "status": "ok" if redis_up else "degraded",
+        "status": "ok" if all_ok else "degraded",
         "version": HEALTH_VERSION,
     }
     if settings.app_env not in ("production", "staging"):
         payload["environment"] = settings.app_env
         payload["database"] = "up"
         payload["redis"] = "up" if redis_up else "degraded"
+        payload["broker"] = "up" if broker_up else "down"
         payload["rate_limit_mode"] = rl_mode
     return JSONResponse(status_code=200, content=payload)

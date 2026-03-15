@@ -15,7 +15,7 @@ export default function RootError({
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-background text-foreground antialiased">
+        <body className="min-h-screen bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100 antialiased">
         <div className="flex min-h-screen flex-col items-center justify-center gap-4 text-center p-6">
           <h1 className="text-3xl font-bold tracking-tight">Something went wrong</h1>
           <p className="max-w-md text-gray-600">

@@ -303,7 +303,7 @@ function RangeBar({
   const zeroPct = low >= 0 ? 0 : ((-low) / range) * 100;
 
   return (
-    <>
+    <div role="img" aria-label={`Range: ${low}% to ${high}%, median ${median}%`} className="absolute inset-0">
       {/* Background gradient: red (left) → green (right) */}
       <div
         className="absolute inset-0 rounded-full"
@@ -323,6 +323,6 @@ function RangeBar({
         className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary shadow-sm"
         style={{ left: `${Math.min(Math.max(medianPct, 5), 95)}%` }}
       />
-    </>
+    </div>
   );
 }

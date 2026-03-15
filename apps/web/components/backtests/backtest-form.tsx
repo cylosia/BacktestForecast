@@ -145,9 +145,10 @@ export function BacktestForm({
         </div>
       ) : (
         <div className="rounded-xl border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground">
-          {quota.limit === null
+          <p>{quota.limit === null
             ? `${quota.used} backtests used this month. This plan currently has no monthly cap.`
-            : `${quota.used} of ${quota.limit} monthly backtests used. ${quota.remaining ?? 0} remaining in the current month.`}
+            : `${quota.used} of ${quota.limit} monthly backtests used. ${quota.remaining ?? 0} remaining in the current month.`}</p>
+          <p className="mt-1 text-xs opacity-70">Usage shown as of page load. Actual limits are enforced server-side.</p>
         </div>
       )}
 

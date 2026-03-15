@@ -36,7 +36,8 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
             </TableHeader>
             <TableBody>
               {trades.map((trade, idx) => {
-                const isPositive = toNumber(trade.net_pnl) >= 0;
+                const pnl = toNumber(trade.net_pnl);
+                const isPositive = Number.isFinite(pnl) ? pnl >= 0 : null;
 
                 return (
                   <TableRow key={trade.id ?? idx}>
@@ -72,7 +73,7 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        <p className={isPositive ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}>
+                        <p className={isPositive === null ? "text-muted-foreground" : isPositive ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}>
                           {formatCurrency(trade.net_pnl)}
                         </p>
                         <p className="text-xs text-muted-foreground">
@@ -82,7 +83,7 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
                     </TableCell>
                     <TableCell>
                       <div className="space-y-2">
-                        <Badge variant={isPositive ? "success" : "secondary"}>{trade.exit_reason}</Badge>
+                        <Badge variant={isPositive === null ? "outline" : isPositive ? "success" : "secondary"}>{trade.exit_reason}</Badge>
                         <p className="text-xs text-muted-foreground">Entered via {trade.entry_reason}</p>
                       </div>
                     </TableCell>

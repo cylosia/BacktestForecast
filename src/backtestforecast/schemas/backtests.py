@@ -271,7 +271,7 @@ class CustomLegDefinition(BaseModel):
         le=2,
         description="0=primary expiration, 1=next available, 2=second-next.",
     )
-    quantity_ratio: float = Field(default=1.0, ge=0.1, le=10.0)
+    quantity_ratio: Decimal = Field(default=Decimal("1.0"), ge=Decimal("0.1"), le=Decimal("10.0"))
 
     @model_validator(mode="after")
     def validate_leg(self) -> "CustomLegDefinition":

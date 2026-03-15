@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
+import structlog
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -303,9 +305,6 @@ class Settings(BaseSettings):
 
     @property
     def web_cors_origins(self) -> list[str]:
-        import logging
-
-        logger = logging.getLogger(__name__)
         origins: list[str] = []
         for origin in self.web_cors_origins_raw.split(","):
             origin = origin.strip()
@@ -384,6 +383,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments require CLERK_ISSUER for JWT issuer verification.")
             if not (self.clerk_jwt_key or self.clerk_jwks_url):
                 raise ValueError("Production-like environments require CLERK_JWT_KEY or CLERK_JWKS_URL for JWT signature verification.")
+            if not self.clerk_secret_key:
+                raise ValueError("Production-like environments require CLERK_SECRET_KEY for webhook verification.")
             if not self.log_json:
                 raise ValueError("Production-like environments must enable structured JSON logging.")
             if "*" in self.api_allowed_hosts:
@@ -411,6 +412,7 @@ class Settings(BaseSettings):
 _settings_cache: Settings | None = None
 _settings_lock = threading.Lock()
 _invalidation_callbacks: list[Callable[[], None]] = []
+logger = structlog.get_logger(__name__)
 
 
 def register_invalidation_callback(callback: Callable[[], None]) -> None:
@@ -448,4 +450,4 @@ def invalidate_settings() -> None:
         try:
             cb()
         except Exception:
-            pass
+            logger.exception("settings_invalidation_callback_failed", callback=repr(cb))

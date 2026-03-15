@@ -355,8 +355,8 @@ class BacktestService:
         run = self.run_repository.get_lightweight_for_user(run_id, user_id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
-        trades = self.run_repository.get_trades_for_run(run_id, limit=trade_limit)
-        equity = self.run_repository.get_equity_points_for_run(run_id, limit=EQUITY_CURVE_LIMIT)
+        trades = self.run_repository.get_trades_for_run(run_id, limit=trade_limit, user_id=user_id)
+        equity = self.run_repository.get_equity_points_for_run(run_id, limit=EQUITY_CURVE_LIMIT, user_id=user_id)
         return self._to_detail_response(run, trades=trades, equity_points=equity)
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
@@ -403,8 +403,8 @@ class BacktestService:
             items=[
                 self._to_detail_response(
                     run,
-                    trades=self.run_repository.get_trades_for_run(run.id, limit=trade_limit),
-                    equity_points=self.run_repository.get_equity_points_for_run(run.id, limit=EQUITY_CURVE_LIMIT),
+                    trades=self.run_repository.get_trades_for_run(run.id, limit=trade_limit, user_id=user.id),
+                    equity_points=self.run_repository.get_equity_points_for_run(run.id, limit=EQUITY_CURVE_LIMIT, user_id=user.id),
                 )
                 for run in ordered
             ],
@@ -602,9 +602,9 @@ class BacktestService:
         equity_points: list[BacktestEquityPoint] | None = None,
     ) -> BacktestRunDetailResponse:
         if trades is None:
-            trades = self.run_repository.get_trades_for_run(run.id, limit=trade_limit)
+            trades = self.run_repository.get_trades_for_run(run.id, limit=trade_limit, user_id=run.user_id)
         if equity_points is None:
-            equity_points = self.run_repository.get_equity_points_for_run(run.id, limit=EQUITY_CURVE_LIMIT)
+            equity_points = self.run_repository.get_equity_points_for_run(run.id, limit=EQUITY_CURVE_LIMIT, user_id=run.user_id)
         return BacktestRunDetailResponse(
             id=run.id,
             symbol=run.symbol,

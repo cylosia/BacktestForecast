@@ -1,4 +1,5 @@
 import { getCurrentUser, getStrategyCatalog, getTemplates } from "@/lib/api/server";
+import { ApiError } from "@/lib/api/shared";
 import { buildBacktestQuota } from "@/lib/backtests/quota";
 import { BacktestForm } from "@/components/backtests/backtest-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,7 +38,7 @@ export default async function NewBacktestPage({
       </div>
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "The backtest form could not be prepared.";
+    const message = error instanceof ApiError ? error.message : "This page could not be loaded. Please try again.";
 
     return (
       <div className="space-y-6">

@@ -102,7 +102,32 @@ class PMCCStrategy(StrategyDefinition):
             scheduled_exit_date=near_exp,
             capital_required_per_unit=capital,
             max_loss_per_unit=max_loss,
-            detail_json={"long_expiration": far_exp.isoformat(), "short_expiration": near_exp.isoformat()},
+            detail_json={
+                "long_expiration": far_exp.isoformat(),
+                "short_expiration": near_exp.isoformat(),
+                "legs": [
+                    {
+                        "asset_type": "option",
+                        "ticker": long_c.ticker,
+                        "side": "long",
+                        "contract_type": "call",
+                        "strike_price": long_strike,
+                        "expiration_date": far_exp.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": lq.mid_price,
+                    },
+                    {
+                        "asset_type": "option",
+                        "ticker": short_c.ticker,
+                        "side": "short",
+                        "contract_type": "call",
+                        "strike_price": short_strike,
+                        "expiration_date": near_exp.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": sq.mid_price,
+                    },
+                ],
+            },
         )
 
 
@@ -176,7 +201,32 @@ class DiagonalSpreadStrategy(StrategyDefinition):
             scheduled_exit_date=near_exp,
             capital_required_per_unit=capital,
             max_loss_per_unit=max_loss,
-            detail_json={"long_expiration": far_exp.isoformat(), "short_expiration": near_exp.isoformat()},
+            detail_json={
+                "long_expiration": far_exp.isoformat(),
+                "short_expiration": near_exp.isoformat(),
+                "legs": [
+                    {
+                        "asset_type": "option",
+                        "ticker": long_c.ticker,
+                        "side": "long",
+                        "contract_type": "call",
+                        "strike_price": far_strike,
+                        "expiration_date": far_exp.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": lq.mid_price,
+                    },
+                    {
+                        "asset_type": "option",
+                        "ticker": short_c.ticker,
+                        "side": "short",
+                        "contract_type": "call",
+                        "strike_price": near_strike,
+                        "expiration_date": near_exp.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": sq.mid_price,
+                    },
+                ],
+            },
         )
 
 
@@ -267,7 +317,52 @@ class DoubleDiagonalStrategy(StrategyDefinition):
             scheduled_exit_date=near_exp,
             capital_required_per_unit=capital,
             max_loss_per_unit=max_loss,
-            detail_json={"near_expiration": near_exp.isoformat(), "far_expiration": far_exp.isoformat()},
+            detail_json={
+                "near_expiration": near_exp.isoformat(),
+                "far_expiration": far_exp.isoformat(),
+                "legs": [
+                    {
+                        "asset_type": "option",
+                        "ticker": lc.ticker,
+                        "side": "long",
+                        "contract_type": "call",
+                        "strike_price": far_call_strike,
+                        "expiration_date": far_exp.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": lcq.mid_price,  # type: ignore[union-attr]
+                    },
+                    {
+                        "asset_type": "option",
+                        "ticker": sc.ticker,
+                        "side": "short",
+                        "contract_type": "call",
+                        "strike_price": near_call_strike,
+                        "expiration_date": near_exp.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": scq.mid_price,  # type: ignore[union-attr]
+                    },
+                    {
+                        "asset_type": "option",
+                        "ticker": lp.ticker,
+                        "side": "long",
+                        "contract_type": "put",
+                        "strike_price": far_put_strike,
+                        "expiration_date": far_exp.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": lpq.mid_price,  # type: ignore[union-attr]
+                    },
+                    {
+                        "asset_type": "option",
+                        "ticker": sp.ticker,
+                        "side": "short",
+                        "contract_type": "put",
+                        "strike_price": near_put_strike,
+                        "expiration_date": near_exp.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": spq.mid_price,  # type: ignore[union-attr]
+                    },
+                ],
+            },
         )
 
 

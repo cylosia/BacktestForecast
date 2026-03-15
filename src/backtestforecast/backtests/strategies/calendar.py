@@ -65,8 +65,8 @@ class CalendarSpreadStrategy(StrategyDefinition):
         long_leg_value = long_quote.mid_price * 100.0
         reduced_margin = max(full_margin - long_leg_value, net_debit)
         if entry_value_per_unit >= 0:
-            capital = max(entry_value_per_unit, 1.0)
-            max_loss: float | None = max(entry_value_per_unit, 1.0)
+            capital = max(entry_value_per_unit, 0.01)
+            max_loss: float | None = max(entry_value_per_unit, 0.01)
         else:
             capital = reduced_margin
             max_loss = reduced_margin

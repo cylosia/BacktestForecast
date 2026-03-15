@@ -75,17 +75,20 @@ class SyntheticPutStrategy(StrategyDefinition):
             stock_legs=[OpenStockLeg(config.symbol, -1, 100, bar.close_price, bar.close_price)],
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
-            max_loss_per_unit=premium + (strike - bar.close_price) * 100.0 if strike > bar.close_price else premium,
+            max_loss_per_unit=max(premium + (strike - bar.close_price) * 100.0, 0.0) if strike > bar.close_price else max(premium - (bar.close_price - strike) * 100.0, 0.0),
             max_profit_per_unit=None,
             detail_json={
                 "legs": [
-                    {"asset_type": "stock", "symbol": config.symbol, "side": "short", "shares": 100},
+                    {"asset_type": "stock", "identifier": config.symbol, "side": "short", "share_quantity_per_unit": 100, "entry_price": bar.close_price},
                     {
                         "asset_type": "option",
                         "ticker": long_call.ticker,
                         "side": "long",
                         "contract_type": "call",
                         "strike_price": strike,
+                        "expiration_date": expiration.isoformat(),
+                        "quantity_per_unit": 1,
+                        "entry_mid": cq.mid_price,
                     },
                 ]
             },
@@ -152,7 +155,15 @@ class ReverseConversionStrategy(StrategyDefinition):
             scheduled_exit_date=expiration,
             capital_required_per_unit=capital,
             max_loss_per_unit=max(net_option - (bar.close_price - strike) * 100.0, 0.0),
-            detail_json={"strike": strike, "net_option_cost": net_option},
+            detail_json={
+                "strike": strike,
+                "net_option_cost": net_option,
+                "legs": [
+                    {"asset_type": "stock", "identifier": config.symbol, "side": "short", "share_quantity_per_unit": 100, "entry_price": bar.close_price},
+                    {"asset_type": "option", "ticker": long_call.ticker, "side": "long", "contract_type": "call", "strike_price": strike, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": cq.mid_price},
+                    {"asset_type": "option", "ticker": short_put.ticker, "side": "short", "contract_type": "put", "strike_price": strike, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": pq.mid_price},
+                ],
+            },
         )
 
 

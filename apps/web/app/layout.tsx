@@ -7,6 +7,8 @@ export const metadata: Metadata = {
   description: "Historical options backtesting for retail traders.",
 };
 
+// TODO: Add dark mode toggle. Dark mode variants (dark:...) are defined
+// throughout the codebase but no mechanism exists to activate them yet.
 export default function RootLayout({
   children,
 }: Readonly<{

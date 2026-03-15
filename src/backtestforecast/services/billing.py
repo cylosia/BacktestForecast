@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PAID_STATUSES, BillingInterval, PlanTier
@@ -141,7 +141,7 @@ class BillingService:
             metadata={"return_url": return_url},
         )
         self.session.commit()
-        logger.info("billing.portal_session.created", user_id=str(user.id), customer_id=user.stripe_customer_id)
+        logger.info("billing.portal_session.created", user_id=str(user.id))
         return PortalSessionResponse(portal_url=portal_session.url)
 
     def handle_webhook(
@@ -194,7 +194,7 @@ class BillingService:
                 logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
                 STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
                 return {"status": "duplicate", "event_type": event_type}
-            self.session.flush()
+            self.session.commit()
         except IntegrityError as ie:
             self.session.rollback()
             if "uq_audit_events_" in str(getattr(ie, "orig", ie)):
@@ -220,9 +220,13 @@ class BillingService:
                 self._sync_subscription(data_object)
             else:
                 logger.info("billing.webhook.ignored", event_type=event_type)
-        except ExternalServiceError:
+        except ExternalServiceError as ese:
             self.session.rollback()
-            self._trip_stripe_circuit()
+            if not isinstance(ese.__cause__, NotFoundError) and "not found" not in str(ese).lower():
+                self._trip_stripe_circuit()
+            raise
+        except NotFoundError:
+            self.session.rollback()
             raise
         except Exception:
             self.session.rollback()
@@ -242,7 +246,9 @@ class BillingService:
                 user = self.users.get_by_stripe_customer_id(customer_id)
         if user is None:
             logger.warning("billing.checkout_session.user_not_found", session_id=checkout_session.get("id"))
-            return None
+            raise NotFoundError(
+                "User not found for checkout session; Stripe should retry this webhook."
+            )
 
         customer_id = self._coerce_stripe_id(checkout_session.get("customer"))
         subscription_id = self._coerce_stripe_id(checkout_session.get("subscription"))
@@ -282,7 +288,9 @@ class BillingService:
                 user = self.users.get_by_stripe_customer_id(customer_id)
         if user is None:
             logger.warning("billing.subscription.user_not_found", subscription_id=subscription.get("id"))
-            return None
+            raise NotFoundError(
+                "User not found for subscription event; Stripe should retry this webhook."
+            )
         self._apply_subscription_to_user(user, subscription)
         return user
 
@@ -393,26 +401,27 @@ class BillingService:
         )
 
     def _get_or_create_customer(self, user: User) -> str:
-        locked_user = self.session.scalar(
-            select(User).where(User.id == user.id).with_for_update()
-        )
-        if locked_user is None:
-            raise NotFoundError("User account no longer exists.")
-        if locked_user.stripe_customer_id:
-            return locked_user.stripe_customer_id
+        if user.stripe_customer_id:
+            return user.stripe_customer_id
         client = self._get_stripe_client()
         customer = client.customers.create(
             params={
-                "email": locked_user.email,
+                "email": user.email,
                 "metadata": {
-                    "user_id": str(locked_user.id),
-                    "clerk_user_id": locked_user.clerk_user_id,
+                    "user_id": str(user.id),
+                    "clerk_user_id": user.clerk_user_id,
                 },
             }
         )
-        locked_user.stripe_customer_id = customer.id
-        self.session.add(locked_user)
+        result = self.session.execute(
+            sa_update(User)
+            .where(User.id == user.id, User.stripe_customer_id.is_(None))
+            .values(stripe_customer_id=customer.id)
+        )
         self.session.flush()
+        if result.rowcount == 0:
+            self.session.refresh(user)
+            return user.stripe_customer_id
         return customer.id
 
     def _find_user_by_metadata(self, payload: Any) -> User | None:

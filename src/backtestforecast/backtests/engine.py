@@ -80,6 +80,8 @@ class OptionsBacktestEngine:
                 snapshot = self._mark_position(position, bar, option_gateway, warnings, warning_codes)
                 position_value = snapshot.position_value
                 exit_prices = {leg.ticker: leg.last_mid for leg in position.option_legs}
+                for stock_leg in position.stock_legs:
+                    exit_prices[stock_leg.symbol] = stock_leg.last_price
 
                 should_exit, exit_reason = self._resolve_exit(
                     bar=bar,
@@ -140,7 +142,10 @@ class OptionsBacktestEngine:
                         ev_per_unit = self._entry_value_per_unit(candidate)
                         contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
                         commission_per_unit = config.commission_per_contract * contracts_per_unit
-                        gross_notional_per_unit = sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in candidate.option_legs)
+                        gross_notional_per_unit = (
+                            sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in candidate.option_legs)
+                            + sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in candidate.stock_legs)
+                        )
                         quantity = self._resolve_position_size(
                             available_cash=cash,
                             account_size=config.account_size,
@@ -200,6 +205,8 @@ class OptionsBacktestEngine:
         if position is not None:
             snapshot = self._mark_position(position, sorted_bars[-1], option_gateway, warnings, warning_codes)
             exit_prices_fc = {leg.ticker: leg.last_mid for leg in position.option_legs}
+            for stock_leg in position.stock_legs:
+                exit_prices_fc[stock_leg.symbol] = stock_leg.last_price
             trade, cash_delta = self._close_position(
                 position, config, snapshot.position_value, sorted_bars[-1].trade_date,
                 sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
@@ -275,7 +282,7 @@ class OptionsBacktestEngine:
         return PositionSnapshot(
             position_value=option_value + stock_value,
             position_missing_quote=bool(missing_quote_tickers),
-            missing_quote_tickers=missing_quote_tickers,
+            missing_quote_tickers=tuple(missing_quote_tickers),
         )
 
     @staticmethod
@@ -306,8 +313,7 @@ class OptionsBacktestEngine:
         effective_risk = (
             max_loss_per_unit if max_loss_per_unit is not None and max_loss_per_unit > 0 else capital_required_per_unit
         )
-        if effective_risk <= 0:
-            return 0
+        effective_risk = max(effective_risk, 1.0)
         by_risk = int(risk_budget // effective_risk)
         slippage_per_unit = (gross_notional_per_unit if gross_notional_per_unit > 0 else entry_cost_per_unit) * (slippage_pct / 100.0)
         cash_per_unit = max(capital_required_per_unit, entry_cost_per_unit) + commission_per_unit + slippage_per_unit
@@ -411,6 +417,11 @@ class OptionsBacktestEngine:
             ticker = leg.get("ticker")
             if isinstance(ticker, str) and ticker in exit_prices:
                 leg["exit_mid"] = exit_prices[ticker]
+        for leg in legs:
+            if leg.get("asset_type") == "stock":
+                identifier = leg.get("identifier")
+                if isinstance(identifier, str) and identifier in exit_prices:
+                    leg["exit_price"] = exit_prices[identifier]
         detail["legs"] = legs
         detail["actual_units"] = position.quantity
         detail["capital_required_total"] = position.capital_required_per_unit * position.quantity

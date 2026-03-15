@@ -165,4 +165,4 @@ class OpenMultiLegPosition:
 class PositionSnapshot:
     position_value: float
     position_missing_quote: bool
-    missing_quote_tickers: list[str]
+    missing_quote_tickers: tuple[str, ...]

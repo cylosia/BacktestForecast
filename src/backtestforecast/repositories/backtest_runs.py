@@ -115,27 +115,26 @@ class BacktestRunRepository:
         stmt = (
             select(BacktestRun)
             .where(BacktestRun.id.in_(run_ids), BacktestRun.user_id == user_id)
+            .order_by(BacktestRun.created_at.desc())
         )
         return list(self.session.scalars(stmt))
 
-    def get_trades_for_run(self, run_id: UUID, *, limit: int = 10_000, user_id: UUID | None = None) -> list[BacktestTrade]:
+    def get_trades_for_run(self, run_id: UUID, *, limit: int = 10_000, user_id: UUID) -> list[BacktestTrade]:
         stmt = (
             select(BacktestTrade)
-            .where(BacktestTrade.run_id == run_id)
+            .join(BacktestRun, BacktestTrade.run_id == BacktestRun.id)
+            .where(BacktestTrade.run_id == run_id, BacktestRun.user_id == user_id)
             .order_by(BacktestTrade.entry_date)
             .limit(limit)
         )
-        if user_id is not None:
-            stmt = stmt.join(BacktestRun, BacktestTrade.run_id == BacktestRun.id).where(BacktestRun.user_id == user_id)
         return list(self.session.scalars(stmt))
 
-    def get_equity_points_for_run(self, run_id: UUID, *, limit: int = 10_000, user_id: UUID | None = None) -> list[BacktestEquityPoint]:
+    def get_equity_points_for_run(self, run_id: UUID, *, limit: int = 10_000, user_id: UUID) -> list[BacktestEquityPoint]:
         stmt = (
             select(BacktestEquityPoint)
-            .where(BacktestEquityPoint.run_id == run_id)
+            .join(BacktestRun, BacktestEquityPoint.run_id == BacktestRun.id)
+            .where(BacktestEquityPoint.run_id == run_id, BacktestRun.user_id == user_id)
             .order_by(BacktestEquityPoint.trade_date)
             .limit(limit)
         )
-        if user_id is not None:
-            stmt = stmt.join(BacktestRun, BacktestEquityPoint.run_id == BacktestRun.id).where(BacktestRun.user_id == user_id)
         return list(self.session.scalars(stmt))
