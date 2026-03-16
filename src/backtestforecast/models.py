@@ -84,7 +84,7 @@ class BacktestRun(Base):
         CheckConstraint("commission_per_contract >= 0", name="ck_backtest_runs_commission_nonneg"),
         CheckConstraint("date_from < date_to", name="ck_backtest_runs_date_order"),
         CheckConstraint("max_holding_days >= 1", name="ck_backtest_runs_holding_days_positive"),
-        CheckConstraint("target_dte >= 0", name="ck_backtest_runs_target_dte_nonneg"),
+        CheckConstraint("target_dte >= 7", name="ck_backtest_runs_target_dte_nonneg"),
         CheckConstraint("dte_tolerance_days >= 0", name="ck_backtest_runs_dte_tolerance_nonneg"),
         CheckConstraint(
             "engine_version IN ('options-multileg-v1', 'options-multileg-v2')",

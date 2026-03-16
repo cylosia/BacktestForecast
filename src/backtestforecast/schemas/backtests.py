@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import JobStatus, PlanTier, sanitize_error_message
+from backtestforecast.schemas.common import PlanTier, sanitize_error_message
 
 SYMBOL_ALLOWED_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
 
@@ -78,7 +78,14 @@ class SupportResistanceMode(str, Enum):
     BREAKDOWN_BELOW_SUPPORT = "breakdown_below_support"
 
 
-RunStatus = JobStatus
+class RunStatus(str, Enum):
+    """Status enum for backtest runs. Unlike JobStatus, this excludes
+    ``expired`` which only applies to export jobs."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RsiRule(BaseModel):

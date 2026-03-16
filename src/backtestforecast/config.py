@@ -178,7 +178,7 @@ class Settings(BaseSettings):
     trusted_proxy_cidrs: str = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
     rate_limit_prefix: str = "bff:rate-limit"
-    rate_limit_fail_closed: bool = True
+    rate_limit_fail_closed: bool = False
     rate_limit_memory_max_keys: int = 10_000
     backtest_create_rate_limit: int = 10
     scan_create_rate_limit: int = 6

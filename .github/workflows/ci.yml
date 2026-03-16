@@ -478,14 +478,25 @@ jobs:
             NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app/dashboard
             NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app/dashboard
 
+      - name: Start PostgreSQL for smoke test
+        run: |
+          docker run -d --name ci-postgres --network host \
+            -e POSTGRES_USER=smoke -e POSTGRES_PASSWORD=smoke -e POSTGRES_DB=smoke_test \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec ci-postgres pg_isready -U smoke -d smoke_test && break
+            sleep 1
+          done
+
       - name: Verify API container starts
         run: |
-          docker run -d --name ci-api -p 8000:8000 \
-            -e DATABASE_URL=sqlite:///tmp/test.db \
+          docker run -d --name ci-api -p 8000:8000 --network host \
+            -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke_test \
             -e REDIS_URL=redis://localhost:6379/0 \
             -e APP_ENV=test \
-            backtestforecast-api:ci
-          sleep 5
+            backtestforecast-api:ci \
+            sh -c "alembic upgrade head && uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+          sleep 8
           docker logs ci-api
           curl --fail --silent --max-time 5 http://localhost:8000/health/live || {
             echo "API container failed to start"
@@ -493,3 +504,4 @@ jobs:
             exit 1
           }
           docker stop ci-api
+          docker stop ci-postgres
