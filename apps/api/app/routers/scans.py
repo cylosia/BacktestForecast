@@ -40,7 +40,8 @@ def list_scans(
         limit=settings.scan_create_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    return ScanService(db).list_jobs(user, limit=limit, offset=offset)
+    with ScanService(db) as service:
+        return service.list_jobs(user, limit=limit, offset=offset)
 
 
 @router.post("", response_model=ScannerJobResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -61,21 +62,21 @@ def create_scan(
         limit=settings.scan_create_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = ScanService(db)
-    job = service.create_job(user, payload)
-    dispatch_celery_task(
-        db=db,
-        job=job,
-        task_name="scans.run_job",
-        task_kwargs={"job_id": str(job.id)},
-        queue="research",
-        log_event="scan",
-        logger=logger,
-        request_id=metadata.request_id,
-        traceparent=request.headers.get("traceparent"),
-    )
-    db.expire_all()
-    return service.get_job(user, job.id)
+    with ScanService(db) as service:
+        job = service.create_job(user, payload)
+        dispatch_celery_task(
+            db=db,
+            job=job,
+            task_name="scans.run_job",
+            task_kwargs={"job_id": str(job.id)},
+            queue="research",
+            log_event="scan",
+            logger=logger,
+            request_id=metadata.request_id,
+            traceparent=request.headers.get("traceparent"),
+        )
+        db.expire_all()
+        return service.get_job(user, job.id)
 
 
 @router.get("/{job_id}", response_model=ScannerJobResponse)
@@ -91,7 +92,8 @@ def get_scan(
         limit=settings.scan_create_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    return ScanService(db).get_job(user, job_id)
+    with ScanService(db) as service:
+        return service.get_job(user, job_id)
 
 
 @router.get("/{job_id}/recommendations", response_model=ScannerRecommendationListResponse)
@@ -107,4 +109,5 @@ def get_scan_recommendations(
         limit=settings.scan_create_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    return ScanService(db).get_recommendations(user, job_id)
+    with ScanService(db) as service:
+        return service.get_recommendations(user, job_id)

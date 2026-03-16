@@ -41,8 +41,8 @@ def list_backtests(
         limit=settings.backtest_create_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestService(db)
-    return service.list_runs(user, limit=limit, offset=offset)
+    with BacktestService(db) as service:
+        return service.list_runs(user, limit=limit, offset=offset)
 
 
 @router.post("", response_model=BacktestRunDetailResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -63,23 +63,23 @@ def create_backtest(
         limit=settings.backtest_create_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestService(db)
-    run = service.enqueue(user, payload)
+    with BacktestService(db) as service:
+        run = service.enqueue(user, payload)
 
-    dispatch_celery_task(
-        db=db,
-        job=run,
-        task_name="backtests.run",
-        task_kwargs={"run_id": str(run.id)},
-        queue="research",
-        log_event="backtest",
-        logger=logger,
-        request_id=metadata.request_id,
-        traceparent=request.headers.get("traceparent"),
-    )
+        dispatch_celery_task(
+            db=db,
+            job=run,
+            task_name="backtests.run",
+            task_kwargs={"run_id": str(run.id)},
+            queue="research",
+            log_event="backtest",
+            logger=logger,
+            request_id=metadata.request_id,
+            traceparent=request.headers.get("traceparent"),
+        )
 
-    db.expire_all()
-    return service.get_run(user, run.id)
+        db.expire_all()
+        return service.get_run(user, run.id)
 
 
 @router.post("/compare", response_model=CompareBacktestsResponse)
@@ -96,8 +96,8 @@ def compare_backtests(
         limit=settings.backtest_create_rate_limit * 2,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestService(db)
-    return service.compare_runs(user, payload)
+    with BacktestService(db) as service:
+        return service.compare_runs(user, payload)
 
 
 @router.get("/{run_id}/status", response_model=BacktestRunStatusResponse)
@@ -113,8 +113,8 @@ def get_backtest_status(
         limit=settings.backtest_create_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestService(db)
-    return service.get_run_status(user, run_id)
+    with BacktestService(db) as service:
+        return service.get_run_status(user, run_id)
 
 
 @router.get("/{run_id}", response_model=BacktestRunDetailResponse)
@@ -131,5 +131,5 @@ def get_backtest(
         limit=settings.backtest_create_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestService(db)
-    return service.get_run(user, run_id, trade_limit=trade_limit)
+    with BacktestService(db) as service:
+        return service.get_run(user, run_id, trade_limit=trade_limit)

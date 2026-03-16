@@ -128,7 +128,9 @@ class VerticalSpreadStrategy(StrategyDefinition):
             max_profit_per_unit = max(width - debit, 0.0)
             capital_required_per_unit = debit
         else:
-            credit = abs(min(entry_value_per_unit, 0.0))
+            if entry_value_per_unit > 0:
+                return None
+            credit = abs(entry_value_per_unit)
             max_loss_per_unit = max(width - credit, 0.0)
             max_profit_per_unit = credit
             capital_required_per_unit = credit_spread_margin(

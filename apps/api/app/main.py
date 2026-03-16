@@ -332,7 +332,7 @@ def dlq_status(request: Request) -> Response:
         import json
 
         fallback_redis = None
-        r = get_rate_limiter()._get_redis()
+        r = get_rate_limiter().get_redis()
         if r is None:
             from redis import Redis
             r = Redis.from_url(settings.redis_url, socket_timeout=5, decode_responses=False)

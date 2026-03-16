@@ -84,8 +84,9 @@ class JadeLizardStrategy(StrategyDefinition):
             return None
 
         total_credit = (spq.mid_price + scq.mid_price - lcq.mid_price) * 100.0
+        if total_credit <= 0:
+            return None
         call_width = (call_long_strike - call_short_strike) * 100.0
-        # No upside loss if credit > call spread width
         upside_risk = max(call_width - total_credit, 0.0)
         margin = jade_lizard_margin(
             bar.close_price,

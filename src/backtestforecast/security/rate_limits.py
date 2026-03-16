@@ -47,6 +47,14 @@ class RateLimiter:
         self._redis_retry_after: float = 0.0
         self._lua_sha: str | None = None
 
+    def get_redis(self) -> Redis | None:
+        """Return the underlying Redis client, or None if unavailable.
+
+        Public so that other subsystems (e.g. billing circuit breaker) can
+        perform lightweight Redis checks without duplicating connection logic.
+        """
+        return self._get_redis()
+
     def _get_redis(self) -> Redis | None:
         if self._redis is not None:
             return self._redis
@@ -208,3 +216,19 @@ def get_rate_limiter() -> RateLimiter:
 
 def ping_redis() -> bool:
     return get_rate_limiter().ping()
+
+
+def _invalidate_rate_limiter() -> None:
+    """Close and discard the cached rate limiter so the next call
+    to ``get_rate_limiter()`` creates a fresh instance with updated settings."""
+    global _rate_limiter
+    with _rate_limiter_lock:
+        old = _rate_limiter
+        _rate_limiter = None
+    if old is not None:
+        old.close()
+
+
+from backtestforecast.config import register_invalidation_callback as _register  # noqa: E402
+
+_register(_invalidate_rate_limiter)

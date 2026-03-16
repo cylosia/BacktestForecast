@@ -50,16 +50,30 @@ def _seed_run_with_trades(session, user_id) -> BacktestRun:
         id=uuid4(),
         user_id=user_id,
         symbol="AAPL",
-        strategy_type="long_only",
+        strategy_type="long_call",
         status="succeeded",
+        date_from=date(2023, 1, 1),
+        date_to=date(2023, 6, 30),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=30,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        input_snapshot_json={"symbol": "AAPL"},
         starting_equity=Decimal("10000"),
         ending_equity=Decimal("10500"),
-        total_return_pct=Decimal("5.0"),
+        total_roi_pct=Decimal("5.0"),
         max_drawdown_pct=Decimal("2.0"),
-        win_rate_pct=Decimal("60.0"),
-        total_trades=1,
-        winning_trades=1,
-        losing_trades=0,
+        win_rate=Decimal("60.0"),
+        trade_count=1,
+        total_net_pnl=Decimal("500"),
+        total_commissions=Decimal("5"),
+        average_win_amount=Decimal("500"),
+        average_loss_amount=Decimal("0"),
+        average_holding_period_days=Decimal("14"),
+        average_dte_at_open=Decimal("20"),
+        expectancy=Decimal("500"),
         profit_factor=None,
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
@@ -67,11 +81,12 @@ def _seed_run_with_trades(session, user_id) -> BacktestRun:
     session.add(run)
     session.flush()
 
-    trade = BacktestTrade(
+    winning_trade = BacktestTrade(
         id=uuid4(),
-        backtest_run_id=run.id,
+        run_id=run.id,
         option_ticker="AAPL230120C00150000",
-        strategy_type="long_only",
+        strategy_type="long_call",
+        underlying_symbol="AAPL",
         entry_date=date(2023, 1, 1),
         exit_date=date(2023, 1, 15),
         expiration_date=date(2023, 1, 20),
@@ -82,17 +97,41 @@ def _seed_run_with_trades(session, user_id) -> BacktestRun:
         exit_underlying_close=Decimal("155.00"),
         entry_mid=Decimal("5.00"),
         exit_mid=Decimal("7.50"),
-        gross_pnl=Decimal("250.00"),
-        net_pnl=Decimal("245.00"),
+        gross_pnl=Decimal("750.00"),
+        net_pnl=Decimal("745.00"),
         total_commissions=Decimal("5.00"),
         entry_reason="signal",
         exit_reason="target",
     )
-    session.add(trade)
+    session.add(winning_trade)
+
+    losing_trade = BacktestTrade(
+        id=uuid4(),
+        run_id=run.id,
+        option_ticker="AAPL230215C00160000",
+        strategy_type="long_call",
+        underlying_symbol="AAPL",
+        entry_date=date(2023, 2, 1),
+        exit_date=date(2023, 2, 15),
+        expiration_date=date(2023, 2, 17),
+        quantity=1,
+        dte_at_open=17,
+        holding_period_days=14,
+        entry_underlying_close=Decimal("160.00"),
+        exit_underlying_close=Decimal("155.00"),
+        entry_mid=Decimal("6.00"),
+        exit_mid=Decimal("3.50"),
+        gross_pnl=Decimal("-250.00"),
+        net_pnl=Decimal("-255.00"),
+        total_commissions=Decimal("5.00"),
+        entry_reason="signal",
+        exit_reason="max_holding_days",
+    )
+    session.add(losing_trade)
 
     point = BacktestEquityPoint(
         id=uuid4(),
-        backtest_run_id=run.id,
+        run_id=run.id,
         trade_date=date(2023, 1, 1),
         equity=Decimal("10000.00"),
         cash=Decimal("5000.00"),
@@ -110,6 +149,7 @@ def test_backfill_updates_missing_metrics(db_session):
     run = _seed_run_with_trades(db_session, user.id)
 
     assert run.profit_factor is None
+    run_id = run.id
 
     with patch(
         "backtestforecast.management.backfill_metrics.SessionLocal",
@@ -120,8 +160,11 @@ def test_backfill_updates_missing_metrics(db_session):
         count = backfill()
 
     assert count >= 1
-    db_session.refresh(run)
-    assert run.profit_factor is not None
+    db_session.expire_all()
+    from sqlalchemy import select
+    refreshed = db_session.scalar(select(BacktestRun).where(BacktestRun.id == run_id))
+    assert refreshed is not None
+    assert refreshed.profit_factor is not None
 
 
 def test_backfill_skips_already_filled(db_session):

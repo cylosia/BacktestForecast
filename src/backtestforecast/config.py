@@ -8,6 +8,8 @@ import structlog
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+logger = structlog.get_logger(__name__)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
@@ -448,7 +450,6 @@ class Settings(BaseSettings):
 _settings_cache: Settings | None = None
 _settings_lock = threading.Lock()
 _invalidation_callbacks: list[Callable[[], None]] = []
-logger = structlog.get_logger(__name__)
 
 
 def register_invalidation_callback(callback: Callable[[], None]) -> None:

@@ -75,9 +75,12 @@ class ButterflyStrategy(StrategyDefinition):
             max_loss_per_unit = entry_value_per_unit
             max_profit_per_unit = max(wing_width - entry_value_per_unit, 0.0)
         else:
-            capital_per_unit = max(wing_width + entry_value_per_unit, 0.0)
-            max_loss_per_unit = 0.0
-            max_profit_per_unit = wing_width + abs(entry_value_per_unit)
+            credit = abs(entry_value_per_unit)
+            wider_wing = max(left_width, right_width)
+            tail_risk = max(wider_wing - wing_width - credit, 0.0)
+            capital_per_unit = max(wider_wing - credit, 0.0)
+            max_loss_per_unit = tail_risk
+            max_profit_per_unit = wing_width + credit
 
         detail_json = {
             "legs": [

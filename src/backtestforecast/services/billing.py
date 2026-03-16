@@ -566,7 +566,7 @@ class BillingService:
     def _get_stripe_client(self):
         try:
             from backtestforecast.security import get_rate_limiter
-            r = get_rate_limiter()._get_redis()
+            r = get_rate_limiter().get_redis()
             if r is not None and r.exists(_STRIPE_CIRCUIT_KEY):
                 raise ExternalServiceError("Stripe is temporarily unavailable. Please try again shortly.")
         except ExternalServiceError:
@@ -587,7 +587,7 @@ class BillingService:
     def _trip_stripe_circuit(self) -> None:
         try:
             from backtestforecast.security import get_rate_limiter
-            r = get_rate_limiter()._get_redis()
+            r = get_rate_limiter().get_redis()
             if r is not None:
                 r.setex(_STRIPE_CIRCUIT_KEY, _STRIPE_CIRCUIT_COOLDOWN, "1")
         except (ConnectionError, OSError, TimeoutError, RuntimeError):

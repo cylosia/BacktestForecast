@@ -41,32 +41,32 @@ def create_export(
         limit=settings.export_create_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = ExportService(db)
-    job_response = service.enqueue_export(
-        user,
-        payload,
-        request_id=metadata.request_id,
-        ip_address=metadata.ip_address,
-    )
-
-    export_job = service.exports.get(job_response.id)
-    if export_job is not None:
-        dispatch_celery_task(
-            db=db,
-            job=export_job,
-            task_name="exports.generate",
-            task_kwargs={"export_job_id": str(job_response.id)},
-            queue="exports",
-            log_event="export",
-            logger=logger,
+    with ExportService(db) as service:
+        job_response = service.enqueue_export(
+            user,
+            payload,
             request_id=metadata.request_id,
-            traceparent=request.headers.get("traceparent"),
+            ip_address=metadata.ip_address,
         )
-    else:
-        logger.error("export.post_enqueue_missing", export_job_id=str(job_response.id))
 
-    db.expire_all()
-    return service.get_export_status(user, job_response.id)
+        export_job = service.exports.get(job_response.id)
+        if export_job is not None:
+            dispatch_celery_task(
+                db=db,
+                job=export_job,
+                task_name="exports.generate",
+                task_kwargs={"export_job_id": str(job_response.id)},
+                queue="exports",
+                log_event="export",
+                logger=logger,
+                request_id=metadata.request_id,
+                traceparent=request.headers.get("traceparent"),
+            )
+        else:
+            logger.error("export.post_enqueue_missing", export_job_id=str(job_response.id))
+
+        db.expire_all()
+        return service.get_export_status(user, job_response.id)
 
 
 @router.get("/{export_job_id}/status", response_model=ExportJobResponse)
@@ -82,7 +82,8 @@ def get_export_status(
         limit=settings.export_create_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    return ExportService(db).get_export_status(user, export_job_id)
+    with ExportService(db) as service:
+        return service.get_export_status(user, export_job_id)
 
 
 @router.get(
@@ -118,7 +119,8 @@ def download_export(
         limit=settings.export_create_rate_limit * 3,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    export_job = ExportService(db).get_export_for_download(
+    service = ExportService(db)
+    export_job = service.get_export_for_download(
         user,
         export_job_id,
         request_id=metadata.request_id,

@@ -43,10 +43,10 @@ def get_forecast(
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     symbol = ticker.upper()
-    service = ScanService(db)
-    return service.build_forecast(
-        user=user,
-        symbol=symbol,
-        strategy_type=strategy_type.value if strategy_type is not None else None,
-        horizon_days=horizon_days,
-    )
+    with ScanService(db) as service:
+        return service.build_forecast(
+            user=user,
+            symbol=symbol,
+            strategy_type=strategy_type.value if strategy_type is not None else None,
+            horizon_days=horizon_days,
+        )
