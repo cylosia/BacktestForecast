@@ -404,6 +404,14 @@ class CreateBacktestRunRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=80)
     custom_legs: list[CustomLegDefinition] | None = Field(default=None, max_length=8)
     slippage_pct: float = Field(default=0.0, ge=0.0, le=5.0, description="Slippage percentage applied to entry and exit prices.")
+    profit_target_pct: float | None = Field(
+        default=None, ge=1.0, le=500.0,
+        description="Close position when unrealized profit reaches this percentage of capital at risk. None disables.",
+    )
+    stop_loss_pct: float | None = Field(
+        default=None, ge=1.0, le=100.0,
+        description="Close position when unrealized loss reaches this percentage of capital at risk. None disables.",
+    )
     strategy_overrides: StrategyOverrides | None = Field(
         default=None, description="Optional overrides for strike placement and spread width"
     )

@@ -52,6 +52,8 @@ class BacktestExecutionService:
             slippage_pct=request.slippage_pct,
             strategy_overrides=request.strategy_overrides,
             custom_legs=request.custom_legs,
+            profit_target_pct=request.profit_target_pct,
+            stop_loss_pct=request.stop_loss_pct,
         )
         return self.engine.run(
             config=config,

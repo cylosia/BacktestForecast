@@ -85,12 +85,19 @@ class OptionsBacktestEngine:
                 for stock_leg in position.stock_legs:
                     exit_prices[stock_leg.symbol] = stock_leg.last_price
 
+                entry_cost = self._entry_value_per_unit(position) * position.quantity
+                capital_at_risk = position.capital_required_per_unit * position.quantity
                 should_exit, exit_reason = self._resolve_exit(
                     bar=bar,
                     position=position,
                     max_holding_days=config.max_holding_days,
                     backtest_end_date=config.end_date,
                     last_bar_date=sorted_bars[-1].trade_date,
+                    position_value=snapshot.position_value,
+                    entry_cost=entry_cost,
+                    capital_at_risk=capital_at_risk,
+                    profit_target_pct=config.profit_target_pct,
+                    stop_loss_pct=config.stop_loss_pct,
                 )
                 if should_exit:
                     trade, cash_delta = self._close_position(
@@ -461,6 +468,12 @@ class OptionsBacktestEngine:
         max_holding_days: int,
         backtest_end_date: date,
         last_bar_date: date,
+        *,
+        position_value: float = 0.0,
+        entry_cost: float = 0.0,
+        capital_at_risk: float = 0.0,
+        profit_target_pct: float | None = None,
+        stop_loss_pct: float | None = None,
     ) -> tuple[bool, str]:
         if position.option_legs:
             exit_date = position.scheduled_exit_date or max(leg.expiration_date for leg in position.option_legs)
@@ -468,6 +481,16 @@ class OptionsBacktestEngine:
             exit_date = position.scheduled_exit_date or (position.entry_date + timedelta(days=max_holding_days))
         if bar.trade_date >= exit_date:
             return True, "expiration"
+
+        if capital_at_risk > 0 and (stop_loss_pct is not None or profit_target_pct is not None):
+            unrealized_pnl = position_value - entry_cost
+            unrealized_pnl_pct = (unrealized_pnl / capital_at_risk) * 100.0
+
+            if stop_loss_pct is not None and unrealized_pnl_pct <= -stop_loss_pct:
+                return True, "stop_loss"
+            if profit_target_pct is not None and unrealized_pnl_pct >= profit_target_pct:
+                return True, "profit_target"
+
         if (bar.trade_date - position.entry_date).days >= max_holding_days:
             return True, "max_holding_days"
         if bar.trade_date >= backtest_end_date and bar.trade_date == last_bar_date:

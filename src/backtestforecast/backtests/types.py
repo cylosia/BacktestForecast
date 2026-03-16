@@ -37,6 +37,8 @@ class BacktestConfig:
     slippage_pct: float = 0.0
     strategy_overrides: StrategyOverrides | None = None
     custom_legs: Sequence[CustomLegDefinition] | None = None
+    profit_target_pct: float | None = None
+    stop_loss_pct: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
