@@ -1,4 +1,18 @@
-﻿alembic==1.18.4
+# Pinned transitive dependencies for reproducible builds.
+#
+# Refresh procedure:
+#   1. Create a clean venv:  python -m venv .venv && .venv/Scripts/activate
+#   2. Install:              pip install -e '.[dev]'
+#   3. Regenerate:           pip freeze --exclude-editable > constraints.txt
+#   4. Review diff:          git diff constraints.txt
+#   5. Run full test suite:  pytest
+#   6. Commit:               git add constraints.txt && git commit -m "chore: refresh constraints.txt"
+#
+# Usage in Dockerfiles:
+#   pip install --constraint constraints.txt -e '.[prod]'
+#
+# Last refreshed: 2026-03-16
+alembic==1.18.4
 amqp==5.3.1
 annotated-doc==0.0.4
 annotated-types==0.7.0

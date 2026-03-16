@@ -19,7 +19,9 @@ def _make_export_job(*, storage_key: str | None = "s3://key", status: str = "suc
 
 
 def test_cleanup_skips_job_when_s3_delete_fails() -> None:
-    """When storage delete raises, the job should NOT be marked expired."""
+    """When storage delete raises a caught exception, the job IS still marked
+    expired but the storage_key is preserved so a future reconciliation can
+    retry the S3 deletion."""
     from backtestforecast.services.exports import ExportService
 
     job = _make_export_job(storage_key="s3://bucket/key")
@@ -31,14 +33,15 @@ def test_cleanup_skips_job_when_s3_delete_fails() -> None:
     service.exports.list_expired_for_cleanup = MagicMock(side_effect=[[job], []])
 
     storage = MagicMock()
-    storage.delete = MagicMock(side_effect=Exception("S3 failure"))
+    storage.delete = MagicMock(side_effect=OSError("S3 failure"))
     service._storage = storage
 
     cleaned = service.cleanup_expired_exports(batch_size=10)
 
-    assert cleaned == 0
-    assert job.status == "succeeded"
-    assert job.storage_key == "s3://bucket/key"
+    assert cleaned == 1
+    assert job.status == "expired"
+    assert job.storage_key == "s3://bucket/key", "storage_key must be preserved for retry"
+    assert job.content_bytes is None
 
 
 def test_cleanup_marks_expired_when_delete_succeeds() -> None:

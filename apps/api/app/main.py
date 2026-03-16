@@ -159,7 +159,7 @@ def _custom_openapi():
             responses = operation.setdefault("responses", {})
             responses.setdefault("401", {"description": "Authentication required or session expired.", **_error_content})
             responses.setdefault("403", {"description": "Insufficient permissions or feature locked.", **_error_content})
-            responses.setdefault("422", {"description": "Validation error — request payload did not match the expected schema.", **_error_content})
+            responses["422"] = {"description": "Validation error — request payload did not match the expected schema.", **_error_content}
             responses.setdefault("429", {"description": "Rate limit exceeded. See Retry-After header.", **_error_content})
             responses.setdefault("500", {"description": "Unexpected server error.", **_error_content})
             if method in ("get", "delete"):

@@ -119,9 +119,9 @@ def test_to_detail_response_receives_preloaded_data(db_session):
 
 
 def test_compare_runs_calls_get_trades_with_limit(db_session):
-    """Verify compare_runs calls get_trades_for_run with an explicit limit
-    instead of relying on eagerly loaded trades."""
-    from unittest.mock import patch, call
+    """Verify compare_runs calls get_trades_for_runs (batch) with an explicit
+    limit_per_run instead of eagerly loading trades one-by-one."""
+    from unittest.mock import patch
 
     user = _create_user(db_session)
     run1 = _create_run(db_session, user, "succeeded")
@@ -131,12 +131,12 @@ def test_compare_runs_calls_get_trades_with_limit(db_session):
     request = CompareBacktestsRequest(run_ids=[run1.id, run2.id])
 
     with patch.object(
-        service.run_repository, "get_trades_for_run", wraps=service.run_repository.get_trades_for_run
+        service.run_repository, "get_trades_for_runs", wraps=service.run_repository.get_trades_for_runs
     ) as mock_get_trades:
         service.compare_runs(user, request)
 
-        assert mock_get_trades.call_count == 2
-        for c in mock_get_trades.call_args_list:
-            assert "limit" in c.kwargs or len(c.args) >= 2, (
-                "get_trades_for_run must be called with an explicit limit argument"
-            )
+        assert mock_get_trades.call_count == 1
+        call_kwargs = mock_get_trades.call_args
+        assert "limit_per_run" in call_kwargs.kwargs or len(call_kwargs.args) >= 2, (
+            "get_trades_for_runs must be called with an explicit limit_per_run argument"
+        )

@@ -177,6 +177,19 @@ def nightly_scan_pipeline(
         forecaster = PipelineForecaster(forecaster_engine, market_data)
 
         if symbols is None:
+            try:
+                from redis import Redis as _SymRedis
+                _sym_r = _SymRedis.from_url(settings.redis_url, decode_responses=True, socket_timeout=3)
+                _override = _sym_r.get("bff:pipeline:symbols")
+                _sym_r.close()
+                if _override:
+                    parsed = [s.strip() for s in _override.split(",") if s.strip()]
+                    if parsed:
+                        symbols = parsed
+                        logger.info("pipeline.symbols_from_redis", count=len(parsed))
+            except Exception:
+                pass
+        if symbols is None:
             symbols = settings.pipeline_default_symbols
 
         from zoneinfo import ZoneInfo

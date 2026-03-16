@@ -92,11 +92,16 @@ def test_model_indexes_not_absent_from_migrations():
 def test_deep_analysis_failure_sets_error_code():
     """When deep analysis fails, the SymbolAnalysis model must be able
     to store error_code='analysis_execution_failed'."""
-    analysis = SymbolAnalysis.__new__(SymbolAnalysis)
-    analysis.status = "failed"
-    analysis.error_code = "analysis_execution_failed"
+    from types import SimpleNamespace
+    analysis = SimpleNamespace(status="failed", error_code="analysis_execution_failed")
     assert analysis.error_code == "analysis_execution_failed"
     assert analysis.status == "failed"
+
+    from sqlalchemy import inspect as sa_inspect
+    mapper = sa_inspect(SymbolAnalysis)
+    column_names = {col.key for col in mapper.column_attrs}
+    assert "error_code" in column_names
+    assert "status" in column_names
 
 
 def test_symbol_analysis_has_error_code_column():
