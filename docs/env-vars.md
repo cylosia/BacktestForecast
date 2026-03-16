@@ -80,7 +80,7 @@ All environment variables recognised by BacktestForecast. Variables marked **req
 | Variable | Description | Default | Required in |
 |---|---|---|---|
 | `RATE_LIMIT_PREFIX` | Redis key prefix for rate-limit counters | `bff:rate-limit` | — |
-| `RATE_LIMIT_FAIL_CLOSED` | Reject requests when Redis is unavailable | `true` | — |
+| `RATE_LIMIT_FAIL_CLOSED` | Reject requests when Redis is unavailable (fail-open by default; set `true` for strict security) | `false` | — |
 | `RATE_LIMIT_MEMORY_MAX_KEYS` | Maximum keys in the in-memory fallback rate limiter | `10000` | — |
 | `RATE_LIMIT_WINDOW_SECONDS` | Default sliding window for rate limits | `60` | — |
 | `BACKTEST_CREATE_RATE_LIMIT` | Max backtest create requests per window | `10` | — |

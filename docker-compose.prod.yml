@@ -44,7 +44,7 @@ services:
       retries: 5
 
   api:
-    image: ${API_IMAGE:-ghcr.io/backtestforecast/api:latest}
+    image: ${API_IMAGE:?API_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -71,7 +71,7 @@ services:
       start_period: 15s
 
   worker:
-    image: ${WORKER_IMAGE:-ghcr.io/backtestforecast/worker:latest}
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -94,7 +94,7 @@ services:
       start_period: 30s
 
   beat:
-    image: ${WORKER_IMAGE:-ghcr.io/backtestforecast/worker:latest}
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
     depends_on:
       redis:
@@ -120,7 +120,7 @@ services:
       start_period: 30s
 
   web:
-    image: ${WEB_IMAGE:-ghcr.io/backtestforecast/web:latest}
+    image: ${WEB_IMAGE:?WEB_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
     depends_on:
       api:

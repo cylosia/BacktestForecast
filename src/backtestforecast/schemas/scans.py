@@ -9,19 +9,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from backtestforecast.billing.entitlements import ScannerMode
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import JobStatus, PlanTier, sanitize_error_message
+from backtestforecast.schemas.common import PlanTier, sanitize_error_message
 from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
     BacktestTradeResponse,
     EntryRule,
     EquityCurvePointResponse,
+    RunStatus,
     StrategyType,
     validate_entry_rule_collection,
 )
 
 
-ScannerJobStatus = JobStatus
+ScannerJobStatus = RunStatus
 
 
 class RuleSetDefinition(BaseModel):

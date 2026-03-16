@@ -417,6 +417,10 @@ class AuditEvent(Base):
             unique=True,
             postgresql_where=text("subject_id IS NULL"),
         ),
+        CheckConstraint(
+            "subject_id IS NULL OR length(subject_id) > 0",
+            name="ck_audit_events_subject_id_not_empty",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -449,7 +453,7 @@ class NightlyPipelineRun(Base):
             postgresql_where=text("status = 'succeeded'"),
         ),
         CheckConstraint(
-            "status IN ('running', 'succeeded', 'failed')",
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
             name="ck_nightly_pipeline_runs_valid_pipeline_status",
         ),
         CheckConstraint(

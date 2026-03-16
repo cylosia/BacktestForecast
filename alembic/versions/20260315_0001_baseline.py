@@ -425,6 +425,11 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("subject_id IS NULL"),
     )
+    op.create_check_constraint(
+        "ck_audit_events_subject_id_not_empty",
+        "audit_events",
+        "subject_id IS NULL OR length(subject_id) > 0",
+    )
 
     # ------------------------------------------------- nightly_pipeline_runs
     op.create_table(
@@ -448,7 +453,7 @@ def upgrade() -> None:
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.CheckConstraint(
-            "status IN ('running', 'succeeded', 'failed')",
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
             name="ck_nightly_pipeline_runs_valid_pipeline_status",
         ),
     )
