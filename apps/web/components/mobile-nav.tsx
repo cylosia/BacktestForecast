@@ -3,13 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import { AppNavLink } from "@/components/app-nav-link";
 import { Button } from "@/components/ui/button";
 
 export interface NavItem {
   href: string;
-  icon: LucideIcon;
+  icon: React.ReactNode;
   label: string;
 }
 

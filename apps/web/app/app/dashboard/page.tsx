@@ -14,6 +14,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { HistoryList } from "@/components/backtests/history-list";
 import { planLabel } from "@/lib/plan";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardPage() {
   const [userResult, historyResult] = await Promise.allSettled([getCurrentUser(), getBacktestHistory(10)]);
 

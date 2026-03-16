@@ -23,6 +23,8 @@ import { ResultSummaryCards } from "@/components/backtests/result-summary-cards"
 import { TradeListTable } from "@/components/backtests/trade-list-table";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
 
+export const dynamic = "force-dynamic";
+
 export default async function BacktestDetailPage({
   params,
 }: {

@@ -8,7 +8,11 @@ export interface ApiErrorPayload {
   };
 }
 
-const API_BASE = env.apiBaseUrl.replace(/\/+$/, "");
+const API_BASE = (
+  typeof window === "undefined" && process.env.API_INTERNAL_BASE_URL
+    ? process.env.API_INTERNAL_BASE_URL
+    : env.apiBaseUrl
+).replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSignal): { signal: AbortSignal; cleanup: () => void } {

@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { planLabel } from "@/lib/plan";
 
+export const dynamic = "force-dynamic";
+
 export default async function BillingSettingsPage() {
   let user;
   try {

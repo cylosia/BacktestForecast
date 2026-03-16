@@ -9,6 +9,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
 
+export const dynamic = "force-dynamic";
+
 export default async function ScannerPage() {
   let user;
   try {

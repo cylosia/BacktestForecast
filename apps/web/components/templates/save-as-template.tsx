@@ -21,7 +21,7 @@ function formValuesToTemplateConfig(
     entryRules.push({
       type: "rsi",
       operator: values.rsiOperator,
-      threshold: Number(values.rsiThreshold),
+      threshold: String(values.rsiThreshold),
       period: Number(values.rsiPeriod),
     } as EntryRule);
   }

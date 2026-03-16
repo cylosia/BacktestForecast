@@ -102,6 +102,8 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
   );
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function DailyPicksPage() {
   let user;
   try {

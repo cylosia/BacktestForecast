@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 RUN corepack enable
@@ -7,17 +7,12 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json .prettie
 COPY apps/web/package.json /app/apps/web/package.json
 COPY packages/api-client/package.json /app/packages/api-client/package.json
 
-RUN pnpm install --frozen-lockfile --filter @backtestforecast/web...
+RUN echo "node-linker=hoisted" > .npmrc && \
+    pnpm install --frozen-lockfile --filter @backtestforecast/web...
 
 COPY apps/web /app/apps/web
 COPY packages/api-client /app/packages/api-client
 
-FROM base AS builder
-WORKDIR /app
-
-# These NEXT_PUBLIC_* values are intentionally public — they are embedded in the
-# client-side JS bundle by Next.js at build time and visible to end users.
-# Never pass secret keys (CLERK_SECRET_KEY, etc.) as build args.
 ARG NEXT_PUBLIC_APP_URL
 ARG NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
@@ -25,7 +20,7 @@ ARG NEXT_PUBLIC_CLERK_SIGN_IN_URL
 ARG NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL
 ARG NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL
 
-RUN pnpm --filter @backtestforecast/web exec next build
+RUN pnpm --filter @backtestforecast/web run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app

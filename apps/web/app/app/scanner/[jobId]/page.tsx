@@ -10,6 +10,8 @@ import { ScannerJobPoller } from "@/components/scanner/scanner-job-poller";
 import { RecommendationList } from "@/components/scanner/recommendation-list";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
 
+export const dynamic = "force-dynamic";
+
 export default async function ScannerDetailPage({
   params,
 }: {

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { compareBacktests } from "@/lib/api/server";
+
+export const dynamic = "force-dynamic";
 import { ApiError } from "@/lib/api/shared";
 import {
   formatCurrency,
@@ -8,7 +10,7 @@ import {
   formatNumber,
   formatPercent,
   strategyLabel,
-  toNumber,
+  type NumericValue,
 } from "@/lib/backtests/format";
 import type { BacktestRunDetailResponse, BacktestSummaryResponse } from "@backtestforecast/api-client";
 import { Badge } from "@/components/ui/badge";
@@ -24,13 +26,13 @@ const GRID_COLS: Record<number, string> = {
 };
 
 function safeCurrency(v: unknown): string {
-  return v != null ? formatCurrency(toNumber(v)) : "—";
+  return v != null ? formatCurrency(v as NumericValue) : "—";
 }
 function safePercent(v: unknown): string {
-  return v != null ? formatPercent(toNumber(v)) : "—";
+  return v != null ? formatPercent(v as NumericValue) : "—";
 }
 function safeNum(v: unknown): string {
-  return v != null ? formatNumber(toNumber(v)) : "—";
+  return v != null ? formatNumber(v as NumericValue) : "—";
 }
 function safeRatio(v: unknown): string {
   if (v == null) return "—";
@@ -76,7 +78,8 @@ function bestIndex(runs: BacktestRunDetailResponse[], key: keyof BacktestSummary
   for (let i = 0; i < runs.length; i++) {
     const raw = runs[i].summary[key];
     if (raw == null) continue;
-    const val = toNumber(raw);
+    const n = typeof raw === "number" ? raw : Number(raw);
+    const val = Number.isFinite(n) ? n : 0;
     if (best === -1 || (higherIsBetter ? val > bestVal : val < bestVal)) {
       best = i;
       bestVal = val;

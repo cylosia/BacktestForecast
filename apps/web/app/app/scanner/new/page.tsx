@@ -2,6 +2,8 @@ import { getCurrentUser } from "@/lib/api/server";
 import { ScannerForm } from "@/components/scanner/scanner-form";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 
+export const dynamic = "force-dynamic";
+
 export default async function NewScanPage() {
   let user;
   try {

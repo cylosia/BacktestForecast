@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+          { key: "Cross-Origin-Embedder-Policy", value: "unsafe-none" },
           {
             key: "Permissions-Policy",
             value: "camera=(), microphone=(), geolocation=()",
@@ -40,7 +40,7 @@ const nextConfig: NextConfig = {
             // per-request nonce, injects it into the CSP header, and passes it to
             // <Script nonce={nonce} /> components. Until then, 'unsafe-inline'
             // remains necessary to avoid breaking inline scripts.
-            value: `default-src 'self'; script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.dev https://*.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.clerk.com https://*.clerk.dev https://*.stripe.com; font-src 'self' data:; connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.dev https://*.clerk.com ${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}; frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://*.stripe.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; upgrade-insecure-requests${process.env.CSP_REPORT_URI ? `; report-uri ${process.env.CSP_REPORT_URI}; report-to csp-endpoint` : ""}`.replace(/\s+/g, " ").trim(),
+            value: `default-src 'self'; script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.dev https://*.clerk.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.clerk.com https://*.clerk.dev https://*.stripe.com; font-src 'self' data:; connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.dev https://*.clerk.com https://challenges.cloudflare.com ${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}; frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://*.stripe.com https://challenges.cloudflare.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; upgrade-insecure-requests${process.env.CSP_REPORT_URI ? `; report-uri ${process.env.CSP_REPORT_URI}; report-to csp-endpoint` : ""}`.replace(/\s+/g, " ").trim(),
           },
           ...(process.env.CSP_REPORT_URI
             ? [

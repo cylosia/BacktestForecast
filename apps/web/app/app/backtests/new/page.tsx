@@ -4,6 +4,8 @@ import { buildBacktestQuota } from "@/lib/backtests/quota";
 import { BacktestForm } from "@/components/backtests/backtest-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+export const dynamic = "force-dynamic";
+
 export default async function NewBacktestPage({
   searchParams,
 }: {

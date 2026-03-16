@@ -8,15 +8,15 @@ import { getCurrentUser } from "@/lib/api/server";
 import { planBadgeVariant, planLabel } from "@/lib/plan";
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/app/dashboard", icon: BarChart3, label: "Dashboard" },
-  { href: "/app/backtests", icon: History, label: "History" },
-  { href: "/app/backtests/new", icon: PlusCircle, label: "New backtest" },
-  { href: "/app/templates", icon: Bookmark, label: "Templates" },
-  { href: "/app/daily-picks", icon: Zap, label: "Daily Picks" },
-  { href: "/app/analysis", icon: Microscope, label: "Deep Analysis" },
-  { href: "/app/scanner", icon: ScanSearch, label: "Scanner" },
-  { href: "/app/forecasts", icon: TrendingUp, label: "Forecasts" },
-  { href: "/app/settings/billing", icon: CreditCard, label: "Billing" },
+  { href: "/app/dashboard", icon: <BarChart3 className="h-4 w-4" />, label: "Dashboard" },
+  { href: "/app/backtests", icon: <History className="h-4 w-4" />, label: "History" },
+  { href: "/app/backtests/new", icon: <PlusCircle className="h-4 w-4" />, label: "New backtest" },
+  { href: "/app/templates", icon: <Bookmark className="h-4 w-4" />, label: "Templates" },
+  { href: "/app/daily-picks", icon: <Zap className="h-4 w-4" />, label: "Daily Picks" },
+  { href: "/app/analysis", icon: <Microscope className="h-4 w-4" />, label: "Deep Analysis" },
+  { href: "/app/scanner", icon: <ScanSearch className="h-4 w-4" />, label: "Scanner" },
+  { href: "/app/forecasts", icon: <TrendingUp className="h-4 w-4" />, label: "Forecasts" },
+  { href: "/app/settings/billing", icon: <CreditCard className="h-4 w-4" />, label: "Billing" },
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {

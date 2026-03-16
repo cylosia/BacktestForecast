@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { TemplateActions } from "@/components/templates/template-actions";
 
+export const dynamic = "force-dynamic";
+
 export default async function TemplatesPage() {
   try {
     const data = await getTemplates();

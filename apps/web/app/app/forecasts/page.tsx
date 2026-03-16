@@ -2,6 +2,8 @@ import { getCurrentUser } from "@/lib/api/server";
 import { ForecastLookup } from "@/components/forecasts/forecast-lookup";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 
+export const dynamic = "force-dynamic";
+
 export default async function ForecastsPage() {
   let user;
   try {

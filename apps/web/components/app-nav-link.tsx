@@ -2,16 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function AppNavLink({
   href,
-  icon: Icon,
+  icon,
   children,
 }: {
   href: string;
-  icon: LucideIcon;
+  icon: React.ReactNode;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -31,7 +30,7 @@ export function AppNavLink({
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
       )}
     >
-      <Icon className="h-4 w-4" />
+      {icon}
       <span>{children}</span>
     </Link>
   );

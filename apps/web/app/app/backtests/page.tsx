@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SelectableHistoryList } from "@/components/backtests/selectable-history-list";
 
+export const dynamic = "force-dynamic";
+
 export default async function BacktestsPage() {
   try {
     const [user, history] = await Promise.all([getCurrentUser(), getBacktestHistory()]);
