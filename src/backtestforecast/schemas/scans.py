@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -91,11 +91,12 @@ class CreateScannerJobRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self) -> "CreateScannerJobRequest":
-        today = datetime.now(UTC).date()
+        from backtestforecast.utils.dates import market_date_today
+        today = market_date_today()
         if self.end_date > today:
-            raise ValueError("end_date cannot be in the future")
+            raise ValueError("end_date cannot be in the future (US Eastern time)")
         if self.start_date > today:
-            raise ValueError("start_date cannot be in the future")
+            raise ValueError("start_date cannot be in the future (US Eastern time)")
         if self.start_date >= self.end_date:
             raise ValueError("start_date must be earlier than end_date")
         if (self.end_date - self.start_date).days > get_settings().max_scanner_window_days:
