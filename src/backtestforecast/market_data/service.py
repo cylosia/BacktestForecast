@@ -211,6 +211,7 @@ class MarketDataService:
         self._bars_cache: OrderedDict[tuple[str, date, date], list[DailyBar]] = OrderedDict()
         self._bars_cache_lock = threading.Lock()
         self._bars_inflight: dict[tuple[str, date, date], threading.Event] = {}
+        self._bars_errors: dict[tuple[str, date, date], Exception] = {}
 
     def _fetch_bars_coalesced(self, symbol: str, start: date, end: date) -> list[DailyBar]:
         """Fetch bars with request coalescing: only one thread fetches per key."""
@@ -237,6 +238,9 @@ class MarketDataService:
                 if cached is not None:
                     self._bars_cache.move_to_end(cache_key)
                     return cached
+                error = self._bars_errors.get(cache_key)
+            if error is not None:
+                raise error
             return self.client.get_stock_daily_bars(symbol, start, end)
 
         try:
@@ -248,6 +252,10 @@ class MarketDataService:
                     self._bars_cache[cache_key] = raw_bars
                 self._bars_cache.move_to_end(cache_key)
                 return self._bars_cache[cache_key]
+        except Exception as exc:
+            with self._bars_cache_lock:
+                self._bars_errors[cache_key] = exc
+            raise
         finally:
             inflight_event.set()
             with self._bars_cache_lock:

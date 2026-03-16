@@ -413,9 +413,9 @@ class CreateBacktestRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self) -> "CreateBacktestRunRequest":
-        from datetime import UTC, datetime as _dt
-        if self.end_date > _dt.now(UTC).date():
-            raise ValueError("end_date cannot be in the future.")
+        from backtestforecast.utils.dates import market_date_today
+        if self.end_date > market_date_today():
+            raise ValueError("end_date cannot be in the future (US Eastern time).")
         if self.start_date >= self.end_date:
             raise ValueError("start_date must be earlier than end_date")
         if self.dte_tolerance_days >= self.target_dte:

@@ -83,16 +83,14 @@ def test_fallback_persist_status_noop_for_non_terminal_request():
     execute_result.rowcount = 0
     mock_session.execute.return_value = execute_result
 
-    with patch("backtestforecast.events.SessionLocal", mock_session_factory):
+    with patch("backtestforecast.db.session.SessionLocal", mock_session_factory):
         from backtestforecast.events import _fallback_persist_status
         _fallback_persist_status("backtest", job_id, "queued")
 
-    if mock_session.execute.called:
-        call_args = mock_session.execute.call_args
-        assert execute_result.rowcount == 0, (
-            "Writing 'queued' via fallback should affect 0 rows "
-            "(terminal-guard WHERE clause prevents overwrite)"
-        )
+    assert not mock_session.execute.called, (
+        "'queued' is not a valid target status; function should return early "
+        "without executing any SQL"
+    )
 
 
 # ---------------------------------------------------------------------------

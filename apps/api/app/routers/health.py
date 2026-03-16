@@ -45,7 +45,7 @@ def _ping_broker_redis() -> bool:
                     socket_timeout=2.0,
                     socket_connect_timeout=2.0,
                 )
-        return bool(_broker_redis.ping())
+            return bool(_broker_redis.ping())
     except Exception:
         with _broker_redis_lock:
             if _broker_redis is not None:

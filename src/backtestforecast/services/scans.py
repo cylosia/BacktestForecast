@@ -802,9 +802,10 @@ class ScanService:
         if n <= cls._MAX_SCAN_EQUITY_POINTS:
             return [cls._serialize_equity_point(p) for p in equity_curve]
         step = max(1, -(-n // cls._MAX_SCAN_EQUITY_POINTS))
+        max_dd_idx = max(range(n), key=lambda i: equity_curve[i].drawdown_pct)
         sampled: list[dict[str, Any]] = []
         for i, point in enumerate(equity_curve):
-            if i % step == 0 or i == n - 1:
+            if i % step == 0 or i == n - 1 or i == max_dd_idx:
                 sampled.append(cls._serialize_equity_point(point))
         return sampled
 

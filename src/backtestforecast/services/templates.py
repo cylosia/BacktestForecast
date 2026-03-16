@@ -105,13 +105,18 @@ class BacktestTemplateService:
                     "Template was modified by another request. Please refresh and try again."
                 )
 
+        changed = False
         if request.name is not None:
             template.name = request.name
+            changed = True
         if request.description is not UNSET:
             template.description = request.description
+            changed = True
         if request.config is not None:
             template.strategy_type = request.config.strategy_type.value
             template.config_json = request.config.model_dump(mode="json")
+            changed = True
+        if changed:
             template.updated_at = datetime.now(UTC)  # type: ignore[assignment]
 
         from sqlalchemy.exc import IntegrityError

@@ -5,6 +5,7 @@ import type {
   MovingAverageRuleType,
   StrategyType,
 } from "@backtestforecast/api-client";
+import { daysAgo } from "@/lib/utils";
 
 export interface BacktestFormValues {
   symbol: string;
@@ -52,12 +53,6 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     slowPeriod: "50",
     crossoverDirection: "bullish",
   };
-}
-
-function daysAgo(days: number): string {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() - days);
-  return date.toISOString().slice(0, 10);
 }
 
 const NUMERIC_RE = /^-?\d+(\.\d+)?$/;

@@ -24,6 +24,8 @@ from backtestforecast.market_data.types import DailyBar
 
 logger = structlog.get_logger(__name__)
 
+CONTRACT_MULTIPLIER: float = 100.0
+
 
 class OptionsBacktestEngine:
     def __init__(self) -> None:
@@ -143,7 +145,7 @@ class OptionsBacktestEngine:
                         contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
                         commission_per_unit = config.commission_per_contract * contracts_per_unit
                         gross_notional_per_unit = (
-                            sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in candidate.option_legs)
+                            sum(abs(leg.entry_mid * CONTRACT_MULTIPLIER) * leg.quantity_per_unit for leg in candidate.option_legs)
                             + sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in candidate.stock_legs)
                         )
                         quantity = self._resolve_position_size(
@@ -264,7 +266,7 @@ class OptionsBacktestEngine:
                     current_mid = leg.last_mid
                     missing_quote_tickers.append(leg.ticker)
             leg.last_mid = current_mid
-            option_value += leg.side * leg.quantity_per_unit * current_mid * 100.0 * position.quantity
+            option_value += leg.side * leg.quantity_per_unit * current_mid * CONTRACT_MULTIPLIER * position.quantity
 
         if missing_quote_tickers:
             self._add_warning_once(
@@ -288,7 +290,7 @@ class OptionsBacktestEngine:
     @staticmethod
     def _current_position_value(position: OpenMultiLegPosition, underlying_close: float) -> float:
         option_value = sum(
-            leg.side * leg.quantity_per_unit * leg.last_mid * 100.0 * position.quantity for leg in position.option_legs
+            leg.side * leg.quantity_per_unit * leg.last_mid * CONTRACT_MULTIPLIER * position.quantity for leg in position.option_legs
         )
         stock_value = sum(
             leg.side * leg.share_quantity_per_unit * underlying_close * position.quantity for leg in position.stock_legs
@@ -334,12 +336,12 @@ class OptionsBacktestEngine:
     ) -> tuple[TradeResult, float]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
         exit_commission = self._option_commission_total(position, config.commission_per_contract)
-        option_exit_notional = sum(abs(leg.last_mid * 100.0) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
+        option_exit_notional = sum(abs(leg.last_mid * CONTRACT_MULTIPLIER) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
         stock_exit_notional = sum(abs(leg.last_price * leg.share_quantity_per_unit) for leg in position.stock_legs) * position.quantity if position.stock_legs else 0.0
         exit_gross_notional = option_exit_notional + stock_exit_notional
         exit_slippage = exit_gross_notional * (config.slippage_pct / 100.0)
         entry_value_per_unit = self._entry_value_per_unit(position)
-        option_entry_notional = sum(abs(leg.entry_mid * 100.0) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
+        option_entry_notional = sum(abs(leg.entry_mid * CONTRACT_MULTIPLIER) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
         stock_entry_notional = sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in position.stock_legs) * position.quantity if position.stock_legs else 0.0
         entry_gross_notional = option_entry_notional + stock_entry_notional
         entry_slippage = entry_gross_notional * (config.slippage_pct / 100.0)
@@ -404,7 +406,7 @@ class OptionsBacktestEngine:
 
     @staticmethod
     def _entry_value_per_unit(position: OpenMultiLegPosition) -> float:
-        option_value = sum(leg.side * leg.quantity_per_unit * leg.entry_mid * 100.0 for leg in position.option_legs)
+        option_value = sum(leg.side * leg.quantity_per_unit * leg.entry_mid * CONTRACT_MULTIPLIER for leg in position.option_legs)
         stock_value = sum(leg.side * leg.share_quantity_per_unit * leg.entry_price for leg in position.stock_legs)
         return option_value + stock_value
 

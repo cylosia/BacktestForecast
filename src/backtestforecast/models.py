@@ -86,6 +86,14 @@ class BacktestRun(Base):
         CheckConstraint("max_holding_days >= 1", name="ck_backtest_runs_holding_days_positive"),
         CheckConstraint("target_dte >= 0", name="ck_backtest_runs_target_dte_nonneg"),
         CheckConstraint("dte_tolerance_days >= 0", name="ck_backtest_runs_dte_tolerance_nonneg"),
+        CheckConstraint(
+            "engine_version IN ('options-multileg-v1', 'options-multileg-v2')",
+            name="ck_backtest_runs_valid_engine_version",
+        ),
+        CheckConstraint(
+            "data_source IN ('massive', 'manual')",
+            name="ck_backtest_runs_valid_data_source",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -157,6 +165,7 @@ class BacktestTrade(Base):
         Index("ix_backtest_trades_run_entry_date", "run_id", "entry_date"),
         UniqueConstraint("run_id", "entry_date", "option_ticker", name="uq_backtest_trades_dedup"),
         CheckConstraint("quantity > 0", name="ck_backtest_trades_quantity_positive"),
+        CheckConstraint("entry_date <= exit_date", name="ck_backtest_trades_date_order"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -362,6 +371,7 @@ class ExportJob(Base):
             "status != 'succeeded' OR content_bytes IS NOT NULL OR storage_key IS NOT NULL",
             name="ck_export_jobs_succeeded_has_storage",
         ),
+        CheckConstraint("size_bytes >= 0", name="ck_export_jobs_size_bytes_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -441,6 +451,10 @@ class NightlyPipelineRun(Base):
         CheckConstraint(
             "status IN ('running', 'succeeded', 'failed')",
             name="ck_nightly_pipeline_runs_valid_pipeline_status",
+        ),
+        CheckConstraint(
+            "stage IN ('universe_screen', 'strategy_match', 'quick_backtest', 'full_backtest', 'forecast_rank')",
+            name="ck_nightly_pipeline_runs_valid_stage",
         ),
     )
 

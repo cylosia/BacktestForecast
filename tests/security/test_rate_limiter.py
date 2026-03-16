@@ -11,11 +11,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from redis.exceptions import RedisError
 
-from backtestforecast.errors import RateLimitError
+from backtestforecast.errors import RateLimitError, ServiceUnavailableError
 from backtestforecast.security.rate_limits import (
     RateLimiter,
     RateLimitInfo,
-    ServiceUnavailableError,
 )
 
 _CHECK = dict(bucket="test", actor_key="user-1", limit=5, window_seconds=60)
@@ -172,6 +171,21 @@ def test_high_load_different_actors_independent():
 
     info = limiter.check(bucket="load", actor_key="fresh", limit=limit, window_seconds=60)
     assert info.remaining == limit - 1
+
+
+def test_redis_happy_path_returns_count_from_redis():
+    """When Redis works, the count should come from the Lua script result."""
+    limiter = _make_limiter()
+    mock_redis = MagicMock()
+    mock_redis.evalsha.return_value = 3
+    mock_redis.script_load.return_value = "fakeshaXYZ"
+    limiter._get_redis = lambda: mock_redis  # type: ignore[assignment]
+    limiter._redis = mock_redis
+
+    info = limiter.check(bucket="redis_ok", actor_key="u1", limit=10, window_seconds=60)
+    assert info.remaining == 7
+    assert info.limit == 10
+    mock_redis.evalsha.assert_called_once()
 
 
 def test_high_load_remaining_reaches_zero_at_limit():

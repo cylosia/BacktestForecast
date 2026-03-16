@@ -64,7 +64,7 @@ def choose_secondary_expiration(
     later_candidates = [expiration for expiration in expirations if (expiration - entry_date).days >= minimum_target]
     if later_candidates:
         return later_candidates[0]
-    return expirations[0]
+    return None
 
 
 def contracts_for_expiration(contracts: Iterable[OptionContractRecord], expiration: date) -> list[OptionContractRecord]:

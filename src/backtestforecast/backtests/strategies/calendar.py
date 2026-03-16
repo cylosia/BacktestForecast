@@ -64,9 +64,10 @@ class CalendarSpreadStrategy(StrategyDefinition):
         full_margin = naked_call_margin(bar.close_price, short_near.strike_price, short_quote.mid_price)
         long_leg_value = long_quote.mid_price * 100.0
         reduced_margin = max(full_margin - long_leg_value, net_debit)
+        _MIN_DEBIT_FLOOR = 1.0
         if entry_value_per_unit >= 0:
-            capital = max(entry_value_per_unit, 0.01)
-            max_loss: float | None = max(entry_value_per_unit, 0.01)
+            capital = max(entry_value_per_unit, _MIN_DEBIT_FLOOR)
+            max_loss: float | None = max(entry_value_per_unit, _MIN_DEBIT_FLOOR)
         else:
             capital = reduced_margin
             max_loss = reduced_margin

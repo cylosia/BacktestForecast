@@ -473,8 +473,8 @@ class TestSharpeSortinoConsistency:
 
         assert abs(s.sharpe_ratio - expected_sharpe) < 1e-10
 
-    def test_sortino_uses_n_minus_1_denominator(self):
-        """Verify Sortino ratio matches manual computation using N-1 downside denominator."""
+    def test_sortino_uses_population_denominator(self):
+        """Verify Sortino ratio matches manual computation using N (population) downside denominator."""
         import math
 
         equities = [10000.0, 10100.0, 10050.0, 10150.0, 10100.0, 10200.0,
@@ -488,14 +488,13 @@ class TestSharpeSortinoConsistency:
         excess = self._compute_excess_returns(equities)
         mean_excess = sum(excess) / len(excess)
         downside_sq_sum = sum(x ** 2 for x in excess if x < 0)
-        down_dev = math.sqrt(downside_sq_sum / (len(excess) - 1))
+        down_dev = math.sqrt(downside_sq_sum / len(excess))
         expected_sortino = mean_excess / down_dev * math.sqrt(252.0)
 
         assert abs(s.sortino_ratio - expected_sortino) < 1e-10
 
-    def test_sharpe_sortino_use_same_n_minus_1(self):
-        """Both ratios must divide by (N-1), not N. Verify by checking the
-        denominator count is consistent between the two."""
+    def test_sharpe_uses_sample_sortino_uses_population(self):
+        """Sharpe uses sample stddev (N-1), Sortino uses population downside dev (N)."""
         import math
 
         equities = [10000.0]
@@ -510,20 +509,20 @@ class TestSharpeSortinoConsistency:
         excess = self._compute_excess_returns(equities)
         n = len(excess)
 
-        # Sharpe: stddev = sqrt(sum((x - mean)^2) / (N-1))
         mean_excess = sum(excess) / n
         var_n_minus_1 = sum((x - mean_excess) ** 2 for x in excess) / (n - 1)
-        var_n = sum((x - mean_excess) ** 2 for x in excess) / n
         stddev_sample = math.sqrt(var_n_minus_1)
-        stddev_pop = math.sqrt(var_n)
 
         if stddev_sample > 0 and s.sharpe_ratio is not None:
             sharpe_sample = mean_excess / stddev_sample * math.sqrt(252.0)
-            sharpe_pop = mean_excess / stddev_pop * math.sqrt(252.0)
             assert abs(s.sharpe_ratio - sharpe_sample) < 1e-10, (
                 "Sharpe must use sample stddev (N-1)"
             )
-            if n > 2:
-                assert abs(s.sharpe_ratio - sharpe_pop) > 1e-12 or n <= 2, (
-                    "Sharpe should NOT match population stddev (N)"
-                )
+
+        if s.sortino_ratio is not None:
+            downside_sq_sum = sum(x ** 2 for x in excess if x < 0)
+            down_dev_pop = math.sqrt(downside_sq_sum / n)
+            expected_sortino = mean_excess / down_dev_pop * math.sqrt(252.0)
+            assert abs(s.sortino_ratio - expected_sortino) < 1e-10, (
+                "Sortino must use population downside dev (N)"
+            )

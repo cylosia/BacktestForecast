@@ -87,19 +87,18 @@ class BacktestService:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def enqueue(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
-        """Create a queued backtest run. The caller is responsible for dispatching to Celery."""
-        self._enforce_backtest_quota(user)
-
-        # Idempotency: return existing run if key matches
-        if request.idempotency_key:
-            existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
-            if existing is not None:
-                return existing
-
-        run = BacktestRun(
-            user_id=user.id,
-            status="queued",
+    @staticmethod
+    def _build_initial_run(
+        user_id: UUID,
+        request: CreateBacktestRunRequest,
+        *,
+        status: str = "queued",
+        started_at: datetime | None = None,
+    ) -> BacktestRun:
+        return BacktestRun(
+            user_id=user_id,
+            status=status,
+            started_at=started_at,
             symbol=request.symbol,
             strategy_type=request.strategy_type.value,
             date_from=request.start_date,
@@ -128,6 +127,18 @@ class BacktestService:
             starting_equity=to_decimal(request.account_size),
             ending_equity=to_decimal(request.account_size),
         )
+
+    def enqueue(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
+        """Create a queued backtest run. The caller is responsible for dispatching to Celery."""
+        self._enforce_backtest_quota(user)
+
+        # Idempotency: return existing run if key matches
+        if request.idempotency_key:
+            existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
+            if existing is not None:
+                return existing
+
+        run = self._build_initial_run(user.id, request, status="queued")
         self.run_repository.add(run)
         try:
             self.session.commit()
@@ -231,38 +242,7 @@ class BacktestService:
             if existing is not None:
                 return existing
 
-        run = BacktestRun(
-            user_id=user.id,
-            status="running",
-            started_at=datetime.now(UTC),
-            symbol=request.symbol,
-            strategy_type=request.strategy_type.value,
-            date_from=request.start_date,
-            date_to=request.end_date,
-            target_dte=request.target_dte,
-            dte_tolerance_days=request.dte_tolerance_days,
-            max_holding_days=request.max_holding_days,
-            account_size=to_decimal(request.account_size),
-            risk_per_trade_pct=to_decimal(request.risk_per_trade_pct),
-            commission_per_contract=to_decimal(request.commission_per_contract),
-            input_snapshot_json=request.model_dump(mode="json"),
-            idempotency_key=request.idempotency_key,
-            warnings_json=[],
-            engine_version="options-multileg-v2",
-            data_source="massive",
-            trade_count=0,
-            win_rate=Decimal("0"),
-            total_roi_pct=Decimal("0"),
-            average_win_amount=Decimal("0"),
-            average_loss_amount=Decimal("0"),
-            average_holding_period_days=Decimal("0"),
-            average_dte_at_open=Decimal("0"),
-            max_drawdown_pct=Decimal("0"),
-            total_commissions=Decimal("0"),
-            total_net_pnl=Decimal("0"),
-            starting_equity=to_decimal(request.account_size),
-            ending_equity=to_decimal(request.account_size),
-        )
+        run = self._build_initial_run(user.id, request, status="running", started_at=datetime.now(UTC))
         self.run_repository.add(run)
         try:
             self.session.commit()

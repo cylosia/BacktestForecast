@@ -28,7 +28,6 @@ from backtestforecast.market_data.types import DailyBar
 class VerticalSpreadStrategy(StrategyDefinition):
     strategy_type: str
     contract_type: str
-    short_leg_bias: str
     is_debit: bool
     margin_warning_message: str | None = None
 
@@ -210,19 +209,16 @@ class VerticalSpreadStrategy(StrategyDefinition):
 BULL_CALL_DEBIT_SPREAD_STRATEGY = VerticalSpreadStrategy(
     strategy_type="bull_call_debit_spread",
     contract_type="call",
-    short_leg_bias="higher",
     is_debit=True,
 )
 BEAR_PUT_DEBIT_SPREAD_STRATEGY = VerticalSpreadStrategy(
     strategy_type="bear_put_debit_spread",
     contract_type="put",
-    short_leg_bias="lower",
     is_debit=True,
 )
 BULL_PUT_CREDIT_SPREAD_STRATEGY = VerticalSpreadStrategy(
     strategy_type="bull_put_credit_spread",
     contract_type="put",
-    short_leg_bias="higher",
     is_debit=False,
     margin_warning_message=(
         "Bull put credit spread sizing is constrained"
@@ -232,7 +228,6 @@ BULL_PUT_CREDIT_SPREAD_STRATEGY = VerticalSpreadStrategy(
 BEAR_CALL_CREDIT_SPREAD_STRATEGY = VerticalSpreadStrategy(
     strategy_type="bear_call_credit_spread",
     contract_type="call",
-    short_leg_bias="lower",
     is_debit=False,
     margin_warning_message=(
         "Bear call credit spread sizing is constrained"

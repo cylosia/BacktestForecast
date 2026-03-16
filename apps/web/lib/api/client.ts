@@ -33,14 +33,6 @@ export async function createBacktestRun(
   });
 }
 
-export async function fetchBacktestRun(
-  token: string,
-  runId: string,
-  signal?: AbortSignal,
-): Promise<BacktestRunDetailResponse> {
-  return apiRequest<BacktestRunDetailResponse>(`/v1/backtests/${encodeURIComponent(runId)}`, token, signal ? { signal } : undefined);
-}
-
 export async function fetchBacktestRunStatus(
   token: string,
   runId: string,
@@ -124,10 +116,6 @@ export async function deleteTemplate(token: string, templateId: string, signal?:
     method: "DELETE",
     signal,
   });
-}
-
-export async function fetchTemplates(token: string, signal?: AbortSignal): Promise<TemplateListResponse> {
-  return apiRequest<TemplateListResponse>("/v1/templates", token, signal ? { signal } : undefined);
 }
 
 export async function createScannerJob(

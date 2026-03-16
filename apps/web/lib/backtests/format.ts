@@ -184,3 +184,22 @@ export function isTerminalStatus(status: RunStatus | string): boolean {
   }
   return TERMINAL_STATUSES.has(status);
 }
+
+const REASON_LABELS: Record<string, string> = {
+  entry_rules_met: "Entry rules met",
+  max_holding_days: "Max holding days",
+  expiration: "Expiration",
+  stop_loss: "Stop loss",
+  take_profit: "Take profit",
+  backtest_end_option_liquidation: "Backtest end",
+  early_assignment_risk: "Early assignment risk",
+  near_leg_expiration: "Near-leg expiration",
+  manual_exit: "Manual exit",
+  delta_threshold: "Delta threshold",
+  profit_target: "Profit target",
+  time_decay_exit: "Time decay exit",
+};
+
+export function formatReason(reason: string): string {
+  return REASON_LABELS[reason] ?? reason.replace(/_/g, " ");
+}

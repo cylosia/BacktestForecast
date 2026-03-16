@@ -332,8 +332,10 @@ class BillingService:
             )
             return
 
+        is_terminal = status in ("canceled", "unpaid", "incomplete_expired")
         if (
-            current_period_end is not None
+            not is_terminal
+            and current_period_end is not None
             and user.subscription_current_period_end is not None
             and current_period_end < user.subscription_current_period_end
             and subscription_id == user.stripe_subscription_id
@@ -408,14 +410,30 @@ class BillingService:
         from sqlalchemy import update as sa_update
         from backtestforecast.models import BacktestRun, ScannerJob, ExportJob, SymbolAnalysis
         _ACTIVE = ("queued", "running")
+        task_ids: list[str] = []
         cancelled = 0
         for model_cls in (BacktestRun, ScannerJob, ExportJob, SymbolAnalysis):
+            rows = self.session.execute(
+                select(model_cls.celery_task_id).where(
+                    model_cls.user_id == user_id,
+                    model_cls.status.in_(_ACTIVE),
+                    model_cls.celery_task_id.isnot(None),
+                )
+            ).scalars().all()
+            task_ids.extend(rows)
             result = self.session.execute(
                 sa_update(model_cls)
                 .where(model_cls.user_id == user_id, model_cls.status.in_(_ACTIVE))
                 .values(status="cancelled")
             )
             cancelled += result.rowcount
+        if task_ids:
+            try:
+                from apps.worker.app.celery_app import celery_app
+                for tid in task_ids:
+                    celery_app.control.revoke(tid, terminate=True, signal="SIGTERM")
+            except Exception:
+                logger.warning("billing.celery_revoke_failed", user_id=str(user_id), task_count=len(task_ids))
         if cancelled > 0:
             logger.info("billing.in_flight_jobs_cancelled", user_id=str(user_id), count=cancelled)
 
@@ -444,6 +462,10 @@ class BillingService:
             except Exception:
                 logger.warning("billing.orphan_customer_cleanup_failed", customer_id=customer.id)
             self.session.refresh(user)
+            if user.stripe_customer_id is None:
+                raise ExternalServiceError(
+                    "Failed to resolve Stripe customer after concurrent creation race."
+                )
             return user.stripe_customer_id
         return customer.id
 
@@ -482,29 +504,34 @@ class BillingService:
             return requested_tier
         return None
 
-    @staticmethod
-    def _extract_price_details(subscription: Any) -> tuple[str | None, str | None]:
-        """Extract price ID and billing interval from the first subscription item.
+    def _extract_price_details(self, subscription: Any) -> tuple[str | None, str | None]:
+        """Extract plan price ID and billing interval from subscription items.
 
-        TODO: Support multi-item subscriptions. Currently only the first line
-        item is inspected. If the product catalog evolves to include bundled
-        add-ons (e.g. data packs, priority queue credits) each item's price
-        should be matched against the configured price lookup and the primary
-        plan item identified — possibly by a metadata tag such as
-        ``"is_plan": "true"`` on the Stripe Price object.
+        When the subscription has multiple line items, each item's price is
+        matched against the configured price lookup. The first item whose
+        price_id is a known plan price is used. If none match, the first item
+        is used as a fallback.
         """
         items = subscription.get("items", {}).get("data", []) if isinstance(subscription, dict) else []
         if not items:
             return None, None
+        known_price_ids = set(self.settings.stripe_price_lookup.values())
         if len(items) > 1:
+            for item in items:
+                price = item.get("price", {})
+                pid = price.get("id") if isinstance(price, dict) else None
+                if pid and pid in known_price_ids:
+                    return self._interval_from_price(price)
             logger.warning(
-                "billing.multi_item_subscription",
+                "billing.multi_item_subscription_no_plan_match",
                 item_count=len(items),
                 sub_id=subscription.get("id") if isinstance(subscription, dict) else None,
-                hint="Only the first line item is used for tier resolution. "
-                     "Review if add-on items are now present.",
             )
         price = items[0].get("price", {})
+        return self._interval_from_price(price)
+
+    @staticmethod
+    def _interval_from_price(price: Any) -> tuple[str | None, str | None]:
         price_id = price.get("id") if isinstance(price, dict) else None
         recurring = price.get("recurring", {}) if isinstance(price, dict) else {}
         interval = recurring.get("interval") if isinstance(recurring, dict) else None

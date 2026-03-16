@@ -3,6 +3,7 @@ import {
   formatCurrency,
   formatDate,
   formatNumber,
+  formatReason,
   strategyLabel,
   toNumber,
 } from "@/lib/backtests/format";
@@ -83,8 +84,8 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
                     </TableCell>
                     <TableCell>
                       <div className="space-y-2">
-                        <Badge variant={isPositive === null ? "outline" : isPositive ? "success" : "secondary"}>{trade.exit_reason}</Badge>
-                        <p className="text-xs text-muted-foreground">Entered via {trade.entry_reason}</p>
+                        <Badge variant={isPositive === null ? "outline" : isPositive ? "success" : "secondary"}>{formatReason(trade.exit_reason)}</Badge>
+                        <p className="text-xs text-muted-foreground">Entered via {formatReason(trade.entry_reason)}</p>
                       </div>
                     </TableCell>
                   </TableRow>

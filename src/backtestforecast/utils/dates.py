@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 _US_EASTERN = ZoneInfo("America/New_York")
 
 
 def market_date_today() -> date:
-    """Return today's date in US Eastern time (the canonical market timezone).
+    """Return the most recent trading day in US Eastern time.
 
-    All internal date comparisons for trading data (pipeline, scans, analysis)
-    should use this function so that "today" is consistent across the codebase
-    regardless of the server's timezone or UTC offset.
+    On weekends the date is rolled back to the preceding Friday so that
+    pipeline runs, scans, and analysis always reference a real trading day.
+    Market holidays are not handled — only weekday adjustment is performed.
     """
-    return datetime.now(_US_EASTERN).date()
+    today = datetime.now(_US_EASTERN).date()
+    while today.weekday() >= 5:
+        today -= timedelta(days=1)
+    return today

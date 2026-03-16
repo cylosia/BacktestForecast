@@ -339,14 +339,25 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(symbols)) if symbols else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_screen_one, s): s for s in symbols}
-            for future in as_completed(futures, timeout=300):
-                try:
-                    snapshot = future.result(timeout=300)
-                except Exception:
-                    logger.warning("pipeline.screen_task_failed", exc_info=True)
-                    continue
-                if snapshot is not None:
-                    results.append(snapshot)
+            try:
+                for future in as_completed(futures, timeout=300):
+                    try:
+                        snapshot = future.result(timeout=300)
+                    except Exception:
+                        logger.warning("pipeline.screen_task_failed", exc_info=True)
+                        continue
+                    if snapshot is not None:
+                        results.append(snapshot)
+            except TimeoutError:
+                logger.warning("pipeline.stage1_timeout", completed=len(results), total=len(symbols))
+                for f in futures:
+                    if f.done() and not f.cancelled():
+                        try:
+                            snapshot = f.result(timeout=0)
+                            if snapshot is not None:
+                                results.append(snapshot)
+                        except Exception:
+                            pass
 
         return results
 
@@ -451,14 +462,25 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(work_items)) if work_items else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, item): item for item in work_items}
-            for future in as_completed(futures, timeout=300):
-                try:
-                    result = future.result(timeout=300)
-                except Exception:
-                    logger.warning("pipeline.quick_backtest_task_failed", exc_info=True)
-                    continue
-                if result is not None:
-                    results.append(result)
+            try:
+                for future in as_completed(futures, timeout=300):
+                    try:
+                        result = future.result(timeout=300)
+                    except Exception:
+                        logger.warning("pipeline.quick_backtest_task_failed", exc_info=True)
+                        continue
+                    if result is not None:
+                        results.append(result)
+            except TimeoutError:
+                logger.warning("pipeline.stage3_timeout", completed=len(results), total=len(work_items))
+                for f in futures:
+                    if f.done() and not f.cancelled():
+                        try:
+                            result = f.result(timeout=0)
+                            if result is not None:
+                                results.append(result)
+                        except Exception:
+                            pass
 
         return results
 
@@ -522,14 +544,25 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, c): c for c in candidates}
-            for future in as_completed(futures, timeout=300):
-                try:
-                    result = future.result(timeout=300)
-                except Exception:
-                    logger.warning("pipeline.full_backtest_task_failed", exc_info=True)
-                    continue
-                if result is not None:
-                    results.append(result)
+            try:
+                for future in as_completed(futures, timeout=300):
+                    try:
+                        result = future.result(timeout=300)
+                    except Exception:
+                        logger.warning("pipeline.full_backtest_task_failed", exc_info=True)
+                        continue
+                    if result is not None:
+                        results.append(result)
+            except TimeoutError:
+                logger.warning("pipeline.stage4_timeout", completed=len(results), total=len(candidates))
+                for f in futures:
+                    if f.done() and not f.cancelled():
+                        try:
+                            result = f.result(timeout=0)
+                            if result is not None:
+                                results.append(result)
+                        except Exception:
+                            pass
 
         return results
 

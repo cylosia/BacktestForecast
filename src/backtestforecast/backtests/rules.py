@@ -273,7 +273,7 @@ def build_estimated_iv_series(
     target_dte: int,
     dte_tolerance_days: int,
     risk_free_rate: float = 0.045,
-    sample_interval: int = 5,
+    sample_interval: int = 1,
 ) -> list[float | None]:
     results: list[float | None] = []
     last_iv: float | None = None

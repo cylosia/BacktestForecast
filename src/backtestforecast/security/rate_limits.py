@@ -10,7 +10,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.errors import AppError, RateLimitError
+from backtestforecast.errors import RateLimitError, ServiceUnavailableError
 from backtestforecast.observability.metrics import (
     RATE_LIMIT_HITS_TOTAL,
     REDIS_CONNECTION_ERRORS_TOTAL,
@@ -25,11 +25,6 @@ class RateLimitInfo:
     limit: int
     remaining: int
     reset_at: int
-
-
-class ServiceUnavailableError(AppError):
-    def __init__(self, message: str = "Service temporarily unavailable. Please retry later.") -> None:
-        super().__init__(code="service_unavailable", message=message, status_code=503)
 
 
 _RATE_LIMIT_LUA = """
@@ -96,7 +91,8 @@ class RateLimiter:
                 logger.error("rate_limiter.fail_closed", bucket=bucket)
                 raise ServiceUnavailableError()
         if count is None:
-            count, current_bucket = self._check_memory(namespaced, window_seconds)
+            mem_count, current_bucket = self._check_memory(namespaced, window_seconds)
+            count = mem_count
         remaining = max(limit - count, 0)
         reset_at = (current_bucket + 1) * window_seconds
         info = RateLimitInfo(limit=limit, remaining=remaining, reset_at=reset_at)
@@ -133,12 +129,14 @@ class RateLimiter:
 
     def close(self) -> None:
         """Release Redis connection resources."""
-        if self._redis is not None:
+        with self._redis_lock:
+            redis = self._redis
+            self._redis = None
+        if redis is not None:
             try:
-                self._redis.close()
+                redis.close()
             except Exception:
                 pass
-            self._redis = None
 
     def reset(self) -> None:
         with self._memory_lock:

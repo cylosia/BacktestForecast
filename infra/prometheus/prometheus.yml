@@ -16,7 +16,8 @@ scrape_configs:
     scheme: http
     static_configs:
       - targets: ["api:8000"]
-    # In production, set METRICS_TOKEN secret and uncomment the line below:
+    # In production, mount /etc/prometheus/secrets/metrics_token containing the
+    # bearer token that matches the API's METRICS_TOKEN environment variable.
     bearer_token_file: /etc/prometheus/secrets/metrics_token
 
   - job_name: "backtestforecast-worker"

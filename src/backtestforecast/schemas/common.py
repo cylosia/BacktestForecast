@@ -8,7 +8,10 @@ from pydantic import BaseModel
 
 _SENSITIVE_PATTERNS = [
     re.compile(r"Traceback \(most recent call"),
-    re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b.*\b(FROM|INTO|SET|TABLE|WHERE|VALUES|INDEX)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"psycopg|sqlalchemy\.exc|SQLSTATE|pg_catalog", re.IGNORECASE),
     re.compile(r"[A-Za-z]:\\(?:[^\s\\]+\\){2,}[^\s]*|/(?:home|usr|var|tmp|etc)/[^\s]+"),
     re.compile(r"https?://(?:localhost|127\.0\.0\.1|10\.\d|172\.(?:1[6-9]|2\d|3[01])|192\.168)[^\s]*"),

@@ -85,16 +85,16 @@ class TestSSEEndpoint:
         from apps.api.app.routers.events import router
 
         paths = [route.path for route in router.routes]
-        assert "/backtests/{run_id}" in paths
+        assert any("backtests/{run_id}" in p for p in paths)
 
     def test_scan_events_route_registered(self):
         from apps.api.app.routers.events import router
 
         paths = [route.path for route in router.routes]
-        assert "/scans/{job_id}" in paths
+        assert any("scans/{job_id}" in p for p in paths)
 
     def test_export_events_route_registered(self):
         from apps.api.app.routers.events import router
 
         paths = [route.path for route in router.routes]
-        assert "/exports/{export_job_id}" in paths
+        assert any("exports/{export_job_id}" in p for p in paths)

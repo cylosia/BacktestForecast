@@ -15,6 +15,8 @@ export interface ScannerFormInput {
   maxRecs: string;
 }
 
+const TICKER_RE = /^[A-Z0-9.\/^-]{1,16}$/;
+
 export function parseSymbols(text: string): string[] {
   return text
     .split(/[,\s]+/)
@@ -28,6 +30,10 @@ export function validateScannerForm(input: ScannerFormInput): string[] {
 
   if (symbols.length === 0) {
     errors.push("At least one symbol is required.");
+  }
+  const invalid = symbols.filter((s) => !TICKER_RE.test(s));
+  if (invalid.length > 0) {
+    errors.push(`Invalid ticker format: ${invalid.slice(0, 3).join(", ")}${invalid.length > 3 ? "…" : ""}`);
   }
   if (input.selectedStrategies.size === 0) {
     errors.push("At least one strategy type is required.");

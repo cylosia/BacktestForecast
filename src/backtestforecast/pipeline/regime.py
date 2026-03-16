@@ -140,11 +140,11 @@ def classify_regime(
     if volume_ratio > 1.5:
         regimes.add(Regime.HIGH_VOLUME)
 
-    # Earnings
+    # Earnings — flag if earnings are within 10 days ahead or 2 days behind
     if earnings_dates:
         last_date = sorted_bars[-1].trade_date
-        upcoming = [d for d in earnings_dates if 0 <= (d - last_date).days <= 10]
-        if upcoming:
+        nearby = [d for d in earnings_dates if -2 <= (d - last_date).days <= 10]
+        if nearby:
             regimes.add(Regime.EARNINGS_IMMINENT)
 
     return RegimeSnapshot(

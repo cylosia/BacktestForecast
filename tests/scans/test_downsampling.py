@@ -47,15 +47,15 @@ class TestDownsampleEquityCurve:
         result = ScanService._downsample_equity_curve(curve)
         assert len(result) <= 500
 
-    def test_999_points_reduced_to_at_most_500(self):
+    def test_999_points_reduced_to_at_most_501(self):
         curve = _make_curve(999)
         result = ScanService._downsample_equity_curve(curve)
-        assert len(result) <= 500
+        assert len(result) <= 501
 
-    def test_1000_points_reduced_to_at_most_500(self):
+    def test_1000_points_reduced_to_at_most_501(self):
         curve = _make_curve(1000)
         result = ScanService._downsample_equity_curve(curve)
-        assert len(result) <= 500
+        assert len(result) <= 501
 
     def test_first_and_last_points_always_included(self):
         curve = _make_curve(600)

@@ -134,6 +134,7 @@ def get_pool_stats() -> dict[str, int]:
         "checked_out": pool.checkedout(),
         "overflow": pool.overflow(),
     }
-    if hasattr(pool, "_max_overflow"):
-        stats["max_overflow"] = pool._max_overflow
+    from sqlalchemy.pool import QueuePool
+    if isinstance(pool, QueuePool):
+        stats["max_overflow"] = pool._max_overflow  # type: ignore[attr-defined]
     return stats

@@ -24,7 +24,7 @@ class CheckoutSessionResponse(BaseModel):
 
 
 class CreatePortalSessionRequest(BaseModel):
-    return_path: str | None = Field(default="/app/settings/billing", max_length=200)
+    return_path: str | None = Field(default="/app/settings/billing", max_length=200, pattern=r"^/[^\s]*$")
 
 
 class PortalSessionResponse(BaseModel):

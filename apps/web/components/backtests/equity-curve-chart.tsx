@@ -8,12 +8,16 @@ const PADDING_X = 18;
 const PADDING_Y = 18;
 
 export function EquityCurveChart({ points }: { points: EquityCurvePointResponse[] }) {
-  if (points.length === 0) {
+  if (points.length < 2) {
     return (
       <Card>
         <CardHeader>
           <CardTitle>Equity curve</CardTitle>
-          <CardDescription>No equity points were returned for this run.</CardDescription>
+          <CardDescription>
+            {points.length === 0
+              ? "No equity points were returned for this run."
+              : "Not enough data points to render an equity curve."}
+          </CardDescription>
         </CardHeader>
       </Card>
     );

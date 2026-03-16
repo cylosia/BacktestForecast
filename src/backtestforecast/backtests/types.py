@@ -17,21 +17,7 @@ class OptionDataGateway(Protocol):
         dte_tolerance_days: int,
     ) -> Sequence[OptionContractRecord]: ...
 
-    def select_contract(
-        self,
-        entry_date: date,
-        strategy_type: str,
-        underlying_close: float,
-        target_dte: int,
-        dte_tolerance_days: int,
-    ) -> OptionContractRecord: ...
-
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None: ...
-
-    def get_chain_delta_lookup(
-        self,
-        contracts: Sequence[OptionContractRecord],
-    ) -> dict[float, float]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +60,6 @@ class TradeResult:
     entry_reason: str
     exit_reason: str
     detail_json: dict[str, Any] = field(default_factory=dict)
-    slippage_per_leg: list[float] | None = None
 
 
 @dataclass(frozen=True, slots=True)

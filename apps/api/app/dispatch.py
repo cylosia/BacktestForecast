@@ -72,7 +72,7 @@ def dispatch_celery_task(
                 logger.warning(f"{log_event}.revoke_failed", celery_task_id=result.id)
             raise
         logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)
-    except (OSError, KombuError, KombuOperationalError, TimeoutError):
+    except (OSError, KombuError, KombuOperationalError, TimeoutError, ConnectionError, RuntimeError) as exc:
         logger.exception(f"{log_event}.enqueue_failed", **task_kwargs)
         job.status = "failed"
         job.error_code = "enqueue_failed"

@@ -81,8 +81,8 @@ def test_fallback_persist_status_skips_terminal(db_session, db_session_factory):
     user = _create_user(db_session)
     run = _create_backtest_run(db_session, user, status="succeeded")
 
-    with patch("backtestforecast.events.SessionLocal", db_session_factory):
-        _fallback_persist_status("backtest", run.id, "running")
+    with patch("backtestforecast.db.session.SessionLocal", db_session_factory):
+        _fallback_persist_status("backtest", run.id, "failed")
 
     db_session.expire_all()
     refreshed = db_session.get(BacktestRun, run.id)
@@ -96,7 +96,7 @@ def test_fallback_persist_status_updates_non_terminal(db_session, db_session_fac
     user = _create_user(db_session)
     run = _create_backtest_run(db_session, user, status="running")
 
-    with patch("backtestforecast.events.SessionLocal", db_session_factory):
+    with patch("backtestforecast.db.session.SessionLocal", db_session_factory):
         _fallback_persist_status("backtest", run.id, "failed")
 
     db_session.expire_all()

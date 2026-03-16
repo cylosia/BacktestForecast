@@ -82,6 +82,11 @@ class CreateAnalysisRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=16)
     idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
 
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def normalize_symbol(cls, v: str) -> str:
+        return v.strip().upper()
+
 
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisSummaryResponse]

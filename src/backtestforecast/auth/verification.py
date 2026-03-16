@@ -126,6 +126,8 @@ class ClerkTokenVerifier:
                 else:
                     raise ConfigurationError("Set CLERK_JWT_KEY or CLERK_JWKS_URL (or CLERK_ISSUER) to enable auth.")
 
-            self._jwks_client = PyJWKClient(jwks_url, timeout=10)
+            self._jwks_client = PyJWKClient(
+                jwks_url, timeout=10, cache_jwk_set=True, lifespan=300,
+            )
             return self._jwks_client
 

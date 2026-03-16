@@ -1,5 +1,8 @@
+from typing import Any
+
 from fastapi import APIRouter, Request
 
+from apps.api.app.dependencies import _extract_client_ip
 from backtestforecast.config import get_settings
 from backtestforecast.security import get_rate_limiter
 
@@ -8,13 +11,10 @@ router = APIRouter(tags=["meta"])
 API_VERSION = "0.1.0"
 
 
-from typing import Any
-
-
 @router.get("/meta")
 def get_meta(request: Request) -> dict[str, Any]:
     settings = get_settings()
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _extract_client_ip(request)
     get_rate_limiter().check(
         bucket="meta:read",
         actor_key=client_ip,

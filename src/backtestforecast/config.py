@@ -306,6 +306,19 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("trusted_proxy_cidrs")
+    @classmethod
+    def validate_trusted_proxy_cidrs(cls, value: str) -> str:
+        import ipaddress
+        for entry in value.split(","):
+            entry = entry.strip()
+            if entry:
+                try:
+                    ipaddress.ip_network(entry, strict=False)
+                except ValueError as exc:
+                    raise ValueError(f"Invalid CIDR in trusted_proxy_cidrs: {entry!r}") from exc
+        return value
+
     @property
     def web_cors_origins(self) -> list[str]:
         raw = self.web_cors_origins_raw.strip()
@@ -383,7 +396,8 @@ class Settings(BaseSettings):
                 host_part = parsed.hostname or "localhost"
                 if parsed.port:
                     host_part = f"{host_part}:{parsed.port}"
-                new_netloc = f":{encoded_pw}@{host_part}"
+                username = parsed.username or ""
+                new_netloc = f"{username}:{encoded_pw}@{host_part}"
                 setattr(self, attr, urlunparse(parsed._replace(netloc=new_netloc)))
         return self
 
@@ -418,10 +432,15 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
             if not self.clerk_authorized_parties:
                 raise ValueError("Production-like environments require at least one CLERK_AUTHORIZED_PARTIES entry.")
-            if "sslmode" not in self.database_url:
+            import re as _re
+            _sslmode_match = _re.search(r"sslmode=(\w+)", self.database_url)
+            if not _sslmode_match or _sslmode_match.group(1) not in (
+                "require", "verify-ca", "verify-full",
+            ):
                 raise ValueError(
-                    "Production-like environments require sslmode in DATABASE_URL "
-                    "(e.g. ?sslmode=require) to encrypt Postgres traffic in transit."
+                    "Production-like environments require sslmode=require, "
+                    "sslmode=verify-ca, or sslmode=verify-full in DATABASE_URL "
+                    "to encrypt Postgres traffic in transit."
                 )
         return self
 

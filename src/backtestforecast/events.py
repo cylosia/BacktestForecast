@@ -121,7 +121,8 @@ _JOB_TYPE_MODEL_MAP: dict[str, str] = {
     "analysis": "SymbolAnalysis",
 }
 
-_VALID_TARGET_STATUSES = frozenset({"succeeded", "failed", "cancelled", "expired"})
+_VALID_TARGET_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+_EXPORT_VALID_TARGET_STATUSES = frozenset({"succeeded", "failed", "cancelled", "expired"})
 
 
 def _fallback_persist_status(
@@ -133,7 +134,8 @@ def _fallback_persist_status(
     read-check and the write that could clobber a terminal status set
     by another worker in the meantime.
     """
-    if status not in _VALID_TARGET_STATUSES:
+    allowed = _EXPORT_VALID_TARGET_STATUSES if job_type == "export" else _VALID_TARGET_STATUSES
+    if status not in allowed:
         return
     try:
         from sqlalchemy import update
@@ -150,13 +152,13 @@ def _fallback_persist_status(
         if model_cls is None:
             return
 
-        _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "expired"})
+        terminal = _EXPORT_VALID_TARGET_STATUSES if job_type == "export" else _VALID_TARGET_STATUSES
         with SessionLocal() as session:
             result = session.execute(
                 update(model_cls)
                 .where(
                     model_cls.id == job_id,
-                    model_cls.status.notin_(_TERMINAL_STATUSES),
+                    model_cls.status.notin_(terminal),
                 )
                 .values(status=status)
             )

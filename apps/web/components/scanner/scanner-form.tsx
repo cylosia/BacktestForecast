@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api/shared";
 import type { CreateScannerJobRequest, ScannerMode, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { parseSymbols, validateScannerForm } from "@/lib/scanner/validation";
+import { daysAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -101,12 +102,6 @@ const ADVANCED_STRATEGY_GROUPS: Array<{
 ];
 
 const ADVANCED_STRATEGIES = ADVANCED_STRATEGY_GROUPS.flatMap((g) => g.strategies);
-
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - n);
-  return d.toISOString().slice(0, 10);
-}
 
 export function ScannerForm({
   scannerModes,
@@ -293,6 +288,7 @@ export function ScannerForm({
       setStatus("error");
       setErrorMessage(msg);
       setErrorCode(code);
+    } finally {
       submittingRef.current = false;
     }
   }

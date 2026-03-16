@@ -20,30 +20,29 @@ from backtestforecast.backtests.types import (
 class TestToDecimalEdgeCases:
     """Item 61: to_decimal(NaN) and to_decimal(Inf) behavior."""
 
-    def test_nan_returns_zero(self):
+    def test_nan_raises(self):
         from backtestforecast.services.backtests import to_decimal
 
-        result = to_decimal(float("nan"))
-        assert result == Decimal("0")
-        assert isinstance(result, Decimal)
+        with pytest.raises(ValueError, match="Non-finite"):
+            to_decimal(float("nan"))
 
-    def test_inf_returns_zero(self):
+    def test_inf_raises(self):
         from backtestforecast.services.backtests import to_decimal
 
-        result = to_decimal(float("inf"))
-        assert result == Decimal("0")
+        with pytest.raises(ValueError, match="Non-finite"):
+            to_decimal(float("inf"))
 
-    def test_neg_inf_returns_zero(self):
+    def test_neg_inf_raises(self):
         from backtestforecast.services.backtests import to_decimal
 
-        result = to_decimal(float("-inf"))
-        assert result == Decimal("0")
+        with pytest.raises(ValueError, match="Non-finite"):
+            to_decimal(float("-inf"))
 
-    def test_decimal_nan_returns_zero(self):
+    def test_decimal_nan_raises(self):
         from backtestforecast.services.backtests import to_decimal
 
-        result = to_decimal(Decimal("NaN"))
-        assert result == Decimal("0")
+        with pytest.raises(ValueError, match="Non-finite"):
+            to_decimal(Decimal("NaN"))
 
     def test_normal_float_quantized(self):
         from backtestforecast.services.backtests import to_decimal

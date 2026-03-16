@@ -1,1 +1,1 @@
-"""TODO: Clerk auth integration lives here."""
+"""Clerk authentication and JWT verification."""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import re
 import sys
@@ -129,6 +130,8 @@ def hash_ip(value: str | None) -> str | None:
     if not value:
         return None
     settings = get_settings()
-    return hashlib.sha256(
-        f"{settings.ip_hash_salt}:{value}".encode("utf-8"),
+    return hmac.new(
+        settings.ip_hash_salt.encode("utf-8"),
+        value.encode("utf-8"),
+        hashlib.sha256,
     ).hexdigest()

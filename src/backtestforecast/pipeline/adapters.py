@@ -281,7 +281,10 @@ class PipelineForecaster:
                 with self._bar_fetch_locks_lock:
                     fetch_lock = self._bar_fetch_locks.setdefault(cache_key, threading.Lock())
                     if len(self._bar_fetch_locks) > 500:
-                        keys_to_remove = list(self._bar_fetch_locks.keys())[:len(self._bar_fetch_locks) - 500]
+                        keys_to_remove = [
+                            k for k in list(self._bar_fetch_locks.keys())[:len(self._bar_fetch_locks) - 500]
+                            if k != cache_key and not self._bar_fetch_locks[k].locked()
+                        ]
                         for k in keys_to_remove:
                             self._bar_fetch_locks.pop(k, None)
                 with fetch_lock:

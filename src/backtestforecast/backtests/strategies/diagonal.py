@@ -247,11 +247,19 @@ class DoubleDiagonalStrategy(StrategyDefinition):
         near_exp = choose_primary_expiration(
             [c for c in calls if c.expiration_date in common_near_exp], bar.trade_date, config.target_dte
         )
-        far_exp_c = choose_secondary_expiration(calls, bar.trade_date, near_exp)
-        far_exp_p = choose_secondary_expiration(puts, bar.trade_date, near_exp)
-        if far_exp_c is None or far_exp_p is None:
+        common_far_exps = sorted(
+            {c.expiration_date for c in calls if c.expiration_date > near_exp}
+            & {c.expiration_date for c in puts if c.expiration_date > near_exp}
+        )
+        if not common_far_exps:
+            raise DataUnavailableError("No common far expiration for double diagonal.")
+        far_exp = choose_secondary_expiration(
+            [c for c in calls if c.expiration_date in set(common_far_exps)],
+            bar.trade_date,
+            near_exp,
+        )
+        if far_exp is None:
             raise DataUnavailableError("No longer-dated expiration for double diagonal.")
-        far_exp = min(far_exp_c, far_exp_p)
 
         near_cc = contracts_for_expiration(calls, near_exp)
         near_pc = contracts_for_expiration(puts, near_exp)

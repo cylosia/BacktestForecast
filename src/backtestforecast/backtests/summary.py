@@ -137,7 +137,7 @@ def _compute_sharpe_sortino(
 
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
     if downside_sq_sum > 0:
-        down_dev = math.sqrt(downside_sq_sum / (len(excess) - 1))
+        down_dev = math.sqrt(downside_sq_sum / len(excess))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None
@@ -171,6 +171,10 @@ def _compute_cagr(
 
 
 def _compute_streaks(trades: list[TradeResult]) -> tuple[int, int]:
+    """Return (max_consecutive_wins, max_consecutive_losses).
+
+    Break-even trades (net_pnl == 0) reset both streak counters.
+    """
     max_w = max_l = cur_w = cur_l = 0
     for trade in trades:
         if trade.net_pnl > 0:

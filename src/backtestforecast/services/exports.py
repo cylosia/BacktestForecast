@@ -179,6 +179,16 @@ class ExportService:
                     storage_key=storage_key,
                     exc_info=True,
                 )
+                if not isinstance(self._storage, DatabaseStorage):
+                    try:
+                        self._storage.delete(storage_key)
+                        logger.info("export.orphan_cleaned", storage_key=storage_key)
+                    except Exception:
+                        logger.warning(
+                            "export.orphan_cleanup_failed",
+                            storage_key=storage_key,
+                            exc_info=True,
+                        )
                 raise
         except AppError:
             self.session.rollback()
