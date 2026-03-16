@@ -12,14 +12,14 @@ This plan covers all production-critical flows: authenticated access, async back
 - **Templates**: full CRUD (201 → list → get → patch → 204 delete); free limit (3) → `quota_exceeded`; pro higher limit; not found; multi-strategy acceptance.
 - **Compare**: Pro 2-run compare → 200 with correct order and limit; free → `feature_locked`; missing run → 404; minimum-two validation → 422; premium 4-run compare → limit 8.
 - **Exports**: Pro CSV export → 202 → inline generation → status polling → download with formula sanitization; free → `feature_locked`.
-- **Catalog**: GET returns 14 strategies in 4 categories; tier split 6 free + 8 premium; auth required.
+- **Catalog**: GET returns 35 strategies in 9 categories; tier split 6 free + 29 premium; auth required.
 - **Scanner**: Pro full flow → 202 → inline execution → recommendations with forecasts; free → `feature_locked`.
 - **Stripe webhook**: subscription sync updates plan_tier; duplicate event ignored.
 - **`/v1/me` enrichment**: returns features, usage, and quota after a backtest.
 
 ### Unit tests (29 tests)
 - **Error types** (3): `QuotaExceededError` and `FeatureLockedError` codes, status, and hierarchy.
-- **Strategy catalog** (5): all 14 entries present, grouped order, required fields.
+- **Strategy catalog** (5): all 35 entries present, grouped order, required fields.
 - **Template service** (7): CRUD, not-found, free limit 3, pro limit, limit visibility.
 - **Entitlements** (4): inactive subscription downgrade, export/forecast access, scanner mode enforcement.
 - **Backtests validation** (2): conflicting directional rules rejected, extended indicators accepted.

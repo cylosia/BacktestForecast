@@ -534,6 +534,10 @@ class SymbolAnalysis(Base):
         CheckConstraint("strategies_tested >= 0", name="ck_symbol_analyses_strategies_tested_nonneg"),
         CheckConstraint("configs_tested >= 0", name="ck_symbol_analyses_configs_tested_nonneg"),
         CheckConstraint("top_results_count >= 0", name="ck_symbol_analyses_top_results_nonneg"),
+        CheckConstraint(
+            "stage IN ('pending', 'regime', 'landscape', 'deep_dive', 'forecast')",
+            name="ck_symbol_analyses_valid_stage",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)

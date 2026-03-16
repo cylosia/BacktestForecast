@@ -542,6 +542,10 @@ def upgrade() -> None:
         sa.CheckConstraint("strategies_tested >= 0", name="ck_symbol_analyses_strategies_tested_nonneg"),
         sa.CheckConstraint("configs_tested >= 0", name="ck_symbol_analyses_configs_tested_nonneg"),
         sa.CheckConstraint("top_results_count >= 0", name="ck_symbol_analyses_top_results_nonneg"),
+        sa.CheckConstraint(
+            "stage IN ('pending', 'regime', 'landscape', 'deep_dive', 'forecast')",
+            name="ck_symbol_analyses_valid_stage",
+        ),
     )
     op.create_index("ix_symbol_analyses_user_id", "symbol_analyses", ["user_id"])
     op.create_index("ix_symbol_analyses_user_created", "symbol_analyses", ["user_id", "created_at"])

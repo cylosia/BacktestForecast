@@ -92,6 +92,91 @@ This document describes the default modeling assumptions used by the current mul
 - If a covered call expires ITM, shares are considered called away and the stock leg is closed.
 - Remaining shares at the end of the run are liquidated on the final available bar.
 
+### Poor Man's Covered Call (PMCC)
+- Buys a deep-ITM far-dated call (2 strikes below spot) and sells an OTM near-dated call.
+- Two legs with different expirations.
+- Capital required is the net debit paid. Max loss is the debit.
+- If opened for a net credit, margin is calculated as naked call margin on the short leg.
+
+### Diagonal Spread
+- Sells a near-dated call at a resolved strike, buys a far-dated call one strike increment lower.
+- Two legs with different expirations.
+- Risk profile mirrors PMCC: debit case uses debit as capital, credit case uses naked call margin.
+
+### Double Diagonal
+- Four legs across two expirations: sells near-dated call and put (OTM), buys far-dated call and put further OTM.
+- Capital is net debit if opened for debit; otherwise short straddle/strangle margin.
+- Max loss is the debit paid (if debit); uncapped if opened for credit.
+
+### Ratio Call Backspread
+- Sells 1 lower-strike call and buys 2 higher-strike calls (same expiration, 1:2 ratio).
+- Max loss is the risk between strikes plus net debit, realised if the underlying finishes at the long strike at expiration.
+- Unlimited upside profit potential from the extra long call.
+
+### Ratio Put Backspread
+- Sells 1 higher-strike put and buys 2 lower-strike puts (same expiration, 1:2 ratio).
+- Mirror image of ratio call backspread.
+- Max loss is the risk between strikes plus net debit. Unlimited downside profit potential.
+
+### Collar
+- Buys 100 shares, sells 1 OTM call, buys 1 OTM put (same expiration).
+- Two option legs plus one stock leg. Fully defined risk.
+- Max loss is (spot minus put strike) times 100 plus net option cost.
+- Max profit is (call strike minus spot) times 100 minus net option cost.
+
+### Short Straddle
+- Sells an ATM call and an ATM put at the same strike.
+- Max loss is unlimited in both directions. Max profit is the total credit received.
+- Capital is calculated using short straddle/strangle margin (Reg T).
+
+### Short Strangle
+- Sells an OTM call and an OTM put at separately resolved strikes.
+- Risk profile same as short straddle but with a wider breakeven range.
+- Capital uses short straddle/strangle margin.
+
+### Covered Strangle
+- Buys 100 shares, sells 1 OTM call, sells 1 OTM put (same expiration).
+- More aggressive than a collar: exposed to downside below the put strike with additional assignment risk.
+- Capital uses covered strangle margin (stock cost plus put collateral with overlap discount).
+
+### Synthetic Put
+- Shorts 100 shares and buys 1 ATM call.
+- One option leg plus one stock leg. Behaves like a long put.
+- Profits as the stock falls. Losses are capped by the call protection.
+
+### Reverse Conversion
+- Shorts 100 shares, buys 1 ATM call, sells 1 ATM put (same strike).
+- Two option legs plus one stock leg. Arbitrage-style structure.
+- P&L is determined by net option cost versus stock-to-strike carry.
+
+### Jade Lizard
+- Sells 1 OTM put, sells 1 OTM call, buys 1 higher-strike call (bear call spread plus naked put).
+- Three legs, same expiration. Only entered if total credit is positive.
+- Upside risk can be zero when credit exceeds call spread width.
+- Unlimited downside risk below the put strike.
+
+### Iron Butterfly
+- Sells ATM call and ATM put (same center strike), buys OTM call wing and OTM put wing.
+- Four legs, same expiration. Fully defined risk.
+- Max loss is the wider wing width minus credit received. Max profit is the credit.
+- Rejected if opened for a net debit.
+
+### Custom 2/3/4/5/6/8 Leg
+- Accepts user-defined leg specifications: asset type (stock or option), contract type, side, strike offset from ATM, expiration offset (0/1/2), and quantity ratio.
+- Supports up to 3 different expirations and mixed stock/option legs.
+- Capital is estimated by pairing short legs with matching longs as credit spreads; unpaired shorts use naked option margin.
+- Max loss and max profit are not calculated (both `None`).
+
+### Naked Call
+- Sells a single call at a resolved strike. Unlimited theoretical loss.
+- Capital uses Reg T naked option margin formula.
+- Users should interpret results with caution — see known limitations.
+
+### Naked Put
+- Sells a single put at a resolved strike. Loss is capped at strike-to-zero.
+- Capital uses Reg T naked option margin formula.
+- Users should interpret results with caution — see known limitations.
+
 ## Indicator/rule assumptions
 
 ### RSI
