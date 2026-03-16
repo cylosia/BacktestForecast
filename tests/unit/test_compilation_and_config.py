@@ -65,38 +65,34 @@ def test_sse_redis_connect_timeout_validated_to_minimum() -> None:
         )
 
 
-def test_to_decimal_raises_on_nan() -> None:
-    """Item 89: to_decimal must raise ValueError for float('nan')."""
+def test_to_decimal_coerces_nan_to_zero() -> None:
+    """to_decimal must coerce float('nan') to Decimal('0') instead of crashing."""
     from decimal import Decimal
 
     from backtestforecast.services.backtests import to_decimal
 
-    import pytest
-
-    with pytest.raises(ValueError, match="Non-finite"):
-        to_decimal(float("nan"))
+    result = to_decimal(float("nan"))
+    assert result == Decimal("0")
 
 
-def test_to_decimal_raises_on_inf() -> None:
-    """to_decimal must also raise ValueError for float('inf')."""
-    from backtestforecast.services.backtests import to_decimal
-
-    import pytest
-
-    with pytest.raises(ValueError, match="Non-finite"):
-        to_decimal(float("inf"))
-
-
-def test_to_decimal_raises_on_decimal_nan() -> None:
-    """to_decimal must raise ValueError for Decimal('NaN')."""
+def test_to_decimal_coerces_inf_to_zero() -> None:
+    """to_decimal must coerce float('inf') to Decimal('0') instead of crashing."""
     from decimal import Decimal
 
     from backtestforecast.services.backtests import to_decimal
 
-    import pytest
+    result = to_decimal(float("inf"))
+    assert result == Decimal("0")
 
-    with pytest.raises(ValueError, match="Non-finite"):
-        to_decimal(Decimal("NaN"))
+
+def test_to_decimal_coerces_decimal_nan_to_zero() -> None:
+    """to_decimal must coerce Decimal('NaN') to Decimal('0') instead of crashing."""
+    from decimal import Decimal
+
+    from backtestforecast.services.backtests import to_decimal
+
+    result = to_decimal(Decimal("NaN"))
+    assert result == Decimal("0")
 
 
 def test_db_pool_max_overflow_validated_to_minimum_one() -> None:

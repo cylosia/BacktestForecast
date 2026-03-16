@@ -430,10 +430,19 @@ class BillingService:
         if task_ids:
             try:
                 from apps.worker.app.celery_app import celery_app
-                for tid in task_ids:
-                    celery_app.control.revoke(tid, terminate=True, signal="SIGTERM")
-            except Exception:
-                logger.warning("billing.celery_revoke_failed", user_id=str(user_id), task_count=len(task_ids))
+            except ImportError:
+                logger.warning(
+                    "billing.celery_import_unavailable",
+                    user_id=str(user_id),
+                    task_count=len(task_ids),
+                    msg="Cannot revoke Celery tasks: worker module not importable in this process.",
+                )
+            else:
+                try:
+                    for tid in task_ids:
+                        celery_app.control.revoke(tid, terminate=True, signal="SIGTERM")
+                except Exception:
+                    logger.warning("billing.celery_revoke_failed", user_id=str(user_id), task_count=len(task_ids))
         if cancelled > 0:
             logger.info("billing.in_flight_jobs_cancelled", user_id=str(user_id), count=cancelled)
 

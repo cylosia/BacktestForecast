@@ -52,8 +52,8 @@ from backtestforecast.services.backtests import to_decimal
 
 logger = structlog.get_logger("services.scans")
 
-_FALLBACK_ENTRY_RULES: list[dict[str, Any]] = [
-    {"type": "rsi", "operator": "lte", "threshold": "40", "period": 14},
+_FALLBACK_ENTRY_RULES: list[RsiRule] = [
+    RsiRule(type="rsi", operator="lte", threshold=Decimal("40"), period=14),
 ]
 
 

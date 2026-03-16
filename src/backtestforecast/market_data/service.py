@@ -297,9 +297,6 @@ class MarketDataService:
             option_gateway=option_gateway,
         )
 
-    def prepare_long_option_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
-        return self.prepare_backtest(request)
-
     def _load_earnings_dates_if_required(self, request: CreateBacktestRunRequest) -> set[date]:
         avoid_rules = [rule for rule in request.entry_rules if isinstance(rule, AvoidEarningsRule)]
         if not avoid_rules:

@@ -49,15 +49,20 @@ EQUITY_CURVE_LIMIT = 10_000
 def to_decimal(value: float | Decimal) -> Decimal:
     """Convert a float or Decimal to a quantized Decimal.
 
-    Non-finite values (NaN, Inf) raise ``ValueError`` so callers can handle
-    the anomaly explicitly rather than silently storing zero.
+    Non-finite values (NaN, Inf) are coerced to ``Decimal("0")`` with a
+    warning log so that a single degenerate data point cannot crash the
+    entire worker task.  The engine already guards most paths against NaN,
+    but edge cases (e.g. missing quotes across all bars) can still produce
+    non-finite intermediates.
     """
     if isinstance(value, Decimal):
         if not value.is_finite():
-            raise ValueError(f"Non-finite float value: {value}")
+            logger.warning("to_decimal.non_finite_coerced", value=str(value))
+            return Decimal("0")
         return value.quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
     if not math.isfinite(value):
-        raise ValueError(f"Non-finite float value: {value}")
+        logger.warning("to_decimal.non_finite_coerced", value=str(value))
+        return Decimal("0")
     return Decimal(str(value)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 
 

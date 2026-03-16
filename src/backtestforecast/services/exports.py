@@ -239,11 +239,14 @@ class ExportService:
         self.session.refresh(export_job)
         return export_job
 
+    _CLEANUP_COMMIT_INTERVAL = 10
+
     def cleanup_expired_exports(self, *, batch_size: int = 100, max_batches: int = 100) -> int:
         """Delete storage content for expired exports. Returns count cleaned."""
         cleaned = 0
         now = datetime.now(UTC)
         batch_count = 0
+        pending_commit = 0
 
         while batch_count < max_batches:
             batch_count += 1
@@ -273,13 +276,8 @@ class ExportService:
                 job.status = "expired"
                 job.size_bytes = 0
                 job.sha256_hex = None
-                try:
-                    self.session.commit()
-                except Exception:
-                    self.session.rollback()
-                    logger.warning("cleanup.commit_failed", export_job_id=str(job.id), exc_info=True)
-                    continue
                 cleaned += 1
+                pending_commit += 1
                 logger.info(
                     "cleanup.expired",
                     export_job_id=str(job.id),
@@ -287,8 +285,23 @@ class ExportService:
                     expires_at=str(job.expires_at) if job.expires_at else None,
                 )
 
+                if pending_commit >= self._CLEANUP_COMMIT_INTERVAL:
+                    try:
+                        self.session.commit()
+                    except Exception:
+                        self.session.rollback()
+                        logger.warning("cleanup.batch_commit_failed", pending=pending_commit, exc_info=True)
+                    pending_commit = 0
+
             if len(jobs) < batch_size:
                 break
+
+        if pending_commit > 0:
+            try:
+                self.session.commit()
+            except Exception:
+                self.session.rollback()
+                logger.warning("cleanup.final_commit_failed", pending=pending_commit, exc_info=True)
 
         return cleaned
 

@@ -473,8 +473,9 @@ class TestSharpeSortinoConsistency:
 
         assert abs(s.sharpe_ratio - expected_sharpe) < 1e-10
 
-    def test_sortino_uses_population_denominator(self):
-        """Verify Sortino ratio matches manual computation using N (population) downside denominator."""
+    def test_sortino_uses_sample_denominator(self):
+        """Verify Sortino ratio matches manual computation using N-1 (sample)
+        downside denominator, consistent with Sharpe's sample stddev."""
         import math
 
         equities = [10000.0, 10100.0, 10050.0, 10150.0, 10100.0, 10200.0,
@@ -488,13 +489,14 @@ class TestSharpeSortinoConsistency:
         excess = self._compute_excess_returns(equities)
         mean_excess = sum(excess) / len(excess)
         downside_sq_sum = sum(x ** 2 for x in excess if x < 0)
-        down_dev = math.sqrt(downside_sq_sum / len(excess))
+        down_dev = math.sqrt(downside_sq_sum / (len(excess) - 1))
         expected_sortino = mean_excess / down_dev * math.sqrt(252.0)
 
         assert abs(s.sortino_ratio - expected_sortino) < 1e-10
 
-    def test_sharpe_uses_sample_sortino_uses_population(self):
-        """Sharpe uses sample stddev (N-1), Sortino uses population downside dev (N)."""
+    def test_sharpe_and_sortino_both_use_sample_denominator(self):
+        """Both Sharpe and Sortino use sample-corrected denominators (N-1)
+        for internal consistency."""
         import math
 
         equities = [10000.0]
@@ -521,8 +523,8 @@ class TestSharpeSortinoConsistency:
 
         if s.sortino_ratio is not None:
             downside_sq_sum = sum(x ** 2 for x in excess if x < 0)
-            down_dev_pop = math.sqrt(downside_sq_sum / n)
-            expected_sortino = mean_excess / down_dev_pop * math.sqrt(252.0)
+            down_dev_sample = math.sqrt(downside_sq_sum / (n - 1))
+            expected_sortino = mean_excess / down_dev_sample * math.sqrt(252.0)
             assert abs(s.sortino_ratio - expected_sortino) < 1e-10, (
-                "Sortino must use population downside dev (N)"
+                "Sortino must use sample downside dev (N-1) for consistency with Sharpe"
             )

@@ -137,7 +137,7 @@ def _compute_sharpe_sortino(
 
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
     if downside_sq_sum > 0:
-        down_dev = math.sqrt(downside_sq_sum / len(excess))
+        down_dev = math.sqrt(downside_sq_sum / (len(excess) - 1))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None
