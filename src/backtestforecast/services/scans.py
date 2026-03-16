@@ -708,6 +708,9 @@ class ScanService:
                 strategy_type=strategy_type,
             )
         except (ValueError, LookupError):
+            from backtestforecast.observability.metrics import FORECAST_FALLBACK_TOTAL
+            FORECAST_FALLBACK_TOTAL.labels(symbol=symbol).inc()
+            logger.info("forecast.zero_analog_fallback", symbol=symbol, horizon_days=horizon_days)
             fallback_date = bars[-1].trade_date if bars else market_date_today()
             return HistoricalAnalogForecastResponse(
                 symbol=symbol,

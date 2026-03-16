@@ -31,7 +31,7 @@ def build_engine(
         engine_kwargs["pool_size"] = cfg.db_pool_size
         engine_kwargs["max_overflow"] = cfg.db_pool_max_overflow
         engine_kwargs["pool_recycle"] = cfg.db_pool_recycle
-        engine_kwargs["pool_timeout"] = 10
+        engine_kwargs["pool_timeout"] = cfg.db_pool_timeout
         engine_kwargs["connect_args"] = {"options": f"-c statement_timeout={statement_timeout_ms}"}
     return create_engine(url, **engine_kwargs)
 

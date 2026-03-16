@@ -71,6 +71,7 @@ class BacktestRun(Base):
         Index("ix_backtest_runs_user_id", "user_id"),
         Index("ix_backtest_runs_user_created_at", "user_id", "created_at"),
         Index("ix_backtest_runs_user_status", "user_id", "status"),
+        Index("ix_backtest_runs_user_symbol", "user_id", "symbol"),
         Index("ix_backtest_runs_started_at", "started_at"),
         Index("ix_backtest_runs_celery_task_id", "celery_task_id"),
         Index("ix_backtest_runs_status_celery_created", "status", "celery_task_id", "created_at"),
@@ -100,7 +101,7 @@ class BacktestRun(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
-    strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
     date_from: Mapped[date] = mapped_column(Date, nullable=False)
     date_to: Mapped[date] = mapped_column(Date, nullable=False)
     target_dte: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -173,7 +174,7 @@ class BacktestTrade(Base):
         GUID(), ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False
     )
     option_ticker: Mapped[str] = mapped_column(String(64), nullable=False)
-    strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
     underlying_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)
     exit_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -227,7 +228,7 @@ class BacktestTemplate(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
     config_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -333,7 +334,7 @@ class ScannerRecommendation(Base):
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
-    strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
     rule_set_name: Mapped[str] = mapped_column(String(120), nullable=False)
     rule_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
@@ -505,7 +506,7 @@ class DailyRecommendation(Base):
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
-    strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
     regime_labels: Mapped[list[str]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
     close_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     target_dte: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -92,7 +92,7 @@ def upgrade() -> None:
         sa.Column("user_id", GUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("status", sa.String(32), nullable=False, server_default="queued"),
         sa.Column("symbol", sa.String(32), nullable=False),
-        sa.Column("strategy_type", sa.String(32), nullable=False),
+        sa.Column("strategy_type", sa.String(48), nullable=False),
         sa.Column("date_from", sa.Date(), nullable=False),
         sa.Column("date_to", sa.Date(), nullable=False),
         sa.Column("target_dte", sa.Integer(), nullable=False),
@@ -156,6 +156,7 @@ def upgrade() -> None:
     op.create_index("ix_backtest_runs_user_id", "backtest_runs", ["user_id"])
     op.create_index("ix_backtest_runs_user_created_at", "backtest_runs", ["user_id", "created_at"])
     op.create_index("ix_backtest_runs_user_status", "backtest_runs", ["user_id", "status"])
+    op.create_index("ix_backtest_runs_user_symbol", "backtest_runs", ["user_id", "symbol"])
     op.create_index("ix_backtest_runs_started_at", "backtest_runs", ["started_at"])
     op.create_index("ix_backtest_runs_celery_task_id", "backtest_runs", ["celery_task_id"])
     op.create_index(
@@ -176,7 +177,7 @@ def upgrade() -> None:
         sa.Column("id", GUID(), primary_key=True),
         sa.Column("run_id", GUID(), sa.ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False),
         sa.Column("option_ticker", sa.String(64), nullable=False),
-        sa.Column("strategy_type", sa.String(32), nullable=False),
+        sa.Column("strategy_type", sa.String(48), nullable=False),
         sa.Column("underlying_symbol", sa.String(32), nullable=False),
         sa.Column("entry_date", sa.Date(), nullable=False),
         sa.Column("exit_date", sa.Date(), nullable=False),
@@ -219,7 +220,7 @@ def upgrade() -> None:
         sa.Column("user_id", GUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("name", sa.String(120), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("strategy_type", sa.String(32), nullable=False),
+        sa.Column("strategy_type", sa.String(48), nullable=False),
         sa.Column("config_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -323,7 +324,7 @@ def upgrade() -> None:
         sa.Column("rank", sa.Integer(), nullable=False),
         sa.Column("score", sa.Numeric(18, 6), nullable=False),
         sa.Column("symbol", sa.String(32), nullable=False),
-        sa.Column("strategy_type", sa.String(32), nullable=False),
+        sa.Column("strategy_type", sa.String(48), nullable=False),
         sa.Column("rule_set_name", sa.String(120), nullable=False),
         sa.Column("rule_set_hash", sa.String(64), nullable=False),
         sa.Column("request_snapshot_json", JSON_VARIANT, nullable=False, server_default=sa.text("'{}'::jsonb")),
@@ -490,7 +491,7 @@ def upgrade() -> None:
         sa.Column("rank", sa.Integer(), nullable=False),
         sa.Column("score", sa.Numeric(18, 6), nullable=False),
         sa.Column("symbol", sa.String(32), nullable=False),
-        sa.Column("strategy_type", sa.String(32), nullable=False),
+        sa.Column("strategy_type", sa.String(48), nullable=False),
         sa.Column("regime_labels", JSON_VARIANT, nullable=False, server_default=sa.text("'[]'::jsonb")),
         sa.Column("close_price", sa.Numeric(18, 4), nullable=False),
         sa.Column("target_dte", sa.Integer(), nullable=False),

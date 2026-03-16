@@ -103,6 +103,12 @@ DB_POOL_MAX_OVERFLOW = Gauge("db_pool_max_overflow", "Maximum pool overflow conn
 
 S3_STREAM_OPEN = Gauge("s3_stream_open", "Number of currently open S3 body streams")
 
+FORECAST_FALLBACK_TOTAL = Counter(
+    "forecast_fallback_total",
+    "Forecasts that fell back to 0-analog empty response",
+    ["symbol"],
+)
+
 REAPER_DURATION_SECONDS = Histogram(
     "reaper_duration_seconds",
     "Time spent in reaper task",

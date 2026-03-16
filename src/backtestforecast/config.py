@@ -174,6 +174,7 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_pool_max_overflow: int = Field(default=10, ge=1)
     db_pool_recycle: int = 1800
+    db_pool_timeout: int = Field(default=10, ge=1, le=120)
 
     trusted_proxy_cidrs: str = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
@@ -198,6 +199,9 @@ class Settings(BaseSettings):
     pipeline_max_workers: int = Field(default=20, ge=1, le=64)
 
     scan_timeout_seconds: int = 540
+
+    max_concurrent_analyses_default: int = Field(default=3, ge=1, le=20)
+    max_concurrent_analyses_premium: int = Field(default=5, ge=1, le=20)
 
     risk_free_rate: float = 0.045
 

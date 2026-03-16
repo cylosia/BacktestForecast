@@ -295,7 +295,10 @@ class OptionsBacktestEngine:
         stock_value = sum(
             leg.side * leg.share_quantity_per_unit * underlying_close * position.quantity for leg in position.stock_legs
         )
-        return option_value + stock_value
+        result = option_value + stock_value
+        if not math.isfinite(result):
+            return 0.0
+        return result
 
     @staticmethod
     def _resolve_position_size(

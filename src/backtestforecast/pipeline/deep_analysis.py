@@ -73,6 +73,15 @@ for _dte in _DTES:
             )
 
 
+_DEEP_PARAM_GRID_MAX = 500
+if len(DEEP_PARAM_GRID) > _DEEP_PARAM_GRID_MAX:
+    logger.warning(
+        "deep_analysis.param_grid_large",
+        size=len(DEEP_PARAM_GRID),
+        max_recommended=_DEEP_PARAM_GRID_MAX,
+        msg="Large parameter grid will increase deep analysis runtime significantly.",
+    )
+
 # Strategies to skip in landscape (custom strategies need user-defined legs)
 _SKIP_STRATEGIES = {
     "custom_2_leg",
@@ -172,8 +181,14 @@ class SymbolDeepAnalysisService:
             select(User).where(User.id == user.id).with_for_update()
         )
         from backtestforecast.billing.entitlements import resolve_feature_policy
+        from backtestforecast.config import get_settings
         policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-        max_concurrent = 5 if policy.tier.value == "premium" else 3
+        _settings = get_settings()
+        max_concurrent = (
+            _settings.max_concurrent_analyses_premium
+            if policy.tier.value == "premium"
+            else _settings.max_concurrent_analyses_default
+        )
 
         active_count = self.session.scalar(
             select(func.count()).select_from(SymbolAnalysis).where(
