@@ -1343,6 +1343,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         JOBS_STUCK_RUNNING.labels(model="NightlyPipelineRun").set(len(stale_running_pipeline_rows))
 
         orphan_cutoff = datetime.now(UTC) - timedelta(minutes=15)
+        result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=86400)
         for model_cls, model_name in [
             (BacktestRun, "BacktestRun"),
             (ExportJob, "ExportJob"),
@@ -1351,7 +1352,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         ]:
             try:
                 orphan_ids_stmt = (
-                    select(model_cls.id, model_cls.celery_task_id)
+                    select(model_cls.id, model_cls.celery_task_id, model_cls.created_at)
                     .where(
                         model_cls.status == "queued",
                         model_cls.celery_task_id.isnot(None),
@@ -1362,12 +1363,16 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 )
                 orphan_rows = list(session.execute(orphan_ids_stmt))
                 recovered = 0
-                for row_id, stale_task_id in orphan_rows:
+                for row_id, stale_task_id, created_at in orphan_rows:
                     task_alive = False
                     if stale_task_id:
                         try:
                             result_obj = celery_app.AsyncResult(stale_task_id)
-                            task_alive = result_obj.state in ("STARTED", "RETRY", "RECEIVED")
+                            state = result_obj.state
+                            if state in ("STARTED", "RETRY", "RECEIVED"):
+                                task_alive = True
+                            elif state == "PENDING" and created_at > result_expires_cutoff:
+                                task_alive = True
                         except Exception:
                             pass
                     if not task_alive:
@@ -1410,7 +1415,12 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
     from backtestforecast.models import AuditEvent
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-    high_volume_types = ("export.downloaded",)
+    high_volume_types = (
+        "export.downloaded",
+        "backtest.viewed",
+        "scan.viewed",
+        "analysis.viewed",
+    )
     deleted = 0
     with SessionLocal() as session:
         for event_type in high_volume_types:
