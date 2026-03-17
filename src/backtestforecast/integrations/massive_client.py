@@ -251,6 +251,71 @@ class MassiveClient:
             ask_price=ask_f,
         )
 
+    def get_market_holidays(self) -> list[date]:
+        """Fetch upcoming NYSE full-closure dates from /v1/marketstatus/upcoming.
+
+        Returns only dates where the NYSE is fully closed (status="closed"),
+        not early-close sessions.  The endpoint is forward-looking; past
+        holidays are not included.
+        """
+        if not self._circuit.allow_request():
+            raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
+
+        url = f"{self.base_url}/v1/marketstatus/upcoming"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        retryable_message: str | None = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self._http.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                self._circuit.record_failure()
+                retryable_message = "Massive request failed due to a network error."
+                if attempt < self.max_retries:
+                    self._sleep_before_retry(attempt, None)
+                    continue
+                raise ExternalServiceError(retryable_message) from exc
+
+            if response.status_code == 429 or response.status_code >= 500:
+                self._circuit.record_failure()
+                retryable_message = (
+                    "Massive rate limit reached. Retry later."
+                    if response.status_code == 429
+                    else "Massive is currently unavailable."
+                )
+                if attempt < self.max_retries:
+                    self._sleep_before_retry(attempt, response.headers.get("Retry-After"))
+                    continue
+                raise ExternalServiceError(retryable_message)
+            if response.status_code >= 400:
+                self._circuit.record_failure()
+                raise ExternalServiceError(
+                    f"Massive returned {response.status_code} for market holidays."
+                )
+
+            self._circuit.record_success()
+            data = response.json()
+            if not isinstance(data, list):
+                raise ExternalServiceError("Massive market holidays returned an unexpected payload.")
+
+            holidays: list[date] = []
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("exchange") != "NYSE":
+                    continue
+                if entry.get("status") != "closed":
+                    continue
+                raw_date = entry.get("date")
+                if isinstance(raw_date, str):
+                    try:
+                        holidays.append(date.fromisoformat(raw_date))
+                    except ValueError:
+                        logger.debug("massive_client.holiday_date_parse_skipped", raw=raw_date)
+            return holidays
+
+        raise ExternalServiceError(retryable_message or "Massive request failed.")
+
     def list_earnings_event_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         attempts = [
             {
@@ -506,6 +571,66 @@ class AsyncMassiveClient:
                 )
             )
         return contracts
+
+    async def get_market_holidays(self) -> list[date]:
+        """Async variant of MassiveClient.get_market_holidays."""
+        if not await self._circuit.allow_request_async():
+            raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
+
+        url = f"{self.base_url}/v1/marketstatus/upcoming"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        retryable_message: str | None = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await self._http.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                await self._circuit.record_failure_async()
+                retryable_message = "Massive request failed due to a network error."
+                if attempt < self.max_retries:
+                    await self._async_sleep_before_retry(attempt, None)
+                    continue
+                raise ExternalServiceError(retryable_message) from exc
+
+            if response.status_code == 429 or response.status_code >= 500:
+                await self._circuit.record_failure_async()
+                retryable_message = (
+                    "Massive rate limit reached. Retry later."
+                    if response.status_code == 429
+                    else "Massive is currently unavailable."
+                )
+                if attempt < self.max_retries:
+                    await self._async_sleep_before_retry(attempt, response.headers.get("Retry-After"))
+                    continue
+                raise ExternalServiceError(retryable_message)
+            if response.status_code >= 400:
+                await self._circuit.record_failure_async()
+                raise ExternalServiceError(
+                    f"Massive returned {response.status_code} for market holidays."
+                )
+
+            await self._circuit.record_success_async()
+            data = response.json()
+            if not isinstance(data, list):
+                raise ExternalServiceError("Massive market holidays returned an unexpected payload.")
+
+            holidays: list[date] = []
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("exchange") != "NYSE":
+                    continue
+                if entry.get("status") != "closed":
+                    continue
+                raw_date = entry.get("date")
+                if isinstance(raw_date, str):
+                    try:
+                        holidays.append(date.fromisoformat(raw_date))
+                    except ValueError:
+                        logger.debug("massive_client.holiday_date_parse_skipped", raw=raw_date)
+            return holidays
+
+        raise ExternalServiceError(retryable_message or "Massive request failed.")
 
     async def get_option_quote_for_date(
         self,

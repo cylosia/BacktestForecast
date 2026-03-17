@@ -1412,6 +1412,44 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
 
 @celery_app.task(
+    name="maintenance.refresh_market_holidays",
+    base=BaseTaskWithDLQ,
+    bind=True,
+    ignore_result=True,
+    max_retries=2,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def refresh_market_holidays(self) -> dict[str, int | str]:
+    """Fetch upcoming NYSE holidays from Massive and cache them in Redis."""
+    from backtestforecast.config import get_settings
+    from backtestforecast.integrations.massive_client import MassiveClient
+    from backtestforecast.utils.dates import invalidate_holiday_cache, store_holidays_in_redis
+
+    settings = get_settings()
+    client = MassiveClient(api_key=settings.massive_api_key)
+    try:
+        holidays = client.get_market_holidays()
+        count = store_holidays_in_redis(holidays)
+        invalidate_holiday_cache()
+        logger.info("market_holidays.refreshed", count=count)
+        CELERY_TASKS_TOTAL.labels(task_name="maintenance.refresh_market_holidays", status="succeeded").inc()
+        return {"status": "ok", "holidays_cached": count}
+    except Exception as exc:
+        CELERY_TASKS_TOTAL.labels(task_name="maintenance.refresh_market_holidays", status="failed").inc()
+        logger.exception("market_holidays.refresh_failed")
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except MaxRetriesExceededError:
+            raise
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+@celery_app.task(
     name="maintenance.cleanup_audit_events",
     base=BaseTaskWithDLQ,
     bind=True,

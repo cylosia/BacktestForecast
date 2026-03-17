@@ -518,6 +518,34 @@ class DailyRecommendation(Base):
     pipeline_run: Mapped["NightlyPipelineRun"] = relationship(back_populates="recommendations")
 
 
+class StripeEvent(Base):
+    __tablename__ = "stripe_events"
+    __table_args__ = (
+        UniqueConstraint("stripe_event_id", name="uq_stripe_events_event_id"),
+        Index("ix_stripe_events_event_type", "event_type"),
+        Index("ix_stripe_events_created_at", "created_at"),
+        Index("ix_stripe_events_user_id", "user_id"),
+        CheckConstraint(
+            "idempotency_status IN ('processed', 'ignored', 'error')",
+            name="ck_stripe_events_valid_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    stripe_event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    livemode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    idempotency_status: Mapped[str] = mapped_column(String(16), nullable=False, default="processed")
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ip_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_summary: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class SymbolAnalysis(Base):
     __tablename__ = "symbol_analyses"
     __table_args__ = (

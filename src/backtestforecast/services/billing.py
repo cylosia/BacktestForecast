@@ -22,6 +22,7 @@ from backtestforecast.models import User
 from backtestforecast.observability import get_logger
 from backtestforecast.observability.metrics import STRIPE_WEBHOOK_EVENTS_TOTAL
 from backtestforecast.repositories.audit_events import AuditEventRepository
+from backtestforecast.repositories.stripe_events import StripeEventRepository
 from backtestforecast.repositories.users import UserRepository
 from backtestforecast.schemas.billing import (
     CheckoutSessionResponse,
@@ -45,6 +46,7 @@ class BillingService:
         self.users = UserRepository(session)
         self.audit = AuditService(session)
         self.audit_events = AuditEventRepository(session)
+        self.stripe_events = StripeEventRepository(session)
         self._stripe_client: Any = None
 
     def create_checkout_session(
@@ -171,39 +173,24 @@ class BillingService:
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ignored").inc()
             return {"status": "ignored", "reason": "missing_event_id"}
 
-        # Atomically claim this event via audit insert BEFORE any side effects.
-        # If a concurrent delivery already claimed it, the unique constraint
-        # causes deduplication or IntegrityError; we return "duplicate".
-        from sqlalchemy.exc import IntegrityError
+        from backtestforecast.observability import hash_ip
 
-        try:
-            recorded = self.audit.record(
-                event_type=f"billing.webhook.{event_type}",
-                subject_type="stripe_event",
-                subject_id=event_id,
-                user_id=None,
-                request_id=request_id,
-                ip_address=ip_address,
-                metadata={
-                    "event_type": event_type,
-                    "livemode": bool(event.get("livemode")),
-                    "duplicate": False,
-                },
-            )
-            if recorded is None:
-                logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
-                STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
-                return {"status": "duplicate", "event_type": event_type}
-            self.session.flush()
-        except IntegrityError as ie:
-            self.session.rollback()
-            if "uq_audit_events_" in str(getattr(ie, "orig", ie)):
-                logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
-                STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
-                return {"status": "duplicate", "event_type": event_type}
-            logger.exception("billing.webhook.integrity_error", event_id=event_id, event_type=event_type)
-            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
-            return {"status": "error", "event_type": event_type, "reason": "integrity_error"}
+        claimed = self.stripe_events.claim(
+            stripe_event_id=event_id,
+            event_type=event_type,
+            livemode=bool(event.get("livemode")),
+            request_id=request_id,
+            ip_hash=hash_ip(ip_address),
+            payload_summary={
+                "event_type": event_type,
+                "livemode": bool(event.get("livemode")),
+            },
+        )
+        if claimed is None:
+            logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
+            return {"status": "duplicate", "event_type": event_type}
+        self.session.flush()
 
         data_object = event["data"]["object"]
 
@@ -222,14 +209,17 @@ class BillingService:
                 logger.info("billing.webhook.ignored", event_type=event_type)
         except ExternalServiceError as ese:
             self.session.rollback()
+            self._mark_stripe_event_error(event_id, str(ese))
             if not isinstance(ese.__cause__, NotFoundError) and "not found" not in str(ese).lower():
                 self._trip_stripe_circuit()
             raise
-        except NotFoundError:
+        except NotFoundError as nfe:
             self.session.rollback()
+            self._mark_stripe_event_error(event_id, str(nfe))
             raise
         except Exception:
             self.session.rollback()
+            self._mark_stripe_event_error(event_id, "Unhandled processing error")
             logger.exception("billing.webhook.processing_error", event_id=event_id, event_type=event_type)
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
             raise
@@ -592,6 +582,15 @@ class BillingService:
             raise ConfigurationError("The Stripe SDK is not installed.") from exc
         self._stripe_client = stripe.StripeClient(self.settings.stripe_secret_key)
         return self._stripe_client
+
+    def _mark_stripe_event_error(self, stripe_event_id: str, detail: str) -> None:
+        """Best-effort: mark a claimed stripe event as errored."""
+        try:
+            self.stripe_events.mark_error(stripe_event_id, detail)
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            logger.debug("billing.stripe_event_error_mark_failed", event_id=stripe_event_id)
 
     def _trip_stripe_circuit(self) -> None:
         try:

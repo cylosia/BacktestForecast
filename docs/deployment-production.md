@@ -49,6 +49,49 @@
 - Keep **beat** singleton to avoid duplicate scheduled refresh launches.
 - Use blue/green or rolling deployment with migration-first sequencing.
 
+## Connection pool sizing
+
+The API and worker each maintain a SQLAlchemy connection pool to PostgreSQL. Two engines exist: a default engine (30 s statement timeout) for API requests, and a worker engine (300 s) for long-running tasks. Both engines share the same pool settings.
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `DB_POOL_SIZE` | `5` | Base number of persistent connections per engine |
+| `DB_POOL_MAX_OVERFLOW` | `10` | Extra connections allowed above `pool_size` under load |
+| `DB_POOL_RECYCLE` | `1800` | Seconds before a connection is recycled (prevents stale connections after PG restarts) |
+| `DB_POOL_TIMEOUT` | `10` | Seconds to wait for a connection from the pool before raising |
+
+### Capacity math
+
+Each OS process creates its own engine, so the total connection count depends on the number of processes:
+
+- **API**: `uvicorn --workers N` × `pool_size` = base connections. With default `--workers 4` and `pool_size=5`: 20 base, up to 60 with overflow.
+- **Worker**: `WORKER_REPLICAS` × `pool_size` = base connections. With default 2 replicas and `pool_size=5`: 10 base, up to 30 with overflow.
+- **Beat**: 1 process, rarely opens DB connections.
+
+**Total worst-case**: ~90 connections against PostgreSQL's default `max_connections=100`. If you increase uvicorn workers or worker replicas, increase `max_connections` on PostgreSQL accordingly, or reduce `DB_POOL_SIZE`/`DB_POOL_MAX_OVERFLOW`.
+
+### Recommended production values
+
+For a moderate-load deployment (4 API workers, 2 worker replicas):
+
+```
+DB_POOL_SIZE=5
+DB_POOL_MAX_OVERFLOW=10
+DB_POOL_RECYCLE=1800
+DB_POOL_TIMEOUT=10
+```
+
+For higher load (8 API workers, 4 worker replicas), either increase PostgreSQL `max_connections` to 200+ or reduce per-process pool size:
+
+```
+DB_POOL_SIZE=3
+DB_POOL_MAX_OVERFLOW=7
+DB_POOL_RECYCLE=1800
+DB_POOL_TIMEOUT=10
+```
+
+`pool_pre_ping=True` is always enabled to detect stale connections after DB restarts.
+
 ## Rollback
 - Roll back web and API images independently.
 - If a migration is non-breaking, keep schema and roll back code first.

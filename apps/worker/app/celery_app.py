@@ -77,6 +77,7 @@ celery_app.conf.task_routes = {
     "pipeline.nightly_scan": {"queue": "pipeline"},
     "analysis.deep_symbol": {"queue": "research"},
     "maintenance.cleanup_audit_events": {"queue": "maintenance"},
+    "maintenance.refresh_market_holidays": {"queue": "maintenance"},
 }
 
 # RedBeat loads these entries on first run and stores them in Redis.
@@ -104,6 +105,10 @@ celery_app.conf.beat_schedule = {
         "task": "maintenance.cleanup_audit_events",
         "schedule": crontab(hour=2, minute=0, day_of_week=0),
     },
+    "refresh-market-holidays-weekly": {
+        "task": "maintenance.refresh_market_holidays",
+        "schedule": crontab(hour=1, minute=0, day_of_week=0),
+    },
 }
 
 
@@ -126,15 +131,24 @@ def _clear_task_context(task_id, task, *args, **kwargs):  # type: ignore[no-unty
 
 def _start_worker_metrics_server() -> None:
     """Start a lightweight HTTP server to expose Prometheus metrics from the worker process."""
+    import hmac
     import os
     import threading
     from http.server import HTTPServer, BaseHTTPRequestHandler
 
     port = int(os.environ.get("WORKER_METRICS_PORT", "9090"))
+    metrics_token = settings.metrics_token
 
     class _MetricsHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/metrics":
+                if metrics_token:
+                    auth = self.headers.get("Authorization", "")
+                    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+                    if not token or not hmac.compare_digest(token, metrics_token):
+                        self.send_response(403)
+                        self.end_headers()
+                        return
                 from prometheus_client import generate_latest
                 body = generate_latest()
                 self.send_response(200)
@@ -151,7 +165,11 @@ def _start_worker_metrics_server() -> None:
     server = HTTPServer(("0.0.0.0", port), _MetricsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    _shutdown_logger.info("worker.metrics_server_started", port=port)
+    _shutdown_logger.info(
+        "worker.metrics_server_started",
+        port=port,
+        auth_enabled=bool(metrics_token),
+    )
 
 
 _worker_heartbeat_key: str | None = None
@@ -195,6 +213,26 @@ def _on_worker_ready(**kwargs):  # type: ignore[no-untyped-def]
         _start_worker_metrics_server()
     except Exception:
         _shutdown_logger.warning("worker.metrics_server_failed", exc_info=True)
+    try:
+        _seed_market_holidays()
+    except Exception:
+        _shutdown_logger.warning("worker.market_holidays_seed_failed", exc_info=True)
+
+
+def _seed_market_holidays() -> None:
+    """Dispatch a one-off holiday refresh so the cache is warm on first boot."""
+    from redis import Redis
+
+    r = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=3)
+    try:
+        if r.exists("bff:market_holidays"):
+            _shutdown_logger.info("worker.market_holidays_already_cached")
+            return
+    finally:
+        r.close()
+
+    celery_app.send_task("maintenance.refresh_market_holidays")
+    _shutdown_logger.info("worker.market_holidays_seed_dispatched")
 
 
 @worker_shutting_down.connect

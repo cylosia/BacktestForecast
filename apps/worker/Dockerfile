@@ -31,6 +31,8 @@ USER app
 
 EXPOSE 9090
 
+STOPSIGNAL SIGTERM
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD celery -A apps.worker.app.celery_app.celery_app status --timeout 5 || exit 1
 

@@ -49,6 +49,11 @@ AUDIT_DEDUPE_CONFLICTS_TOTAL = Counter(
     "Audit event inserts rejected by uq_audit_events_dedup",
 )
 
+STRIPE_WEBHOOK_DEDUPE_TOTAL = Counter(
+    "stripe_webhook_dedupe_total",
+    "Stripe webhook events rejected by uq_stripe_events_event_id",
+)
+
 JOBS_STUCK_REDISPATCHED_TOTAL = Counter(
     "jobs_stuck_redispatched_total",
     "Stale jobs re-dispatched by the reaper",

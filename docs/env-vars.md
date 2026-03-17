@@ -23,6 +23,7 @@ All environment variables recognised by BacktestForecast. Variables marked **req
 | `DB_POOL_SIZE` | Connection pool size | `5` | — |
 | `DB_POOL_MAX_OVERFLOW` | Maximum overflow connections beyond pool size | `10` | — |
 | `DB_POOL_RECYCLE` | Seconds before a pooled connection is recycled | `1800` | — |
+| `DB_POOL_TIMEOUT` | Seconds to wait for a connection from the pool before raising | `10` | — |
 
 ## Redis
 
