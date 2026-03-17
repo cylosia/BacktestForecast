@@ -40,9 +40,15 @@ _GATEWAY_SNAPSHOT_CACHE_MAX = 5_000
 
 
 class MassiveOptionGateway:
-    def __init__(self, client: MassiveClient, symbol: str) -> None:
+    def __init__(
+        self,
+        client: MassiveClient,
+        symbol: str,
+        redis_cache: "OptionDataRedisCache | None" = None,
+    ) -> None:
         self.client = client
         self.symbol = symbol
+        self._redis_cache = redis_cache
         self._contract_cache: OrderedDict[tuple[date, str, int, int], list[OptionContractRecord]] = OrderedDict()
         self._quote_cache: OrderedDict[tuple[str, date], OptionQuoteRecord | None] = OrderedDict()
         self._snapshot_cache: OrderedDict[str, OptionSnapshotRecord | None] = OrderedDict()
@@ -62,8 +68,19 @@ class MassiveOptionGateway:
             if contracts is not None:
                 self._contract_cache.move_to_end(cache_key)
                 return contracts
+
         expiration_gte = entry_date + timedelta(days=max(1, target_dte - dte_tolerance_days))
         expiration_lte = entry_date + timedelta(days=target_dte + dte_tolerance_days)
+
+        if self._redis_cache is not None:
+            cached = self._redis_cache.get_contracts(
+                self.symbol, entry_date, contract_type, expiration_gte, expiration_lte,
+            )
+            if cached is not None:
+                contracts = [c for c in cached if c.shares_per_contract == 100]
+                self._store_contracts_in_memory(cache_key, contracts)
+                return contracts
+
         contracts = self.client.list_option_contracts(
             symbol=self.symbol,
             as_of_date=entry_date,
@@ -71,13 +88,26 @@ class MassiveOptionGateway:
             expiration_gte=expiration_gte,
             expiration_lte=expiration_lte,
         )
+
+        if self._redis_cache is not None:
+            self._redis_cache.set_contracts(
+                self.symbol, entry_date, contract_type, expiration_gte, expiration_lte, contracts,
+            )
+
         contracts = [contract for contract in contracts if contract.shares_per_contract == 100]
+        self._store_contracts_in_memory(cache_key, contracts)
+        return contracts
+
+    def _store_contracts_in_memory(
+        self,
+        cache_key: tuple[date, str, int, int],
+        contracts: list[OptionContractRecord],
+    ) -> None:
         with self._lock:
             if len(self._contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX:
                 for _ in range(len(self._contract_cache) // 4):
                     self._contract_cache.popitem(last=False)
             self._contract_cache[cache_key] = contracts
-        return contracts
 
     def select_contract(
         self,
@@ -130,13 +160,32 @@ class MassiveOptionGateway:
             if cache_key in self._quote_cache:
                 self._quote_cache.move_to_end(cache_key)
                 return self._quote_cache[cache_key]
+
+        if self._redis_cache is not None:
+            from backtestforecast.market_data.redis_cache import CACHE_MISS
+            redis_result = self._redis_cache.get_quote(option_ticker, trade_date)
+            if redis_result is not CACHE_MISS:
+                self._store_quote_in_memory(cache_key, redis_result)
+                return redis_result
+
         quote = self.client.get_option_quote_for_date(option_ticker, trade_date)
+
+        if self._redis_cache is not None:
+            self._redis_cache.set_quote(option_ticker, trade_date, quote)
+
+        self._store_quote_in_memory(cache_key, quote)
+        return quote
+
+    def _store_quote_in_memory(
+        self,
+        cache_key: tuple[str, date],
+        quote: OptionQuoteRecord | None,
+    ) -> None:
         with self._lock:
             if len(self._quote_cache) >= _GATEWAY_QUOTE_CACHE_MAX:
                 for _ in range(len(self._quote_cache) // 4):
                     self._quote_cache.popitem(last=False)
             self._quote_cache[cache_key] = quote
-        return quote
 
     def get_snapshot(self, option_ticker: str) -> OptionSnapshotRecord | None:
         """Return a real-time snapshot (greeks, IV) for a single option contract.
@@ -213,6 +262,24 @@ class MarketDataService:
         self._bars_cache_lock = threading.Lock()
         self._bars_inflight: dict[tuple[str, date, date], threading.Event] = {}
         self._bars_errors: dict[tuple[str, date, date], Exception] = {}
+        self._redis_cache: OptionDataRedisCache | None = self._build_redis_cache()
+
+    @staticmethod
+    def _build_redis_cache() -> OptionDataRedisCache | None:
+        from backtestforecast.config import get_settings
+        from backtestforecast.market_data.redis_cache import OptionDataRedisCache
+
+        settings = get_settings()
+        if not settings.option_cache_enabled:
+            return None
+        redis_url = settings.redis_cache_url
+        if not redis_url:
+            return None
+        try:
+            return OptionDataRedisCache(redis_url, ttl_seconds=settings.option_cache_ttl_seconds)
+        except Exception:
+            logger.warning("market_data.redis_cache_init_failed", exc_info=True)
+            return None
 
     def _fetch_bars_coalesced(self, symbol: str, start: date, end: date) -> list[DailyBar]:
         """Fetch bars with request coalescing: only one thread fetches per key."""
@@ -297,7 +364,9 @@ class MarketDataService:
             )
 
         earnings_dates = self._load_earnings_dates_if_required(request)
-        option_gateway = MassiveOptionGateway(self.client, request.symbol)
+        option_gateway = MassiveOptionGateway(
+            self.client, request.symbol, redis_cache=self._redis_cache,
+        )
 
         return HistoricalDataBundle(
             bars=bars,

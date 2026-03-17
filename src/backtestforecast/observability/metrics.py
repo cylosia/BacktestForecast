@@ -174,6 +174,12 @@ SCAN_JOBS_TOTAL = Counter(
     ["status"],
 )
 
+SWEEP_JOBS_TOTAL = Counter(
+    "sweep_jobs_total",
+    "Total sweep jobs by final status",
+    ["status"],
+)
+
 ANALYSIS_JOBS_TOTAL = Counter(
     "analysis_jobs_total",
     "Total analysis jobs by final status",

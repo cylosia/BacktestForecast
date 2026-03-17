@@ -29,17 +29,20 @@ from backtestforecast.observability.metrics import (
     NIGHTLY_PIPELINE_RUNS_TOTAL,
     REAPER_DURATION_SECONDS,
     SCAN_JOBS_TOTAL,
+    SWEEP_JOBS_TOTAL,
 )
 from backtestforecast.models import (
     BacktestRun,
     ExportJob as ExportJobModel,
     ScannerJob as ScannerJobModel,
+    SweepJob as SweepJobModel,
     SymbolAnalysis,
     User,
 )
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
+from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("worker.tasks")
 
@@ -897,6 +900,95 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             "status": job.status,
             "job_id": job_id,
             "recommendation_count": job.recommendation_count,
+        }
+
+
+@celery_app.task(name="sweeps.run", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=2, soft_time_limit=3600, time_limit=3660)
+def run_sweep(self, job_id: str) -> dict[str, str | int]:
+    with SessionLocal() as session:
+        if not _validate_task_ownership(session, SweepJobModel, UUID(job_id), self.request.id):
+            DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="sweeps.run").inc()
+            logger.info("sweeps.run.duplicate_delivery", job_id=job_id, task_id=self.request.id)
+            return {"status": "skipped", "job_id": job_id, "reason": "duplicate_delivery"}
+        sj = session.get(SweepJobModel, UUID(job_id))
+        if sj is None:
+            CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
+            return {"status": "failed", "job_id": job_id, "error_code": "not_found"}
+        publish_job_status("sweep", UUID(job_id), "running")
+        service = SweepService(session)
+        try:
+            job = service.run_job(UUID(job_id))
+        except AppError as exc:
+            session.rollback()
+            session.expire_all()
+            sweep_obj = session.get(SweepJobModel, UUID(job_id))
+            if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
+                sweep_obj.status = "failed"
+                sweep_obj.error_code = exc.code
+                sweep_obj.error_message = str(exc.message)
+                try:
+                    session.commit()
+                except Exception:
+                    session.rollback()
+            CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
+            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": exc.code})
+            return {"status": "failed", "job_id": job_id, "error_code": exc.code}
+        except SoftTimeLimitExceeded:
+            session.rollback()
+            session.expire_all()
+            from datetime import UTC, datetime
+
+            sweep_obj = session.get(SweepJobModel, UUID(job_id))
+            if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
+                sweep_obj.status = "failed"
+                sweep_obj.error_code = "time_limit_exceeded"
+                sweep_obj.error_message = "Sweep exceeded the time limit."
+                sweep_obj.completed_at = datetime.now(UTC)
+                try:
+                    session.commit()
+                except Exception:
+                    logger.exception("sweep.soft_time_limit.commit_failed")
+                    session.rollback()
+            CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
+            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "time_limit_exceeded"})
+            raise
+        except Exception as exc:
+            session.rollback()
+            session.expire_all()
+            try:
+                delay = 120 * (self.request.retries + 1)
+                raise self.retry(exc=exc, countdown=delay)
+            except self.MaxRetriesExceededError:
+                from datetime import UTC, datetime
+
+                sweep_obj = session.get(SweepJobModel, UUID(job_id))
+                if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
+                    sweep_obj.status = "failed"
+                    sweep_obj.error_code = "max_retries_exceeded"
+                    sweep_obj.error_message = "Sweep failed after exhausting retries."
+                    sweep_obj.completed_at = datetime.now(UTC)
+                    try:
+                        session.commit()
+                    except Exception:
+                        logger.exception("sweep.max_retries.commit_failed")
+                        session.rollback()
+                CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
+                publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "max_retries_exceeded"})
+                raise
+        finally:
+            try:
+                service.close()
+            except Exception:
+                logger.exception("sweep.service.close_failed")
+
+        effective_status = "succeeded" if job.status == "succeeded" else "failed"
+        CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status=effective_status).inc()
+        SWEEP_JOBS_TOTAL.labels(status=job.status).inc()
+        publish_job_status("sweep", UUID(job_id), job.status)
+        return {
+            "status": job.status,
+            "job_id": job_id,
+            "result_count": job.result_count,
         }
 
 

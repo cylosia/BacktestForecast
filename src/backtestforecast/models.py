@@ -63,6 +63,7 @@ class User(Base):
     templates: Mapped[list["BacktestTemplate"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="user", passive_deletes=True)
     symbol_analyses: Mapped[list["SymbolAnalysis"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    sweep_jobs: Mapped[list["SweepJob"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class BacktestRun(Base):
@@ -601,3 +602,80 @@ class SymbolAnalysis(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="symbol_analyses")
+
+
+class SweepJob(Base):
+    __tablename__ = "sweep_jobs"
+    __table_args__ = (
+        Index("ix_sweep_jobs_user_id", "user_id"),
+        Index("ix_sweep_jobs_user_created_at", "user_id", "created_at"),
+        Index("ix_sweep_jobs_user_status", "user_id", "status"),
+        Index("ix_sweep_jobs_celery_task_id", "celery_task_id"),
+        Index("ix_sweep_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
+        UniqueConstraint("user_id", "idempotency_key", name="uq_sweep_jobs_user_idempotency_key"),
+        Index("ix_sweep_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_sweep_jobs_valid_status",
+        ),
+        CheckConstraint("candidate_count >= 0", name="ck_sweep_jobs_candidate_count_nonneg"),
+        CheckConstraint("evaluated_candidate_count >= 0", name="ck_sweep_jobs_evaluated_count_nonneg"),
+        CheckConstraint("result_count >= 0", name="ck_sweep_jobs_result_count_nonneg"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    evaluated_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
+    prefetch_summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
+    engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2", server_default="options-multileg-v2")
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="sweep_jobs")
+    results: Mapped[list["SweepResult"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="SweepResult.rank",
+    )
+
+
+class SweepResult(Base):
+    __tablename__ = "sweep_results"
+    __table_args__ = (
+        UniqueConstraint("sweep_job_id", "rank", name="uq_sweep_results_job_rank"),
+        Index("ix_sweep_results_job_id", "sweep_job_id"),
+        CheckConstraint("rank >= 1", name="ck_sweep_results_rank_positive"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    sweep_job_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("sweep_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    parameter_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
+    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
+    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    job: Mapped["SweepJob"] = relationship(back_populates="results")

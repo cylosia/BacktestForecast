@@ -26,6 +26,7 @@ from apps.api.app.routers import (
     me,
     meta,
     scans,
+    sweeps,
     templates,
 )
 from apps.api.app.dependencies import _extract_client_ip, reset_trusted_networks, reset_token_verifier
@@ -212,6 +213,7 @@ app.include_router(catalog.router, prefix="/v1")
 app.include_router(backtests.router, prefix="/v1")
 app.include_router(templates.router, prefix="/v1")
 app.include_router(scans.router, prefix="/v1")
+app.include_router(sweeps.router, prefix="/v1")
 app.include_router(forecasts.router, prefix="/v1")
 app.include_router(exports.router, prefix="/v1")
 app.include_router(daily_picks.router, prefix="/v1")

@@ -119,6 +119,7 @@ _JOB_TYPE_MODEL_MAP: dict[str, str] = {
     "backtest": "BacktestRun",
     "export": "ExportJob",
     "scan": "ScannerJob",
+    "sweep": "SweepJob",
     "analysis": "SymbolAnalysis",
 }
 

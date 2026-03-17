@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     massive_retry_backoff_seconds: float = 0.5
     earnings_api_key: str | None = None
 
+    option_cache_enabled: bool = True
+    option_cache_ttl_seconds: int = 604_800  # 7 days
+
     # Nightly pipeline — override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
     pipeline_default_symbols_csv: str | None = None
     pipeline_default_symbols: list[str] = [
