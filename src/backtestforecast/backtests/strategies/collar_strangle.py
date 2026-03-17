@@ -45,13 +45,14 @@ class CollarStrategy(StrategyDefinition):
         pc = contracts_for_expiration(puts, expiration)
         dte = (expiration - bar.trade_date).days
 
+        _iv_cache = getattr(option_gateway, '_iv_cache', None)
         call_strike = resolve_strike(
             [c.strike_price for c in cc], bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         put_strike = resolve_strike(
             [c.strike_price for c in pc], bar.close_price, "put", overrides.long_put_strike, dte,
-            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         short_call = require_contract_for_strike(cc, call_strike)
         long_put = require_contract_for_strike(pc, put_strike)
@@ -151,13 +152,14 @@ class CoveredStrangleStrategy(StrategyDefinition):
         pc = contracts_for_expiration(puts, expiration)
         dte = (expiration - bar.trade_date).days
 
+        _iv_cache = getattr(option_gateway, '_iv_cache', None)
         call_strike = resolve_strike(
             [c.strike_price for c in cc], bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         put_strike = resolve_strike(
             [c.strike_price for c in pc], bar.close_price, "put", overrides.short_put_strike, dte,
-            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         short_call = require_contract_for_strike(cc, call_strike)
         short_put = require_contract_for_strike(pc, put_strike)

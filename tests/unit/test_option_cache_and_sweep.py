@@ -519,3 +519,108 @@ class TestSweepServiceScoring:
             count = SweepService._compute_candidate_count(payload)
             # 2 strategies × 2 entry_sets × 3 deltas × 1 width × 2 exits = 24
             assert count == 24
+
+
+# ---------------------------------------------------------------------------
+# IV estimation cache
+# ---------------------------------------------------------------------------
+
+class TestIVEstimationCache:
+    def test_iv_cache_avoids_bisection_on_second_call(self):
+        from backtestforecast.backtests.strategies.common import _estimate_iv_for_strike
+
+        contracts = [
+            OptionContractRecord("O:TSLA250321P00250000", "put", date(2025, 3, 21), 250.0, 100.0),
+        ]
+        mock_gateway = MagicMock()
+        mock_gateway.get_quote.return_value = OptionQuoteRecord(date(2025, 3, 14), 5.0, 5.2, None)
+
+        iv_cache: dict = {}
+
+        with patch("backtestforecast.backtests.rules.implied_volatility_from_price", return_value=0.35) as mock_iv:
+            result1 = _estimate_iv_for_strike(250.0, "put", 260.0, 8, contracts, mock_gateway, date(2025, 3, 14), iv_cache=iv_cache)
+            result2 = _estimate_iv_for_strike(250.0, "put", 260.0, 8, contracts, mock_gateway, date(2025, 3, 14), iv_cache=iv_cache)
+
+        assert result1 == 0.35
+        assert result2 == 0.35
+        assert mock_iv.call_count == 1, "Bisection should only run once; second call should hit cache"
+        assert len(iv_cache) == 1
+
+    def test_iv_cache_stores_none_for_missing_quote(self):
+        from backtestforecast.backtests.strategies.common import _estimate_iv_for_strike
+
+        contracts = [
+            OptionContractRecord("O:TSLA250321P00250000", "put", date(2025, 3, 21), 250.0, 100.0),
+        ]
+        mock_gateway = MagicMock()
+        mock_gateway.get_quote.return_value = None
+
+        iv_cache: dict = {}
+
+        result1 = _estimate_iv_for_strike(250.0, "put", 260.0, 8, contracts, mock_gateway, date(2025, 3, 14), iv_cache=iv_cache)
+        result2 = _estimate_iv_for_strike(250.0, "put", 260.0, 8, contracts, mock_gateway, date(2025, 3, 14), iv_cache=iv_cache)
+
+        assert result1 is None
+        assert result2 is None
+        assert ("O:TSLA250321P00250000", date(2025, 3, 14)) in iv_cache
+        assert iv_cache[("O:TSLA250321P00250000", date(2025, 3, 14))] is None
+        assert mock_gateway.get_quote.call_count == 1, "Second call should hit cache, not re-fetch quote"
+
+    def test_iv_cache_shared_across_resolve_strike_calls(self):
+        from backtestforecast.backtests.strategies.common import resolve_strike
+        from backtestforecast.schemas.backtests import StrikeSelection, StrikeSelectionMode
+
+        contracts = [
+            OptionContractRecord("O:PUT240", "put", date(2025, 3, 21), 240.0, 100.0),
+            OptionContractRecord("O:PUT250", "put", date(2025, 3, 21), 250.0, 100.0),
+            OptionContractRecord("O:PUT260", "put", date(2025, 3, 21), 260.0, 100.0),
+        ]
+        strikes = [240.0, 250.0, 260.0]
+
+        mock_gateway = MagicMock()
+        mock_gateway.get_quote.return_value = OptionQuoteRecord(date(2025, 3, 14), 3.0, 3.2, None)
+
+        iv_cache: dict = {}
+
+        with patch("backtestforecast.backtests.rules.implied_volatility_from_price", return_value=0.30) as mock_iv:
+            sel_30 = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=30)
+            resolve_strike(
+                strikes, 255.0, "put", sel_30, 8,
+                contracts=contracts, option_gateway=mock_gateway, trade_date=date(2025, 3, 14), iv_cache=iv_cache,
+            )
+            first_call_count = mock_iv.call_count
+
+            sel_16 = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=16)
+            resolve_strike(
+                strikes, 255.0, "put", sel_16, 8,
+                contracts=contracts, option_gateway=mock_gateway, trade_date=date(2025, 3, 14), iv_cache=iv_cache,
+            )
+            second_call_count = mock_iv.call_count
+
+        assert first_call_count == 3, "First call should compute IV for all 3 strikes"
+        assert second_call_count == 3, "Second call should hit cache for all 3 strikes (0 new bisections)"
+        assert len(iv_cache) == 3
+
+    def test_iv_cache_none_does_not_break_existing_behavior(self):
+        from backtestforecast.backtests.strategies.common import _estimate_iv_for_strike
+
+        contracts = [
+            OptionContractRecord("O:TSLA250321P00250000", "put", date(2025, 3, 21), 250.0, 100.0),
+        ]
+        mock_gateway = MagicMock()
+        mock_gateway.get_quote.return_value = OptionQuoteRecord(date(2025, 3, 14), 5.0, 5.2, None)
+
+        with patch("backtestforecast.backtests.rules.implied_volatility_from_price", return_value=0.40) as mock_iv:
+            result = _estimate_iv_for_strike(250.0, "put", 260.0, 8, contracts, mock_gateway, date(2025, 3, 14), iv_cache=None)
+
+        assert result == 0.40
+        assert mock_iv.call_count == 1
+
+    def test_gateway_has_iv_cache(self):
+        from backtestforecast.market_data.service import MassiveOptionGateway
+
+        mock_client = MagicMock()
+        gw = MassiveOptionGateway(mock_client, "TSLA")
+        assert hasattr(gw, '_iv_cache')
+        assert isinstance(gw._iv_cache, dict)
+        assert len(gw._iv_cache) == 0

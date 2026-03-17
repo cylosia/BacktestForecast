@@ -48,7 +48,7 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
 
         short_strike = resolve_strike(
             strikes, bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
         )
         long_strike = offset_strike(strikes, short_strike, 1)
         if long_strike is None:
@@ -117,7 +117,7 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
 
         short_strike = resolve_strike(
             strikes, bar.close_price, "put", overrides.short_put_strike, dte,
-            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
         )
         long_strike = offset_strike(strikes, short_strike, -1)
         if long_strike is None:

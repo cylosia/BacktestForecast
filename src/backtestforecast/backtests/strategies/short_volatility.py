@@ -58,13 +58,14 @@ class ShortVolatilityStrategy(StrategyDefinition):
             call_c = require_contract_for_strike(cc, strike)
             put_c = require_contract_for_strike(pc, strike)
         else:
+            _iv_cache = getattr(option_gateway, '_iv_cache', None)
             call_strike = resolve_strike(
                 [c.strike_price for c in cc], bar.close_price, "call", overrides.short_call_strike, dte,
-                contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+                contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
             )
             put_strike = resolve_strike(
                 [c.strike_price for c in pc], bar.close_price, "put", overrides.short_put_strike, dte,
-                contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date,
+                contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
             )
             call_c = require_contract_for_strike(cc, call_strike)
             put_c = require_contract_for_strike(pc, put_strike)

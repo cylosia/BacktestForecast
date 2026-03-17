@@ -209,10 +209,13 @@ def _estimate_iv_for_strike(
     option_gateway: OptionDataGateway,
     trade_date: date,
     risk_free_rate: float = 0.045,
+    iv_cache: dict[tuple[str, date], float | None] | None = None,
 ) -> float | None:
     """Estimate implied volatility from the market quote for a given strike.
 
     Returns None if no usable quote or IV estimate is available.
+    When *iv_cache* is provided, results are memoized by (ticker, date)
+    so repeated calls for the same contract skip the BSM bisection.
     """
     from backtestforecast.backtests.rules import implied_volatility_from_price
 
@@ -224,11 +227,17 @@ def _estimate_iv_for_strike(
     if contract is None:
         return None
 
+    cache_key = (contract.ticker, trade_date)
+    if iv_cache is not None and cache_key in iv_cache:
+        return iv_cache[cache_key]
+
     quote = option_gateway.get_quote(contract.ticker, trade_date)
     if quote is None or quote.mid_price <= 0:
+        if iv_cache is not None:
+            iv_cache[cache_key] = None
         return None
 
-    return implied_volatility_from_price(
+    iv = implied_volatility_from_price(
         option_price=quote.mid_price,
         underlying_price=underlying_close,
         strike_price=strike,
@@ -236,6 +245,9 @@ def _estimate_iv_for_strike(
         option_type=contract_type,
         risk_free_rate=risk_free_rate,
     )
+    if iv_cache is not None:
+        iv_cache[cache_key] = iv
+    return iv
 
 
 def _nearest_strike(strikes: list[float], target: float) -> float:
@@ -257,6 +269,7 @@ def resolve_strike(
     option_gateway: OptionDataGateway | None = None,
     trade_date: date | None = None,
     expiration_date: date | None = None,
+    iv_cache: dict[tuple[str, date], float | None] | None = None,
 ) -> float:
     """Resolve a strike based on the selection config, or fall back to nearest OTM.
 
@@ -316,6 +329,7 @@ def resolve_strike(
                     iv = _estimate_iv_for_strike(
                         strike, contract_type, underlying_close, dte_days,
                         contracts, option_gateway, trade_date,
+                        iv_cache=iv_cache,
                     )
                 if iv is not None:
                     delta = _approx_bsm_delta(underlying_close, strike, dte_days, contract_type, vol=iv)

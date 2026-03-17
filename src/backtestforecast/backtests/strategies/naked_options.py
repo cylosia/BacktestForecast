@@ -52,7 +52,7 @@ class NakedOptionStrategy(StrategyDefinition):
             self.contract_type,
             override,
             dte,
-            contracts=exp_contracts, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=exp_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
         )
         contract = require_contract_for_strike(exp_contracts, strike)
         quote = option_gateway.get_quote(contract.ticker, bar.trade_date)

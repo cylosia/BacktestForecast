@@ -53,13 +53,14 @@ class JadeLizardStrategy(StrategyDefinition):
         pc = contracts_for_expiration(puts, expiration)
         dte = (expiration - bar.trade_date).days
 
+        _iv_cache = getattr(option_gateway, '_iv_cache', None)
         put_strike = resolve_strike(
             [c.strike_price for c in pc], bar.close_price, "put", overrides.short_put_strike, dte,
-            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         call_short_strike = resolve_strike(
             [c.strike_price for c in cc], bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         call_long_strike = resolve_wing_strike(
             [c.strike_price for c in cc],

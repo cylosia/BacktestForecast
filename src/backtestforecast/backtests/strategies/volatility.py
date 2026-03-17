@@ -63,13 +63,14 @@ class VolatilityExpansionStrategy(StrategyDefinition):
                 "Position stays open until expiration, max_holding_days, or backtest end.",
             ]
         else:
+            _iv_cache = getattr(option_gateway, '_iv_cache', None)
             call_strike = resolve_strike(
                 [c.strike_price for c in call_contracts],
                 bar.close_price,
                 "call",
                 overrides.long_call_strike,
                 dte,
-                contracts=call_contracts, option_gateway=option_gateway, trade_date=bar.trade_date,
+                contracts=call_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
             )
             put_strike = resolve_strike(
                 [c.strike_price for c in put_contracts],
@@ -77,7 +78,7 @@ class VolatilityExpansionStrategy(StrategyDefinition):
                 "put",
                 overrides.long_put_strike,
                 dte,
-                contracts=put_contracts, option_gateway=option_gateway, trade_date=bar.trade_date,
+                contracts=put_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
             )
             call_contract = require_contract_for_strike(call_contracts, call_strike)
             put_contract = require_contract_for_strike(put_contracts, put_strike)

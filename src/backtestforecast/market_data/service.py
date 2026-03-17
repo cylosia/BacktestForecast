@@ -53,6 +53,7 @@ class MassiveOptionGateway:
         self._quote_cache: OrderedDict[tuple[str, date], OptionQuoteRecord | None] = OrderedDict()
         self._snapshot_cache: OrderedDict[str, OptionSnapshotRecord | None] = OrderedDict()
         self._chain_snapshot_loaded: bool = False
+        self._iv_cache: dict[tuple[str, date], float | None] = {}
         self._lock = threading.Lock()
 
     def list_contracts(

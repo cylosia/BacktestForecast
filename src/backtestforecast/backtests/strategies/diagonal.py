@@ -56,7 +56,7 @@ class PMCCStrategy(StrategyDefinition):
 
         short_strike = resolve_strike(
             [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
         )
         long_strike = _deep_itm_call_strike([c.strike_price for c in far_cc], bar.close_price)
         short_c = require_contract_for_strike(near_cc, short_strike)
@@ -151,7 +151,7 @@ class DiagonalSpreadStrategy(StrategyDefinition):
 
         near_strike = resolve_strike(
             [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
         )
         far_strikes = sorted_unique_strikes(far_cc)
         far_strike = offset_strike(far_strikes, near_strike, -1)
@@ -267,13 +267,14 @@ class DoubleDiagonalStrategy(StrategyDefinition):
         far_pc = contracts_for_expiration(puts, far_exp)
         dte = (near_exp - bar.trade_date).days
 
+        _iv_cache = getattr(option_gateway, '_iv_cache', None)
         near_call_strike = resolve_strike(
             [c.strike_price for c in near_cc], bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         near_put_strike = resolve_strike(
             [c.strike_price for c in near_pc], bar.close_price, "put", overrides.short_put_strike, dte,
-            contracts=near_pc, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=near_pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         far_call_strike = offset_strike(sorted_unique_strikes(far_cc), near_call_strike, -1)
         far_put_strike = offset_strike(sorted_unique_strikes(far_pc), near_put_strike, 1)

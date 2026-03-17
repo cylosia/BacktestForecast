@@ -55,13 +55,14 @@ class IronCondorStrategy(StrategyDefinition):
         put_contracts = contracts_for_expiration(puts, expiration)
         dte = (expiration - bar.trade_date).days
 
+        _iv_cache = getattr(option_gateway, '_iv_cache', None)
         call_short_strike = resolve_strike(
             [c.strike_price for c in call_contracts],
             bar.close_price,
             "call",
             overrides.short_call_strike,
             dte,
-            contracts=call_contracts, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=call_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         put_short_strike = resolve_strike(
             [c.strike_price for c in put_contracts],
@@ -69,7 +70,7 @@ class IronCondorStrategy(StrategyDefinition):
             "put",
             overrides.short_put_strike,
             dte,
-            contracts=put_contracts, option_gateway=option_gateway, trade_date=bar.trade_date,
+            contracts=put_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
         call_long_strike = resolve_wing_strike(
             [c.strike_price for c in call_contracts],
