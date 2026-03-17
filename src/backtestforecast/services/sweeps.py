@@ -106,7 +106,11 @@ class SweepService:
 
         try:
             payload = CreateSweepRequest.model_validate(job.request_snapshot_json)
-            self._execute_sweep(job, payload)
+            from backtestforecast.schemas.sweeps import SweepMode
+            if payload.mode == SweepMode.GENETIC:
+                self._execute_genetic(job, payload)
+            else:
+                self._execute_sweep(job, payload)
             self.session.commit()
             self.session.refresh(job)
             return job
@@ -296,10 +300,186 @@ class SweepService:
         job.completed_at = datetime.now(UTC)
         job.warnings_json = warnings
 
+    # -- genetic mode --------------------------------------------------------
+
+    def _execute_genetic(self, job: SweepJob, payload: CreateSweepRequest) -> None:
+        from backtestforecast.schemas.backtests import (
+            CUSTOM_LEG_COUNT,
+            CustomLegDefinition,
+            StrategyType,
+        )
+        from backtestforecast.sweeps.constraints import Individual
+        from backtestforecast.sweeps.genetic import GAResult, GeneticConfig, GeneticOptimizer
+
+        gc = payload.genetic_config
+        if gc is None:
+            raise ValidationError("genetic_config is required for genetic mode.")
+
+        num_legs = gc.num_legs
+        leg_count_map = {v: k for k, v in CUSTOM_LEG_COUNT.items()}
+        strategy_type = leg_count_map.get(num_legs)
+        if strategy_type is None:
+            raise ValidationError(f"No custom strategy type for {num_legs} legs.")
+
+        warnings: list[dict[str, Any]] = []
+
+        representative = CreateBacktestRunRequest(
+            symbol=payload.symbol,
+            strategy_type=strategy_type,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            target_dte=payload.target_dte,
+            dte_tolerance_days=payload.dte_tolerance_days,
+            max_holding_days=payload.max_holding_days,
+            account_size=payload.account_size,
+            risk_per_trade_pct=payload.risk_per_trade_pct,
+            commission_per_contract=payload.commission_per_contract,
+            entry_rules=payload.entry_rule_sets[0].entry_rules if payload.entry_rule_sets else [],
+            custom_legs=[
+                CustomLegDefinition(contract_type="call", side="long", strike_offset=0)
+                for _ in range(num_legs)
+            ],
+        )
+        bundle = self.execution_service.market_data_service.prepare_backtest(representative)
+        prefetcher = OptionDataPrefetcher()
+        prefetch_summary = prefetcher.prefetch_for_symbol(
+            symbol=payload.symbol,
+            bars=bundle.bars,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            target_dte=payload.target_dte,
+            dte_tolerance_days=payload.dte_tolerance_days,
+            option_gateway=bundle.option_gateway,
+        )
+        job.prefetch_summary_json = prefetch_summary.to_dict()
+
+        entry_rules = payload.entry_rule_sets[0].entry_rules if payload.entry_rule_sets else []
+        exit_set = payload.exit_rule_sets[0] if payload.exit_rule_sets else None
+        exec_service = self.execution_service
+
+        def fitness_fn(individual: Individual) -> float:
+            legs = [
+                CustomLegDefinition(
+                    asset_type=leg.get("asset_type", "option"),
+                    contract_type=leg.get("contract_type"),
+                    side=leg["side"],
+                    strike_offset=leg.get("strike_offset", 0),
+                    expiration_offset=leg.get("expiration_offset", 0),
+                    quantity_ratio=leg.get("quantity_ratio", Decimal("1")),
+                )
+                for leg in individual
+            ]
+            request = CreateBacktestRunRequest(
+                symbol=payload.symbol,
+                strategy_type=strategy_type,
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+                target_dte=payload.target_dte,
+                dte_tolerance_days=payload.dte_tolerance_days,
+                max_holding_days=payload.max_holding_days,
+                account_size=payload.account_size,
+                risk_per_trade_pct=payload.risk_per_trade_pct,
+                commission_per_contract=payload.commission_per_contract,
+                entry_rules=entry_rules,
+                slippage_pct=payload.slippage_pct,
+                profit_target_pct=exit_set.profit_target_pct if exit_set else None,
+                stop_loss_pct=exit_set.stop_loss_pct if exit_set else None,
+                custom_legs=legs,
+            )
+            try:
+                result = exec_service.execute_request(request, bundle=bundle)
+                summary = self._serialize_summary(result.summary)
+                return self._score_candidate_from_summary(summary)
+            except Exception:
+                return 0.0
+
+        ga_config = GeneticConfig(
+            num_legs=gc.num_legs,
+            population_size=gc.population_size,
+            max_generations=gc.max_generations,
+            tournament_size=gc.tournament_size,
+            crossover_rate=gc.crossover_rate,
+            mutation_rate=gc.mutation_rate,
+            elitism_count=gc.elitism_count,
+            max_workers=gc.max_workers,
+            max_stale_generations=gc.max_stale_generations,
+        )
+        optimizer = GeneticOptimizer(ga_config)
+        ga_result = optimizer.run(fitness_fn)
+
+        job.evaluated_candidate_count = ga_result.total_evaluations
+
+        best_legs = [
+            CustomLegDefinition(
+                asset_type=leg.get("asset_type", "option"),
+                contract_type=leg.get("contract_type"),
+                side=leg["side"],
+                strike_offset=leg.get("strike_offset", 0),
+                expiration_offset=leg.get("expiration_offset", 0),
+                quantity_ratio=leg.get("quantity_ratio", Decimal("1")),
+            )
+            for leg in ga_result.best_individual
+        ]
+        best_request = CreateBacktestRunRequest(
+            symbol=payload.symbol,
+            strategy_type=strategy_type,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            target_dte=payload.target_dte,
+            dte_tolerance_days=payload.dte_tolerance_days,
+            max_holding_days=payload.max_holding_days,
+            account_size=payload.account_size,
+            risk_per_trade_pct=payload.risk_per_trade_pct,
+            commission_per_contract=payload.commission_per_contract,
+            entry_rules=entry_rules,
+            slippage_pct=payload.slippage_pct,
+            profit_target_pct=exit_set.profit_target_pct if exit_set else None,
+            stop_loss_pct=exit_set.stop_loss_pct if exit_set else None,
+            custom_legs=best_legs,
+        )
+        best_result = exec_service.execute_request(best_request, bundle=bundle)
+        summary = self._serialize_summary(best_result.summary)
+        trades = [self._serialize_trade(t) for t in best_result.trades[:50]]
+        equity_curve = self._downsample_equity_curve(best_result.equity_curve)
+
+        parameters: dict[str, Any] = {
+            "strategy_type": strategy_type.value,
+            "mode": "genetic",
+            "num_legs": num_legs,
+            "generations_run": ga_result.generations_run,
+            "total_evaluations": ga_result.total_evaluations,
+            "custom_legs": [leg.model_dump(mode="json") for leg in best_legs],
+            "entry_rule_set_name": payload.entry_rule_sets[0].name if payload.entry_rule_sets else None,
+        }
+        if exit_set is not None:
+            parameters["exit_rule_set_name"] = exit_set.name
+            parameters["profit_target_pct"] = exit_set.profit_target_pct
+            parameters["stop_loss_pct"] = exit_set.stop_loss_pct
+
+        job.results.append(
+            SweepResult(
+                rank=1,
+                score=Decimal(str(round(ga_result.best_fitness, 6))),
+                strategy_type=strategy_type.value,
+                parameter_snapshot_json=parameters,
+                summary_json=summary,
+                warnings_json=best_result.warnings or [],
+                trades_json=trades,
+                equity_curve_json=equity_curve,
+            )
+        )
+        job.result_count = 1
+        job.status = "succeeded"
+        job.completed_at = datetime.now(UTC)
+        job.warnings_json = warnings
+
     # -- helpers -------------------------------------------------------------
 
     @staticmethod
     def _compute_candidate_count(payload: CreateSweepRequest) -> int:
+        from backtestforecast.schemas.sweeps import SweepMode
+        if payload.mode == SweepMode.GENETIC and payload.genetic_config:
+            return payload.genetic_config.population_size * payload.genetic_config.max_generations
         strategies = len(payload.strategy_types)
         entry_sets = len(payload.entry_rule_sets)
         deltas = max(len(payload.delta_grid), 1)

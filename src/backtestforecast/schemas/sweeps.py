@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from enum import Enum
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -18,6 +19,11 @@ from backtestforecast.schemas.backtests import (
 )
 from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.schemas.scans import RuleSetDefinition
+
+
+class SweepMode(str, Enum):
+    GRID = "grid"
+    GENETIC = "genetic"
 
 
 class DeltaGridItem(BaseModel):
@@ -51,7 +57,29 @@ class ExitRuleSet(BaseModel):
     stop_loss_pct: float | None = Field(default=None, ge=1.0, le=100.0)
 
 
+class GeneticSweepConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    num_legs: int = Field(default=2, ge=2, le=8)
+    population_size: int = Field(default=100, ge=20, le=500)
+    max_generations: int = Field(default=30, ge=5, le=200)
+    tournament_size: int = Field(default=3, ge=2, le=10)
+    crossover_rate: float = Field(default=0.7, ge=0.1, le=1.0)
+    mutation_rate: float = Field(default=0.3, ge=0.05, le=1.0)
+    elitism_count: int = Field(default=5, ge=1, le=50)
+    max_workers: int = Field(default=10, ge=1, le=32)
+    max_stale_generations: int = Field(default=8, ge=2, le=50)
+
+    @model_validator(mode="after")
+    def validate_config(self) -> "GeneticSweepConfig":
+        if self.num_legs not in (2, 3, 4, 5, 6, 8):
+            raise ValueError("num_legs must be one of 2, 3, 4, 5, 6, or 8")
+        if self.elitism_count >= self.population_size:
+            raise ValueError("elitism_count must be less than population_size")
+        return self
+
+
 class CreateSweepRequest(BaseModel):
+    mode: SweepMode = Field(default=SweepMode.GRID)
     symbol: str = Field(min_length=1, max_length=16)
     strategy_types: list[StrategyType] = Field(min_length=1, max_length=14)
     start_date: date
@@ -66,6 +94,7 @@ class CreateSweepRequest(BaseModel):
     delta_grid: list[DeltaGridItem] = Field(default_factory=list, max_length=20)
     width_grid: list[WidthGridItem] = Field(default_factory=list, max_length=10)
     exit_rule_sets: list[ExitRuleSet] = Field(default_factory=list, max_length=10)
+    genetic_config: GeneticSweepConfig | None = Field(default=None)
     max_results: int = Field(default=20, ge=1, le=100)
     slippage_pct: float = Field(default=0.0, ge=0.0, le=5.0)
     idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
@@ -105,6 +134,8 @@ class CreateSweepRequest(BaseModel):
             exit_names = [es.name.lower() for es in self.exit_rule_sets]
             if len(set(exit_names)) != len(exit_names):
                 raise ValueError("exit_rule_sets must not contain duplicate names")
+        if self.mode == SweepMode.GENETIC and self.genetic_config is None:
+            raise ValueError("genetic_config is required when mode is 'genetic'")
         return self
 
 
