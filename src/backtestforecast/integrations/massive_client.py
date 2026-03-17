@@ -26,7 +26,8 @@ logger = structlog.get_logger("massive_client")
 
 MAX_PAGINATION_PAGES = 100
 
-_massive_api_circuit = CircuitBreaker(name="massive_api", failure_threshold=5, recovery_timeout=30.0)
+_massive_sync_circuit = CircuitBreaker(name="massive_sync_api", failure_threshold=5, recovery_timeout=30.0)
+_massive_async_circuit = CircuitBreaker(name="massive_async_api", failure_threshold=5, recovery_timeout=30.0)
 
 
 class MassiveClient:
@@ -43,7 +44,7 @@ class MassiveClient:
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.Client(timeout=self.timeout)
-        self._circuit = _massive_api_circuit
+        self._circuit = _massive_sync_circuit
 
     def close(self) -> None:
         self._http.close()
@@ -489,7 +490,7 @@ class AsyncMassiveClient:
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
         self._http = httpx.AsyncClient(timeout=self.timeout)
-        self._circuit = _massive_api_circuit
+        self._circuit = _massive_async_circuit
 
     async def close(self) -> None:
         await self._http.aclose()

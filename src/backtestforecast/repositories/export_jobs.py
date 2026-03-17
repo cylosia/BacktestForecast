@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session, defer
 
 from backtestforecast.models import ExportJob
@@ -42,15 +42,20 @@ class ExportJobRepository:
         )
         return self.session.scalar(stmt)
 
-    def list_for_user(self, user_id: UUID, limit: int = 50) -> list[ExportJob]:
+    def list_for_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[ExportJob]:
         stmt = (
             select(ExportJob)
             .where(ExportJob.user_id == user_id)
             .options(defer(ExportJob.content_bytes))
             .order_by(desc(ExportJob.created_at))
+            .offset(offset)
             .limit(min(limit, _MAX_PAGE_SIZE))
         )
         return list(self.session.scalars(stmt))
+
+    def count_for_user(self, user_id: UUID) -> int:
+        stmt = select(func.count(ExportJob.id)).where(ExportJob.user_id == user_id)
+        return int(self.session.scalar(stmt) or 0)
 
     def list_expired_for_cleanup(self, before: datetime, limit: int) -> list[ExportJob]:
         from sqlalchemy import asc

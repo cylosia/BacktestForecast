@@ -311,7 +311,7 @@ class BillingService:
             and user.subscription_status in ("active", "trialing", "past_due")
             and current_period_end is not None
             and user.subscription_current_period_end is not None
-            and self._normalize_utc(current_period_end) <= self._normalize_utc(user.subscription_current_period_end)
+            and self._normalize_utc(current_period_end) < self._normalize_utc(user.subscription_current_period_end)
         ):
             logger.info(
                 "billing.subscription.stale_subscription_event_skipped",

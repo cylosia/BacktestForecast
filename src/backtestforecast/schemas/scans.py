@@ -104,6 +104,8 @@ class CreateScannerJobRequest(BaseModel):
             raise ValueError(
                 f"scanner window exceeds the configured maximum of {get_settings().max_scanner_window_days} days"
             )
+        if self.dte_tolerance_days >= self.target_dte:
+            raise ValueError("dte_tolerance_days must be less than target_dte")
         if len({strategy.value for strategy in self.strategy_types}) != len(self.strategy_types):
             raise ValueError("strategy_types must not contain duplicates")
         rule_names = [rule_set.name.lower() for rule_set in self.rule_sets]

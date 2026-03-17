@@ -46,18 +46,28 @@ DECIMAL_QUANT = Decimal("0.0001")
 EQUITY_CURVE_LIMIT = 10_000
 
 
-def to_decimal(value: float | Decimal) -> Decimal:
+def to_decimal(value: float | Decimal, *, allow_infinite: bool = False) -> Decimal | None:
     """Convert a float or Decimal to a quantized Decimal.
 
-    Raises ``ValueError`` for non-finite values (NaN, Inf, -Inf) so that
-    callers are forced to handle degenerate data explicitly rather than
-    silently propagating zeros through financial calculations.
+    NaN always raises ``ValueError``.  Infinite values return ``None``
+    when *allow_infinite* is True (appropriate for metrics like
+    profit_factor where infinity is a valid result meaning "no losses"),
+    or raise ``ValueError`` when False (the default, for fields that
+    must be finite).
     """
     if isinstance(value, Decimal):
-        if not value.is_finite():
+        if value.is_nan():
+            raise ValueError(f"Non-finite Decimal value: {value}")
+        if value.is_infinite():
+            if allow_infinite:
+                return None
             raise ValueError(f"Non-finite Decimal value: {value}")
         return value.quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
-    if not math.isfinite(value):
+    if math.isnan(value):
+        raise ValueError(f"Non-finite float value: {value}")
+    if math.isinf(value):
+        if allow_infinite:
+            return None
         raise ValueError(f"Non-finite float value: {value}")
     return Decimal(str(value)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 
@@ -486,16 +496,16 @@ class BacktestService:
         run.total_net_pnl = to_decimal(summary.total_net_pnl)
         run.starting_equity = to_decimal(summary.starting_equity)
         run.ending_equity = to_decimal(summary.ending_equity)
-        run.profit_factor = to_decimal(summary.profit_factor) if summary.profit_factor is not None else None
-        run.payoff_ratio = to_decimal(summary.payoff_ratio) if summary.payoff_ratio is not None else None
+        run.profit_factor = to_decimal(summary.profit_factor, allow_infinite=True) if summary.profit_factor is not None else None
+        run.payoff_ratio = to_decimal(summary.payoff_ratio, allow_infinite=True) if summary.payoff_ratio is not None else None
         run.expectancy = to_decimal(summary.expectancy)
-        run.sharpe_ratio = to_decimal(summary.sharpe_ratio) if summary.sharpe_ratio is not None else None
-        run.sortino_ratio = to_decimal(summary.sortino_ratio) if summary.sortino_ratio is not None else None
-        run.cagr_pct = to_decimal(summary.cagr_pct) if summary.cagr_pct is not None else None
-        run.calmar_ratio = to_decimal(summary.calmar_ratio) if summary.calmar_ratio is not None else None
+        run.sharpe_ratio = to_decimal(summary.sharpe_ratio, allow_infinite=True) if summary.sharpe_ratio is not None else None
+        run.sortino_ratio = to_decimal(summary.sortino_ratio, allow_infinite=True) if summary.sortino_ratio is not None else None
+        run.cagr_pct = to_decimal(summary.cagr_pct, allow_infinite=True) if summary.cagr_pct is not None else None
+        run.calmar_ratio = to_decimal(summary.calmar_ratio, allow_infinite=True) if summary.calmar_ratio is not None else None
         run.max_consecutive_wins = summary.max_consecutive_wins
         run.max_consecutive_losses = summary.max_consecutive_losses
-        run.recovery_factor = to_decimal(summary.recovery_factor) if summary.recovery_factor is not None else None
+        run.recovery_factor = to_decimal(summary.recovery_factor, allow_infinite=True) if summary.recovery_factor is not None else None
 
         for trade in execution_result.trades:
             if not validate_json_shape(trade.detail_json, "BacktestTrade.detail_json", required_keys=_TRADE_DETAIL_REQUIRED_KEYS):

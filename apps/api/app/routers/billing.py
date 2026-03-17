@@ -152,7 +152,10 @@ def stripe_webhook(
             _webhook_logger.warning(
                 "webhook.deterministic_error", code=exc.code, ip=ip_address, request_id=request_id,
             )
-            return {"status": "error", "code": exc.code}
+            raise HTTPException(
+                status_code=500,
+                detail={"code": exc.code, "message": "Deterministic error; Stripe should retry."},
+            )
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
         raise HTTPException(
             status_code=500,

@@ -261,12 +261,17 @@ async def _event_stream(
     """
     from redis.exceptions import RedisError
 
+    over_process_limit = False
     async with _sse_process_async_lock:
         if _sse_process_connections >= SSE_MAX_CONNECTIONS_PROCESS:
-            yield {"event": "error", "data": "Server connection limit reached. Please try again later."}
-            yield {"event": "done", "data": "stream_ended"}
-            return
-        _sse_process_connections += 1
+            over_process_limit = True
+        else:
+            _sse_process_connections += 1
+
+    if over_process_limit:
+        yield {"event": "error", "data": "Server connection limit reached. Please try again later."}
+        yield {"event": "done", "data": "stream_ended"}
+        return
 
     process_slot_acquired = True
     user_slot_acquired = False

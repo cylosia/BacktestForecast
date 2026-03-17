@@ -81,6 +81,8 @@ class PipelineBacktestExecutor:
         self._execution_service = execution_service or BacktestExecutionService()
         self._bundle_cache: OrderedDict[tuple, HistoricalDataBundle] = OrderedDict()
         self._bundle_cache_lock = threading.Lock()
+        self._bundle_fetch_locks: dict[tuple, threading.Lock] = {}
+        self._bundle_fetch_locks_lock = threading.Lock()
 
     def close(self) -> None:
         if self._owns_service:
@@ -119,14 +121,32 @@ class PipelineBacktestExecutor:
             if bundle is not None:
                 self._bundle_cache.move_to_end(key)
                 return bundle
-        bundle = self._execution_service.market_data_service.prepare_backtest(request)
-        with self._bundle_cache_lock:
-            if key not in self._bundle_cache:
-                if len(self._bundle_cache) >= self._MAX_BUNDLE_CACHE_SIZE:
-                    self._bundle_cache.popitem(last=False)
-                self._bundle_cache[key] = bundle
-            self._bundle_cache.move_to_end(key)
-            return self._bundle_cache[key]
+
+        with self._bundle_fetch_locks_lock:
+            fetch_lock = self._bundle_fetch_locks.setdefault(key, threading.Lock())
+            if len(self._bundle_fetch_locks) > self._MAX_BUNDLE_CACHE_SIZE:
+                keys_to_remove = [
+                    k for k in list(self._bundle_fetch_locks.keys())[:len(self._bundle_fetch_locks) - self._MAX_BUNDLE_CACHE_SIZE]
+                    if k != key and not self._bundle_fetch_locks[k].locked()
+                ]
+                for k in keys_to_remove:
+                    self._bundle_fetch_locks.pop(k, None)
+
+        with fetch_lock:
+            with self._bundle_cache_lock:
+                bundle = self._bundle_cache.get(key)
+                if bundle is not None:
+                    self._bundle_cache.move_to_end(key)
+                    return bundle
+
+            bundle = self._execution_service.market_data_service.prepare_backtest(request)
+            with self._bundle_cache_lock:
+                if key not in self._bundle_cache:
+                    if len(self._bundle_cache) >= self._MAX_BUNDLE_CACHE_SIZE:
+                        self._bundle_cache.popitem(last=False)
+                    self._bundle_cache[key] = bundle
+                self._bundle_cache.move_to_end(key)
+                return self._bundle_cache[key]
 
     def run_quick_backtest(
         self,

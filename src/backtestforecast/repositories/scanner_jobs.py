@@ -75,7 +75,7 @@ class ScannerJobRepository:
                 ScannerJob.request_hash == request_hash,
                 ScannerJob.mode == mode,
                 ScannerJob.created_at >= since,
-                ScannerJob.status.in_(["queued", "running", "succeeded"]),
+                ScannerJob.status.in_(["queued", "running"]),
                 ScannerJob.job_kind == "manual",
             )
             .order_by(desc(ScannerJob.created_at))

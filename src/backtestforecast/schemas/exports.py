@@ -38,3 +38,10 @@ class ExportJobResponse(BaseModel):
     expires_at: datetime | None = None
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
+
+
+class ExportJobListResponse(BaseModel):
+    items: list[ExportJobResponse]
+    total: int = 0
+    offset: int = 0
+    limit: int = 50

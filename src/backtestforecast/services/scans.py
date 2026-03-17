@@ -218,6 +218,16 @@ class ScanService:
         _scan_timed_out = False
         _scan_timeout = get_settings().scan_timeout_seconds
 
+        if _scan_timeout <= self._CANDIDATE_TIMEOUT_SECONDS:
+            safe_minimum = self._CANDIDATE_TIMEOUT_SECONDS * 2
+            logger.warning(
+                "scan.timeout_too_low",
+                configured=_scan_timeout,
+                candidate_timeout=self._CANDIDATE_TIMEOUT_SECONDS,
+                using=safe_minimum,
+            )
+            _scan_timeout = safe_minimum
+
         for symbol in payload.symbols:
             if _scan_timed_out:
                 break

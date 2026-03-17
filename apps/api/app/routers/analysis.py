@@ -91,7 +91,7 @@ def get_analysis(
     get_rate_limiter().check(
         bucket="analysis:read",
         actor_key=str(user.id),
-        limit=settings.analysis_create_rate_limit * 5,
+        limit=settings.analysis_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
@@ -125,7 +125,7 @@ def get_analysis_status(
     get_rate_limiter().check(
         bucket="analysis:read",
         actor_key=str(user.id),
-        limit=settings.analysis_create_rate_limit * 5,
+        limit=settings.analysis_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
@@ -150,7 +150,7 @@ def list_analyses(
     get_rate_limiter().check(
         bucket="analysis:read",
         actor_key=str(user.id),
-        limit=settings.analysis_create_rate_limit * 5,
+        limit=settings.analysis_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)

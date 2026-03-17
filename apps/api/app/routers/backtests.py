@@ -38,7 +38,7 @@ def list_backtests(
     get_rate_limiter().check(
         bucket="backtests:read",
         actor_key=str(user.id),
-        limit=settings.backtest_create_rate_limit * 5,
+        limit=settings.backtest_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:
@@ -110,7 +110,7 @@ def get_backtest_status(
     get_rate_limiter().check(
         bucket="backtests:read",
         actor_key=str(user.id),
-        limit=settings.backtest_create_rate_limit * 5,
+        limit=settings.backtest_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:
@@ -128,7 +128,7 @@ def get_backtest(
     get_rate_limiter().check(
         bucket="backtests:read",
         actor_key=str(user.id),
-        limit=settings.backtest_create_rate_limit * 5,
+        limit=settings.backtest_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-from typing import Generator
+from typing import Annotated, Generator
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
@@ -15,12 +15,37 @@ from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
-from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
+from backtestforecast.schemas.exports import CreateExportRequest, ExportJobListResponse, ExportJobResponse
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.exports import ExportService
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 logger = structlog.get_logger("api.exports")
+
+
+@router.get("", response_model=ExportJobListResponse)
+def list_exports(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+    settings: Settings = Depends(get_settings),
+) -> ExportJobListResponse:
+    get_rate_limiter().check(
+        bucket="exports:read",
+        actor_key=str(user.id),
+        limit=settings.export_read_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with ExportService(db) as service:
+        jobs = service.exports.list_for_user(user.id, limit=limit, offset=offset)
+        total = service.exports.count_for_user(user.id)
+        return ExportJobListResponse(
+            items=[service._to_response(j) for j in jobs],
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
 
 
 @router.post("", response_model=ExportJobResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -79,7 +104,7 @@ def get_export_status(
     get_rate_limiter().check(
         bucket="exports:read",
         actor_key=str(user.id),
-        limit=settings.export_create_rate_limit * 5,
+        limit=settings.export_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ExportService(db) as service:
@@ -182,7 +207,7 @@ def download_export(
             from backtestforecast.errors import ExternalServiceError
             raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.")
 
-    if content is None:
+    if not content:
         from backtestforecast.errors import NotFoundError
         raise NotFoundError("Export file is not available.")
 

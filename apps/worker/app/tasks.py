@@ -207,7 +207,12 @@ def nightly_scan_pipeline(
         except Exception:
             redis_client.close()
             raise
-        if not lock.acquire():
+        try:
+            acquired = lock.acquire()
+        except Exception:
+            redis_client.close()
+            raise
+        if not acquired:
             logger.info("pipeline.already_locked", trade_date=str(trade_date))
             redis_client.close()
             return {"status": "skipped", "reason": "locked"}

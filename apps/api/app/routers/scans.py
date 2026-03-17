@@ -37,7 +37,7 @@ def list_scans(
     get_rate_limiter().check(
         bucket="scans:read",
         actor_key=str(user.id),
-        limit=settings.scan_create_rate_limit * 5,
+        limit=settings.scan_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ScanService(db) as service:
@@ -89,7 +89,7 @@ def get_scan(
     get_rate_limiter().check(
         bucket="scans:read",
         actor_key=str(user.id),
-        limit=settings.scan_create_rate_limit * 5,
+        limit=settings.scan_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ScanService(db) as service:
@@ -106,7 +106,7 @@ def get_scan_recommendations(
     get_rate_limiter().check(
         bucket="scans:read",
         actor_key=str(user.id),
-        limit=settings.scan_create_rate_limit * 5,
+        limit=settings.scan_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ScanService(db) as service:

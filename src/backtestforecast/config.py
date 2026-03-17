@@ -182,11 +182,15 @@ class Settings(BaseSettings):
     rate_limit_fail_closed: bool = False
     rate_limit_memory_max_keys: int = 10_000
     backtest_create_rate_limit: int = 10
+    backtest_read_rate_limit: int = 60
     scan_create_rate_limit: int = 6
+    scan_read_rate_limit: int = 60
     export_create_rate_limit: int = 20
+    export_read_rate_limit: int = 60
     billing_create_rate_limit: int = 10
     template_mutate_rate_limit: int = 20
     analysis_create_rate_limit: int = 10
+    analysis_read_rate_limit: int = 60
     analysis_rate_limit_window_seconds: int = 3600
     forecast_rate_limit: int = 6
     daily_picks_rate_limit: int = 30
@@ -245,9 +249,12 @@ class Settings(BaseSettings):
         "request_max_body_bytes", "max_backtest_window_days", "max_scanner_window_days",
         "rate_limit_window_seconds", "db_pool_size", "db_pool_recycle",
         "analysis_rate_limit_window_seconds",
-        "backtest_create_rate_limit", "scan_create_rate_limit",
-        "export_create_rate_limit", "billing_create_rate_limit",
-        "template_mutate_rate_limit", "analysis_create_rate_limit",
+        "backtest_create_rate_limit", "backtest_read_rate_limit",
+        "scan_create_rate_limit", "scan_read_rate_limit",
+        "export_create_rate_limit", "export_read_rate_limit",
+        "billing_create_rate_limit",
+        "template_mutate_rate_limit",
+        "analysis_create_rate_limit", "analysis_read_rate_limit",
         "forecast_rate_limit", "daily_picks_rate_limit",
         "rate_limit_memory_max_keys",
         "sse_rate_limit", "sse_redis_max_connections",
@@ -438,6 +445,31 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
             if not self.clerk_authorized_parties:
                 raise ValueError("Production-like environments require at least one CLERK_AUTHORIZED_PARTIES entry.")
+            if not self.rate_limit_fail_closed:
+                logger.warning(
+                    "config.rate_limit_fail_open_in_production",
+                    hint=(
+                        "rate_limit_fail_closed is False in a production-like environment. "
+                        "If Redis is unavailable, rate limiting will be bypassed (fail-open). "
+                        "Consider setting RATE_LIMIT_FAIL_CLOSED=true to enforce limits even during outages."
+                    ),
+                )
+            if self.feature_billing_enabled:
+                _stripe_fields = [
+                    ("stripe_secret_key", self.stripe_secret_key),
+                    ("stripe_webhook_secret", self.stripe_webhook_secret),
+                    ("stripe_pro_monthly_price_id", self.stripe_pro_monthly_price_id),
+                    ("stripe_pro_yearly_price_id", self.stripe_pro_yearly_price_id),
+                    ("stripe_premium_monthly_price_id", self.stripe_premium_monthly_price_id),
+                    ("stripe_premium_yearly_price_id", self.stripe_premium_yearly_price_id),
+                ]
+                _missing = [name for name, val in _stripe_fields if not val]
+                if _missing:
+                    raise ValueError(
+                        f"feature_billing_enabled is True but the following Stripe env vars "
+                        f"are not set: {', '.join(_missing)}"
+                    )
+
             import re as _re
             _sslmode_match = _re.search(r"sslmode=(\w+)", self.database_url)
             if not _sslmode_match or _sslmode_match.group(1) not in (

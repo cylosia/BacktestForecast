@@ -26,7 +26,7 @@ from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from backtestforecast.pipeline.regime import RegimeSnapshot, classify_regime
 from backtestforecast.config import get_settings
-from backtestforecast.observability.metrics import DUPLICATE_NIGHTLY_RUNS_TOTAL, NIGHTLY_PIPELINE_RUNS_TOTAL
+from backtestforecast.observability.metrics import DUPLICATE_NIGHTLY_RUNS_TOTAL
 from backtestforecast.pipeline.strategy_map import (
     DEFAULT_PARAM_GRID,
     strategies_for_regime,
@@ -260,7 +260,6 @@ class NightlyPipelineService:
 
             run.recommendations_produced = len(final_ranked)
             run.status = "succeeded"
-            NIGHTLY_PIPELINE_RUNS_TOTAL.labels(status="succeeded").inc()
             run.completed_at = datetime.now(UTC)
             run.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
             self.session.commit()
@@ -293,7 +292,6 @@ class NightlyPipelineService:
             for attr, value in counters.items():
                 setattr(run, attr, value)
             run.status = "failed"
-            NIGHTLY_PIPELINE_RUNS_TOTAL.labels(status="failed").inc()
             run.error_message = "Pipeline execution failed. See logs for details."
             run.completed_at = datetime.now(UTC)
             run.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
@@ -339,8 +337,10 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(symbols)) if symbols else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_screen_one, s): s for s in symbols}
+            collected: set[int] = set()
             try:
                 for future in as_completed(futures, timeout=300):
+                    collected.add(id(future))
                     try:
                         snapshot = future.result(timeout=300)
                     except Exception:
@@ -351,6 +351,8 @@ class NightlyPipelineService:
             except TimeoutError:
                 logger.warning("pipeline.stage1_timeout", completed=len(results), total=len(symbols))
                 for f in futures:
+                    if id(f) in collected:
+                        continue
                     if f.done() and not f.cancelled():
                         try:
                             snapshot = f.result(timeout=0)
@@ -462,8 +464,10 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(work_items)) if work_items else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, item): item for item in work_items}
+            collected: set[int] = set()
             try:
                 for future in as_completed(futures, timeout=300):
+                    collected.add(id(future))
                     try:
                         result = future.result(timeout=300)
                     except Exception:
@@ -474,6 +478,8 @@ class NightlyPipelineService:
             except TimeoutError:
                 logger.warning("pipeline.stage3_timeout", completed=len(results), total=len(work_items))
                 for f in futures:
+                    if id(f) in collected:
+                        continue
                     if f.done() and not f.cancelled():
                         try:
                             result = f.result(timeout=0)
@@ -544,8 +550,10 @@ class NightlyPipelineService:
         max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run_one, c): c for c in candidates}
+            collected: set[int] = set()
             try:
                 for future in as_completed(futures, timeout=300):
+                    collected.add(id(future))
                     try:
                         result = future.result(timeout=300)
                     except Exception:
@@ -556,6 +564,8 @@ class NightlyPipelineService:
             except TimeoutError:
                 logger.warning("pipeline.stage4_timeout", completed=len(results), total=len(candidates))
                 for f in futures:
+                    if id(f) in collected:
+                        continue
                     if f.done() and not f.cancelled():
                         try:
                             result = f.result(timeout=0)

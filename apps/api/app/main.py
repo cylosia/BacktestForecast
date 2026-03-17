@@ -66,6 +66,11 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
                 "CLERK_AUDIENCE must be set to a non-empty value in production/staging. "
                 "JWT audience verification will not work without it."
             )
+        if not settings.clerk_issuer or not settings.clerk_issuer.strip():
+            raise RuntimeError(
+                "CLERK_ISSUER must be set to a non-empty value in production/staging. "
+                "JWT issuer verification will not work without it."
+            )
     elif not settings.clerk_audience:
         logger.warning(
             "startup.clerk_audience_missing",
