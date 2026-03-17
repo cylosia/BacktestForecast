@@ -1,11 +1,13 @@
 import { auth } from "@clerk/nextjs/server";
 import { apiRequest } from "@/lib/api/shared";
 import type {
+  AnalysisListResponse,
   BacktestRunDetailResponse,
   BacktestRunListResponse,
   CompareBacktestsResponse,
   CurrentUserResponse,
   DailyPicksResponse,
+  PipelineHistoryResponse,
   ScannerJobListResponse,
   ScannerJobResponse,
   ScannerRecommendationListResponse,
@@ -86,4 +88,14 @@ export async function getStrategyCatalog(): Promise<StrategyCatalogResponse> {
 export async function getDailyPicks(): Promise<DailyPicksResponse> {
   const token = await getServerToken();
   return apiRequest<DailyPicksResponse>("/v1/daily-picks", token, { cache: "no-store" });
+}
+
+export async function getAnalysisHistory(limit = 10, offset = 0) {
+  const token = await getServerToken();
+  return apiRequest<AnalysisListResponse>(`/v1/analysis?limit=${limit}&offset=${offset}`, token, { cache: "no-store" });
+}
+
+export async function getDailyPicksHistory(limit = 10) {
+  const token = await getServerToken();
+  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?limit=${limit}`, token, { cache: "no-store" });
 }

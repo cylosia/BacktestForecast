@@ -3,22 +3,26 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { Play, Trash2 } from "lucide-react";
+import { Pencil, Play, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { deleteTemplate } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { EditTemplateDialog } from "@/components/templates/edit-template-dialog";
 
 export function TemplateActions({
   templateId,
   templateName,
+  templateDescription,
 }: {
   templateId: string;
   templateName: string;
+  templateDescription: string;
 }) {
   const router = useRouter();
   const { getToken } = useAuth();
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -65,6 +69,21 @@ export function TemplateActions({
           Apply
         </Link>
       </Button>
+      <Button
+        aria-label="Edit template"
+        size="sm"
+        variant="ghost"
+        onClick={() => setEditOpen(true)}
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </Button>
+      <EditTemplateDialog
+        templateId={templateId}
+        initialName={templateName}
+        initialDescription={templateDescription}
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+      />
       {confirming ? (
         <>
           <span className="text-xs text-destructive">Delete &quot;{templateName}&quot;?</span>

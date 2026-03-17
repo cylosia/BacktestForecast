@@ -1,6 +1,16 @@
-import { getCurrentUser } from "@/lib/api/server";
+import { getCurrentUser, getAnalysisHistory } from "@/lib/api/server";
 import { SymbolAnalysisLauncher } from "@/components/analysis/symbol-analysis-launcher";
+import { AnalysisHistory } from "@/components/analysis/analysis-history";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
+
+async function AnalysisHistorySection() {
+  try {
+    const history = await getAnalysisHistory();
+    return <AnalysisHistory data={history} />;
+  } catch {
+    return null;
+  }
+}
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +38,10 @@ export default async function AnalysisPage() {
       {!hasAccess ? (
         <UpgradePrompt message="Symbol Deep Analysis requires a Pro or Premium plan. Upgrade to analyze any symbol across all strategies and parameter permutations." />
       ) : (
-        <SymbolAnalysisLauncher />
+        <>
+          <SymbolAnalysisLauncher />
+          <AnalysisHistorySection />
+        </>
       )}
     </div>
   );

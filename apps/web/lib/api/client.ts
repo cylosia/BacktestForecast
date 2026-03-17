@@ -111,6 +111,19 @@ export async function createTemplate(
   });
 }
 
+export async function updateTemplate(
+  token: string,
+  templateId: string,
+  payload: { name?: string; description?: string },
+  signal?: AbortSignal,
+): Promise<TemplateResponse> {
+  return apiRequest<TemplateResponse>(`/v1/templates/${encodeURIComponent(templateId)}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
+
 export async function deleteTemplate(token: string, templateId: string, signal?: AbortSignal): Promise<void> {
   await apiRequest<void>(`/v1/templates/${encodeURIComponent(templateId)}`, token, {
     method: "DELETE",

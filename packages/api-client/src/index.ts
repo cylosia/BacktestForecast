@@ -133,6 +133,8 @@ export type StrategyCatalogResponse = components["schemas"]["StrategyCatalogResp
 export type DailyPickItem = components["schemas"]["DailyPickItemResponse"];
 export type PipelineStats = components["schemas"]["PipelineStatsResponse"];
 export type DailyPicksResponse = components["schemas"]["DailyPicksResponse"];
+export type PipelineHistoryItemResponse = components["schemas"]["PipelineHistoryItemResponse"];
+export type PipelineHistoryResponse = components["schemas"]["PipelineHistoryResponse"];
 
 // ---------------------------------------------------------------------------
 // Analysis types

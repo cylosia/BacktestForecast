@@ -34,6 +34,10 @@ const advancedCards: Array<{
   { key: "expectancy", label: "Expectancy", formatter: (value) => (value != null ? formatCurrency(value) : "—") },
   { key: "cagr_pct", label: "CAGR", formatter: (value) => (value != null ? formatPercent(value) : "—") },
   { key: "payoff_ratio", label: "Payoff ratio", formatter: safeRatio },
+  { key: "calmar_ratio", label: "Calmar ratio", formatter: safeRatio },
+  { key: "recovery_factor", label: "Recovery factor", formatter: safeRatio },
+  { key: "max_consecutive_wins", label: "Max consec. wins", formatter: (value) => (value != null ? String(value) : "—") },
+  { key: "max_consecutive_losses", label: "Max consec. losses", formatter: (value) => (value != null ? String(value) : "—") },
 ];
 
 function CardGrid({ cards, summary }: { cards: typeof primaryCards; summary: BacktestSummaryResponse }) {

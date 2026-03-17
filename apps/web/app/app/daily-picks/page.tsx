@@ -1,4 +1,4 @@
-import { getCurrentUser, getDailyPicks } from "@/lib/api/server";
+import { getCurrentUser, getDailyPicks, getDailyPicksHistory } from "@/lib/api/server";
 import { ApiError } from "@/lib/api/shared";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
 import type { DailyPickItem, DailyPicksResponse } from "@backtestforecast/api-client";
@@ -6,6 +6,8 @@ import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PicksHistory } from "@/components/daily-picks/picks-history";
+import type { PipelineHistoryResponse } from "@backtestforecast/api-client";
 
 function regimeColor(regime: string): string {
   switch (regime) {
@@ -153,6 +155,13 @@ export default async function DailyPicksPage() {
     );
   }
 
+  let history: PipelineHistoryResponse | null = null;
+  try {
+    history = await getDailyPicksHistory();
+  } catch {
+    // Don't break the page if history fails to load
+  }
+
   const items = data.items ?? [];
   const maxScore = items.length > 0 ? Math.max(...items.map((i) => i.score)) : 1;
 
@@ -218,6 +227,8 @@ export default async function DailyPicksPage() {
           predictions, or financial advice.
         </p>
       </div>
+
+      {history ? <PicksHistory data={history} /> : null}
     </div>
   );
 }

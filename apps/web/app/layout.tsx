@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Inter } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
@@ -15,13 +16,14 @@ export const metadata: Metadata = {
   },
 };
 
-// TODO: Add dark mode toggle. Dark mode variants (dark:...) are defined
-// throughout the codebase but no mechanism exists to activate them yet.
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const headersList = await headers();
+  const nonce = headersList.get("x-nonce") ?? undefined;
+
   return (
     <html lang="en" suppressHydrationWarning className={inter.className}>
       <body className="min-h-screen bg-background text-foreground antialiased">
@@ -31,7 +33,7 @@ export default function RootLayout({
         >
           Skip to content
         </a>
-        <ClerkProvider>{children}</ClerkProvider>
+        <ClerkProvider nonce={nonce}>{children}</ClerkProvider>
       </body>
     </html>
   );

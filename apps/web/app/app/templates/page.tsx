@@ -117,7 +117,7 @@ export default async function TemplatesPage() {
                         {formatDateTime(template.updated_at)}
                       </TableCell>
                       <TableCell>
-                        <TemplateActions templateId={template.id} templateName={template.name} />
+                        <TemplateActions templateId={template.id} templateName={template.name} templateDescription={template.description ?? ""} />
                       </TableCell>
                     </TableRow>
                     );

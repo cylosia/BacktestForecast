@@ -7,7 +7,7 @@ import { Loader2 } from "lucide-react";
 import { fetchScannerJob } from "@/lib/api/client";
 import { isTerminalStatus, statusLabel } from "@/lib/backtests/format";
 import type { ScannerJobResponse, ScannerJobStatus } from "@backtestforecast/api-client";
-import { usePolling } from "@/hooks/use-polling";
+import { useSSE } from "@/hooks/use-sse";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const POLL_INTERVAL_MS = 3_000;
@@ -33,17 +33,30 @@ export function ScannerJobPoller({
     return fetchScannerJob(token, jobId, signal);
   }, [getToken, jobId]);
 
-  const { status: pollStatus, attempts } = usePolling<ScannerJobResponse>({
-    fetcher,
-    onComplete: () => router.refresh(),
-    onProgress: (job) => {
-      setStatus(job.status);
-      setEvaluated(job.evaluated_candidate_count);
+  const { status: sseStatus } = useSSE<ScannerJobResponse>({
+    resourceType: "scans",
+    resourceId: jobId,
+    onProgress: (data) => {
+      const s = data.status as ScannerJobStatus | string;
+      if (s) setStatus(s);
+      if (typeof data.evaluated_candidate_count === "number") {
+        setEvaluated(data.evaluated_candidate_count);
+      }
     },
-    isComplete: (job) => isTerminalStatus(job.status),
-    interval: POLL_INTERVAL_MS,
-    maxAttempts: MAX_POLLS,
+    onComplete: () => router.refresh(),
+    isTerminal: isTerminalStatus,
     autoStart: !isTerminalStatus(initialStatus),
+    pollingFallback: {
+      fetcher,
+      onComplete: () => router.refresh(),
+      onProgress: (job) => {
+        setStatus(job.status);
+        setEvaluated(job.evaluated_candidate_count);
+      },
+      isComplete: (job) => isTerminalStatus(job.status),
+      interval: POLL_INTERVAL_MS,
+      maxAttempts: MAX_POLLS,
+    },
   });
 
   if (isTerminalStatus(status)) return null;
@@ -73,12 +86,10 @@ export function ScannerJobPoller({
           </div>
         </CardContent>
       ) : null}
-      {pollStatus === "timeout" || pollStatus === "error" ? (
+      {sseStatus === "error" ? (
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            {pollStatus === "error"
-              ? "Something went wrong while checking status. Refresh the page to see the latest results."
-              : "Polling timed out. Refresh the page to check the latest status."}
+            Something went wrong while checking status. Refresh the page to see the latest results.
           </p>
         </CardContent>
       ) : null}

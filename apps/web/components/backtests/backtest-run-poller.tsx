@@ -7,7 +7,7 @@ import { Loader2 } from "lucide-react";
 import { fetchBacktestRunStatus } from "@/lib/api/client";
 import { isTerminalStatus, statusLabel } from "@/lib/backtests/format";
 import type { BacktestRunStatusResponse, RunStatus } from "@backtestforecast/api-client";
-import { usePolling } from "@/hooks/use-polling";
+import { useSSE } from "@/hooks/use-sse";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const POLL_INTERVAL_MS = 2_000;
@@ -30,14 +30,24 @@ export function BacktestRunPoller({
     return fetchBacktestRunStatus(token, runId, signal);
   }, [getToken, runId]);
 
-  const { status: pollStatus, attempts } = usePolling<BacktestRunStatusResponse>({
-    fetcher,
+  const { status: sseStatus } = useSSE<BacktestRunStatusResponse>({
+    resourceType: "backtests",
+    resourceId: runId,
+    onProgress: (data) => {
+      const s = data.status as RunStatus | string;
+      if (s) setStatus(s);
+    },
     onComplete: () => router.refresh(),
-    onProgress: (run) => setStatus(run.status),
-    isComplete: (run) => isTerminalStatus(run.status),
-    interval: POLL_INTERVAL_MS,
-    maxAttempts: MAX_POLLS,
+    isTerminal: isTerminalStatus,
     autoStart: !isTerminalStatus(initialStatus),
+    pollingFallback: {
+      fetcher,
+      onComplete: () => router.refresh(),
+      onProgress: (run) => setStatus(run.status),
+      isComplete: (run) => isTerminalStatus(run.status),
+      interval: POLL_INTERVAL_MS,
+      maxAttempts: MAX_POLLS,
+    },
   });
 
   if (isTerminalStatus(status)) {
@@ -57,12 +67,10 @@ export function BacktestRunPoller({
             : "Your backtest is running. Results will appear automatically when complete."}
         </CardDescription>
       </CardHeader>
-      {pollStatus === "timeout" || pollStatus === "error" ? (
+      {sseStatus === "error" ? (
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            {pollStatus === "error"
-              ? "Something went wrong while checking status. Refresh the page to see the latest results."
-              : `Polling timed out after ${attempts} attempts. Refresh the page to check the latest status.`}
+            Something went wrong while checking status. Refresh the page to see the latest results.
           </p>
         </CardContent>
       ) : null}

@@ -30,18 +30,9 @@ const nextConfig: NextConfig = {
             key: "Strict-Transport-Security",
             value: "max-age=63072000; includeSubDomains; preload",
           },
-          {
-            key: "Content-Security-Policy",
-            // 'unsafe-inline' in script-src is required for Next.js inline scripts
-            // (e.g. __NEXT_DATA__). A nonce-based CSP would be preferable but requires
-            // custom server middleware. This is a documented security tradeoff.
-            // TODO: Replace 'unsafe-inline' with nonce-based CSP in a future sprint.
-            // This requires a custom Next.js server or middleware that generates a
-            // per-request nonce, injects it into the CSP header, and passes it to
-            // <Script nonce={nonce} /> components. Until then, 'unsafe-inline'
-            // remains necessary to avoid breaking inline scripts.
-            value: `default-src 'self'; script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.dev https://*.clerk.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.clerk.com https://*.clerk.dev https://*.stripe.com; font-src 'self' data:; connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.dev https://*.clerk.com https://challenges.cloudflare.com ${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}; frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://*.stripe.com https://challenges.cloudflare.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; upgrade-insecure-requests${process.env.CSP_REPORT_URI ? `; report-uri ${process.env.CSP_REPORT_URI}; report-to csp-endpoint` : ""}`.replace(/\s+/g, " ").trim(),
-          },
+          // Content-Security-Policy is set per-request in middleware.ts with a
+          // unique nonce. Do not duplicate it here — static headers cannot
+          // include per-request nonces.
           ...(process.env.CSP_REPORT_URI
             ? [
                 {
