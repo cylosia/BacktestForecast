@@ -101,12 +101,13 @@ def test_handle_webhook_side_effects_only_once(billing_service, db_session, test
     assert user.plan_tier == "pro"
     assert user.subscription_status == "active"
 
-    from backtestforecast.models import AuditEvent
+    from backtestforecast.models import StripeEvent
 
-    billing_webhook_events = list(
-        db_session.query(AuditEvent).filter(
-            AuditEvent.event_type == "billing.webhook.customer.subscription.updated",
-            AuditEvent.subject_id == EVENT_ID,
+    stripe_events = list(
+        db_session.query(StripeEvent).filter(
+            StripeEvent.stripe_event_id == EVENT_ID,
         )
     )
-    assert len(billing_webhook_events) == 1
+    assert len(stripe_events) == 1
+    assert stripe_events[0].event_type == "customer.subscription.updated"
+    assert stripe_events[0].idempotency_status == "processed"
