@@ -316,7 +316,7 @@ def test_forecast_builder_dte_tolerance_invariant(horizon_days: int) -> None:
     """For every supported horizon_days, the ScanService.build_forecast formula
     must produce dte_tolerance_days < target_dte to satisfy
     CreateBacktestRunRequest validation."""
-    target_dte = max(horizon_days, 7)
+    target_dte = max(horizon_days, 1)
     dte_tolerance = min(5, target_dte - 1)
     assert dte_tolerance < target_dte, (
         f"horizon_days={horizon_days}: dte_tolerance_days ({dte_tolerance}) "
