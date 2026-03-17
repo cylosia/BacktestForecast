@@ -62,6 +62,7 @@ class Settings(BaseSettings):
 
     option_cache_enabled: bool = True
     option_cache_ttl_seconds: int = 604_800  # 7 days
+    prefetch_max_workers: int = Field(default=10, ge=1, le=32)
 
     # Nightly pipeline — override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
     pipeline_default_symbols_csv: str | None = None

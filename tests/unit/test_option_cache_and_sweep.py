@@ -275,7 +275,7 @@ class TestOptionDataPrefetcher:
             DailyBar(date(2025, 3, 17), 252, 258, 250, 256, 1200000),
         ]
 
-        prefetcher = OptionDataPrefetcher()
+        prefetcher = OptionDataPrefetcher(max_workers=2)
         summary = prefetcher.prefetch_for_symbol(
             symbol="TSLA",
             bars=bars,
@@ -291,6 +291,46 @@ class TestOptionDataPrefetcher:
         assert mock_client.list_option_contracts.call_count == 4
         # 2 contracts × 2 dates × 2 types = 8 quote calls
         assert summary.quotes_fetched == 8
+
+    def test_prefetch_uses_concurrency(self):
+        """Verify that multiple dates are processed by the thread pool."""
+        import threading
+        from backtestforecast.market_data.prefetch import OptionDataPrefetcher
+        from backtestforecast.market_data.service import MassiveOptionGateway
+
+        mock_client = MagicMock()
+        gw = MassiveOptionGateway(mock_client, "TSLA")
+
+        observed_threads: set[int] = set()
+        original_list = mock_client.list_option_contracts
+
+        def _track_thread(*args, **kwargs):
+            observed_threads.add(threading.current_thread().ident)
+            return [OptionContractRecord("O:A", "put", date(2025, 3, 21), 250.0, 100.0)]
+
+        mock_client.list_option_contracts.side_effect = _track_thread
+        mock_client.get_option_quote_for_date.return_value = OptionQuoteRecord(
+            date(2025, 3, 14), 2.0, 2.2, None,
+        )
+
+        bars = [
+            DailyBar(date(2025, 3, d), 250, 255, 248, 252, 1000000)
+            for d in range(3, 22) if date(2025, 3, d).weekday() < 5
+        ]
+
+        prefetcher = OptionDataPrefetcher(max_workers=4)
+        summary = prefetcher.prefetch_for_symbol(
+            symbol="TSLA",
+            bars=bars,
+            start_date=date(2025, 3, 3),
+            end_date=date(2025, 3, 21),
+            target_dte=8,
+            dte_tolerance_days=2,
+            option_gateway=gw,
+        )
+
+        assert summary.dates_processed == len(bars)
+        assert len(observed_threads) > 1, "Expected multiple threads to be used"
 
 
 # ---------------------------------------------------------------------------
