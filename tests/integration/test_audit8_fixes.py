@@ -78,15 +78,30 @@ def test_quota_counts_queued_and_running_runs(client, auth_headers, db_session, 
     assert resp.json()["error"]["code"] == "quota_exceeded"
 
 
-def test_to_decimal_returns_none_for_nan():
-    assert to_decimal(float("nan")) is None
+def test_to_decimal_raises_for_nan():
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(float("nan"))
 
 
-def test_to_decimal_returns_none_for_infinity():
-    assert to_decimal(float("inf")) is None
-    assert to_decimal(float("-inf")) is None
-    assert to_decimal(Decimal("Infinity")) is None
-    assert to_decimal(Decimal("NaN")) is None
+def test_to_decimal_raises_for_nan_with_allow_infinite():
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(float("nan"), allow_infinite=True)
+
+
+def test_to_decimal_returns_none_for_infinity_when_allowed():
+    assert to_decimal(float("inf"), allow_infinite=True) is None
+    assert to_decimal(float("-inf"), allow_infinite=True) is None
+    assert to_decimal(Decimal("Infinity"), allow_infinite=True) is None
+
+
+def test_to_decimal_raises_for_infinity_when_not_allowed():
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(float("inf"))
+
+
+def test_to_decimal_raises_for_decimal_nan():
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(Decimal("NaN"))
 
 
 def test_end_date_rejects_future_date():
