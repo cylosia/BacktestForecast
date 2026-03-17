@@ -75,7 +75,10 @@ def create_scan(
             request_id=metadata.request_id,
             traceparent=request.headers.get("traceparent"),
         )
-        db.expire_all()
+        db.refresh(job)
+        if job.status == "failed":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": job.error_message or "Unable to dispatch job."})
         return service.get_job(user, job.id)
 
 

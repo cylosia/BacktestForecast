@@ -90,7 +90,11 @@ def create_export(
         else:
             logger.error("export.post_enqueue_missing", export_job_id=str(job_response.id))
 
-        db.expire_all()
+        if export_job is not None:
+            db.refresh(export_job)
+            if export_job.status == "failed":
+                from fastapi import HTTPException
+                raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": export_job.error_message or "Unable to dispatch job."})
         return service.get_export_status(user, job_response.id)
 
 

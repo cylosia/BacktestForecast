@@ -76,7 +76,10 @@ def create_analysis(
         traceparent=request.headers.get("traceparent"),
     )
 
-    db.expire_all()
+    db.refresh(analysis)
+    if analysis.status == "failed":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": analysis.error_message or "Unable to dispatch job."})
     return _to_summary(analysis)
 
 

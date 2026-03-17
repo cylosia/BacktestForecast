@@ -78,14 +78,20 @@ def _validate_ip(value: str) -> str | None:
 
 
 def _extract_client_ip(request: Request) -> str | None:
+    """Extract the real client IP using the rightmost-untrusted approach.
+
+    Walks the X-Forwarded-For chain from right to left, skipping entries
+    that belong to trusted proxies.  The first non-trusted entry is the
+    actual client IP.  This prevents spoofing via a forged leftmost entry.
+    """
     direct_host = request.client.host if request.client is not None else None
     if _is_trusted_proxy(direct_host):
         forwarded_for = request.headers.get("x-forwarded-for")
         if forwarded_for:
-            first = forwarded_for.split(",", maxsplit=1)[0].strip()
-            if first:
-                validated = _validate_ip(first)
-                if validated:
+            parts = [p.strip() for p in forwarded_for.split(",") if p.strip()]
+            for candidate in reversed(parts):
+                validated = _validate_ip(candidate)
+                if validated and not _is_trusted_proxy(validated):
                     return validated
         real_ip = request.headers.get("x-real-ip")
         if real_ip:
@@ -135,8 +141,9 @@ def get_current_user(
         if token:
             origin = request.headers.get("origin")
             if origin:
-                allowed_origins = [o.strip() for o in get_settings().web_cors_origins_raw.split(",") if o.strip()]
-                if origin not in allowed_origins:
+                normalized_origin = origin.strip().lower().rstrip("/")
+                allowed_origins = [o.strip().lower().rstrip("/") for o in get_settings().web_cors_origins_raw.split(",") if o.strip()]
+                if normalized_origin not in allowed_origins:
                     raise AuthenticationError(
                         "Cookie-based request origin not in allowed list."
                     )

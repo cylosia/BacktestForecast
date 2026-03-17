@@ -59,23 +59,7 @@ def dispatch_celery_task(
             task_name, kwargs=task_kwargs, queue=queue,
             headers=headers if headers else None,
         )
-        job.celery_task_id = result.id
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.exception(f"{log_event}.enqueued_but_commit_failed", celery_task_id=result.id, **task_kwargs)
-            # Best-effort revocation: if revoke fails, the task may execute but
-            # the job is already marked failed. The task's ownership check will
-            # detect the mismatch and skip processing.
-            try:
-                celery_app.control.revoke(result.id)
-            except Exception:
-                DISPATCH_REVOKE_FAILED.inc()
-                logger.warning(f"{log_event}.revoke_failed", celery_task_id=result.id)
-            raise
-        logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)
-    except Exception as exc:
+    except (KombuError, KombuOperationalError, Exception) as exc:
         logger.exception(f"{log_event}.enqueue_failed", **task_kwargs)
         job.status = "failed"
         job.error_code = "enqueue_failed"
@@ -85,3 +69,28 @@ def dispatch_celery_task(
         except Exception:
             logger.exception(f"{log_event}.enqueue_failed.commit_error", **task_kwargs)
             db.rollback()
+        return
+
+    job.celery_task_id = result.id
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(f"{log_event}.enqueued_but_commit_failed", celery_task_id=result.id, **task_kwargs)
+        # Best-effort revocation: if revoke fails, the task may execute but
+        # the job is already marked failed. The task's ownership check will
+        # detect the mismatch and skip processing.
+        try:
+            celery_app.control.revoke(result.id)
+        except Exception:
+            DISPATCH_REVOKE_FAILED.inc()
+            logger.warning(f"{log_event}.revoke_failed", celery_task_id=result.id)
+        job.status = "failed"
+        job.error_code = "enqueue_failed"
+        job.error_message = "Task dispatched but state could not be persisted."
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        return
+    logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)

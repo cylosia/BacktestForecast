@@ -78,7 +78,10 @@ def create_backtest(
             traceparent=request.headers.get("traceparent"),
         )
 
-        db.expire_all()
+        db.refresh(run)
+        if run.status == "failed":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": run.error_message or "Unable to dispatch job."})
         return service.get_run(user, run.id)
 
 
