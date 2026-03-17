@@ -28,7 +28,7 @@ from apps.api.app.routers import (
     scans,
     templates,
 )
-from apps.api.app.dependencies import _extract_client_ip, reset_trusted_networks
+from apps.api.app.dependencies import _extract_client_ip, reset_trusted_networks, reset_token_verifier
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.errors import AppError, FeatureLockedError, QuotaExceededError, RateLimitError
 from backtestforecast.security import get_rate_limiter
@@ -78,6 +78,7 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     register_invalidation_callback(reset_trusted_networks)
+    register_invalidation_callback(reset_token_verifier)
 
     from backtestforecast.exports.storage import _invalidate_storage
     register_invalidation_callback(_invalidate_storage)
@@ -176,6 +177,15 @@ def _custom_openapi():
 
 app.openapi = _custom_openapi
 
+# Middleware execution order (outermost to innermost):
+# 1. PrometheusMiddleware — records request metrics
+# 2. RequestContextMiddleware — binds request_id to structlog context
+# 3. TrustedHostMiddleware — rejects requests with invalid Host headers
+# 4. CORSMiddleware — handles cross-origin preflight and response headers
+# 5. RequestBodyLimitMiddleware — enforces max request body size
+# 6. ApiSecurityHeadersMiddleware — adds security response headers
+#
+# Starlette builds middleware LIFO: the last add_middleware call is outermost.
 app.add_middleware(ApiSecurityHeadersMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
 app.add_middleware(
@@ -187,6 +197,10 @@ app.add_middleware(
     expose_headers=["X-Request-ID", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
     max_age=600,
 )
+# Note: TrustedHostMiddleware runs BEFORE CORSMiddleware. If a CORS preflight
+# request has a Host header not in api_allowed_hosts, it will be rejected with
+# 400 before CORS headers are attached. Ensure api_allowed_hosts includes all
+# domains that legitimate CORS requests target.
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(PrometheusMiddleware)

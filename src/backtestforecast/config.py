@@ -207,6 +207,8 @@ class Settings(BaseSettings):
     max_concurrent_analyses_default: int = Field(default=3, ge=1, le=20)
     max_concurrent_analyses_premium: int = Field(default=5, ge=1, le=20)
 
+    forecast_max_analogs: int = 20
+
     risk_free_rate: float = 0.045
 
     max_backtest_window_days: int = 1_825
@@ -445,6 +447,14 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
             if not self.clerk_authorized_parties:
                 raise ValueError("Production-like environments require at least one CLERK_AUTHORIZED_PARTIES entry.")
+            if "backtestforecast:backtestforecast" in self.database_url:
+                logger.warning(
+                    "config.default_database_password_detected",
+                    hint=(
+                        "DATABASE_URL contains the default password 'backtestforecast:backtestforecast'. "
+                        "Rotate to a strong, unique password before accepting real traffic."
+                    ),
+                )
             if not self.rate_limit_fail_closed:
                 logger.warning(
                     "config.rate_limit_fail_open_in_production",

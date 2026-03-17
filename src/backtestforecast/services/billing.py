@@ -154,7 +154,7 @@ class BillingService:
         request_id: str | None = None,
         ip_address: str | None = None,
     ) -> dict[str, str]:
-        client = self._get_stripe_client()
+        client = self._get_stripe_client(skip_circuit_check=True)
         if not signature_header:
             raise AuthenticationError("Missing Stripe-Signature header.")
         try:
@@ -456,10 +456,16 @@ class BillingService:
         )
         self.session.flush()
         if result.rowcount == 0:
-            try:
-                client.customers.delete(customer.id)
-            except Exception:
-                logger.warning("billing.orphan_customer_cleanup_failed", customer_id=customer.id)
+            import time as _time
+            for _attempt in range(2):
+                try:
+                    client.customers.delete(customer.id)
+                    break
+                except Exception:
+                    if _attempt == 0:
+                        _time.sleep(1)
+                    else:
+                        logger.warning("billing.orphan_customer_cleanup_failed", customer_id=customer.id)
             self.session.refresh(user)
             if user.stripe_customer_id is None:
                 raise ExternalServiceError(
@@ -574,16 +580,17 @@ class BillingService:
         except (TypeError, ValueError, OSError):
             return None
 
-    def _get_stripe_client(self):
-        try:
-            from backtestforecast.security import get_rate_limiter
-            r = get_rate_limiter().get_redis()
-            if r is not None and r.exists(_STRIPE_CIRCUIT_KEY):
-                raise ExternalServiceError("Stripe is temporarily unavailable. Please try again shortly.")
-        except ExternalServiceError:
-            raise
-        except (ConnectionError, OSError, TimeoutError, RuntimeError):
-            logger.debug("billing.circuit_check_skipped", reason="redis_unavailable")
+    def _get_stripe_client(self, *, skip_circuit_check: bool = False):
+        if not skip_circuit_check:
+            try:
+                from backtestforecast.security import get_rate_limiter
+                r = get_rate_limiter().get_redis()
+                if r is not None and r.exists(_STRIPE_CIRCUIT_KEY):
+                    raise ExternalServiceError("Stripe is temporarily unavailable. Please try again shortly.")
+            except ExternalServiceError:
+                raise
+            except (ConnectionError, OSError, TimeoutError, RuntimeError):
+                logger.debug("billing.circuit_check_skipped", reason="redis_unavailable")
         if self._stripe_client is not None:
             return self._stripe_client
         if not self.settings.stripe_secret_key or not self.settings.stripe_webhook_secret:

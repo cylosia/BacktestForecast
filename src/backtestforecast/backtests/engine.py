@@ -181,6 +181,8 @@ class OptionsBacktestEngine:
                             candidate.entry_commission_total = entry_commission
                             slippage_cost = gross_notional_per_unit * quantity * (config.slippage_pct / 100.0)
                             cash -= (ev_per_unit * quantity) + entry_commission + slippage_cost
+                            if cash < 0:
+                                warnings.append({"code": "negative_cash", "message": f"Cash went negative ({cash:.2f}) after entry. Slippage may have exceeded available funds."})
                             position = candidate
                             if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
                                 ev_per_unit
@@ -240,6 +242,10 @@ class OptionsBacktestEngine:
             self._add_warning_once(
                 warnings, warning_codes, "position_force_closed",
                 "An open position was force-closed because no more market data was available.",
+            )
+            self._add_warning_once(
+                warnings, warning_codes, "data_exhausted_pricing",
+                "Position force-closed at last available bar price. Actual settlement price may differ significantly.",
             )
 
         ending_equity = equity_curve[-1].equity if equity_curve else config.account_size

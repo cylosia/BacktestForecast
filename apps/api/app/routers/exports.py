@@ -144,88 +144,88 @@ def download_export(
         limit=settings.export_create_rate_limit * 3,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = ExportService(db)
-    export_job = service.get_export_for_download(
-        user,
-        export_job_id,
-        request_id=metadata.request_id,
-        ip_address=metadata.ip_address,
-    )
-    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", export_job.file_name)
-    allowed_mime_types = {"text/csv", "text/csv; charset=utf-8", "application/pdf"}
-    mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
+    with ExportService(db) as service:
+        export_job = service.get_export_for_download(
+            user,
+            export_job_id,
+            request_id=metadata.request_id,
+            ip_address=metadata.ip_address,
+        )
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", export_job.file_name)
+        allowed_mime_types = {"text/csv", "text/csv; charset=utf-8", "application/pdf"}
+        mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
 
-    storage_key = getattr(export_job, "storage_key", None)
-    content = export_job.content_bytes
+        storage_key = getattr(export_job, "storage_key", None)
+        content = export_job.content_bytes
 
-    if storage_key and content is None:
-        try:
-            from backtestforecast.exports.storage import get_storage, S3Storage
+        if storage_key and content is None:
+            try:
+                from backtestforecast.exports.storage import get_storage, S3Storage
 
-            s3_storage = get_storage(settings)
-            if not isinstance(s3_storage, S3Storage):
-                raise NotImplementedError
-            s3_obj = s3_storage.get_object(storage_key)
-            content_length = s3_obj.get("ContentLength")
+                s3_storage = get_storage(settings)
+                if not isinstance(s3_storage, S3Storage):
+                    raise NotImplementedError
+                s3_obj = s3_storage.get_object(storage_key)
+                content_length = s3_obj.get("ContentLength")
 
-            if content_length is not None and export_job.size_bytes > 0 and content_length != export_job.size_bytes:
-                logger.warning(
-                    "export.s3_size_mismatch",
-                    export_job_id=str(export_job_id),
-                    expected=export_job.size_bytes,
-                    actual=content_length,
+                if content_length is not None and export_job.size_bytes > 0 and content_length != export_job.size_bytes:
+                    logger.warning(
+                        "export.s3_size_mismatch",
+                        export_job_id=str(export_job_id),
+                        expected=export_job.size_bytes,
+                        actual=content_length,
+                    )
+
+                headers = {
+                    "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
+                }
+                if content_length is not None:
+                    headers["Content-Length"] = str(content_length)
+
+                _CHUNK_SIZE = 32_768  # 32 KB
+
+                def _stream_s3() -> Generator[bytes, None, None]:
+                    body = s3_obj["Body"]
+                    try:
+                        while True:
+                            chunk = body.read(_CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            yield chunk
+                    finally:
+                        body.close()
+
+                return StreamingResponse(
+                    _stream_s3(),
+                    media_type=mime_type,
+                    headers=headers,
                 )
+            except NotImplementedError:
+                pass
+            except Exception:
+                logger.warning("export.s3_stream_unavailable", export_job_id=str(export_job_id), exc_info=True)
+                from backtestforecast.errors import ExternalServiceError
+                raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.")
 
-            headers = {
-                "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
-            }
-            if content_length is not None:
-                headers["Content-Length"] = str(content_length)
+        if not content:
+            from backtestforecast.errors import NotFoundError
+            raise NotFoundError("Export file is not available.")
 
-            _CHUNK_SIZE = 32_768  # 32 KB
+        headers = {
+            "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
+            "Content-Length": str(len(content)),
+        }
 
-            def _stream_s3() -> Generator[bytes, None, None]:
-                body = s3_obj["Body"]
-                try:
-                    while True:
-                        chunk = body.read(_CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        yield chunk
-                finally:
-                    body.close()
+        _FALLBACK_CHUNK_SIZE = 32_768  # 32 KB
 
-            return StreamingResponse(
-                _stream_s3(),
-                media_type=mime_type,
-                headers=headers,
-            )
-        except NotImplementedError:
-            pass
-        except Exception:
-            logger.warning("export.s3_stream_unavailable", export_job_id=str(export_job_id), exc_info=True)
-            from backtestforecast.errors import ExternalServiceError
-            raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.")
+        def _chunk_bytes(data: bytes, chunk_size: int = _FALLBACK_CHUNK_SIZE) -> Generator[bytes, None, None]:
+            offset = 0
+            while offset < len(data):
+                yield data[offset:offset + chunk_size]
+                offset += chunk_size
 
-    if not content:
-        from backtestforecast.errors import NotFoundError
-        raise NotFoundError("Export file is not available.")
-
-    headers = {
-        "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
-        "Content-Length": str(len(content)),
-    }
-
-    _FALLBACK_CHUNK_SIZE = 32_768  # 32 KB
-
-    def _chunk_bytes(data: bytes, chunk_size: int = _FALLBACK_CHUNK_SIZE) -> Generator[bytes, None, None]:
-        offset = 0
-        while offset < len(data):
-            yield data[offset:offset + chunk_size]
-            offset += chunk_size
-
-    return StreamingResponse(
-        _chunk_bytes(content),
-        media_type=mime_type,
-        headers=headers,
-    )
+        return StreamingResponse(
+            _chunk_bytes(content),
+            media_type=mime_type,
+            headers=headers,
+        )

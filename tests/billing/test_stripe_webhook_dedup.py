@@ -61,7 +61,7 @@ def test_user(db_session) -> User:
 def billing_service(db_session, test_user, monkeypatch):
     import backtestforecast.services.billing as billing_mod
 
-    def fake_get_client(self):
+    def fake_get_client(self, **kwargs):
         return _make_fake_stripe(str(test_user.id))
 
     monkeypatch.setattr(billing_mod.BillingService, "_get_stripe_client", fake_get_client)

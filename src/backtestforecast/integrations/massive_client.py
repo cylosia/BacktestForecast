@@ -378,8 +378,10 @@ class MassiveClient:
                 parsed_next = urlparse(next_url)
                 parsed_base = urlparse(self.base_url)
                 if parsed_next.netloc != self._base_netloc or parsed_next.scheme != parsed_base.scheme:
+                    logger.debug("massive_client.pagination_next_url_rejected", next_url=next_url)
                     break
             elif not next_url.startswith("/"):
+                logger.debug("massive_client.pagination_next_url_rejected", next_url=next_url)
                 break
 
             next_path = next_url
@@ -415,6 +417,7 @@ class MassiveClient:
                 self._circuit.record_failure()
                 raise ExternalServiceError("Massive rejected the request. Verify API key and entitlements.")
             if response.status_code == 404:
+                # 404 does not trip circuit breaker: data-not-found is not a service failure.
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
                 self._circuit.record_failure()
@@ -718,8 +721,10 @@ class AsyncMassiveClient:
                 parsed_next = urlparse(next_url)
                 parsed_base = urlparse(self.base_url)
                 if parsed_next.netloc != self._base_netloc or parsed_next.scheme != parsed_base.scheme:
+                    logger.debug("massive_client.pagination_next_url_rejected", next_url=next_url)
                     break
             elif not next_url.startswith("/"):
+                logger.debug("massive_client.pagination_next_url_rejected", next_url=next_url)
                 break
             next_path = next_url
             next_params = None
@@ -750,6 +755,7 @@ class AsyncMassiveClient:
                 await self._circuit.record_failure_async()
                 raise ExternalServiceError("Massive rejected the request. Verify API key and entitlements.")
             if response.status_code == 404:
+                # 404 does not trip circuit breaker: data-not-found is not a service failure.
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
                 await self._circuit.record_failure_async()

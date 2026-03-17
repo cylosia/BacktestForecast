@@ -290,6 +290,7 @@ class ExportService:
                         self.session.commit()
                     except Exception:
                         self.session.rollback()
+                        cleaned -= pending_commit
                         logger.warning("cleanup.batch_commit_failed", pending=pending_commit, exc_info=True)
                     pending_commit = 0
 
@@ -301,6 +302,7 @@ class ExportService:
                 self.session.commit()
             except Exception:
                 self.session.rollback()
+                cleaned -= pending_commit
                 logger.warning("cleanup.final_commit_failed", pending=pending_commit, exc_info=True)
 
         return cleaned

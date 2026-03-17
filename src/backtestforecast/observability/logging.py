@@ -32,8 +32,11 @@ def _sanitize_sensitive_keys(
 ) -> dict[str, Any]:
     """Drop or redact values whose keys suggest they contain secrets."""
     for key in list(event_dict):
-        if key.lower() in _SENSITIVE_KEYS:
+        lower = key.lower()
+        if lower in _SENSITIVE_KEYS:
             event_dict[key] = _REDACTED
+        elif isinstance(event_dict[key], dict):
+            event_dict[key] = _sanitize_sensitive_keys(_logger, _method, event_dict[key])
     return event_dict
 
 

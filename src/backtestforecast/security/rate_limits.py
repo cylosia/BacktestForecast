@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from dataclasses import dataclass
 from threading import Lock
@@ -75,7 +76,7 @@ class RateLimiter:
                 self._redis.ping()
             except Exception:
                 self._redis = None
-                self._redis_retry_after = time.time() + 30.0
+                self._redis_retry_after = time.time() + 30.0 + random.uniform(0, 10)
         return self._redis
 
     def check(self, *, bucket: str, actor_key: str, limit: int, window_seconds: int) -> RateLimitInfo:
@@ -91,7 +92,7 @@ class RateLimiter:
         except RedisError:
             with self._redis_lock:
                 self._redis = None
-                self._redis_retry_after = time.time() + 30.0
+                self._redis_retry_after = time.time() + 30.0 + random.uniform(0, 10)
             REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="rate_limit").inc()
             REDIS_RATE_LIMIT_FALLBACK_TOTAL.labels(bucket=bucket).inc()
             logger.warning("rate_limiter.redis_fallback", key=bucket, exc_info=True)
@@ -131,7 +132,7 @@ class RateLimiter:
         except RedisError:
             with self._redis_lock:
                 self._redis = None
-                self._redis_retry_after = time.time() + 30.0
+                self._redis_retry_after = time.time() + 30.0 + random.uniform(0, 10)
             REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="ping").inc()
             return False
 

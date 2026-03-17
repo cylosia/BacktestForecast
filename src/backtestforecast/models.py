@@ -87,6 +87,7 @@ class BacktestRun(Base):
         CheckConstraint("max_holding_days >= 1", name="ck_backtest_runs_holding_days_positive"),
         CheckConstraint("target_dte >= 0", name="ck_backtest_runs_target_dte_nonneg"),
         CheckConstraint("dte_tolerance_days >= 0", name="ck_backtest_runs_dte_tolerance_nonneg"),
+        Index("ix_backtest_runs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         CheckConstraint(
             "engine_version IN ('options-multileg-v1', 'options-multileg-v2')",
             name="ck_backtest_runs_valid_engine_version",
@@ -112,8 +113,8 @@ class BacktestRun(Base):
     commission_per_contract: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
     warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
-    engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2")
-    data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="massive")
+    engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2", server_default="options-multileg-v2")
+    data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="massive", server_default="massive")
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -257,6 +258,7 @@ class ScannerJob(Base):
             unique=True,
             postgresql_where=text("status IN ('queued', 'running')"),
         ),
+        Index("ix_scanner_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="ck_scanner_jobs_valid_job_status",
@@ -287,7 +289,7 @@ class ScannerJob(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     plan_tier_snapshot: Mapped[str] = mapped_column(String(16), nullable=False)
-    job_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    job_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="manual", server_default="manual")
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     refresh_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -298,7 +300,7 @@ class ScannerJob(Base):
     recommendation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
     warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
-    ranking_version: Mapped[str] = mapped_column(String(32), nullable=False, default="scanner-ranking-v1")
+    ranking_version: Mapped[str] = mapped_column(String(32), nullable=False, default="scanner-ranking-v1", server_default="scanner-ranking-v1")
     engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2")
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -364,6 +366,7 @@ class ExportJob(Base):
         Index("ix_export_jobs_backtest_run_id", "backtest_run_id"),
         Index("ix_export_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         Index("ix_export_jobs_status_expires_at", "status", "expires_at"),
+        Index("ix_export_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')",
             name="ck_export_jobs_valid_export_status",
@@ -534,8 +537,8 @@ class StripeEvent(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     stripe_event_id: Mapped[str] = mapped_column(String(255), nullable=False)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
-    livemode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    idempotency_status: Mapped[str] = mapped_column(String(16), nullable=False, default="processed")
+    livemode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    idempotency_status: Mapped[str] = mapped_column(String(16), nullable=False, default="processed", server_default="processed")
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -556,6 +559,7 @@ class SymbolAnalysis(Base):
         Index("ix_symbol_analyses_celery_task_id", "celery_task_id"),
         Index("ix_symbol_analyses_status_celery_created", "status", "celery_task_id", "created_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_symbol_analyses_user_idempotency"),
+        Index("ix_symbol_analyses_queued", "created_at", postgresql_where=text("status = 'queued'")),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="ck_symbol_analyses_valid_analysis_status",

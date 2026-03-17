@@ -75,8 +75,6 @@ def build_summary(
                 max_drawdown_dollars = dd
         if max_drawdown_dollars > 0:
             recovery_factor = total_net_pnl / max_drawdown_dollars
-            if total_net_pnl < 0:
-                recovery_factor = None
 
     return BacktestSummary(
         trade_count=trade_count,
@@ -135,6 +133,9 @@ def _compute_sharpe_sortino(
 
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
+    # Uses the full-sample denominator (N-1 across all observations) for
+    # consistency with the Sharpe ratio. This can inflate Sortino when
+    # negative return days are sparse.
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
     if downside_sq_sum > 0:
         down_dev = math.sqrt(downside_sq_sum / (len(excess) - 1))
@@ -152,7 +153,11 @@ def _compute_cagr(
 ) -> float | None:
     if not equity_curve or len(equity_curve) < _MIN_TRADING_DAYS_FOR_CAGR:
         return None
-    if starting_equity <= 0 or ending_equity <= 0:
+    if starting_equity <= 0:
+        return None
+    if ending_equity == 0:
+        return -100.0
+    if ending_equity < 0:
         return None
     calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
     # Require at least 60 calendar days to avoid misleadingly large annualised

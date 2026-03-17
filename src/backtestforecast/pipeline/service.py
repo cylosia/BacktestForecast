@@ -424,10 +424,12 @@ class NightlyPipelineService:
 
                 roi = summary.get("total_roi_pct", 0.0)
                 win_rate = summary.get("win_rate", 0.0) / 100.0
-                drawdown = min(summary.get("max_drawdown_pct", 50.0), 99.0)
+                drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
                 trade_count = summary.get("trade_count", 1)
                 sample_factor = min(trade_count / 10.0, 1.0)
                 score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
+                if drawdown >= 100.0:
+                    score = 0.0
 
                 if score < 0:
                     return None
@@ -518,10 +520,12 @@ class NightlyPipelineService:
 
                 roi = full.get("total_roi_pct", 0.0)
                 win_rate = full.get("win_rate", 0.0) / 100.0
-                drawdown = min(full.get("max_drawdown_pct", 50.0), 99.0)
+                drawdown = min(full.get("max_drawdown_pct", 50.0), 100.0)
                 trade_count = full.get("trade_count", 1)
                 sample_factor = min(trade_count / 10.0, 1.0)
                 score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
+                if drawdown >= 100.0:
+                    score = 0.0
 
                 return FullBacktestResult(
                     symbol=candidate.symbol,

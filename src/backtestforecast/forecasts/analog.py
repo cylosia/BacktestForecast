@@ -26,6 +26,7 @@ class HistoricalAnalogForecaster:
         bars: list[DailyBar],
         horizon_days: int,
         strategy_type: str | None = None,
+        max_analogs: int = 20,
     ) -> HistoricalAnalogForecastResponse:
         if horizon_days < 1:
             raise ValueError("horizon_days must be at least 1.")
@@ -100,7 +101,7 @@ class HistoricalAnalogForecaster:
                 candidate.trade_date,
             ),
         )
-        analogs = ranked[: min(20, len(ranked))]
+        analogs = ranked[: min(max_analogs, len(ranked))]
         returns = sorted(candidate.forward_return_pct for candidate in analogs)
         positive_rate = (sum(1 for value in returns if value > 0) / len(returns)) * 100.0
         low = self._percentile(returns, 0.25)
@@ -274,7 +275,9 @@ class HistoricalAnalogForecaster:
     def _calendar_to_trading_days(calendar_days: int) -> int:
         if calendar_days <= 0:
             return 0
-        return max(1, int(calendar_days * 5 / 7))
+        weekday_days = int(calendar_days * 5 / 7)
+        estimated_holidays = int(calendar_days / 30) * 0.75
+        return max(1, int(weekday_days - estimated_holidays))
 
     _QUANT = Decimal("0.0001")
 

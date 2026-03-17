@@ -88,6 +88,9 @@ celery_app.conf.beat_schedule = {
         "task": "scans.refresh_prioritized",
         "schedule": crontab(hour=6, minute=5),
     },
+    # Runs at 4:00 UTC (midnight ET / 11 PM EDT). Market data providers may not
+    # have finalized end-of-day prices at this time. Consider running at 6:00 UTC
+    # or later if stale close prices are observed in pipeline results.
     "nightly-scan-pipeline": {
         "task": "pipeline.nightly_scan",
         "schedule": crontab(hour=4, minute=0),
@@ -189,13 +192,19 @@ def _start_heartbeat_loop() -> None:
 
     def _loop() -> None:
         from redis import Redis
+        conn: Redis | None = None
         while True:
             try:
-                r = Redis.from_url(settings.redis_url, socket_timeout=5)
-                r.setex(_worker_heartbeat_key, 90, "1")
-                r.close()
+                if conn is None:
+                    conn = Redis.from_url(settings.redis_url, socket_timeout=5)
+                conn.setex(_worker_heartbeat_key, 90, "1")
             except Exception:
-                pass
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = None
             time.sleep(30)
 
     t = threading.Thread(target=_loop, daemon=True)

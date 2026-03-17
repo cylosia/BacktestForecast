@@ -255,6 +255,10 @@ class MarketDataService:
         except Exception as exc:
             with self._bars_cache_lock:
                 self._bars_errors[cache_key] = exc
+                if len(self._bars_errors) > 500:
+                    keys_to_remove = list(self._bars_errors.keys())[:250]
+                    for k in keys_to_remove:
+                        self._bars_errors.pop(k, None)
             raise
         finally:
             inflight_event.set()

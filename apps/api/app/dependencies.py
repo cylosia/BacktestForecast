@@ -16,7 +16,23 @@ from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
 
-token_verifier = ClerkTokenVerifier()
+_token_verifier: ClerkTokenVerifier | None = None
+
+
+def get_token_verifier() -> ClerkTokenVerifier:
+    global _token_verifier
+    if _token_verifier is None:
+        _token_verifier = ClerkTokenVerifier()
+    return _token_verifier
+
+
+def reset_token_verifier() -> None:
+    """Clear the cached verifier so it is recreated on next use."""
+    global _token_verifier
+    _token_verifier = None
+
+
+token_verifier = get_token_verifier()
 
 _trusted_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] | None = None
 
@@ -133,7 +149,7 @@ def get_current_user(
     # timeout knob; its default urllib timeout applies.  If latency becomes a
     # concern, configure PyJWKClient with a custom ``urllib.request.Request``
     # or switch to an httpx-based JWKS fetcher with explicit timeouts.
-    principal = token_verifier.verify_bearer_token(token)
+    principal = get_token_verifier().verify_bearer_token(token)
     repository = UserRepository(db)
     user = repository.get_or_create(principal.clerk_user_id, principal.email)
     try:

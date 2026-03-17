@@ -44,3 +44,9 @@ class SymbolAnalysisRepository:
             .limit(min(limit, _MAX_PAGE_SIZE))
         )
         return list(self.session.scalars(stmt))
+
+    def count_for_user(self, user_id: UUID) -> int:
+        """Return the total number of analyses for a user."""
+        from sqlalchemy import func
+        stmt = select(func.count()).select_from(SymbolAnalysis).where(SymbolAnalysis.user_id == user_id)
+        return self.session.scalar(stmt) or 0

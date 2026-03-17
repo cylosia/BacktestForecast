@@ -65,6 +65,9 @@ def dispatch_celery_task(
         except Exception:
             db.rollback()
             logger.exception(f"{log_event}.enqueued_but_commit_failed", celery_task_id=result.id, **task_kwargs)
+            # Best-effort revocation: if revoke fails, the task may execute but
+            # the job is already marked failed. The task's ownership check will
+            # detect the mismatch and skip processing.
             try:
                 celery_app.control.revoke(result.id)
             except Exception:

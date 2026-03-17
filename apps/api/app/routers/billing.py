@@ -89,7 +89,7 @@ def stripe_webhook(
     get_rate_limiter().check(
         bucket="billing:webhook",
         actor_key=ip_address or "unknown",
-        limit=60,
+        limit=300,
         window_seconds=settings.rate_limit_window_seconds,
     )
 

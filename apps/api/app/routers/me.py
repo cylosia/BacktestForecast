@@ -24,4 +24,5 @@ def get_me(
         limit=120,
         window_seconds=60,
     )
+    # Read-only — execution service not initialized, no cleanup needed.
     return BacktestService(db).to_current_user_response(user)

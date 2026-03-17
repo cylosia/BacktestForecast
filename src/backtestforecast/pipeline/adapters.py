@@ -218,8 +218,10 @@ class PipelineBacktestExecutor:
                         "net_pnl": t.net_pnl,
                         "holding_period_days": t.holding_period_days,
                     }
-                    for t in result.trades[:50]  # Cap trade detail for storage
+                    for t in result.trades[:50]
                 ],
+                "trades_truncated": len(result.trades) > 50,
+                "total_trade_count": len(result.trades),
                 "equity_curve": self._downsample_equity_curve(result.equity_curve),
                 "warnings": [w for w in result.warnings],
             }

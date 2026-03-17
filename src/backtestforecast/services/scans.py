@@ -97,6 +97,8 @@ class ScanService:
             user.subscription_current_period_end,
         )
         validate_strategy_access(policy, [strategy.value for strategy in payload.strategy_types])
+        if hasattr(policy, "max_recommendations") and policy.max_recommendations:
+            payload.max_recommendations = min(payload.max_recommendations, policy.max_recommendations)
         self._validate_limits(policy, payload)
 
         candidate_count, compatibility_warnings = self._count_compatible_candidates(payload)

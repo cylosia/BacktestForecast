@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import structlog
 from sqlalchemy import select
@@ -61,6 +61,35 @@ class AuditEventRepository:
                 subject_id=event.subject_id,
             )
             return event, False
+
+    def list_recent(self, *, limit: int = 50) -> list[AuditEvent]:
+        """Return the most recent audit events, newest first."""
+        stmt = (
+            select(AuditEvent)
+            .order_by(AuditEvent.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_for_user(self, user_id: UUID, *, limit: int = 50) -> list[AuditEvent]:
+        """Return audit events for a specific user."""
+        stmt = (
+            select(AuditEvent)
+            .where(AuditEvent.user_id == user_id)
+            .order_by(AuditEvent.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_by_type(self, event_type: str, *, limit: int = 50) -> list[AuditEvent]:
+        """Return audit events of a specific type."""
+        stmt = (
+            select(AuditEvent)
+            .where(AuditEvent.event_type == event_type)
+            .order_by(AuditEvent.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:
         stmt = select(AuditEvent.id).where(

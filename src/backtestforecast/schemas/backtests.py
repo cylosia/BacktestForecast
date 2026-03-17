@@ -522,7 +522,7 @@ class BacktestSummaryResponse(BaseModel):
 
 
 class BacktestTradeResponse(BaseModel):
-    id: UUID | None = None
+    id: UUID
     option_ticker: str
     strategy_type: str
     underlying_symbol: str

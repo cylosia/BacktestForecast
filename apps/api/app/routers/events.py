@@ -29,6 +29,9 @@ _SSE_RESPONSES = {
 SSE_TIMEOUT_SECONDS = 300
 SSE_HEARTBEAT_SECONDS = 15
 SSE_MAX_CONNECTIONS_PER_USER = 10
+# Per-process limit on simultaneous SSE connections. With N uvicorn workers,
+# the effective server-wide limit is N × SSE_MAX_CONNECTIONS_PROCESS.
+# Per-user limits are enforced via Redis (see _acquire_sse_slot).
 SSE_MAX_CONNECTIONS_PROCESS = 200
 
 _SSE_CONN_KEY_PREFIX = "sse:connections:"
