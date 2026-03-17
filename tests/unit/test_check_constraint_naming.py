@@ -84,3 +84,15 @@ def test_all_check_constraints_have_names():
                     f"Unnamed CheckConstraint found on {model.__tablename__}: "
                     f"{arg.sqltext}"
                 )
+
+
+def test_check_constraint_naming_consistency():
+    """All CheckConstraints must follow the ``ck_<tablename>_<descriptor>`` convention."""
+    for model in _ALL_MODELS:
+        table_name = model.__tablename__
+        expected_prefix = f"ck_{table_name}_"
+        for name in _extract_check_constraint_names(model):
+            assert name.startswith(expected_prefix), (
+                f"CheckConstraint '{name}' on {table_name} does not follow "
+                f"the naming convention '{expected_prefix}<descriptor>'"
+            )

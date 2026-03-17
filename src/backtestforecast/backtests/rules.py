@@ -412,6 +412,8 @@ def black_scholes_price(
     volatility: float,
     risk_free_rate: float = 0.045,
 ) -> float:
+    if underlying_price <= 0 or strike_price <= 0:
+        return 0.0
     if time_to_expiry_years <= 0 or volatility <= 0:
         intrinsic = (
             max(0.0, underlying_price - strike_price)

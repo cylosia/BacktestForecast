@@ -56,12 +56,23 @@ class DatabaseStorage:
         pass
 
     def exists(self, storage_key: str) -> bool:
-        """Content is in the DB row; check cannot verify without a session.
+        """Check if content exists for the given storage key.
 
-        Callers should verify ``ExportJob.content_bytes is not None`` before
-        streaming.  Returns ``bool(storage_key)`` as a basic sanity check.
+        DatabaseStorage cannot verify without a DB session.  Returns False for
+        empty/None keys.  Callers MUST also verify
+        ``ExportJob.content_bytes is not None`` before streaming — this method
+        only confirms the key looks valid, not that content is present.
         """
-        return bool(storage_key)
+        if not storage_key:
+            return False
+        from backtestforecast.db.session import SessionLocal
+        from backtestforecast.models import ExportJob
+        try:
+            with SessionLocal() as session:
+                job = session.get(ExportJob, storage_key)
+                return job is not None and job.content_bytes is not None
+        except Exception:
+            return bool(storage_key)
 
     def get_object(self, key: str) -> Any:
         raise NotImplementedError("DatabaseStorage does not support streaming")

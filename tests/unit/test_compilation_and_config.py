@@ -71,28 +71,27 @@ def test_to_decimal_coerces_nan_to_zero() -> None:
 
     from backtestforecast.services.backtests import to_decimal
 
-    result = to_decimal(float("nan"))
-    assert result == Decimal("0")
+    import pytest
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(float("nan"))
 
 
 def test_to_decimal_coerces_inf_to_zero() -> None:
-    """to_decimal must coerce float('inf') to Decimal('0') instead of crashing."""
-    from decimal import Decimal
-
+    """to_decimal must reject float('inf') with ValueError."""
     from backtestforecast.services.backtests import to_decimal
 
-    result = to_decimal(float("inf"))
-    assert result == Decimal("0")
+    import pytest
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(float("inf"))
 
 
 def test_to_decimal_coerces_decimal_nan_to_zero() -> None:
-    """to_decimal must coerce Decimal('NaN') to Decimal('0') instead of crashing."""
-    from decimal import Decimal
-
+    """to_decimal must reject Decimal('NaN') with ValueError."""
     from backtestforecast.services.backtests import to_decimal
 
-    result = to_decimal(Decimal("NaN"))
-    assert result == Decimal("0")
+    import pytest
+    with pytest.raises(ValueError, match="Non-finite"):
+        to_decimal(__import__("decimal").Decimal("NaN"))
 
 
 def test_db_pool_max_overflow_validated_to_minimum_one() -> None:

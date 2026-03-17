@@ -158,12 +158,13 @@ class MassiveOptionGateway:
     def get_chain_delta_lookup(
         self,
         contracts: list[OptionContractRecord],
-    ) -> dict[float, float]:
-        """Build a strike->delta lookup using the chain snapshot endpoint.
+    ) -> dict[tuple[float, date], float]:
+        """Build a (strike, expiration)->delta lookup using the chain snapshot.
 
         Fetches the full option chain snapshot once, caches individual results,
-        and returns a mapping of strike_price to absolute delta for the given
-        contracts. Strikes without available delta are omitted.
+        and returns a mapping of ``(strike_price, expiration_date)`` to absolute
+        delta. Keying by both strike and expiration prevents incorrect delta
+        assignment when multiple expirations share the same strike.
         """
         with self._lock:
             already_loaded = self._chain_snapshot_loaded
@@ -178,14 +179,14 @@ class MassiveOptionGateway:
                         self._snapshot_cache.popitem(last=False)
                     self._chain_snapshot_loaded = True
 
-        lookup: dict[float, float] = {}
+        lookup: dict[tuple[float, date], float] = {}
         for contract in contracts:
             with self._lock:
                 snap = self._snapshot_cache.get(contract.ticker)
                 if snap is not None:
                     self._snapshot_cache.move_to_end(contract.ticker)
             if snap is not None and snap.greeks is not None and snap.greeks.delta is not None:
-                lookup[contract.strike_price] = snap.greeks.delta
+                lookup[(contract.strike_price, contract.expiration_date)] = snap.greeks.delta
         return lookup
 
     @staticmethod
@@ -241,7 +242,10 @@ class MarketDataService:
                 error = self._bars_errors.get(cache_key)
             if error is not None:
                 raise error
-            return self.client.get_stock_daily_bars(symbol, start, end)
+            from backtestforecast.errors import DataUnavailableError
+            raise DataUnavailableError(
+                f"Market data fetch for {symbol} timed out or completed without caching results."
+            )
 
         try:
             raw_bars = self.client.get_stock_daily_bars(symbol, start, end)

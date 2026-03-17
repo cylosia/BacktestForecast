@@ -279,9 +279,9 @@ class PipelineForecaster:
     def __init__(self, forecaster: Any, market_data: PipelineMarketDataFetcher) -> None:
         self._forecaster = forecaster
         self._market_data = market_data
-        self._bar_cache: OrderedDict[tuple[str, date], list[DailyBar]] = OrderedDict()
+        self._bar_cache: OrderedDict[tuple[str, date, int], list[DailyBar]] = OrderedDict()
         self._bar_cache_lock = threading.Lock()
-        self._bar_fetch_locks: dict[tuple[str, date], threading.Lock] = {}
+        self._bar_fetch_locks: dict[tuple[str, date, int], threading.Lock] = {}
         self._bar_fetch_locks_lock = threading.Lock()
 
     def get_forecast(
@@ -294,7 +294,7 @@ class PipelineForecaster:
     ) -> dict[str, Any] | None:
         try:
             end_date = as_of_date or datetime.now(ZoneInfo("America/New_York")).date()
-            cache_key = (symbol, end_date)
+            cache_key = (symbol, end_date, horizon_days)
             with self._bar_cache_lock:
                 bars = self._bar_cache.get(cache_key)
                 if bars is not None:

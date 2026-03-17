@@ -252,15 +252,16 @@ def resolve_strike(
     selection: StrikeSelection | None,
     dte_days: int = 30,
     *,
-    delta_lookup: dict[float, float] | None = None,
+    delta_lookup: dict[tuple[float, date], float] | dict[float, float] | None = None,
     contracts: list[OptionContractRecord] | None = None,
     option_gateway: OptionDataGateway | None = None,
     trade_date: date | None = None,
+    expiration_date: date | None = None,
 ) -> float:
     """Resolve a strike based on the selection config, or fall back to nearest OTM.
 
     For DELTA_TARGET mode, the resolution order is:
-      1. *delta_lookup* — pre-built strike->delta map (from API chain snapshot)
+      1. *delta_lookup* — pre-built (strike, expiration)->delta map (from API chain snapshot)
       2. IV-improved BSM — estimate IV from the market quote for each candidate
       3. Hardcoded 30% vol BSM — final fallback
     """
@@ -301,7 +302,11 @@ def resolve_strike(
             delta: float | None = None
 
             if delta_lookup is not None:
-                raw = delta_lookup.get(strike)
+                raw: float | None = None
+                if expiration_date is not None:
+                    raw = delta_lookup.get((strike, expiration_date))  # type: ignore[call-overload]
+                if raw is None:
+                    raw = delta_lookup.get(strike)  # type: ignore[call-overload]
                 if raw is not None:
                     delta = raw
 

@@ -29,6 +29,7 @@ class ScannerMode(str, Enum):
 
 PAID_STATUSES = {"active", "trialing"}
 PAST_DUE_GRACE_DAYS = 7
+ACTIVE_RENEWAL_GRACE = timedelta(hours=1)
 INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete", "incomplete_expired", "paused"}
 
 
@@ -199,10 +200,9 @@ def normalize_plan_tier(
         return PlanTier.FREE
     elif subscription_status is None:
         return PlanTier.FREE
-    _ACTIVE_RENEWAL_GRACE = timedelta(hours=1)
     if (
         subscription_current_period_end is not None
-        and subscription_current_period_end + _ACTIVE_RENEWAL_GRACE < datetime.now(UTC)
+        and subscription_current_period_end + ACTIVE_RENEWAL_GRACE < datetime.now(UTC)
     ):
         return PlanTier.FREE
     if plan_tier == PlanTier.PREMIUM.value:

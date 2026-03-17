@@ -56,6 +56,20 @@ def _ping_broker_redis() -> bool:
                 _broker_redis = None
         return False
 
+def _check_massive_config(settings) -> bool:
+    """Non-blocking check: verify Massive API key is configured and circuit breaker is not open."""
+    if not settings.massive_api_key:
+        return False
+    try:
+        from backtestforecast.integrations.massive_client import MassiveClient
+        cb = getattr(MassiveClient, "_circuit_breaker", None)
+        if cb is not None and getattr(cb, "state", None) == "open":
+            return False
+    except Exception:
+        pass
+    return True
+
+
 _HEALTH_MAX_RPM = 120
 _health_window: deque[float] = deque(maxlen=_HEALTH_MAX_RPM + 50)
 _health_lock = Lock()
@@ -120,6 +134,8 @@ def ready(request: Request) -> JSONResponse:
     else:
         rl_mode = "in_memory_fallback"
 
+    massive_ok = _check_massive_config(settings)
+
     all_ok = redis_up and broker_up
     payload: dict[str, str] = {
         "status": "ok" if all_ok else "degraded",
@@ -131,4 +147,5 @@ def ready(request: Request) -> JSONResponse:
         payload["redis"] = "up" if redis_up else "degraded"
         payload["broker"] = "up" if broker_up else "down"
         payload["rate_limit_mode"] = rl_mode
+        payload["massive_api"] = "ok" if massive_ok else "degraded"
     return JSONResponse(status_code=200, content=payload)

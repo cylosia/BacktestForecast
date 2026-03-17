@@ -180,10 +180,16 @@ class OptionsBacktestEngine:
                             entry_commission = self._option_commission_total(candidate, config.commission_per_contract)
                             candidate.entry_commission_total = entry_commission
                             slippage_cost = gross_notional_per_unit * quantity * (config.slippage_pct / 100.0)
-                            cash -= (ev_per_unit * quantity) + entry_commission + slippage_cost
-                            if cash < 0:
-                                warnings.append({"code": "negative_cash", "message": f"Cash went negative ({cash:.2f}) after entry. Slippage may have exceeded available funds."})
-                            position = candidate
+                            total_entry_cost = (ev_per_unit * quantity) + entry_commission + slippage_cost
+                            if cash - total_entry_cost < 0:
+                                self._add_warning_once(
+                                    warnings, warning_codes, "negative_cash_rejected",
+                                    "One or more entries were skipped because the total cost "
+                                    "(including slippage) would have exceeded available cash.",
+                                )
+                            else:
+                                cash -= total_entry_cost
+                                position = candidate
                             if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
                                 ev_per_unit
                             ):

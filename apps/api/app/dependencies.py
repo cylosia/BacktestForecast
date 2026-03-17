@@ -32,8 +32,6 @@ def reset_token_verifier() -> None:
     _token_verifier = None
 
 
-token_verifier = get_token_verifier()
-
 _trusted_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] | None = None
 
 

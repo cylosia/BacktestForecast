@@ -388,12 +388,21 @@ class Settings(BaseSettings):
     # 4. validate_production_security — enforces production invariants
     # Adding new validators? Place them before validate_production_security
     # so their effects are visible to the security checks.
+    MAX_SYMBOLS: int = 200
+
     @model_validator(mode="after")
     def apply_env_overrides(self) -> "Settings":
         if self.pipeline_default_symbols_csv:
             parsed = [s.strip() for s in self.pipeline_default_symbols_csv.split(",") if s.strip()]
             if parsed:
                 self.pipeline_default_symbols = parsed
+        if len(self.pipeline_default_symbols) > self.MAX_SYMBOLS:
+            logger.warning(
+                "config.pipeline_symbols_capped",
+                original=len(self.pipeline_default_symbols),
+                max=self.MAX_SYMBOLS,
+            )
+            self.pipeline_default_symbols = self.pipeline_default_symbols[:self.MAX_SYMBOLS]
         return self
 
     @model_validator(mode="after")

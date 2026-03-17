@@ -1,3 +1,5 @@
+import threading
+
 import structlog
 from celery import Celery
 from celery.schedules import crontab
@@ -54,8 +56,11 @@ celery_app.conf.update(
     worker_max_memory_per_child=500_000,
     broker_connection_retry_on_startup=True,
     redbeat_redis_url=settings.redis_url,
-    # visibility_timeout must exceed the longest task's hard time_limit
-    # to prevent re-delivery of tasks that are still running.  4200s = 70 min.
+    # REQUIREMENT: visibility_timeout must exceed the longest task's hard
+    # time_limit to prevent the broker from re-delivering tasks that are still
+    # running.  Current longest task_time_limit = 3900s (65 min), so we set
+    # visibility_timeout = 4200s (70 min).  If you increase task_time_limit,
+    # you MUST increase visibility_timeout proportionally.
     broker_transport_options={"visibility_timeout": 4200},
 )
 
@@ -136,7 +141,6 @@ def _start_worker_metrics_server() -> None:
     """Start a lightweight HTTP server to expose Prometheus metrics from the worker process."""
     import hmac
     import os
-    import threading
     from http.server import HTTPServer, BaseHTTPRequestHandler
 
     port = int(os.environ.get("WORKER_METRICS_PORT", "9090"))
@@ -165,7 +169,7 @@ def _start_worker_metrics_server() -> None:
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass
 
-    server = HTTPServer(("0.0.0.0", port), _MetricsHandler)
+    server = HTTPServer(("127.0.0.1", port), _MetricsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     _shutdown_logger.info(
@@ -177,13 +181,12 @@ def _start_worker_metrics_server() -> None:
 
 _worker_heartbeat_key: str | None = None
 _heartbeat_thread = None
+_heartbeat_stop = threading.Event()
 
 
 def _start_heartbeat_loop() -> None:
     """Set a TTL key in Redis every 30s so the reaper can count live workers."""
     import os
-    import threading
-    import time
 
     global _worker_heartbeat_key
     pid = os.getpid()
@@ -193,19 +196,23 @@ def _start_heartbeat_loop() -> None:
     def _loop() -> None:
         from redis import Redis
         conn: Redis | None = None
-        while True:
+        consecutive_errors = 0
+        while not _heartbeat_stop.is_set():
             try:
                 if conn is None:
                     conn = Redis.from_url(settings.redis_url, socket_timeout=5)
                 conn.setex(_worker_heartbeat_key, 90, "1")
+                consecutive_errors = 0
             except Exception:
+                consecutive_errors += 1
                 if conn is not None:
                     try:
                         conn.close()
                     except Exception:
                         pass
                     conn = None
-            time.sleep(30)
+            sleep_secs = min(30 * (2 ** consecutive_errors), 120)
+            _heartbeat_stop.wait(sleep_secs)
 
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
@@ -257,6 +264,7 @@ def _on_worker_shutting_down(sig, how, exitcode, **kwargs):  # type: ignore[no-u
 @worker_shutdown.connect
 def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
     _shutdown_logger.info("worker.shutdown_cleanup_started")
+    _heartbeat_stop.set()
     if _worker_heartbeat_key:
         try:
             from redis import Redis

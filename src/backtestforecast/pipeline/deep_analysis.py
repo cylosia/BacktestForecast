@@ -503,9 +503,7 @@ class SymbolDeepAnalysisService:
                     except Exception:
                         pass
         finally:
-            # wait=False: running tasks will complete in background; their results
-            # are unused past this point, and we don't want to block the main thread.
-            pool.shutdown(wait=False, cancel_futures=True)
+            pool.shutdown(wait=True, cancel_futures=False)
 
         return cells
 
@@ -561,9 +559,7 @@ class SymbolDeepAnalysisService:
                     except Exception:
                         pass
         finally:
-            # wait=False: running tasks will complete in background; their results
-            # are unused past this point, and we don't want to block the main thread.
-            pool.shutdown(wait=False, cancel_futures=True)
+            pool.shutdown(wait=True, cancel_futures=False)
 
         cell_order: dict[int, int] = {}
         for idx, c in enumerate(candidates):

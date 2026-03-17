@@ -9,6 +9,7 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backtestforecast.observability.metrics import SCAN_CANDIDATE_FAILURES_TOTAL
 from backtestforecast.billing.entitlements import (
     ensure_forecasting_access,
     resolve_scanner_policy,
@@ -52,6 +53,8 @@ from backtestforecast.services.backtests import to_decimal
 
 logger = structlog.get_logger("services.scans")
 
+# TODO: Make _FALLBACK_ENTRY_RULES configurable via Settings so operators can
+# adjust the default entry rules without a code change / redeployment.
 _FALLBACK_ENTRY_RULES: list[RsiRule] = [
     RsiRule(type="rsi", operator="lte", threshold=Decimal("40"), period=14),
 ]
@@ -312,6 +315,7 @@ class ScanService:
                         )
                         job.evaluated_candidate_count += 1
                     except AppError as exc:
+                        SCAN_CANDIDATE_FAILURES_TOTAL.labels(reason=exc.code if hasattr(exc, 'code') else "internal").inc()
                         warnings.append(
                             {
                                 "code": "candidate_failed",
@@ -324,6 +328,7 @@ class ScanService:
                         )
                     except Exception:  # Intentional broad catch: individual candidate failures
                         # must not abort the entire scan. Logged and appended as a warning.
+                        SCAN_CANDIDATE_FAILURES_TOTAL.labels(reason="internal").inc()
                         logger.warning(
                             "scan.candidate_failed",
                             symbol=symbol,

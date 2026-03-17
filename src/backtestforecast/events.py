@@ -38,6 +38,7 @@ def _get_redis():
             socket_timeout=5.0,
             socket_connect_timeout=2.0,
             retry_on_timeout=True,
+            max_connections=10,
         )
         if not _atexit_registered:
             atexit.register(_shutdown_redis)

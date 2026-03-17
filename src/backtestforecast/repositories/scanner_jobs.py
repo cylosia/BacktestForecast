@@ -109,7 +109,7 @@ class ScannerJobRepository:
         strategy_type: str,
         rule_set_hash: str,
         before: datetime,
-        limit: int = 200,
+        limit: int = 100,
     ) -> list[tuple[ScannerRecommendation, datetime | None]]:
         """Fetch historical recommendations across ALL users for aggregate signal analysis.
 
@@ -137,7 +137,7 @@ class ScannerJobRepository:
         *,
         keys: list[tuple[str, str, str]],
         before: datetime,
-        limit_per_key: int = 200,
+        limit_per_key: int = 100,
     ) -> dict[tuple[str, str, str], list[tuple[ScannerRecommendation, datetime | None]]]:
         """Fetch historical recommendations across ALL users for aggregate signal analysis.
 

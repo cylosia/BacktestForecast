@@ -223,6 +223,23 @@ EXTERNAL_API_LATENCY_SECONDS = Histogram(
     buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
 )
 
+SCAN_CANDIDATE_FAILURES_TOTAL = Counter(
+    "backtestforecast_scan_candidate_failures_total",
+    "Number of individual scanner candidates that failed evaluation",
+    ["reason"],
+)
+
+MARKET_DATA_CACHE_HITS = Counter(
+    "backtestforecast_market_data_cache_hits_total",
+    "Market data cache hits",
+    ["cache_type"],
+)
+MARKET_DATA_CACHE_MISSES = Counter(
+    "backtestforecast_market_data_cache_misses_total",
+    "Market data cache misses",
+    ["cache_type"],
+)
+
 
 _RE_UUID = re.compile(
     r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"

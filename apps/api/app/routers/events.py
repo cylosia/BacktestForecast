@@ -247,7 +247,9 @@ async def _release_sse_slot(user_id: UUID) -> None:
         key = f"{_SSE_CONN_KEY_PREFIX}{user_id}"
         await pool.eval(_SSE_SLOT_RELEASE_LUA, 1, key)
     except Exception:
-        logger.warning("sse.release_slot_redis_error", user_id=str(user_id), exc_info=True)
+        from backtestforecast.observability.metrics import REDIS_CONNECTION_ERRORS_TOTAL
+        REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="sse_slot_release").inc()
+        logger.error("sse.release_slot_redis_error", user_id=str(user_id), exc_info=True)
 
 
 async def _event_stream(

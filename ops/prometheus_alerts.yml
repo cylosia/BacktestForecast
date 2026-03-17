@@ -81,3 +81,30 @@ groups:
         annotations:
           summary: "S3 connection pool nearly exhausted"
           description: "Fewer than 5 S3 connections available. Check for stream leaks in export downloads."
+
+      - alert: ReaperCycleTooSlow
+        expr: histogram_quantile(0.95, rate(backtestforecast_reaper_duration_seconds_bucket[1h])) > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reaper cycle is taking too long"
+          description: "The stale job reaper p95 duration exceeded 5 minutes. Check for DB lock contention or excessive stale jobs."
+
+      - alert: DLQDepthCritical
+        expr: backtestforecast_dlq_depth > 100
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dead letter queue has more than 100 items"
+          description: "{{ $value }} failed tasks in the DLQ. Review and replay or clear."
+
+      - alert: WorkerMemoryHigh
+        expr: process_resident_memory_bytes{job="worker"} > 400 * 1024 * 1024
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker memory usage exceeds 400MB"
+          description: "Worker {{ $labels.instance }} is using {{ $value | humanize1024 }}B. Consider increasing worker_max_memory_per_child or investigating memory leaks."

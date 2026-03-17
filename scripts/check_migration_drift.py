@@ -65,6 +65,46 @@ def _check_check_constraints(engine) -> list[str]:
     return issues
 
 
+def _check_trigger_tables_completeness() -> list[str]:
+    """Verify all ORM tables with an ``updated_at`` column are in _TRIGGER_TABLES."""
+    issues: list[str] = []
+
+    tables_with_updated_at: set[str] = set()
+    for table in Base.metadata.sorted_tables:
+        if "updated_at" in {c.name for c in table.columns}:
+            tables_with_updated_at.add(table.name)
+
+    trigger_tables: set[str] = set()
+    baseline = _ROOT / "alembic" / "versions"
+    import ast
+    for migration in sorted(baseline.glob("*.py")):
+        source = migration.read_text(encoding="utf-8")
+        if "_TRIGGER_TABLES" not in source:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "_TRIGGER_TABLES":
+                        if isinstance(node.value, ast.List):
+                            for elt in node.value.elts:
+                                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                    trigger_tables.add(elt.value)
+
+    if not trigger_tables:
+        return []
+
+    missing = tables_with_updated_at - trigger_tables
+    for table_name in sorted(missing):
+        issues.append(
+            f"  {table_name} has an updated_at column but is missing from _TRIGGER_TABLES"
+        )
+    return issues
+
+
 def main() -> int:
     try:
         settings = get_settings()
@@ -95,6 +135,8 @@ def main() -> int:
     finally:
         engine.dispose()
 
+    trigger_issues = _check_trigger_tables_completeness()
+
     all_issues: list[str] = []
 
     if diffs:
@@ -110,8 +152,12 @@ def main() -> int:
         all_issues.append(f"CheckConstraint drift — {len(constraint_issues)} issue(s):")
         all_issues.extend(constraint_issues)
 
+    if trigger_issues:
+        all_issues.append(f"_TRIGGER_TABLES drift — {len(trigger_issues)} issue(s):")
+        all_issues.extend(trigger_issues)
+
     if not all_issues:
-        print("OK — no migration drift detected (schema, defaults, and constraints all match).")
+        print("OK — no migration drift detected (schema, defaults, constraints, and triggers all match).")
         return 0
 
     print("DRIFT DETECTED:")

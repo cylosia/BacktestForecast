@@ -251,6 +251,7 @@ class ScannerJob(Base):
         Index("ix_scanner_jobs_celery_task_id", "celery_task_id"),
         Index("ix_scanner_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         Index("ix_scanner_jobs_dedup_lookup", "user_id", "request_hash", "mode", "created_at"),
+        Index("ix_scanner_jobs_parent_job_id", "parent_job_id"),
         Index("ix_scanner_jobs_refresh_sources", "refresh_daily", "status"),
         Index(
             "uq_scanner_jobs_active_dedup",

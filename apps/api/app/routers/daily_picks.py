@@ -138,6 +138,9 @@ def get_pipeline_history(
     from datetime import datetime as _dt
 
     settings = get_settings()
+    if not settings.feature_daily_picks_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Daily picks are temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="daily_picks:history",
         actor_key=str(user.id),

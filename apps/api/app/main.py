@@ -354,7 +354,7 @@ def dlq_status(request: Request) -> Response:
         r = get_rate_limiter().get_redis()
         if r is None:
             from redis import Redis
-            r = Redis.from_url(settings.redis_url, socket_timeout=5, decode_responses=False)
+            r = Redis.from_url(settings.redis_cache_url or settings.redis_url, socket_timeout=5, decode_responses=False)
             fallback_redis = r
         try:
             depth = r.llen("bff:dead_letter_queue")

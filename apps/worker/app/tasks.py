@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 from uuid import UUID, uuid4
 
+_ModelT = TypeVar("_ModelT")
+
 if TYPE_CHECKING:
+    from datetime import date
+
     from sqlalchemy.orm import Session
 
 import structlog
@@ -13,7 +17,7 @@ from apps.worker.app.celery_app import celery_app
 from backtestforecast.db.session import SessionLocal, create_worker_session
 from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.errors import AppError
-from backtestforecast.events import publish_job_status
+from backtestforecast.events import _VALID_TARGET_STATUSES, publish_job_status
 from backtestforecast.observability.metrics import (
     ANALYSIS_JOBS_TOTAL,
     BACKTEST_RUNS_TOTAL,
@@ -109,7 +113,14 @@ def ping() -> dict[str, str]:
     }
 
 
-def _find_pipeline_run(session, model_cls, run, trade_date, *, run_id=None):
+def _find_pipeline_run(
+    session: Session,
+    model_cls: type[_ModelT],
+    run: _ModelT | None,
+    trade_date: date,
+    *,
+    run_id: UUID | None = None,
+) -> _ModelT | None:
     """Return the pipeline run object for failure marking.
 
     When *run_id* is provided we look up by exact ID (preferred).
@@ -195,7 +206,11 @@ def nightly_scan_pipeline(
         from zoneinfo import ZoneInfo
 
         if trade_date_iso:
-            trade_date = date.fromisoformat(trade_date_iso)
+            try:
+                trade_date = date.fromisoformat(trade_date_iso)
+            except ValueError:
+                logger.error("pipeline.invalid_trade_date_iso", value=trade_date_iso)
+                return {"status": "failed", "reason": "invalid_trade_date_iso"}
         else:
             trade_date = datetime.now(ZoneInfo("America/New_York")).date()
 
@@ -297,7 +312,7 @@ def nightly_scan_pipeline(
             logger.exception("client.close_failed")
 
 
-_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "expired"})
+_TERMINAL_STATUSES = _VALID_TARGET_STATUSES | frozenset({"expired"})
 
 
 def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, expected_task_id: str | None) -> bool:
@@ -649,7 +664,6 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
         forecaster = PipelineForecaster(HistoricalAnalogForecaster(), market_data)
 
         with SessionLocal() as session:
-            from backtestforecast.models import SymbolAnalysis, User
             if not _validate_task_ownership(session, SymbolAnalysis, UUID(analysis_id), self.request.id):
                 DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="analysis.deep_symbol").inc()
                 logger.info("analysis.deep_symbol.duplicate_delivery", analysis_id=analysis_id, task_id=self.request.id)
@@ -705,9 +719,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
             except SoftTimeLimitExceeded:
                 session.rollback()
                 session.expire_all()
-                from backtestforecast.models import SymbolAnalysis as _SA
-
-                analysis = session.get(_SA, UUID(analysis_id))
+                analysis = session.get(SymbolAnalysis, UUID(analysis_id))
                 if analysis is not None and analysis.status in ("queued", "running"):
                     analysis.status = "failed"
                     analysis.error_code = "time_limit_exceeded"
@@ -732,8 +744,6 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 try:
                     raise self.retry(exc=exc, countdown=60)
                 except self.MaxRetriesExceededError:
-                    from backtestforecast.models import SymbolAnalysis
-
                     analysis = session.get(SymbolAnalysis, UUID(analysis_id))
                     if analysis is not None and analysis.status in ("queued", "running"):
                         analysis.status = "failed"
@@ -1002,14 +1012,10 @@ def reconcile_s3_orphans(self) -> None:
 @celery_app.task(name="maintenance.reap_stale_jobs", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=300, time_limit=360)
 def reap_stale_jobs(self, stale_minutes: int = 30) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
-    from datetime import UTC, datetime, timedelta
-
     from redis import Redis
-    from sqlalchemy import select, update
 
     from backtestforecast.config import get_settings
-    from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SymbolAnalysis
-    from backtestforecast.observability.metrics import CELERY_WORKERS_ONLINE, JOBS_STUCK_REDISPATCHED_TOTAL
+    from backtestforecast.observability.metrics import CELERY_WORKERS_ONLINE
 
     settings = get_settings()
 
@@ -1056,13 +1062,119 @@ def reap_stale_jobs(self, stale_minutes: int = 30) -> dict[str, int]:
                 pass
 
 
+def _reap_queued_jobs(
+    session,
+    model_cls,
+    model_name: str,
+    task_name: str,
+    task_kwarg_key: str,
+    cutoff,
+    counts: dict[str, int],
+    counts_key: str,
+) -> None:
+    """Re-dispatch queued jobs with no celery_task_id older than *cutoff*."""
+    from sqlalchemy import select, update
+
+    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL
+
+    stale_stmt = (
+        select(model_cls.id)
+        .where(
+            model_cls.status == "queued",
+            model_cls.celery_task_id.is_(None),
+            model_cls.created_at < cutoff,
+        )
+        .limit(50)
+        .with_for_update(skip_locked=True)
+    )
+    stale_ids = list(session.scalars(stale_stmt))
+    for job_id in stale_ids:
+        try:
+            task_id = str(uuid4())
+            rows = session.execute(
+                update(model_cls)
+                .where(model_cls.id == job_id, model_cls.celery_task_id.is_(None))
+                .values(celery_task_id=task_id)
+            )
+            if rows.rowcount == 0:
+                session.rollback()
+                logger.info("reaper.already_dispatched", model=model_name, id=str(job_id))
+                continue
+            session.commit()
+            try:
+                celery_app.send_task(task_name, kwargs={task_kwarg_key: str(job_id)}, task_id=task_id)
+            except Exception:
+                session.execute(
+                    update(model_cls)
+                    .where(model_cls.id == job_id, model_cls.celery_task_id == task_id)
+                    .values(celery_task_id=None)
+                )
+                session.commit()
+                raise
+            JOBS_STUCK_REDISPATCHED_TOTAL.labels(model=model_name).inc()
+        except Exception:
+            session.rollback()
+            logger.exception("reaper.redispatch_failed", model=model_name, id=str(job_id))
+    counts[counts_key] = len(stale_ids)
+
+
+def _fail_stale_running_jobs(
+    session,
+    model_cls,
+    model_name: str,
+    job_type: str,
+    cutoff,
+    counts: dict[str, int],
+    counts_key: str,
+) -> None:
+    """Fail jobs stuck in 'running' state longer than *cutoff*."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import or_, select, update
+
+    from backtestforecast.observability.metrics import JOBS_STUCK_RUNNING
+
+    stale_running_stmt = (
+        select(model_cls.id)
+        .where(
+            model_cls.status == "running",
+            or_(
+                model_cls.started_at.isnot(None) & (model_cls.started_at < cutoff),
+                model_cls.started_at.is_(None) & (model_cls.created_at < cutoff),
+            ),
+        )
+        .limit(50)
+        .with_for_update(skip_locked=True)
+    )
+    stale_running_ids = list(session.scalars(stale_running_stmt))
+    if stale_running_ids:
+        session.execute(
+            update(model_cls)
+            .where(model_cls.id.in_(stale_running_ids), model_cls.status == "running")
+            .values(
+                status="failed",
+                error_code="stale_running",
+                error_message="Job was stuck in running state and was automatically failed.",
+                completed_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+        for rid in stale_running_ids:
+            try:
+                publish_job_status(job_type, rid, "failed", metadata={"error_code": "stale_running"})
+            except Exception:
+                pass
+    counts[counts_key] = len(stale_running_ids)
+    JOBS_STUCK_RUNNING.labels(model=model_name).set(len(stale_running_ids))
+
+
 def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import or_, select, update
 
     from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SymbolAnalysis
-    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL, JOBS_STUCK_RUNNING, QUEUE_DEPTH
+    from backtestforecast.observability.metrics import JOBS_STUCK_RUNNING, QUEUE_DEPTH
 
     try:
         from backtestforecast.config import get_settings as _gs
@@ -1084,277 +1196,17 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     counts: dict[str, int] = {}
 
     with create_worker_session() as session:
-        stale_runs_stmt = (
-            select(BacktestRun.id)
-            .where(
-                BacktestRun.status == "queued",
-                BacktestRun.celery_task_id.is_(None),
-                BacktestRun.created_at < cutoff,
-            )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_run_ids = list(session.scalars(stale_runs_stmt))
-        for run_id in stale_run_ids:
-            try:
-                task_id = str(uuid4())
-                rows = session.execute(
-                    update(BacktestRun)
-                    .where(BacktestRun.id == run_id, BacktestRun.celery_task_id.is_(None))
-                    .values(celery_task_id=task_id)
-                )
-                if rows.rowcount == 0:
-                    session.rollback()
-                    logger.info("reaper.already_dispatched", model="BacktestRun", id=str(run_id))
-                    continue
-                session.commit()
-                try:
-                    celery_app.send_task("backtests.run", kwargs={"run_id": str(run_id)}, task_id=task_id)
-                except Exception:
-                    session.execute(
-                        update(BacktestRun)
-                        .where(BacktestRun.id == run_id, BacktestRun.celery_task_id == task_id)
-                        .values(celery_task_id=None)
-                    )
-                    session.commit()
-                    raise
-                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="BacktestRun").inc()
-            except Exception:
-                session.rollback()
-                logger.exception("reaper.redispatch_failed", model="BacktestRun", id=str(run_id))
-        counts["backtest_runs"] = len(stale_run_ids)
+        _reap_queued_jobs(session, BacktestRun, "BacktestRun", "backtests.run", "run_id", cutoff, counts, "backtest_runs")
+        _fail_stale_running_jobs(session, BacktestRun, "BacktestRun", "backtest", cutoff, counts, "stale_running_backtests")
 
-        stale_running_stmt = (
-            select(BacktestRun.id)
-            .where(
-                BacktestRun.status == "running",
-                or_(
-                    BacktestRun.started_at.isnot(None) & (BacktestRun.started_at < cutoff),
-                    BacktestRun.started_at.is_(None) & (BacktestRun.created_at < cutoff),
-                ),
-            )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_running_ids = list(session.scalars(stale_running_stmt))
-        if stale_running_ids:
-            session.execute(
-                update(BacktestRun)
-                .where(BacktestRun.id.in_(stale_running_ids), BacktestRun.status == "running")
-                .values(status="failed", error_code="stale_running", error_message="Job was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
-            )
-            session.commit()
-            for rid in stale_running_ids:
-                try:
-                    publish_job_status("backtest", rid, "failed", metadata={"error_code": "stale_running"})
-                except Exception:
-                    pass
-        counts["stale_running_backtests"] = len(stale_running_ids)
-        JOBS_STUCK_RUNNING.labels(model="BacktestRun").set(len(stale_running_ids))
+        _reap_queued_jobs(session, ExportJob, "ExportJob", "exports.generate", "export_job_id", cutoff, counts, "export_jobs")
+        _fail_stale_running_jobs(session, ExportJob, "ExportJob", "export", cutoff, counts, "stale_running_exports")
 
-        stale_exports_stmt = (
-            select(ExportJob.id)
-            .where(
-                ExportJob.status == "queued",
-                ExportJob.celery_task_id.is_(None),
-                ExportJob.created_at < cutoff,
-            )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_export_ids = list(session.scalars(stale_exports_stmt))
-        for eid in stale_export_ids:
-            try:
-                task_id = str(uuid4())
-                rows = session.execute(
-                    update(ExportJob)
-                    .where(ExportJob.id == eid, ExportJob.celery_task_id.is_(None))
-                    .values(celery_task_id=task_id)
-                )
-                if rows.rowcount == 0:
-                    session.rollback()
-                    logger.info("reaper.already_dispatched", model="ExportJob", id=str(eid))
-                    continue
-                session.commit()
-                try:
-                    celery_app.send_task("exports.generate", kwargs={"export_job_id": str(eid)}, task_id=task_id)
-                except Exception:
-                    session.execute(
-                        update(ExportJob)
-                        .where(ExportJob.id == eid, ExportJob.celery_task_id == task_id)
-                        .values(celery_task_id=None)
-                    )
-                    session.commit()
-                    raise
-                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="ExportJob").inc()
-            except Exception:
-                session.rollback()
-                logger.exception("reaper.redispatch_failed", model="ExportJob", id=str(eid))
-        counts["export_jobs"] = len(stale_export_ids)
+        _reap_queued_jobs(session, ScannerJob, "ScannerJob", "scans.run_job", "job_id", cutoff, counts, "scanner_jobs")
+        _fail_stale_running_jobs(session, ScannerJob, "ScannerJob", "scan", cutoff, counts, "stale_running_scans")
 
-        stale_running_exports_stmt = (
-            select(ExportJob.id)
-            .where(
-                ExportJob.status == "running",
-                or_(
-                    ExportJob.started_at.isnot(None) & (ExportJob.started_at < cutoff),
-                    ExportJob.started_at.is_(None) & (ExportJob.created_at < cutoff),
-                ),
-            )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_running_export_ids = list(session.scalars(stale_running_exports_stmt))
-        if stale_running_export_ids:
-            session.execute(
-                update(ExportJob)
-                .where(ExportJob.id.in_(stale_running_export_ids), ExportJob.status == "running")
-                .values(status="failed", error_code="stale_running", error_message="Job was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
-            )
-            session.commit()
-            for rid in stale_running_export_ids:
-                try:
-                    publish_job_status("export", rid, "failed", metadata={"error_code": "stale_running"})
-                except Exception:
-                    pass
-        counts["stale_running_exports"] = len(stale_running_export_ids)
-        JOBS_STUCK_RUNNING.labels(model="ExportJob").set(len(stale_running_export_ids))
-
-        stale_scans_stmt = (
-            select(ScannerJob.id)
-            .where(
-                ScannerJob.status == "queued",
-                ScannerJob.celery_task_id.is_(None),
-                ScannerJob.created_at < cutoff,
-            )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_scan_ids = list(session.scalars(stale_scans_stmt))
-        for sid in stale_scan_ids:
-            try:
-                task_id = str(uuid4())
-                rows = session.execute(
-                    update(ScannerJob)
-                    .where(ScannerJob.id == sid, ScannerJob.celery_task_id.is_(None))
-                    .values(celery_task_id=task_id)
-                )
-                if rows.rowcount == 0:
-                    session.rollback()
-                    logger.info("reaper.already_dispatched", model="ScannerJob", id=str(sid))
-                    continue
-                session.commit()
-                try:
-                    celery_app.send_task("scans.run_job", kwargs={"job_id": str(sid)}, task_id=task_id)
-                except Exception:
-                    session.execute(
-                        update(ScannerJob)
-                        .where(ScannerJob.id == sid, ScannerJob.celery_task_id == task_id)
-                        .values(celery_task_id=None)
-                    )
-                    session.commit()
-                    raise
-                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="ScannerJob").inc()
-            except Exception:
-                session.rollback()
-                logger.exception("reaper.redispatch_failed", model="ScannerJob", id=str(sid))
-        counts["scanner_jobs"] = len(stale_scan_ids)
-
-        stale_running_scans_stmt = (
-            select(ScannerJob.id)
-            .where(
-                ScannerJob.status == "running",
-                or_(
-                    ScannerJob.started_at.isnot(None) & (ScannerJob.started_at < cutoff),
-                    ScannerJob.started_at.is_(None) & (ScannerJob.created_at < cutoff),
-                ),
-            )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_running_scan_ids = list(session.scalars(stale_running_scans_stmt))
-        if stale_running_scan_ids:
-            session.execute(
-                update(ScannerJob)
-                .where(ScannerJob.id.in_(stale_running_scan_ids), ScannerJob.status == "running")
-                .values(status="failed", error_code="stale_running", error_message="Job was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
-            )
-            session.commit()
-            for rid in stale_running_scan_ids:
-                try:
-                    publish_job_status("scan", rid, "failed", metadata={"error_code": "stale_running"})
-                except Exception:
-                    pass
-        counts["stale_running_scans"] = len(stale_running_scan_ids)
-        JOBS_STUCK_RUNNING.labels(model="ScannerJob").set(len(stale_running_scan_ids))
-
-        stale_analyses_stmt = (
-            select(SymbolAnalysis.id)
-            .where(
-                SymbolAnalysis.status == "queued",
-                SymbolAnalysis.celery_task_id.is_(None),
-                SymbolAnalysis.created_at < analysis_cutoff,
-            )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_analysis_ids = list(session.scalars(stale_analyses_stmt))
-        for aid in stale_analysis_ids:
-            try:
-                task_id = str(uuid4())
-                rows = session.execute(
-                    update(SymbolAnalysis)
-                    .where(SymbolAnalysis.id == aid, SymbolAnalysis.celery_task_id.is_(None))
-                    .values(celery_task_id=task_id)
-                )
-                if rows.rowcount == 0:
-                    session.rollback()
-                    logger.info("reaper.already_dispatched", model="SymbolAnalysis", id=str(aid))
-                    continue
-                session.commit()
-                try:
-                    celery_app.send_task("analysis.deep_symbol", kwargs={"analysis_id": str(aid)}, task_id=task_id)
-                except Exception:
-                    session.execute(
-                        update(SymbolAnalysis)
-                        .where(SymbolAnalysis.id == aid, SymbolAnalysis.celery_task_id == task_id)
-                        .values(celery_task_id=None)
-                    )
-                    session.commit()
-                    raise
-                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model="SymbolAnalysis").inc()
-            except Exception:
-                session.rollback()
-                logger.exception("reaper.redispatch_failed", model="SymbolAnalysis", id=str(aid))
-        counts["symbol_analyses"] = len(stale_analysis_ids)
-
-        stale_running_analyses_stmt = (
-            select(SymbolAnalysis.id)
-            .where(
-                SymbolAnalysis.status == "running",
-                or_(
-                    SymbolAnalysis.started_at.isnot(None) & (SymbolAnalysis.started_at < analysis_cutoff),
-                    SymbolAnalysis.started_at.is_(None) & (SymbolAnalysis.created_at < analysis_cutoff),
-                ),
-            )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_running_analysis_ids = list(session.scalars(stale_running_analyses_stmt))
-        if stale_running_analysis_ids:
-            session.execute(
-                update(SymbolAnalysis)
-                .where(SymbolAnalysis.id.in_(stale_running_analysis_ids), SymbolAnalysis.status == "running")
-                .values(status="failed", error_code="stale_running", error_message="Job was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
-            )
-            session.commit()
-            for rid in stale_running_analysis_ids:
-                try:
-                    publish_job_status("analysis", rid, "failed", metadata={"error_code": "stale_running"})
-                except Exception:
-                    pass
-        counts["stale_running_analyses"] = len(stale_running_analysis_ids)
-        JOBS_STUCK_RUNNING.labels(model="SymbolAnalysis").set(len(stale_running_analysis_ids))
+        _reap_queued_jobs(session, SymbolAnalysis, "SymbolAnalysis", "analysis.deep_symbol", "analysis_id", analysis_cutoff, counts, "symbol_analyses")
+        _fail_stale_running_jobs(session, SymbolAnalysis, "SymbolAnalysis", "analysis", analysis_cutoff, counts, "stale_running_analyses")
 
         stale_running_pipeline_stmt = (
             select(NightlyPipelineRun.id)
@@ -1380,7 +1232,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         JOBS_STUCK_RUNNING.labels(model="NightlyPipelineRun").set(len(stale_running_pipeline_ids))
 
         orphan_cutoff = datetime.now(UTC) - timedelta(minutes=15)
-        result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=86400)
+        result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=600)
         for model_cls, model_name in [
             (BacktestRun, "BacktestRun"),
             (ExportJob, "ExportJob"),

@@ -8,9 +8,13 @@ Callers multiply by contract quantity as needed.
 
 from __future__ import annotations
 
+import math
+
 
 def _require_non_negative(**kwargs: float) -> None:
     for name, value in kwargs.items():
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            raise ValueError(f"{name} must be a finite number, got {value}")
         if value < 0:
             raise ValueError(f"{name} must be non-negative, got {value}")
 

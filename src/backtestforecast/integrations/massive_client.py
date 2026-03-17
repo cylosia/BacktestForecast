@@ -488,6 +488,8 @@ class AsyncMassiveClient:
         if not self.api_key:
             raise ConfigurationError("MASSIVE_API_KEY is required.")
         self.base_url = (base_url or settings.massive_base_url).rstrip("/")
+        if settings.app_env in ("production", "staging") and not self.base_url.startswith("https://"):
+            raise ConfigurationError("MASSIVE_BASE_URL must use HTTPS in production/staging.")
         self._base_netloc = urlparse(self.base_url).netloc
         self.timeout = settings.massive_timeout_seconds
         self.max_retries = settings.massive_max_retries
