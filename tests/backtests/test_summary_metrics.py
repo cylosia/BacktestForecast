@@ -157,7 +157,9 @@ class TestCagr:
     def test_known_values(self):
         curve = _equity_curve([10000.0] * 252 + [12000.0])
         s = build_summary(10000.0, 12000.0, [], curve)
-        expected_cagr = (((12000.0 / 10000.0) ** (252.0 / 253.0)) - 1.0) * 100.0
+        calendar_days = (curve[-1].trade_date - curve[0].trade_date).days
+        years = calendar_days / 365.25
+        expected_cagr = ((12000.0 / 10000.0) ** (1.0 / years) - 1.0) * 100.0
         assert s.cagr_pct is not None
         assert abs(s.cagr_pct - expected_cagr) < 0.01
 

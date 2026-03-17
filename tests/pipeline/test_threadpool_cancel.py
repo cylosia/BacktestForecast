@@ -25,19 +25,16 @@ def _fast_task() -> str:
 class TestThreadPoolCancelFutures:
     def test_cancel_futures_on_shutdown(self):
         """pool.shutdown(cancel_futures=True) cancels pending futures."""
-        pool = ThreadPoolExecutor(max_workers=1)
-        completed: list[str] = []
-        try:
-            first = pool.submit(_slow_task, 0.05)
-            pending = pool.submit(_slow_task, 10.0)
+        import threading
 
-            try:
-                for f in as_completed([first], timeout=2.0):
-                    completed.append(f.result(timeout=2.0))
-            except FuturesTimeoutError:
-                pass
-        finally:
+        hold = threading.Event()
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            first = pool.submit(lambda: (hold.wait(timeout=5.0), "done")[1])
+            pending = pool.submit(_slow_task, 10.0)
             pool.shutdown(wait=False, cancel_futures=True)
+        finally:
+            hold.set()
 
         assert pending.cancelled() or pending.done()
 

@@ -118,6 +118,7 @@ class TestEmptyClerkAudienceBehavior:
             Settings(
                 app_env="production",
                 clerk_jwt_key=public_pem.decode(),
+                clerk_secret_key="sk_test_dummy",
                 clerk_authorized_parties_raw="http://localhost:3000",
                 clerk_audience="",
                 clerk_issuer="https://clerk.example.com",
@@ -125,6 +126,7 @@ class TestEmptyClerkAudienceBehavior:
                 ip_hash_salt="a-secure-salt-for-testing-1234567890",
                 metrics_token="test-metrics-token",
                 redis_password="test-redis-password",
+                database_url="postgresql+psycopg://u:p@localhost/db?sslmode=require",
             )
 
     def test_verifier_raises_for_empty_audience_in_production(self, rsa_keys):

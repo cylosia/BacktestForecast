@@ -203,16 +203,22 @@ def test_pipeline_idempotent_on_retry(db_session) -> None:
 
 
 @pytest.mark.smoke
-def test_stomper_does_not_fail_recent_run(db_session) -> None:
+def test_stomper_does_not_fail_recent_run(db_session, smoke_uses_sqlite) -> None:
     """Verify that a pipeline run started 10 minutes ago is NOT marked as
     failed by the stomper. Only truly stale runs should be superseded."""
+    if smoke_uses_sqlite:
+        pytest.skip(
+            "SQLite does not support partial unique indexes; "
+            "the trade_date uniqueness prevents two concurrent runs."
+        )
     from datetime import UTC, datetime, timedelta
 
     recent_run = NightlyPipelineRun(
         trade_date=date.today(),
         status="running",
-        stage="quick_backtests",
+        stage="quick_backtest",
         created_at=datetime.now(UTC) - timedelta(minutes=10),
+        started_at=datetime.now(UTC) - timedelta(minutes=10),
     )
     db_session.add(recent_run)
     db_session.commit()

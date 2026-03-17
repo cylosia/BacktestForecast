@@ -96,7 +96,7 @@ class PipelineBacktestExecutor:
     def _bundle_cache_key(request: CreateBacktestRunRequest) -> tuple:
         overrides_key: tuple = ()
         if request.strategy_overrides:
-            d = request.strategy_overrides.model_dump(exclude_none=True)
+            d = request.strategy_overrides.model_dump(exclude_none=True, mode="json")
             overrides_key = tuple(sorted(
                 (k, json.dumps(v, sort_keys=True) if isinstance(v, (dict, list)) else str(v))
                 for k, v in d.items()

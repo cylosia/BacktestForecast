@@ -22,13 +22,13 @@ def test_score_adjustment_does_not_compound() -> None:
     """Calling _stage5_forecast_and_rank twice on the same candidates
     should not produce different scores if the candidates are fresh copies."""
     from backtestforecast.pipeline.service import FullBacktestResult
-    from backtestforecast.pipeline.regime import RegimeSnapshot, RegimeLabel
+    from backtestforecast.pipeline.regime import RegimeSnapshot, Regime
 
     regime = RegimeSnapshot(
         symbol="TEST",
         close_price=100.0,
-        regimes=frozenset([RegimeLabel.NEUTRAL]),
-        indicators={},
+        regimes=frozenset([Regime.NEUTRAL]),
+        detail={},
     )
     summary = {
         "total_roi_pct": 15.0,

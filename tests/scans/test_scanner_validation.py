@@ -103,10 +103,13 @@ class TestScanDateValidationTimezoneEdge:
     def test_future_start_date_rejected(self):
         from datetime import timedelta
 
-        future = date.today() + timedelta(days=1)
-        today = date.today()
-        with pytest.raises(PydanticValidationError, match="start_date cannot be in the future"):
-            CreateScannerJobRequest(**self._base_kwargs(start_date=future, end_date=today))
+        from backtestforecast.utils.dates import market_date_today
+
+        today_market = market_date_today()
+        future_start = today_market + timedelta(days=2)
+        future_end = today_market + timedelta(days=5)
+        with pytest.raises(PydanticValidationError, match="end_date cannot be in the future"):
+            CreateScannerJobRequest(**self._base_kwargs(start_date=future_start, end_date=future_end))
 
     def test_start_equals_end_rejected(self):
         same_day = date(2024, 6, 1)

@@ -1,0 +1,68 @@
+# Monitoring stack — run alongside the application compose file.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d
+#
+# Prerequisites:
+#   - Create infra/prometheus/secrets/metrics_token containing the METRICS_TOKEN value.
+#   - Customize infra/alertmanager/alertmanager.yml with your receiver config.
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/grafana/alerts/rules.yml:/etc/prometheus/rules/rules.yml:ro
+      - ./infra/prometheus/secrets:/etc/prometheus/secrets:ro
+      - prometheus_data:/prometheus
+    networks:
+      - backend
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+networks:
+  backend:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-backtestforecast}_backend
+  monitoring:
+
+volumes:
+  prometheus_data:
+  grafana_data:

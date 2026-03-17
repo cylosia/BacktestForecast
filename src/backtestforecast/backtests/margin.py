@@ -177,10 +177,7 @@ def covered_strangle_margin(
     """
     stock_cost = underlying_price * 100.0
     put_margin = naked_put_margin(underlying_price, put_strike, put_premium_per_share)
-    # The naked_put_margin already includes a 20% underlying component; subtract
-    # that overlap since the long stock already covers the put assignment risk.
-    incremental_put_margin = max(put_margin - underlying_price * 100.0 * 0.20, 0.0)
-    return stock_cost + incremental_put_margin
+    return stock_cost + put_margin
 
 
 # ---------------------------------------------------------------------------

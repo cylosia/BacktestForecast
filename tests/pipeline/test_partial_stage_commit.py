@@ -77,7 +77,7 @@ class TestPartialStageCommit:
         with patch.object(service, "_market_data") as mock_md, \
              patch("backtestforecast.pipeline.deep_analysis.classify_regime", return_value=mock_regime), \
              patch("backtestforecast.pipeline.deep_analysis.validate_json_shape"), \
-             patch("backtestforecast.pipeline.deep_analysis.market_date_today", return_value=datetime(2025, 6, 1).date()), \
+             patch("backtestforecast.utils.dates.market_date_today", return_value=datetime(2025, 6, 1).date()), \
              patch.object(service, "_build_landscape", return_value=[]), \
              patch.object(service, "_deep_dive", return_value=[]):
             mock_md.get_daily_bars.return_value = []
@@ -157,7 +157,7 @@ class TestPartialStageCommit:
         with patch.object(service, "_market_data") as mock_md, \
              patch("backtestforecast.pipeline.deep_analysis.classify_regime", return_value=mock_regime), \
              patch("backtestforecast.pipeline.deep_analysis.validate_json_shape"), \
-             patch("backtestforecast.pipeline.deep_analysis.market_date_today", return_value=datetime(2025, 6, 1).date()), \
+             patch("backtestforecast.utils.dates.market_date_today", return_value=datetime(2025, 6, 1).date()), \
              patch.object(service, "_build_landscape", return_value=[]), \
              patch.object(service, "_deep_dive", return_value=[mock_top_result]):
             mock_md.get_daily_bars.return_value = []

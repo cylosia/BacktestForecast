@@ -16,12 +16,13 @@ simulating the file check and PID liveness verification locally.
 from __future__ import annotations
 
 import os
-import signal
+import sys
 import tempfile
 
 import pytest
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill signal 0 not supported on Windows")
 class TestBeatHealthcheckPidFileApproach:
     def test_pid_file_present_and_process_alive(self):
         """When the PID file exists and the process is alive, the

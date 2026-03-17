@@ -384,7 +384,8 @@ def test_wheel_records_assignment_callaway_and_stock_exit() -> None:
     assert result.trades[1].exit_reason == "call_assignment"
     assert result.trades[2].exit_reason == "called_away"
     assert result.trades[2].exit_mid == 100.0, "shares called away at strike, not close"
-    assert round(result.summary.total_net_pnl, 2) == -1400.0
+    # CSP premium: 2×100×2=$400, CC premium: 1×100×qty, stock sold at strike=bought at strike → $0
+    assert round(result.summary.total_net_pnl, 2) == 600.0
 
 
 # ---------------------------------------------------------------------------
@@ -858,7 +859,10 @@ class TestCalendarNetCreditPositionSizing:
         position = strategy.build_position(config, bars_for_test[0], 0, gateway)
         assert position is not None
 
-        expected_margin = naked_call_margin(underlying_close, strike, short_mid)
+        full_margin = naked_call_margin(underlying_close, strike, short_mid)
+        long_leg_value = long_mid * 100.0
+        net_debit = max(entry_value_per_unit, 0.0)
+        expected_margin = max(full_margin - long_leg_value, net_debit)
         assert position.max_loss_per_unit == expected_margin
         assert position.max_loss_per_unit > 0, "max_loss must not be zero for net-credit calendar"
         assert position.capital_required_per_unit == expected_margin

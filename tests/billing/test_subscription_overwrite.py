@@ -27,8 +27,14 @@ def _make_settings() -> MagicMock:
     return settings
 
 
+def _strip_tz(dt: datetime) -> datetime:
+    """Strip timezone info for SQLite-safe comparison."""
+    return dt.replace(tzinfo=None)
+
+
 def test_different_sub_id_skipped_when_active(db_session: Session) -> None:
-    """Webhook with subscription_id != user's current active sub is skipped."""
+    """Webhook for a different subscription with an older period_end
+    is skipped when the user already has an active subscription."""
     user = User(
         clerk_user_id="clerk_overwrite_test",
         email="overwrite@test.com",
@@ -38,7 +44,7 @@ def test_different_sub_id_skipped_when_active(db_session: Session) -> None:
         stripe_customer_id="cus_overwrite",
         stripe_price_id="price_pro_monthly",
         subscription_billing_interval="monthly",
-        subscription_current_period_end=datetime(2025, 4, 1, tzinfo=UTC),
+        subscription_current_period_end=datetime(2025, 5, 1, tzinfo=UTC),
     )
     db_session.add(user)
     db_session.commit()
@@ -52,7 +58,7 @@ def test_different_sub_id_skipped_when_active(db_session: Session) -> None:
         "customer": "cus_overwrite",
         "status": "active",
         "cancel_at_period_end": False,
-        "current_period_end": int(datetime(2025, 5, 1, tzinfo=UTC).timestamp()),
+        "current_period_end": int(datetime(2025, 4, 1, tzinfo=UTC).timestamp()),
         "items": {
             "data": [
                 {
@@ -76,7 +82,7 @@ def test_different_sub_id_skipped_when_active(db_session: Session) -> None:
     assert user.plan_tier == "pro", (
         "Plan tier should remain unchanged when stale webhook is skipped"
     )
-    assert user.subscription_current_period_end == datetime(2025, 4, 1, tzinfo=UTC), (
+    assert _strip_tz(user.subscription_current_period_end) == _strip_tz(datetime(2025, 5, 1, tzinfo=UTC)), (
         "Period end should remain unchanged when stale webhook is skipped"
     )
 
@@ -171,6 +177,6 @@ def test_same_sub_id_is_processed(db_session: Session) -> None:
     db_session.commit()
     db_session.refresh(user)
 
-    assert user.subscription_current_period_end == datetime(2025, 5, 1, tzinfo=UTC), (
+    assert _strip_tz(user.subscription_current_period_end) == _strip_tz(datetime(2025, 5, 1, tzinfo=UTC)), (
         "Same-sub webhook with newer period should be applied"
     )

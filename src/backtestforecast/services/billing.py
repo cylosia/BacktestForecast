@@ -311,7 +311,7 @@ class BillingService:
             and user.subscription_status in ("active", "trialing", "past_due")
             and current_period_end is not None
             and user.subscription_current_period_end is not None
-            and current_period_end <= user.subscription_current_period_end
+            and self._normalize_utc(current_period_end) <= self._normalize_utc(user.subscription_current_period_end)
         ):
             logger.info(
                 "billing.subscription.stale_subscription_event_skipped",
@@ -327,7 +327,7 @@ class BillingService:
             not is_terminal
             and current_period_end is not None
             and user.subscription_current_period_end is not None
-            and current_period_end < user.subscription_current_period_end
+            and self._normalize_utc(current_period_end) < self._normalize_utc(user.subscription_current_period_end)
             and subscription_id == user.stripe_subscription_id
         ):
             logger.info(
@@ -543,6 +543,18 @@ class BillingService:
 
     def _resolve_return_url(self, return_path: str | None) -> str:
         return resolve_return_url(self.settings.app_public_url, return_path)
+
+    @staticmethod
+    def _normalize_utc(dt: datetime) -> datetime:
+        """Ensure a datetime is timezone-aware (UTC) for safe comparison.
+
+        SQLite-backed test sessions may return timezone-naive datetimes even
+        when the column is declared with ``timezone=True``.  PostgreSQL always
+        returns timezone-aware values, so this is a no-op in production.
+        """
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt
 
     @staticmethod
     def _coerce_stripe_id(value: Any) -> str | None:

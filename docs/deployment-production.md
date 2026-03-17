@@ -92,6 +92,41 @@ DB_POOL_TIMEOUT=10
 
 `pool_pre_ping=True` is always enabled to detect stale connections after DB restarts.
 
+## Enabling E2E tests in CI
+
+The `e2e-tests` job in `.github/workflows/ci.yml` is opt-in. To enable it, configure the following in your GitHub repository settings:
+
+### Repository variables (Settings > Variables > Actions)
+
+| Variable | Value |
+|----------|-------|
+| `ENABLE_E2E_TESTS` | `true` |
+
+### Repository secrets (Settings > Secrets > Actions)
+
+| Secret | Source |
+|--------|--------|
+| `CLERK_TESTING_TOKEN` | Clerk dashboard > Testing tokens |
+| `CLERK_TEST_EMAIL` | Email of a dedicated test account |
+| `CLERK_TEST_PASSWORD` | Password for the test account |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk dashboard > API keys |
+| `CLERK_SECRET_KEY` | Clerk dashboard > API keys |
+
+The `ci.yml` E2E job starts only the Next.js frontend. The separate `playwright.yml` workflow (triggered on PRs touching `apps/web/**`) spins up the full stack (Postgres, Redis, API, web) for deeper coverage.
+
+## Monitoring stack
+
+A monitoring compose file is provided at `docker-compose.monitoring.yml` with Prometheus, Alertmanager, and Grafana:
+
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d
+```
+
+Before deploying:
+1. Create `infra/prometheus/secrets/metrics_token` containing the `METRICS_TOKEN` value.
+2. Customize `infra/alertmanager/alertmanager.yml` with your receiver config (Slack, PagerDuty, email, etc.).
+3. Alert rules are at `infra/grafana/alerts/rules.yml` and are auto-loaded by Prometheus.
+
 ## Rollback
 - Roll back web and API images independently.
 - If a migration is non-breaking, keep schema and roll back code first.

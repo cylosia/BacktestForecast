@@ -1,0 +1,55 @@
+# Alertmanager configuration template.
+#
+# Customize the receiver(s) below before deploying.  Common options:
+#   - email_configs: SMTP alerts
+#   - slack_configs: Slack webhook
+#   - pagerduty_configs: PagerDuty integration
+#   - webhook_configs: generic webhook (Opsgenie, custom, etc.)
+#
+# Docs: https://prometheus.io/docs/alerting/latest/configuration/
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    - match:
+        severity: critical
+      receiver: critical
+      repeat_interval: 1h
+
+receivers:
+  - name: default
+    # Uncomment and configure one or more integrations:
+    #
+    # webhook_configs:
+    #   - url: "https://your-webhook-endpoint.example.com/alerts"
+    #     send_resolved: true
+    #
+    # slack_configs:
+    #   - api_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+    #     channel: "#alerts"
+    #     send_resolved: true
+    #     title: '{{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+  - name: critical
+    # Same structure as default — route critical alerts to a higher-urgency
+    # channel (e.g. PagerDuty, on-call Slack channel, or SMS):
+    #
+    # pagerduty_configs:
+    #   - service_key: "YOUR_PAGERDUTY_SERVICE_KEY"
+    #     severity: critical
+
+inhibit_rules:
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ["alertname"]

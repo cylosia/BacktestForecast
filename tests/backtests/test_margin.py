@@ -242,8 +242,9 @@ def test_jade_lizard_credit_less_than_call_spread():
     # put_naked = 1300 (same as above)
     # call_spread = 500
     # total_credit = 2*100 = 200 < 500
-    # margin = max(0, max(1300, 500) - 200) = 1100
-    assert jade_lizard_margin(100.0, 90.0, 3.0, 5.0, 2.0) == pytest.approx(1100.0)
+    # margin = max(put_naked, call_spread) = max(1300, 500) = 1300
+    # Reg T does not subtract total credit from the margin requirement.
+    assert jade_lizard_margin(100.0, 90.0, 3.0, 5.0, 2.0) == pytest.approx(1300.0)
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +329,7 @@ class TestCoveredStrangleMarginReasonable:
     """Verify covered_strangle_margin returns a value less than the sum of
     full stock cost plus full naked put margin (no double-counting)."""
 
-    def test_margin_less_than_stock_plus_naked_put(self):
+    def test_margin_equals_stock_plus_naked_put(self):
         underlying = 100.0
         put_strike = 90.0
         put_premium = 2.0
@@ -337,8 +338,8 @@ class TestCoveredStrangleMarginReasonable:
 
         stock_cost = underlying * 100.0
         full_naked_put = naked_put_margin(underlying, put_strike, put_premium)
-        assert result < stock_cost + full_naked_put, (
-            f"covered_strangle_margin ({result}) should be less than "
+        assert result == pytest.approx(stock_cost + full_naked_put), (
+            f"covered_strangle_margin ({result}) should equal "
             f"stock_cost ({stock_cost}) + naked_put_margin ({full_naked_put})"
         )
 
@@ -769,7 +770,7 @@ class TestButterflyMaxLoss:
 
         strategy = ButterflyStrategy()
         position = strategy.build_position(config, bar, 0, CreditButterflyGW())
-        if position is not None and position.entry_value_per_unit < 0:
+        if position is not None and position.detail_json.get("entry_package_market_value", 0) < 0:
             assert position.max_loss_per_unit == 0.0, (
                 "Credit butterfly should have max_loss_per_unit == 0.0"
             )

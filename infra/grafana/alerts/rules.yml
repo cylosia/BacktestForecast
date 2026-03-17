@@ -231,6 +231,94 @@ groups:
             A nightly pipeline run has failed.  Users may see stale
             daily picks and market analysis data.
 
+      - alert: HTTPErrorRateWarning
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[10m]))
+            / sum(rate(http_requests_total[10m]))
+            > 0.02
+          )
+          and sum(rate(http_requests_total[10m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP 5xx error rate >2% for 10 minutes"
+          runbook_url: "https://docs.internal/runbooks/http-error-rate"
+          description: >-
+            More than 2% of HTTP requests are returning server errors
+            over the last 10 minutes.
+
+      - alert: HealthReadyDegraded
+        expr: |
+          probe_success{job="backtestforecast-api",instance=~".*:8000"} == 0
+          or absent(up{job="backtestforecast-api"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "/health/ready has been degraded for 5+ minutes"
+          runbook_url: "https://docs.internal/runbooks/health-ready"
+          description: >-
+            The API readiness endpoint is returning non-200 responses.
+            Database, Redis, or Celery broker may be down.
+
+      - alert: ScannerJobStuckRunning
+        expr: |
+          max(jobs_stuck_running{model="ScannerJob"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scanner job stuck in running state for >10 minutes"
+          runbook_url: "https://docs.internal/runbooks/stuck-jobs"
+          description: >-
+            {{ $value }} scanner job(s) have been in running state
+            for over 10 minutes.  The reaper should have caught these.
+
+      - alert: StripeWebhookFailures
+        expr: |
+          increase(stripe_webhook_events_total{result="error"}[15m]) > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Stripe webhook failures >3 in 15 minutes"
+          runbook_url: "https://docs.internal/runbooks/stripe-webhooks"
+          description: >-
+            {{ $value }} Stripe webhook processing errors in the last
+            15 minutes.  Billing state may be inconsistent.
+
+      - alert: MassiveProviderErrors
+        expr: |
+          increase(external_api_requests_total{service="massive",result="error"}[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Massive provider error spike (>5 errors in 10 minutes)"
+          runbook_url: "https://docs.internal/runbooks/provider-outage"
+          description: >-
+            {{ $value }} errors from the Massive market data provider.
+            Backtests and scans may be failing or returning incomplete data.
+
+      - alert: ExportFailureRate
+        expr: |
+          (
+            sum(rate(export_jobs_total{status="failed"}[30m]))
+            / sum(rate(export_jobs_total[30m]))
+            > 0.05
+          )
+          and sum(rate(export_jobs_total[30m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Export failure rate >5% over 30 minutes"
+          runbook_url: "https://docs.internal/runbooks/export-failures"
+          description: >-
+            More than 5% of export jobs are failing.
+
       - alert: ExpiredExportsNotCleaned
         expr: |
           increase(export_jobs_total{status="expired"}[24h]) == 0
