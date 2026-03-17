@@ -203,7 +203,7 @@ def nightly_scan_pipeline(
         lock_key = f"bff:pipeline:{trade_date.isoformat()}"
         redis_client = Redis.from_url(settings.redis_url, socket_timeout=5)
         try:
-            lock = redis_client.lock(lock_key, timeout=1750, blocking=False)
+            lock = redis_client.lock(lock_key, timeout=1900, blocking=False)
         except Exception:
             redis_client.close()
             raise
@@ -519,7 +519,14 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             requested_format = _EF(ej.export_format)
         except ValueError:
             requested_format = None
-        if not policy.export_formats or requested_format is None or requested_format not in policy.export_formats:
+        if requested_format is None:
+            ej.status = "failed"
+            ej.error_code = "unsupported_format"
+            ej.error_message = f"Unsupported export format: {ej.export_format}"
+            session.commit()
+            publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": "unsupported_format"})
+            return {"status": "failed", "export_job_id": export_job_id, "error_code": "unsupported_format"}
+        if not policy.export_formats or requested_format not in policy.export_formats:
             ej.status = "failed"
             ej.error_code = "entitlement_revoked"
             ej.error_message = f"Your plan no longer supports {ej.export_format} export."
@@ -938,6 +945,7 @@ def reconcile_s3_orphans(self) -> None:
     """Remove S3 objects that have no corresponding ExportJob in the database."""
     logger.info("s3_orphan_reconciliation_started")
     try:
+        from sqlalchemy import select
         from backtestforecast.config import get_settings
         from backtestforecast.exports.storage import S3Storage
         from backtestforecast.models import ExportJob
@@ -948,23 +956,31 @@ def reconcile_s3_orphans(self) -> None:
             return
 
         s3_storage = S3Storage(settings)
-        prefix = s3_storage._prefix
+        prefix = getattr(s3_storage, "_prefix", "")
+        s3_client = getattr(s3_storage, "_client", None)
+        s3_bucket = getattr(s3_storage, "_bucket", settings.s3_bucket)
+        if s3_client is None:
+            logger.warning("s3_orphan_reconciliation_skipped", reason="no_s3_client")
+            return
+
         with create_worker_session() as session:
-            known_keys = set()
-            for row in session.query(ExportJob.storage_key).filter(
-                ExportJob.storage_key.isnot(None)
-            ).yield_per(5000):
-                known_keys.add(row[0])
             orphan_count = 0
             limit_reached = False
-            paginator = s3_storage._client.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=s3_storage._bucket, Prefix=prefix):
-                for obj in page.get("Contents", []):
+            paginator = s3_client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=s3_bucket, Prefix=prefix):
+                page_keys = [obj["Key"] for obj in page.get("Contents", [])]
+                if not page_keys:
+                    continue
+                existing = set(session.scalars(
+                    select(ExportJob.storage_key).where(
+                        ExportJob.storage_key.in_(page_keys)
+                    )
+                ))
+                for s3_key in page_keys:
                     if orphan_count >= _S3_ORPHAN_MAX_DELETIONS:
                         limit_reached = True
                         break
-                    s3_key = obj["Key"]
-                    if s3_key not in known_keys:
+                    if s3_key not in existing:
                         logger.info("s3_orphan_deleting", s3_key=s3_key)
                         s3_storage.delete(s3_key)
                         orphan_count += 1
@@ -999,8 +1015,10 @@ def reap_stale_jobs(self, stale_minutes: int = 30) -> dict[str, int]:
 
     try:
         _count_redis = Redis.from_url(settings.redis_url, socket_timeout=5)
-        heartbeat_keys = _count_redis.keys("worker:heartbeat:*")
-        CELERY_WORKERS_ONLINE.set(len(heartbeat_keys))
+        heartbeat_count = 0
+        for _ in _count_redis.scan_iter("worker:heartbeat:*", count=100):
+            heartbeat_count += 1
+        CELERY_WORKERS_ONLINE.set(heartbeat_count)
         _count_redis.close()
     except Exception:
         pass
@@ -1107,7 +1125,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         counts["backtest_runs"] = len(stale_run_ids)
 
         stale_running_stmt = (
-            select(BacktestRun)
+            select(BacktestRun.id)
             .where(
                 BacktestRun.status == "running",
                 or_(
@@ -1118,21 +1136,21 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             .limit(50)
             .with_for_update(skip_locked=True)
         )
-        stale_running_rows = list(session.scalars(stale_running_stmt))
-        for row in stale_running_rows:
-            row.status = "failed"
-            row.error_code = "stale_running"
-            row.error_message = "Job was stuck in running state and was automatically failed."
-            row.completed_at = datetime.now(UTC)
-        if stale_running_rows:
+        stale_running_ids = list(session.scalars(stale_running_stmt))
+        if stale_running_ids:
+            session.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id.in_(stale_running_ids), BacktestRun.status == "running")
+                .values(status="failed", error_code="stale_running", error_message="Job was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
+            )
             session.commit()
-            for row in stale_running_rows:
+            for rid in stale_running_ids:
                 try:
-                    publish_job_status("backtest", row.id, "failed", metadata={"error_code": "stale_running"})
+                    publish_job_status("backtest", rid, "failed", metadata={"error_code": "stale_running"})
                 except Exception:
                     pass
-        counts["stale_running_backtests"] = len(stale_running_rows)
-        JOBS_STUCK_RUNNING.labels(model="BacktestRun").set(len(stale_running_rows))
+        counts["stale_running_backtests"] = len(stale_running_ids)
+        JOBS_STUCK_RUNNING.labels(model="BacktestRun").set(len(stale_running_ids))
 
         stale_exports_stmt = (
             select(ExportJob.id)
@@ -1175,7 +1193,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         counts["export_jobs"] = len(stale_export_ids)
 
         stale_running_exports_stmt = (
-            select(ExportJob)
+            select(ExportJob.id)
             .where(
                 ExportJob.status == "running",
                 or_(
@@ -1186,21 +1204,21 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             .limit(50)
             .with_for_update(skip_locked=True)
         )
-        stale_running_export_rows = list(session.scalars(stale_running_exports_stmt))
-        for row in stale_running_export_rows:
-            row.status = "failed"
-            row.error_code = "stale_running"
-            row.error_message = "Job was stuck in running state and was automatically failed."
-            row.completed_at = datetime.now(UTC)
-        if stale_running_export_rows:
+        stale_running_export_ids = list(session.scalars(stale_running_exports_stmt))
+        if stale_running_export_ids:
+            session.execute(
+                update(ExportJob)
+                .where(ExportJob.id.in_(stale_running_export_ids), ExportJob.status == "running")
+                .values(status="failed", error_code="stale_running", error_message="Job was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
+            )
             session.commit()
-            for row in stale_running_export_rows:
+            for rid in stale_running_export_ids:
                 try:
-                    publish_job_status("export", row.id, "failed", metadata={"error_code": "stale_running"})
+                    publish_job_status("export", rid, "failed", metadata={"error_code": "stale_running"})
                 except Exception:
                     pass
-        counts["stale_running_exports"] = len(stale_running_export_rows)
-        JOBS_STUCK_RUNNING.labels(model="ExportJob").set(len(stale_running_export_rows))
+        counts["stale_running_exports"] = len(stale_running_export_ids)
+        JOBS_STUCK_RUNNING.labels(model="ExportJob").set(len(stale_running_export_ids))
 
         stale_scans_stmt = (
             select(ScannerJob.id)
@@ -1243,7 +1261,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         counts["scanner_jobs"] = len(stale_scan_ids)
 
         stale_running_scans_stmt = (
-            select(ScannerJob)
+            select(ScannerJob.id)
             .where(
                 ScannerJob.status == "running",
                 or_(
@@ -1254,21 +1272,21 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             .limit(50)
             .with_for_update(skip_locked=True)
         )
-        stale_running_scan_rows = list(session.scalars(stale_running_scans_stmt))
-        for row in stale_running_scan_rows:
-            row.status = "failed"
-            row.error_code = "stale_running"
-            row.error_message = "Job was stuck in running state and was automatically failed."
-            row.completed_at = datetime.now(UTC)
-        if stale_running_scan_rows:
+        stale_running_scan_ids = list(session.scalars(stale_running_scans_stmt))
+        if stale_running_scan_ids:
+            session.execute(
+                update(ScannerJob)
+                .where(ScannerJob.id.in_(stale_running_scan_ids), ScannerJob.status == "running")
+                .values(status="failed", error_code="stale_running", error_message="Job was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
+            )
             session.commit()
-            for row in stale_running_scan_rows:
+            for rid in stale_running_scan_ids:
                 try:
-                    publish_job_status("scan", row.id, "failed", metadata={"error_code": "stale_running"})
+                    publish_job_status("scan", rid, "failed", metadata={"error_code": "stale_running"})
                 except Exception:
                     pass
-        counts["stale_running_scans"] = len(stale_running_scan_rows)
-        JOBS_STUCK_RUNNING.labels(model="ScannerJob").set(len(stale_running_scan_rows))
+        counts["stale_running_scans"] = len(stale_running_scan_ids)
+        JOBS_STUCK_RUNNING.labels(model="ScannerJob").set(len(stale_running_scan_ids))
 
         stale_analyses_stmt = (
             select(SymbolAnalysis.id)
@@ -1311,7 +1329,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         counts["symbol_analyses"] = len(stale_analysis_ids)
 
         stale_running_analyses_stmt = (
-            select(SymbolAnalysis)
+            select(SymbolAnalysis.id)
             .where(
                 SymbolAnalysis.status == "running",
                 or_(
@@ -1322,24 +1340,24 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             .limit(50)
             .with_for_update(skip_locked=True)
         )
-        stale_running_analysis_rows = list(session.scalars(stale_running_analyses_stmt))
-        for row in stale_running_analysis_rows:
-            row.status = "failed"
-            row.error_code = "stale_running"
-            row.error_message = "Job was stuck in running state and was automatically failed (stale_running)."
-            row.completed_at = datetime.now(UTC)
-        if stale_running_analysis_rows:
+        stale_running_analysis_ids = list(session.scalars(stale_running_analyses_stmt))
+        if stale_running_analysis_ids:
+            session.execute(
+                update(SymbolAnalysis)
+                .where(SymbolAnalysis.id.in_(stale_running_analysis_ids), SymbolAnalysis.status == "running")
+                .values(status="failed", error_code="stale_running", error_message="Job was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
+            )
             session.commit()
-            for row in stale_running_analysis_rows:
+            for rid in stale_running_analysis_ids:
                 try:
-                    publish_job_status("analysis", row.id, "failed", metadata={"error_code": "stale_running"})
+                    publish_job_status("analysis", rid, "failed", metadata={"error_code": "stale_running"})
                 except Exception:
                     pass
-        counts["stale_running_analyses"] = len(stale_running_analysis_rows)
-        JOBS_STUCK_RUNNING.labels(model="SymbolAnalysis").set(len(stale_running_analysis_rows))
+        counts["stale_running_analyses"] = len(stale_running_analysis_ids)
+        JOBS_STUCK_RUNNING.labels(model="SymbolAnalysis").set(len(stale_running_analysis_ids))
 
         stale_running_pipeline_stmt = (
-            select(NightlyPipelineRun)
+            select(NightlyPipelineRun.id)
             .where(
                 NightlyPipelineRun.status == "running",
                 or_(
@@ -1350,15 +1368,16 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             .limit(50)
             .with_for_update(skip_locked=True)
         )
-        stale_running_pipeline_rows = list(session.scalars(stale_running_pipeline_stmt))
-        for row in stale_running_pipeline_rows:
-            row.status = "failed"
-            row.error_message = "Pipeline was stuck in running state and was automatically failed (stale_running)."
-            row.completed_at = datetime.now(UTC)
-        if stale_running_pipeline_rows:
+        stale_running_pipeline_ids = list(session.scalars(stale_running_pipeline_stmt))
+        if stale_running_pipeline_ids:
+            session.execute(
+                update(NightlyPipelineRun)
+                .where(NightlyPipelineRun.id.in_(stale_running_pipeline_ids), NightlyPipelineRun.status == "running")
+                .values(status="failed", error_message="Pipeline was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
+            )
             session.commit()
-        counts["stale_running_pipelines"] = len(stale_running_pipeline_rows)
-        JOBS_STUCK_RUNNING.labels(model="NightlyPipelineRun").set(len(stale_running_pipeline_rows))
+        counts["stale_running_pipelines"] = len(stale_running_pipeline_ids)
+        JOBS_STUCK_RUNNING.labels(model="NightlyPipelineRun").set(len(stale_running_pipeline_ids))
 
         orphan_cutoff = datetime.now(UTC) - timedelta(minutes=15)
         result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=86400)
@@ -1464,12 +1483,13 @@ def refresh_market_holidays(self) -> dict[str, int | str]:
     time_limit=660,
 )
 def cleanup_audit_events(self) -> dict:  # type: ignore[override]
-    """Delete old high-volume audit events (e.g. export.downloaded) to prevent unbounded growth."""
+    """Delete old high-volume audit events in batches to avoid table-locking."""
     from datetime import datetime, timedelta, timezone
-    from sqlalchemy import delete
+    from sqlalchemy import delete, select
     from backtestforecast.db.session import SessionLocal
     from backtestforecast.models import AuditEvent
 
+    BATCH_SIZE = 5000
     cutoff = datetime.now(timezone.utc) - timedelta(days=90)
     high_volume_types = (
         "export.downloaded",
@@ -1480,14 +1500,21 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
     deleted = 0
     with SessionLocal() as session:
         for event_type in high_volume_types:
-            result = session.execute(
-                delete(AuditEvent)
-                .where(
-                    AuditEvent.event_type == event_type,
-                    AuditEvent.created_at < cutoff,
+            while True:
+                batch_ids = list(session.scalars(
+                    select(AuditEvent.id)
+                    .where(
+                        AuditEvent.event_type == event_type,
+                        AuditEvent.created_at < cutoff,
+                    )
+                    .limit(BATCH_SIZE)
+                ))
+                if not batch_ids:
+                    break
+                result = session.execute(
+                    delete(AuditEvent).where(AuditEvent.id.in_(batch_ids))
                 )
-            )
-            deleted += result.rowcount
-        session.commit()
+                deleted += result.rowcount
+                session.commit()
     logger.info("audit.cleanup_complete", deleted=deleted, cutoff=cutoff.isoformat())
     return {"deleted": deleted}

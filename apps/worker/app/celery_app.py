@@ -49,7 +49,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_soft_time_limit=3600,
     task_time_limit=3900,
-    result_expires=86400,
+    result_expires=300,
     worker_max_tasks_per_child=200,
     worker_max_memory_per_child=500_000,
     broker_connection_retry_on_startup=True,
