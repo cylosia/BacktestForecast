@@ -377,6 +377,7 @@ class ExportJob(Base):
             name="ck_export_jobs_succeeded_has_storage",
         ),
         CheckConstraint("size_bytes >= 0", name="ck_export_jobs_size_bytes_nonneg"),
+        CheckConstraint("export_format IN ('csv', 'pdf')", name="ck_export_jobs_valid_export_format"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)

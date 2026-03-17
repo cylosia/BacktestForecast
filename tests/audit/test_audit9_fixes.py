@@ -12,19 +12,12 @@ class TestPipelineForecasterCacheKeyIncludesHorizon:
     forecasts with different horizons are not served from the same cache entry."""
 
     def test_cache_key_differs_by_horizon_days(self):
+        import inspect
         from backtestforecast.pipeline.adapters import PipelineForecaster
-
-        mock_forecaster = MagicMock()
-        mock_market_data = MagicMock()
-        pf = PipelineForecaster(mock_forecaster, mock_market_data)
-
-        key_30 = ("AAPL", date(2025, 6, 1), 30)
-        key_60 = ("AAPL", date(2025, 6, 1), 60)
-
-        assert key_30 != key_60, "Cache keys with different horizon_days must differ"
-
-        assert pf._bar_cache_lock is not None
-        assert isinstance(pf._bar_cache, dict)
+        source = inspect.getsource(PipelineForecaster.get_forecast)
+        assert "(symbol, end_date, horizon_days)" in source, (
+            "PipelineForecaster cache key must include horizon_days"
+        )
 
     def test_get_forecast_uses_horizon_in_cache_key(self):
         from backtestforecast.pipeline.adapters import PipelineForecaster

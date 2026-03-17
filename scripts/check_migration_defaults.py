@@ -16,7 +16,7 @@ from pathlib import Path
 _VERSIONS_DIR = Path(__file__).resolve().parent.parent / "alembic" / "versions"
 
 _COLUMN_RE = re.compile(
-    r"""sa\.Column\(\s*(?P<args>[^)]+)\)""",
+    r"""sa\.Column\((?P<args>(?:[^()]*|\([^()]*\))*)\)""",
     re.DOTALL,
 )
 

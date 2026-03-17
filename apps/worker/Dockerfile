@@ -29,8 +29,6 @@ COPY --from=builder /build /app
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app
 
-EXPOSE 9090
-
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

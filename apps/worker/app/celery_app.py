@@ -211,7 +211,7 @@ def _start_heartbeat_loop() -> None:
                     except Exception:
                         pass
                     conn = None
-            sleep_secs = min(30 * (2 ** consecutive_errors), 120)
+            sleep_secs = min(30 * (2 ** consecutive_errors), 60)
             _heartbeat_stop.wait(sleep_secs)
 
     t = threading.Thread(target=_loop, daemon=True)

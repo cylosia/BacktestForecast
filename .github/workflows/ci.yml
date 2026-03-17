@@ -270,11 +270,15 @@ jobs:
       - name: Verify clean state after downgrade round-trip
         run: alembic check
 
+      - name: Check non-nullable columns have server_default
+        run: python scripts/check_migration_defaults.py
+
   e2e-tests:
+    # ⚠️ WARNING: E2E tests are DISABLED by default. Without setting
+    # ENABLE_E2E_TESTS=true as a repository variable, deployments proceed
+    # WITHOUT browser-level testing coverage.
     # Requires CLERK_TESTING_TOKEN repository secret for Clerk-authenticated E2E flows.
     # Set this in GitHub > Settings > Secrets > Actions to enable this job.
-    # Set the repository variable ENABLE_E2E_TESTS=true to enable.
-    # Without it, E2E tests are silently skipped.
     if: ${{ vars.ENABLE_E2E_TESTS == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20

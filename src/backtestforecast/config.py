@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from typing import ClassVar
 
 import structlog
 
@@ -388,7 +389,7 @@ class Settings(BaseSettings):
     # 4. validate_production_security — enforces production invariants
     # Adding new validators? Place them before validate_production_security
     # so their effects are visible to the security checks.
-    MAX_SYMBOLS: int = 200
+    MAX_SYMBOLS: ClassVar[int] = 200
 
     @model_validator(mode="after")
     def apply_env_overrides(self) -> "Settings":
@@ -403,6 +404,8 @@ class Settings(BaseSettings):
                 max=self.MAX_SYMBOLS,
             )
             self.pipeline_default_symbols = self.pipeline_default_symbols[:self.MAX_SYMBOLS]
+        if not self.pipeline_default_symbols:
+            raise ValueError("pipeline_default_symbols must contain at least one symbol.")
         return self
 
     @model_validator(mode="after")

@@ -78,13 +78,9 @@ services:
       dockerfile: apps/worker/Dockerfile
     container_name: backtestforecast-worker
     restart: unless-stopped
+    env_file: apps/api/.env
     environment:
-      DATABASE_URL: postgresql+psycopg://backtestforecast:backtestforecast@postgres:5432/backtestforecast
-      REDIS_URL: redis://:devpassword@redis:6379/0
-      REDIS_PASSWORD: devpassword
       APP_ENV: development
-      LOG_LEVEL: INFO
-      CELERY_CONCURRENCY: 2
     depends_on:
       postgres:
         condition: service_healthy

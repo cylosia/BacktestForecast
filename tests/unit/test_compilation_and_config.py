@@ -65,31 +65,26 @@ def test_sse_redis_connect_timeout_validated_to_minimum() -> None:
         )
 
 
-def test_to_decimal_coerces_nan_to_zero() -> None:
-    """to_decimal must coerce float('nan') to Decimal('0') instead of crashing."""
-    from decimal import Decimal
-
+def test_to_decimal_rejects_nan() -> None:
+    """to_decimal must reject float('nan') with ValueError."""
     from backtestforecast.services.backtests import to_decimal
 
-    import pytest
     with pytest.raises(ValueError, match="Non-finite"):
         to_decimal(float("nan"))
 
 
-def test_to_decimal_coerces_inf_to_zero() -> None:
+def test_to_decimal_rejects_inf() -> None:
     """to_decimal must reject float('inf') with ValueError."""
     from backtestforecast.services.backtests import to_decimal
 
-    import pytest
     with pytest.raises(ValueError, match="Non-finite"):
         to_decimal(float("inf"))
 
 
-def test_to_decimal_coerces_decimal_nan_to_zero() -> None:
+def test_to_decimal_rejects_decimal_nan() -> None:
     """to_decimal must reject Decimal('NaN') with ValueError."""
     from backtestforecast.services.backtests import to_decimal
 
-    import pytest
     with pytest.raises(ValueError, match="Non-finite"):
         to_decimal(__import__("decimal").Decimal("NaN"))
 

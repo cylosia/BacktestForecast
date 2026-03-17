@@ -373,10 +373,11 @@ class TestCagrShortDuration:
 
 
 class TestRecoveryFactorNegativePnl:
-    """Verify that recovery factor is explicitly set to None when total net
-    PnL is negative, even if there was a meaningful drawdown."""
+    """Verify that recovery factor is a finite negative number when total net
+    PnL is negative and there was a meaningful drawdown.  A negative value is
+    mathematically valid: negative PnL / positive drawdown = negative ratio."""
 
-    def test_negative_pnl_returns_none(self):
+    def test_negative_pnl_returns_negative_recovery_factor(self):
         trades = [_trade(-300.0), _trade(-200.0)]
         equities = [10000.0, 9700.0, 9500.0]
         curve = _equity_curve(equities)
@@ -384,20 +385,18 @@ class TestRecoveryFactorNegativePnl:
 
         assert s.total_net_pnl < 0
         assert s.max_drawdown_pct > 0
-        assert s.recovery_factor is None, (
-            "Recovery factor must be None when total_net_pnl < 0"
-        )
+        assert s.recovery_factor is not None
+        assert s.recovery_factor < 0  # negative PnL produces negative recovery factor
 
-    def test_barely_negative_pnl_returns_none(self):
+    def test_barely_negative_pnl_returns_negative_recovery_factor(self):
         trades = [_trade(500.0), _trade(-501.0)]
         equities = [10000.0, 10500.0, 9999.0]
         curve = _equity_curve(equities)
         s = build_summary(10000.0, 9999.0, trades, curve)
 
         assert s.total_net_pnl < 0
-        assert s.recovery_factor is None, (
-            "Even slightly negative net PnL should yield None recovery factor"
-        )
+        assert s.recovery_factor is not None
+        assert s.recovery_factor < 0  # negative PnL produces negative recovery factor
 
 
 # ---------------------------------------------------------------------------

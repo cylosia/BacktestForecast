@@ -72,7 +72,7 @@ class DatabaseStorage:
                 job = session.get(ExportJob, storage_key)
                 return job is not None and job.content_bytes is not None
         except Exception:
-            return bool(storage_key)
+            return False
 
     def get_object(self, key: str) -> Any:
         raise NotImplementedError("DatabaseStorage does not support streaming")

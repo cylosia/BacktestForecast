@@ -190,12 +190,12 @@ class OptionsBacktestEngine:
                             else:
                                 cash -= total_entry_cost
                                 position = candidate
-                            if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
-                                ev_per_unit
-                            ):
-                                self._add_warning_once(
-                                    warnings, warning_codes, "margin_reserved", strategy.margin_warning_message
-                                )
+                                if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
+                                    ev_per_unit
+                                ):
+                                    self._add_warning_once(
+                                        warnings, warning_codes, "margin_reserved", strategy.margin_warning_message
+                                    )
 
             if position is not None:
                 position_value = self._current_position_value(position, bar.close_price)

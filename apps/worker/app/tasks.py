@@ -1148,15 +1148,17 @@ def _fail_stale_running_jobs(
     )
     stale_running_ids = list(session.scalars(stale_running_stmt))
     if stale_running_ids:
+        values = {
+            "status": "failed",
+            "error_message": "Job was stuck in running state and was automatically failed.",
+            "completed_at": datetime.now(UTC),
+        }
+        if hasattr(model_cls, "error_code"):
+            values["error_code"] = "stale_running"
         session.execute(
             update(model_cls)
             .where(model_cls.id.in_(stale_running_ids), model_cls.status == "running")
-            .values(
-                status="failed",
-                error_code="stale_running",
-                error_message="Job was stuck in running state and was automatically failed.",
-                completed_at=datetime.now(UTC),
-            )
+            .values(**values)
         )
         session.commit()
         for rid in stale_running_ids:

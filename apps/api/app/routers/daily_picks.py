@@ -106,7 +106,7 @@ def get_latest_daily_picks(
                 "score": float(rec.score),
                 "symbol": rec.symbol,
                 "strategy_type": rec.strategy_type,
-                "regime_labels": rec.regime_labels if isinstance(rec.regime_labels, list) else [l.strip() for l in (rec.regime_labels or "").split(",") if l.strip()],
+                "regime_labels": rec.regime_labels if isinstance(rec.regime_labels, list) else [label.strip() for label in (rec.regime_labels or "").split(",") if label.strip()],
                 "close_price": float(rec.close_price),
                 "target_dte": rec.target_dte,
                 "config_snapshot": rec.config_snapshot_json,

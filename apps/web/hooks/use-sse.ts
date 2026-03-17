@@ -104,15 +104,9 @@ export function useSSE<T>({
       if (!mountedRef.current) return;
       es.close();
       esRef.current = null;
-      if (!opened) {
-        setStatus("polling");
-        setUseFallback(true);
-        startPolling();
-      } else {
-        setStatus("polling");
-        setUseFallback(true);
-        startPolling();
-      }
+      setStatus("polling");
+      setUseFallback(true);
+      startPolling();
     };
 
     return () => {

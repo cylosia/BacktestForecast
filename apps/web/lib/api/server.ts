@@ -92,10 +92,13 @@ export async function getDailyPicks(): Promise<DailyPicksResponse> {
 
 export async function getAnalysisHistory(limit = 10, offset = 0) {
   const token = await getServerToken();
-  return apiRequest<AnalysisListResponse>(`/v1/analysis?limit=${limit}&offset=${offset}`, token, { cache: "no-store" });
+  const safeLimit = Math.max(1, Math.min(limit, 100));
+  const safeOffset = Math.max(0, offset);
+  return apiRequest<AnalysisListResponse>(`/v1/analysis?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
 }
 
 export async function getDailyPicksHistory(limit = 10) {
   const token = await getServerToken();
-  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?limit=${limit}`, token, { cache: "no-store" });
+  const safeLimit = Math.max(1, Math.min(limit, 100));
+  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?limit=${safeLimit}`, token, { cache: "no-store" });
 }

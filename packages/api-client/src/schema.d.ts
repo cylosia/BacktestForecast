@@ -722,7 +722,7 @@ export interface components {
             symbol: string;
             /** Strategy Type */
             strategy_type: string;
-            status: components["schemas"]["JobStatus"];
+            status: components["schemas"]["RunStatus"];
             /**
              * Date From
              * Format: date
@@ -783,7 +783,7 @@ export interface components {
             symbol: string;
             /** Strategy Type */
             strategy_type: string;
-            status: components["schemas"]["JobStatus"];
+            status: components["schemas"]["RunStatus"];
             /**
              * Date From
              * Format: date
@@ -811,6 +811,12 @@ export interface components {
         BacktestRunListResponse: {
             /** Items */
             items: components["schemas"]["BacktestRunHistoryItemResponse"][];
+            /** @default 0 */
+            total?: number;
+            /** @default 0 */
+            offset?: number;
+            /** @default 50 */
+            limit?: number;
         };
         /** BacktestRunStatusResponse */
         BacktestRunStatusResponse: {
@@ -888,7 +894,7 @@ export interface components {
         /** BacktestTradeResponse */
         BacktestTradeResponse: {
             /** Id */
-            id?: string | null;
+            id: string;
             /** Option Ticker */
             option_ticker: string;
             /** Strategy Type */
@@ -1364,8 +1370,7 @@ export interface components {
             run_id: string;
             /** Export Format */
             export_format: string;
-            /** Status */
-            status: string;
+            status: components["schemas"]["ExportJobStatus"];
             /** File Name */
             file_name: string;
             /** Mime Type */
@@ -1454,6 +1459,10 @@ export interface components {
             disclaimer: string;
             /** Analog Dates */
             analog_dates?: string[];
+            /** Trading Days Used */
+            trading_days_used?: number | null;
+            /** Analogs Used */
+            analogs_used?: number | null;
         };
         /** HistoricalPerformanceResponse */
         HistoricalPerformanceResponse: {
@@ -1555,10 +1564,20 @@ export interface components {
             lookback_days: number;
         };
         /**
+         * ExportJobStatus
+         * @enum {string}
+         */
+        ExportJobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+        /**
          * JobStatus
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+        /**
+         * RunStatus
+         * @enum {string}
+         */
+        RunStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /** LandscapeCell */
         LandscapeCell: {
             /** Strategy Type */
@@ -1778,6 +1797,12 @@ export interface components {
         ScannerJobListResponse: {
             /** Items */
             items: components["schemas"]["ScannerJobResponse"][];
+            /** @default 0 */
+            total?: number;
+            /** @default 0 */
+            offset?: number;
+            /** @default 50 */
+            limit?: number;
         };
         /** ScannerJobResponse */
         ScannerJobResponse: {
