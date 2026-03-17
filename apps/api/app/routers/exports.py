@@ -156,6 +156,7 @@ def download_export(
             ip_address=metadata.ip_address,
         )
         safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", export_job.file_name)
+        safe_name = safe_name.lstrip(".").replace("..", "_") or "export"
         allowed_mime_types = {"text/csv", "text/csv; charset=utf-8", "application/pdf"}
         mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
 

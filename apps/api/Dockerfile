@@ -40,4 +40,4 @@ STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; r = urllib.request.urlopen('http://localhost:8000/health/live'); exit(0 if r.getcode() == 200 else 1)"
 
-CMD ["uvicorn", "apps.api.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--timeout-graceful-shutdown", "30"]
+CMD ["sh", "-c", "exec uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-4} --proxy-headers --timeout-graceful-shutdown 30 --limit-max-requests ${UVICORN_MAX_REQUESTS:-10000}"]

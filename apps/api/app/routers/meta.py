@@ -17,7 +17,7 @@ def get_meta(request: Request) -> dict[str, Any]:
     client_ip = _extract_client_ip(request)
     get_rate_limiter().check(
         bucket="meta:read",
-        actor_key=client_ip,
+        actor_key=client_ip or "unknown",
         limit=120,
         window_seconds=settings.rate_limit_window_seconds,
     )

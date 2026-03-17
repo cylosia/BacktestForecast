@@ -7,7 +7,7 @@ from apps.api.app.dependencies import get_current_user
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import CurrentUserResponse
-from backtestforecast.security.rate_limits import get_rate_limiter
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.backtests import BacktestService
 
 router = APIRouter(tags=["me"])
