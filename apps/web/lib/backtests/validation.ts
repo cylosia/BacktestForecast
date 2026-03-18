@@ -6,6 +6,7 @@ import type {
   StrategyType,
 } from "@backtestforecast/api-client";
 import { daysAgo } from "@/lib/utils";
+import { TICKER_RE } from "@/lib/validation-constants";
 
 export interface BacktestFormValues {
   symbol: string;
@@ -79,7 +80,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     errors.symbol = "Symbol is required.";
   } else if (normalizedSymbol.length > 16) {
     errors.symbol = "Symbol must be 16 characters or fewer.";
-  } else if (!/^[A-Z][A-Z0-9./^-]{0,15}$/.test(normalizedSymbol)) {
+  } else if (!TICKER_RE.test(normalizedSymbol)) {
     errors.symbol = "Symbol must start with a letter and may contain letters, digits, dots, slashes, ^ or -.";
   }
 
@@ -101,6 +102,15 @@ export function validateBacktestForm(values: BacktestFormValues): {
     errors.endDate = "End date must be later than start date.";
   }
 
+  if (!errors.startDate && !errors.endDate) {
+    const start = new Date(values.startDate);
+    const end = new Date(values.endDate);
+    const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDays > 365 * 20) {
+      errors.endDate = "Date range cannot exceed 20 years.";
+    }
+  }
+
   const numericChecks: Array<{
     key: keyof BacktestFormValues;
     min?: number;
@@ -109,12 +119,12 @@ export function validateBacktestForm(values: BacktestFormValues): {
     integer?: boolean;
     label: string;
   }> = [
-    { key: "targetDte", min: 7, max: 365, integer: true, label: "Target DTE" },
+    { key: "targetDte", min: 1, max: 365, integer: true, label: "Target DTE" },
     { key: "dteToleranceDays", min: 0, max: 60, integer: true, label: "DTE tolerance" },
     { key: "maxHoldingDays", min: 1, max: 120, integer: true, label: "Max holding days" },
     { key: "accountSize", min: 100, max: 100_000_000, label: "Account size" },
     { key: "riskPerTradePct", min: 0, max: 100, exclusiveMin: true, label: "Risk per trade" },
-    { key: "commissionPerContract", min: 0, max: 1000, label: "Commission per contract" },
+    { key: "commissionPerContract", min: 0, max: 100, label: "Commission per contract" },
   ];
 
   for (const check of numericChecks) {
@@ -237,7 +247,6 @@ export function validateBacktestForm(values: BacktestFormValues): {
       risk_per_trade_pct: parseNumber(values.riskPerTradePct),
       commission_per_contract: parseNumber(values.commissionPerContract),
       entry_rules: entryRules,
-      idempotency_key: crypto.randomUUID(),
     },
   };
 }

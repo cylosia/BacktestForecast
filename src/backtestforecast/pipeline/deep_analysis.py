@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES, STRATEGY_REGISTRY
-from backtestforecast.errors import ConfigurationError, DataUnavailableError, NotFoundError, QuotaExceededError
+from backtestforecast.errors import ConfigurationError, ConflictError, DataUnavailableError, NotFoundError, QuotaExceededError
 from backtestforecast.schemas.json_shapes import (
     _REGIME_REQUIRED_KEYS,
     validate_json_shape,
@@ -112,6 +112,7 @@ class LandscapeCell:
     total_roi_pct: float = 0.0
     max_drawdown_pct: float = 0.0
     score: float = 0.0
+    stable_order: int = 0
 
 
 @dataclass
@@ -215,7 +216,11 @@ class SymbolDeepAnalysisService:
         except IntegrityError:
             self.session.rollback()
             if idempotency_key:
-                existing = self._repo.get_by_idempotency_key(user.id, idempotency_key)
+                stmt = select(SymbolAnalysis).where(
+                    SymbolAnalysis.user_id == user.id,
+                    SymbolAnalysis.idempotency_key == idempotency_key,
+                )
+                existing = self.session.scalar(stmt)
                 if existing is not None:
                     return existing
             raise
@@ -231,6 +236,23 @@ class SymbolDeepAnalysisService:
             raise NotFoundError("Symbol analysis not found.")
         if analysis.status not in ("queued", "running"):
             logger.info("deep_analysis.execute_skipped", analysis_id=str(analysis_id), status=analysis.status)
+            return analysis
+
+        # Re-entitlement check: verify user still has access before executing
+        user = self.session.get(User, analysis.user_id)
+        if user is None:
+            analysis.status = "failed"
+            analysis.error_code = "entitlement_revoked"
+            analysis.error_message = "User account not found."
+            self.session.commit()
+            return analysis
+        from backtestforecast.billing.entitlements import resolve_feature_policy
+        policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        if not policy.forecasting_access:
+            analysis.status = "failed"
+            analysis.error_code = "entitlement_revoked"
+            analysis.error_message = "Your plan no longer supports this operation."
+            self.session.commit()
             return analysis
 
         started_at = time.monotonic()
@@ -340,25 +362,35 @@ class SymbolDeepAnalysisService:
             if top_results and top_results[0].forecast:
                 analysis.forecast_json = top_results[0].forecast
 
-            analysis.status = "succeeded"
+            from sqlalchemy import update as sa_update
+            success_values: dict[str, Any] = {
+                "status": "succeeded",
+                "completed_at": datetime.now(UTC),
+                "duration_seconds": Decimal(str(round(time.monotonic() - started_at, 2))),
+                "updated_at": datetime.now(UTC),
+            }
             if not top_results:
-                analysis.forecast_json = {
+                forecast_json = {
                     **(analysis.forecast_json or {}),
-                    "no_results_message": (
-                        "Analysis completed but no profitable strategy configurations were found "
-                        "for this symbol and date range."
-                    ),
+                    "no_results_message": "Analysis completed but no profitable strategy configurations were found for this symbol and date range.",
                 }
-            analysis.completed_at = datetime.now(UTC)
-            analysis.duration_seconds = Decimal(str(round(time.monotonic() - started_at, 2)))
+                success_values["forecast_json"] = forecast_json
+
+            success_rows = self.session.execute(
+                sa_update(SymbolAnalysis)
+                .where(SymbolAnalysis.id == analysis.id, SymbolAnalysis.status == "running")
+                .values(**success_values)
+            )
             self.session.commit()
+            if success_rows.rowcount == 0:
+                logger.warning("analysis.success_overwrite_prevented", analysis_id=str(analysis.id))
 
             logger.info(
                 "deep_analysis.complete",
                 analysis_id=str(analysis_id),
                 symbol=symbol,
                 top_results=len(top_results),
-                duration=float(analysis.duration_seconds),
+                duration=float(success_values["duration_seconds"]),
             )
 
         except Exception:
@@ -414,6 +446,18 @@ class SymbolDeepAnalysisService:
         from sqlalchemy import func as sa_func
         stmt = select(sa_func.count(SymbolAnalysis.id)).where(SymbolAnalysis.user_id == user.id)
         return int(self.session.scalar(stmt) or 0)
+
+    def delete_for_user(self, analysis_id: UUID, user_id: UUID) -> None:
+        """Delete an analysis. Raises ConflictError if the analysis is queued or running."""
+        analysis = self._repo.get_for_user(analysis_id, user_id)
+        if analysis is None:
+            raise NotFoundError("Symbol analysis not found.")
+        if analysis.status in ("queued", "running"):
+            raise ConflictError(
+                "Cannot delete an analysis that is currently queued or running. Cancel it first."
+            )
+        self.session.delete(analysis)
+        self.session.commit()
 
     # -------------------------------------------------------------------
     # Internal stages
@@ -503,7 +547,7 @@ class SymbolDeepAnalysisService:
                     except Exception:
                         pass
         finally:
-            pool.shutdown(wait=True, cancel_futures=False)
+            pool.shutdown(wait=True, cancel_futures=True)
 
         return cells
 
@@ -559,13 +603,11 @@ class SymbolDeepAnalysisService:
                     except Exception:
                         pass
         finally:
-            pool.shutdown(wait=True, cancel_futures=False)
+            pool.shutdown(wait=True, cancel_futures=True)
 
-        cell_order: dict[int, int] = {}
         for idx, c in enumerate(candidates):
-            c._stable_order = idx  # type: ignore[attr-defined]
-            cell_order[idx] = idx
-        backtest_results.sort(key=lambda pair: getattr(pair[0], "_stable_order", 0))
+            c.stable_order = idx
+        backtest_results.sort(key=lambda pair: pair[0].stable_order)
 
         results: list[TopResult] = []
         for rank_idx, (cell, full) in enumerate(backtest_results, start=1):

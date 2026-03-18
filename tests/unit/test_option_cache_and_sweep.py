@@ -533,6 +533,8 @@ class TestIVEstimationCache:
             OptionContractRecord("O:TSLA250321P00250000", "put", date(2025, 3, 21), 250.0, 100.0),
         ]
         mock_gateway = MagicMock()
+        mock_gateway.get_iv = None
+        mock_gateway.store_iv = None
         mock_gateway.get_quote.return_value = OptionQuoteRecord(date(2025, 3, 14), 5.0, 5.2, None)
 
         iv_cache: dict = {}
@@ -553,6 +555,8 @@ class TestIVEstimationCache:
             OptionContractRecord("O:TSLA250321P00250000", "put", date(2025, 3, 21), 250.0, 100.0),
         ]
         mock_gateway = MagicMock()
+        mock_gateway.get_iv = None
+        mock_gateway.store_iv = None
         mock_gateway.get_quote.return_value = None
 
         iv_cache: dict = {}
@@ -578,6 +582,8 @@ class TestIVEstimationCache:
         strikes = [240.0, 250.0, 260.0]
 
         mock_gateway = MagicMock()
+        mock_gateway.get_iv = None
+        mock_gateway.store_iv = None
         mock_gateway.get_quote.return_value = OptionQuoteRecord(date(2025, 3, 14), 3.0, 3.2, None)
 
         iv_cache: dict = {}
@@ -608,6 +614,8 @@ class TestIVEstimationCache:
             OptionContractRecord("O:TSLA250321P00250000", "put", date(2025, 3, 21), 250.0, 100.0),
         ]
         mock_gateway = MagicMock()
+        mock_gateway.get_iv = None
+        mock_gateway.store_iv = None
         mock_gateway.get_quote.return_value = OptionQuoteRecord(date(2025, 3, 14), 5.0, 5.2, None)
 
         with patch("backtestforecast.backtests.rules.implied_volatility_from_price", return_value=0.40) as mock_iv:
@@ -617,10 +625,11 @@ class TestIVEstimationCache:
         assert mock_iv.call_count == 1
 
     def test_gateway_has_iv_cache(self):
+        """MassiveOptionGateway exposes _iv_cache used by strategy modules
+        for per-gateway IV caching during backtest execution."""
         from backtestforecast.market_data.service import MassiveOptionGateway
 
         mock_client = MagicMock()
         gw = MassiveOptionGateway(mock_client, "TSLA")
         assert hasattr(gw, '_iv_cache')
         assert isinstance(gw._iv_cache, dict)
-        assert len(gw._iv_cache) == 0

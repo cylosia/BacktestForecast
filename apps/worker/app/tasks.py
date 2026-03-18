@@ -14,7 +14,7 @@ import structlog
 from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 
 from apps.worker.app.celery_app import celery_app
-from backtestforecast.db.session import SessionLocal, create_worker_session
+from backtestforecast.db.session import create_worker_session
 from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.errors import AppError
 from backtestforecast.events import _VALID_TARGET_STATUSES, publish_job_status
@@ -59,7 +59,7 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         super().on_failure(exc, task_id, args, kwargs, einfo)
         is_terminal = (
-            self.request.retries >= self.max_retries
+            (self.max_retries is not None and self.request.retries >= self.max_retries)
             or isinstance(exc, SoftTimeLimitExceeded)
         )
         if is_terminal:
@@ -165,6 +165,9 @@ def nightly_scan_pipeline(
     trade_date_iso: str | None = None,
 ) -> dict[str, str | int]:
     """Execute the full nightly scan pipeline."""
+    if symbols is not None and len(symbols) > 500:
+        raise ValueError(f"symbols list too large ({len(symbols)}); maximum is 500")
+
     from datetime import UTC, date, datetime
 
     from backtestforecast.config import get_settings
@@ -217,11 +220,15 @@ def nightly_scan_pipeline(
         else:
             trade_date = datetime.now(ZoneInfo("America/New_York")).date()
 
+        if trade_date_iso is None and trade_date.weekday() >= 5:
+            logger.info("pipeline.skipped_weekend", trade_date=str(trade_date))
+            return {"status": "skipped", "reason": "weekend"}
+
         from redis import Redis
         lock_key = f"bff:pipeline:{trade_date.isoformat()}"
         redis_client = Redis.from_url(settings.redis_url, socket_timeout=5)
         try:
-            lock = redis_client.lock(lock_key, timeout=1900, blocking=False)
+            lock = redis_client.lock(lock_key, timeout=1860, blocking=False)
         except Exception:
             redis_client.close()
             raise
@@ -235,6 +242,7 @@ def nightly_scan_pipeline(
             redis_client.close()
             return {"status": "skipped", "reason": "locked"}
 
+        _retrying = False
         try:
             with create_worker_session() as session:
                 service = NightlyPipelineService(
@@ -267,6 +275,7 @@ def nightly_scan_pipeline(
                 except Exception as exc:
                     session.rollback()
                     logger.exception("pipeline.task_failed", trade_date=str(trade_date))
+                    _retrying = True
                     try:
                         raise self.retry(exc=exc, countdown=300, kwargs={
                             "symbols": symbols,
@@ -274,6 +283,7 @@ def nightly_scan_pipeline(
                             "trade_date_iso": trade_date.isoformat(),
                         })
                     except MaxRetriesExceededError:
+                        _retrying = False
                         run_obj = _find_pipeline_run(session, NightlyPipelineRun, run, trade_date)
                         if run_obj is not None and run_obj.status == "running":
                             run_obj.status = "failed"
@@ -296,15 +306,20 @@ def nightly_scan_pipeline(
                     "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
                 }
         finally:
-            try:
-                lock.release()
-            except Exception:
-                pass
+            if not _retrying:
+                try:
+                    lock.release()
+                except Exception:
+                    pass
             try:
                 redis_client.close()
             except Exception:
                 pass
     finally:
+        try:
+            shared_mds.close()
+        except Exception:
+            logger.exception("shared_mds.close_failed")
         try:
             executor.close()
         except Exception:
@@ -346,14 +361,16 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
             update(model_cls)
             .where(model_cls.id == obj_id, model_cls.celery_task_id.is_(None))
             .values(celery_task_id=expected_task_id)
+            .returning(model_cls.id)
         )
+        claimed = result.fetchone() is not None
         try:
             session.commit()
         except Exception:
             session.rollback()
             logger.warning("validate_task_ownership.commit_failed", model=model_cls.__name__, obj_id=str(obj_id), exc_info=True)
             return False
-        if result.rowcount == 0:
+        if not claimed:
             return False
         session.refresh(obj)
         return True
@@ -367,14 +384,16 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
                 model_cls.status.notin_(_TERMINAL_STATUSES),
             )
             .values(celery_task_id=expected_task_id)
+            .returning(model_cls.id)
         )
+        claimed = result.fetchone() is not None
         try:
             session.commit()
         except Exception:
             session.rollback()
             logger.warning("validate_task_ownership.redelivery_commit_failed", model=model_cls.__name__, obj_id=str(obj_id), exc_info=True)
             return False
-        if result.rowcount > 0:
+        if claimed:
             logger.info(
                 "validate_task_ownership.redelivery_claimed",
                 model=model_cls.__name__,
@@ -389,7 +408,7 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
 
 @celery_app.task(name="backtests.run", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=2, soft_time_limit=300, time_limit=330)
 def run_backtest(self, run_id: str) -> dict[str, str]:
-    with SessionLocal() as session:
+    with create_worker_session() as session:
         if not _validate_task_ownership(session, BacktestRun, UUID(run_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="backtests.run").inc()
             logger.info("backtests.run.duplicate_delivery", run_id=run_id, task_id=self.request.id)
@@ -514,7 +533,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
 
 @celery_app.task(name="exports.generate", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=2, soft_time_limit=120, time_limit=150)
 def generate_export(self, export_job_id: str) -> dict[str, str | int]:
-    with SessionLocal() as session:
+    with create_worker_session() as session:
         if not _validate_task_ownership(session, ExportJobModel, UUID(export_job_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="exports.generate").inc()
             logger.info("exports.generate.duplicate_delivery", export_job_id=export_job_id, task_id=self.request.id)
@@ -558,16 +577,19 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
         except AppError as exc:
             session.rollback()
             session.expire_all()
+            from datetime import UTC, datetime as _dt_app
             ej_obj = session.get(ExportJobModel, UUID(export_job_id))
             if ej_obj is not None and ej_obj.status in ("queued", "running"):
                 ej_obj.status = "failed"
                 ej_obj.error_code = exc.code
                 ej_obj.error_message = str(exc.message)
+                ej_obj.completed_at = _dt_app.now(UTC)
                 try:
                     session.commit()
                 except Exception:
                     session.rollback()
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
+            EXPORT_JOBS_TOTAL.labels(status="failed").inc()
             publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": exc.code})
             return {
                 "status": "failed",
@@ -591,6 +613,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                     logger.exception("soft_time_limit.commit_failed")
                     session.rollback()
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
+            EXPORT_JOBS_TOTAL.labels(status="failed").inc()
             publish_job_status(
                 "export", UUID(export_job_id), "failed",
                 metadata={"error_code": "time_limit_exceeded"},
@@ -666,7 +689,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
         market_data = PipelineMarketDataFetcher(client)
         forecaster = PipelineForecaster(HistoricalAnalogForecaster(), market_data)
 
-        with SessionLocal() as session:
+        with create_worker_session() as session:
             if not _validate_task_ownership(session, SymbolAnalysis, UUID(analysis_id), self.request.id):
                 DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="analysis.deep_symbol").inc()
                 logger.info("analysis.deep_symbol.duplicate_delivery", analysis_id=analysis_id, task_id=self.request.id)
@@ -705,9 +728,11 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 session.expire_all()
                 sa_fail = session.get(SymbolAnalysis, UUID(analysis_id))
                 if sa_fail is not None and sa_fail.status in ("queued", "running"):
+                    from datetime import UTC, datetime as _dt_analysis_app
                     sa_fail.status = "failed"
                     sa_fail.error_code = exc.code
                     sa_fail.error_message = str(exc.message)
+                    sa_fail.completed_at = _dt_analysis_app.now(UTC)
                     try:
                         session.commit()
                     except Exception:
@@ -777,6 +802,10 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
             }
     finally:
         try:
+            shared_mds.close()
+        except Exception:
+            logger.exception("shared_mds.close_failed")
+        try:
             executor.close()
         except Exception:
             logger.exception("executor.close_failed")
@@ -788,7 +817,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
 
 @celery_app.task(name="scans.run_job", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=3, soft_time_limit=600, time_limit=660)
 def run_scan_job(self, job_id: str) -> dict[str, str | int]:
-    with SessionLocal() as session:
+    with create_worker_session() as session:
         if not _validate_task_ownership(session, ScannerJobModel, UUID(job_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="scans.run_job").inc()
             logger.info("scans.run_job.duplicate_delivery", job_id=job_id, task_id=self.request.id)
@@ -821,11 +850,13 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         except AppError as exc:
             session.rollback()
             session.expire_all()
+            from datetime import UTC, datetime as _dt_scan
             sj_obj = session.get(ScannerJobModel, UUID(job_id))
             if sj_obj is not None and sj_obj.status in ("queued", "running"):
                 sj_obj.status = "failed"
                 sj_obj.error_code = exc.code
                 sj_obj.error_message = str(exc.message)
+                sj_obj.completed_at = _dt_scan.now(UTC)
                 try:
                     session.commit()
                 except Exception:
@@ -905,7 +936,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
 
 @celery_app.task(name="sweeps.run", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=2, soft_time_limit=3600, time_limit=3660)
 def run_sweep(self, job_id: str) -> dict[str, str | int]:
-    with SessionLocal() as session:
+    with create_worker_session() as session:
         if not _validate_task_ownership(session, SweepJobModel, UUID(job_id), self.request.id):
             DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="sweeps.run").inc()
             logger.info("sweeps.run.duplicate_delivery", job_id=job_id, task_id=self.request.id)
@@ -917,13 +948,13 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
         user = session.get(User, sj.user_id)
         if user is None:
             sj.status = "failed"
-            sj.error_code = "user_not_found"
+            sj.error_code = "entitlement_revoked"
             sj.error_message = "User account not found."
             session.commit()
-            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "user_not_found"})
-            return {"status": "failed", "job_id": job_id, "error_code": "user_not_found"}
+            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-        if policy.monthly_backtest_quota is not None and policy.monthly_backtest_quota <= 0:
+        if not policy.forecasting_access:
             sj.status = "failed"
             sj.error_code = "entitlement_revoked"
             sj.error_message = "Your plan no longer supports this operation."
@@ -937,11 +968,13 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
         except AppError as exc:
             session.rollback()
             session.expire_all()
+            from datetime import UTC, datetime as _dt_sweep_app
             sweep_obj = session.get(SweepJobModel, UUID(job_id))
             if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
                 sweep_obj.status = "failed"
                 sweep_obj.error_code = exc.code
                 sweep_obj.error_message = str(exc.message)
+                sweep_obj.completed_at = _dt_sweep_app.now(UTC)
                 try:
                     session.commit()
                 except Exception:
@@ -1015,7 +1048,7 @@ def refresh_prioritized_scans(self) -> dict[str, int]:
     from backtestforecast.models import ScannerJob
 
     dispatched = 0
-    with SessionLocal() as session:
+    with create_worker_session() as session:
         service = ScanService(session)
         try:
             jobs = service.create_scheduled_refresh_jobs(limit=25)
@@ -1058,6 +1091,28 @@ def refresh_prioritized_scans(self) -> dict[str, int]:
 _S3_ORPHAN_MAX_DELETIONS = 500
 
 
+def _process_orphan_batch(
+    session, s3_storage, page_keys: list[str], orphan_count: int,
+) -> tuple[int, bool]:
+    """Check a batch of S3 keys against the DB and delete orphans."""
+    from sqlalchemy import select
+    from backtestforecast.models import ExportJob
+
+    existing = set(session.scalars(
+        select(ExportJob.storage_key).where(ExportJob.storage_key.in_(page_keys))
+    ))
+    limit_reached = False
+    for s3_key in page_keys:
+        if orphan_count >= _S3_ORPHAN_MAX_DELETIONS:
+            limit_reached = True
+            break
+        if s3_key not in existing:
+            logger.info("s3_orphan_deleting", s3_key=s3_key)
+            s3_storage.delete(s3_key)
+            orphan_count += 1
+    return orphan_count, limit_reached
+
+
 @celery_app.task(name="maintenance.reconcile_s3_orphans", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=0, soft_time_limit=3600, time_limit=3660)
 def reconcile_s3_orphans(self) -> None:
     """Remove S3 objects that have no corresponding ExportJob in the database."""
@@ -1074,36 +1129,26 @@ def reconcile_s3_orphans(self) -> None:
             return
 
         s3_storage = S3Storage(settings)
-        prefix = getattr(s3_storage, "_prefix", "")
-        s3_client = getattr(s3_storage, "_client", None)
-        s3_bucket = getattr(s3_storage, "_bucket", settings.s3_bucket)
-        if s3_client is None:
-            logger.warning("s3_orphan_reconciliation_skipped", reason="no_s3_client")
-            return
 
         with create_worker_session() as session:
             orphan_count = 0
             limit_reached = False
-            paginator = s3_client.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=s3_bucket, Prefix=prefix):
-                page_keys = [obj["Key"] for obj in page.get("Contents", [])]
-                if not page_keys:
+            batch: list[str] = []
+            batch_size = 500
+            for key in s3_storage.iter_keys():
+                batch.append(key)
+                if len(batch) < batch_size:
                     continue
-                existing = set(session.scalars(
-                    select(ExportJob.storage_key).where(
-                        ExportJob.storage_key.in_(page_keys)
-                    )
-                ))
-                for s3_key in page_keys:
-                    if orphan_count >= _S3_ORPHAN_MAX_DELETIONS:
-                        limit_reached = True
-                        break
-                    if s3_key not in existing:
-                        logger.info("s3_orphan_deleting", s3_key=s3_key)
-                        s3_storage.delete(s3_key)
-                        orphan_count += 1
+                orphan_count, limit_reached = _process_orphan_batch(
+                    session, s3_storage, batch, orphan_count,
+                )
+                batch = []
                 if limit_reached:
                     break
+            if batch and not limit_reached:
+                orphan_count, limit_reached = _process_orphan_batch(
+                    session, s3_storage, batch, orphan_count,
+                )
             logger.info(
                 "s3_orphan_reconciliation_complete",
                 orphans_removed=orphan_count,
@@ -1120,6 +1165,8 @@ def reconcile_s3_orphans(self) -> None:
 @celery_app.task(name="maintenance.reap_stale_jobs", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=300, time_limit=360)
 def reap_stale_jobs(self, stale_minutes: int = 30) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
+    stale_minutes = max(stale_minutes, 5)
+
     from redis import Redis
 
     from backtestforecast.config import get_settings
@@ -1127,11 +1174,14 @@ def reap_stale_jobs(self, stale_minutes: int = 30) -> dict[str, int]:
 
     settings = get_settings()
 
+    _MAX_HEARTBEAT_SCAN = 500
     try:
         _count_redis = Redis.from_url(settings.redis_url, socket_timeout=5)
         heartbeat_count = 0
         for _ in _count_redis.scan_iter("worker:heartbeat:*", count=100):
             heartbeat_count += 1
+            if heartbeat_count >= _MAX_HEARTBEAT_SCAN:
+                break
         CELERY_WORKERS_ONLINE.set(heartbeat_count)
         _count_redis.close()
     except Exception:
@@ -1199,10 +1249,11 @@ def _reap_queued_jobs(
     for job_id in stale_ids:
         try:
             task_id = str(uuid4())
+            from datetime import UTC, datetime as _dt_reap
             rows = session.execute(
                 update(model_cls)
                 .where(model_cls.id == job_id, model_cls.celery_task_id.is_(None))
-                .values(celery_task_id=task_id)
+                .values(celery_task_id=task_id, updated_at=_dt_reap.now(UTC))
             )
             if rows.rowcount == 0:
                 session.rollback()
@@ -1256,10 +1307,12 @@ def _fail_stale_running_jobs(
     )
     stale_running_ids = list(session.scalars(stale_running_stmt))
     if stale_running_ids:
+        now = datetime.now(UTC)
         values = {
             "status": "failed",
             "error_message": "Job was stuck in running state and was automatically failed.",
-            "completed_at": datetime.now(UTC),
+            "completed_at": now,
+            "updated_at": now,
         }
         if hasattr(model_cls, "error_code"):
             values["error_code"] = "stale_running"
@@ -1283,8 +1336,14 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
     from sqlalchemy import or_, select, update
 
-    from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SweepJob, SymbolAnalysis
-    from backtestforecast.observability.metrics import JOBS_STUCK_RUNNING, QUEUE_DEPTH
+    from backtestforecast.models import BacktestRun, DailyRecommendation, ExportJob, NightlyPipelineRun, ScannerJob, SweepJob, SymbolAnalysis
+    from backtestforecast.observability.metrics import DAILY_RECOMMENDATIONS_COUNT, JOBS_STUCK_RUNNING, OPTION_CACHE_ENTRIES, QUEUE_DEPTH
+
+    try:
+        from backtestforecast.market_data.service import get_global_cache_entries
+        OPTION_CACHE_ENTRIES.set(get_global_cache_entries())
+    except Exception:
+        pass
 
     try:
         from backtestforecast.config import get_settings as _gs
@@ -1295,6 +1354,8 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             for q_name in ("research", "exports", "maintenance", "pipeline"):
                 depth = _r.llen(q_name)
                 QUEUE_DEPTH.labels(queue=q_name).set(depth)
+            dlq_depth = _r.llen("bff:dead_letter_queue")
+            DLQ_DEPTH.set(dlq_depth)
         finally:
             _r.close()
     except Exception:
@@ -1305,54 +1366,64 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     analysis_cutoff = datetime.now(UTC) - timedelta(minutes=max(stale_minutes, 45))
     counts: dict[str, int] = {}
 
-    with create_worker_session() as session:
-        _reap_queued_jobs(session, BacktestRun, "BacktestRun", "backtests.run", "run_id", cutoff, counts, "backtest_runs")
-        _fail_stale_running_jobs(session, BacktestRun, "BacktestRun", "backtest", cutoff, counts, "stale_running_backtests")
+    _reap_models = [
+        (BacktestRun, "BacktestRun", "backtests.run", "run_id", "backtest", cutoff),
+        (ExportJob, "ExportJob", "exports.generate", "export_job_id", "export", cutoff),
+        (ScannerJob, "ScannerJob", "scans.run_job", "job_id", "scan", cutoff),
+        (SymbolAnalysis, "SymbolAnalysis", "analysis.deep_symbol", "analysis_id", "analysis", analysis_cutoff),
+        (SweepJob, "SweepJob", "sweeps.run", "job_id", "sweep", cutoff),
+    ]
+    for model_cls, model_name, task_name, kwarg_key, job_type, model_cutoff in _reap_models:
+        try:
+            with create_worker_session() as session:
+                _reap_queued_jobs(session, model_cls, model_name, task_name, kwarg_key, model_cutoff, counts, f"{model_name.lower()}_queued")
+        except Exception:
+            logger.exception("reaper.model_reap_failed", model=model_name, phase="queued")
+        try:
+            with create_worker_session() as session:
+                _fail_stale_running_jobs(session, model_cls, model_name, job_type, model_cutoff, counts, f"stale_running_{model_name.lower()}")
+        except Exception:
+            logger.exception("reaper.model_reap_failed", model=model_name, phase="stale_running")
 
-        _reap_queued_jobs(session, ExportJob, "ExportJob", "exports.generate", "export_job_id", cutoff, counts, "export_jobs")
-        _fail_stale_running_jobs(session, ExportJob, "ExportJob", "export", cutoff, counts, "stale_running_exports")
-
-        _reap_queued_jobs(session, ScannerJob, "ScannerJob", "scans.run_job", "job_id", cutoff, counts, "scanner_jobs")
-        _fail_stale_running_jobs(session, ScannerJob, "ScannerJob", "scan", cutoff, counts, "stale_running_scans")
-
-        _reap_queued_jobs(session, SymbolAnalysis, "SymbolAnalysis", "analysis.deep_symbol", "analysis_id", analysis_cutoff, counts, "symbol_analyses")
-        _fail_stale_running_jobs(session, SymbolAnalysis, "SymbolAnalysis", "analysis", analysis_cutoff, counts, "stale_running_analyses")
-
-        _reap_queued_jobs(session, SweepJob, "SweepJob", "sweeps.run", "job_id", cutoff, counts, "sweep_jobs")
-        _fail_stale_running_jobs(session, SweepJob, "SweepJob", "sweep", cutoff, counts, "stale_running_sweeps")
-
-        stale_running_pipeline_stmt = (
-            select(NightlyPipelineRun.id)
-            .where(
-                NightlyPipelineRun.status == "running",
-                or_(
-                    NightlyPipelineRun.started_at.isnot(None) & (NightlyPipelineRun.started_at < pipeline_cutoff),
-                    NightlyPipelineRun.started_at.is_(None) & (NightlyPipelineRun.created_at < pipeline_cutoff),
-                ),
+    try:
+        with create_worker_session() as session:
+            stale_running_pipeline_stmt = (
+                select(NightlyPipelineRun.id)
+                .where(
+                    NightlyPipelineRun.status == "running",
+                    or_(
+                        NightlyPipelineRun.started_at.isnot(None) & (NightlyPipelineRun.started_at < pipeline_cutoff),
+                        NightlyPipelineRun.started_at.is_(None) & (NightlyPipelineRun.created_at < pipeline_cutoff),
+                    ),
+                )
+                .limit(50)
+                .with_for_update(skip_locked=True)
             )
-            .limit(50)
-            .with_for_update(skip_locked=True)
-        )
-        stale_running_pipeline_ids = list(session.scalars(stale_running_pipeline_stmt))
-        if stale_running_pipeline_ids:
-            session.execute(
-                update(NightlyPipelineRun)
-                .where(NightlyPipelineRun.id.in_(stale_running_pipeline_ids), NightlyPipelineRun.status == "running")
-                .values(status="failed", error_message="Pipeline was stuck in running state and was automatically failed.", completed_at=datetime.now(UTC))
-            )
-            session.commit()
-        counts["stale_running_pipelines"] = len(stale_running_pipeline_ids)
-        JOBS_STUCK_RUNNING.labels(model="NightlyPipelineRun").set(len(stale_running_pipeline_ids))
+            stale_running_pipeline_ids = list(session.scalars(stale_running_pipeline_stmt))
+            if stale_running_pipeline_ids:
+                now = datetime.now(UTC)
+                session.execute(
+                    update(NightlyPipelineRun)
+                    .where(NightlyPipelineRun.id.in_(stale_running_pipeline_ids), NightlyPipelineRun.status == "running")
+                    .values(status="failed", error_message="Pipeline was stuck in running state and was automatically failed.", completed_at=now, updated_at=now)
+                )
+                session.commit()
+            counts["stale_running_pipelines"] = len(stale_running_pipeline_ids)
+            JOBS_STUCK_RUNNING.labels(model="NightlyPipelineRun").set(len(stale_running_pipeline_ids))
+    except Exception:
+        logger.exception("reaper.pipeline_reap_failed")
 
-        orphan_cutoff = datetime.now(UTC) - timedelta(minutes=15)
-        result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=600)
-        for model_cls, model_name in [
-            (BacktestRun, "BacktestRun"),
-            (ExportJob, "ExportJob"),
-            (ScannerJob, "ScannerJob"),
-            (SymbolAnalysis, "SymbolAnalysis"),
-        ]:
-            try:
+    orphan_cutoff = datetime.now(UTC) - timedelta(minutes=15)
+    result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=600)
+    for model_cls, model_name in [
+        (BacktestRun, "BacktestRun"),
+        (ExportJob, "ExportJob"),
+        (ScannerJob, "ScannerJob"),
+        (SymbolAnalysis, "SymbolAnalysis"),
+        (SweepJob, "SweepJob"),
+    ]:
+        try:
+            with create_worker_session() as session:
                 orphan_ids_stmt = (
                     select(model_cls.id, model_cls.celery_task_id, model_cls.created_at)
                     .where(
@@ -1389,9 +1460,18 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                     logger.warning("reaper.orphan_recovery", model=model_name, count=recovered)
                 else:
                     session.rollback()
-            except Exception:
-                session.rollback()
-                logger.exception("reaper.orphan_recovery_failed", model=model_name)
+        except Exception:
+            logger.exception("reaper.orphan_recovery_failed", model=model_name)
+
+    try:
+        from sqlalchemy import text
+        with create_worker_session() as stats_session:
+            rec_count = stats_session.scalar(
+                text("SELECT reltuples::bigint FROM pg_class WHERE relname = 'daily_recommendations'")
+            ) or 0
+            DAILY_RECOMMENDATIONS_COUNT.set(rec_count)
+    except Exception:
+        pass
 
     total = sum(counts.values())
     if total > 0:
@@ -1448,10 +1528,14 @@ def refresh_market_holidays(self) -> dict[str, int | str]:
     time_limit=660,
 )
 def cleanup_audit_events(self) -> dict:  # type: ignore[override]
-    """Delete old high-volume audit events in batches to avoid table-locking."""
+    """Delete old high-volume audit events in batches to avoid table-locking.
+
+    WARNING: This permanently deletes audit events. If regulatory compliance
+    requires long-term audit trail retention, implement archival to cold
+    storage (e.g., S3 JSON export) before deletion.
+    """
     from datetime import datetime, timedelta, timezone
     from sqlalchemy import delete, select
-    from backtestforecast.db.session import SessionLocal
     from backtestforecast.models import AuditEvent
 
     BATCH_SIZE = 5000
@@ -1466,7 +1550,7 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
     deleted = 0
     batches_run = 0
     limit_reached = False
-    with SessionLocal() as session:
+    with create_worker_session() as session:
         for event_type in high_volume_types:
             if limit_reached:
                 break
@@ -1481,6 +1565,7 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
                         AuditEvent.created_at < cutoff,
                     )
                     .limit(BATCH_SIZE)
+                    .with_for_update(skip_locked=True)
                 ))
                 if not batch_ids:
                     break
@@ -1492,3 +1577,86 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
                 session.commit()
     logger.info("audit.cleanup_complete", deleted=deleted, cutoff=cutoff.isoformat(), batches_run=batches_run, limit_reached=limit_reached)
     return {"deleted": deleted, "batches_run": batches_run, "limit_reached": limit_reached}
+
+
+@celery_app.task(
+    name="maintenance.cleanup_daily_recommendations",
+    base=BaseTaskWithDLQ,
+    bind=True,
+    ignore_result=True,
+    max_retries=0,
+    soft_time_limit=600,
+    time_limit=660,
+)
+def cleanup_daily_recommendations(self, retention_days: int = 90) -> dict:  # type: ignore[override]
+    """Delete old daily recommendations and their parent pipeline runs in batches."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import delete, select
+
+    from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
+
+    BATCH_SIZE = 2000
+    max_batches = 200
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    deleted_recs = 0
+    deleted_runs = 0
+    batches_run = 0
+    limit_reached = False
+
+    with create_worker_session() as session:
+        while batches_run < max_batches:
+            batches_run += 1
+            batch_ids = list(session.scalars(
+                select(DailyRecommendation.id)
+                .where(DailyRecommendation.created_at < cutoff)
+                .limit(BATCH_SIZE)
+                .with_for_update(skip_locked=True)
+            ))
+            if not batch_ids:
+                break
+            result = session.execute(
+                delete(DailyRecommendation).where(DailyRecommendation.id.in_(batch_ids))
+            )
+            deleted_recs += result.rowcount
+            session.commit()
+
+        if batches_run >= max_batches:
+            limit_reached = True
+
+        if not limit_reached:
+            from sqlalchemy import outerjoin
+            orphan_stmt = (
+                select(NightlyPipelineRun.id)
+                .outerjoin(
+                    DailyRecommendation,
+                    NightlyPipelineRun.id == DailyRecommendation.pipeline_run_id,
+                )
+                .where(
+                    NightlyPipelineRun.created_at < cutoff,
+                    DailyRecommendation.id.is_(None),
+                )
+                .limit(BATCH_SIZE)
+            )
+            orphan_run_ids = list(session.scalars(orphan_stmt))
+            if orphan_run_ids:
+                result = session.execute(
+                    delete(NightlyPipelineRun).where(NightlyPipelineRun.id.in_(orphan_run_ids))
+                )
+                deleted_runs += result.rowcount
+                session.commit()
+
+    logger.info(
+        "daily_recommendations.cleanup_complete",
+        deleted_recs=deleted_recs,
+        deleted_runs=deleted_runs,
+        cutoff=cutoff.isoformat(),
+        batches_run=batches_run,
+        limit_reached=limit_reached,
+    )
+    return {
+        "deleted_recs": deleted_recs,
+        "deleted_runs": deleted_runs,
+        "batches_run": batches_run,
+        "limit_reached": limit_reached,
+    }

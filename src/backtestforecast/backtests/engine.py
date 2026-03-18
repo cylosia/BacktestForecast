@@ -24,7 +24,7 @@ from backtestforecast.market_data.types import DailyBar
 
 logger = structlog.get_logger(__name__)
 
-CONTRACT_MULTIPLIER: float = 100.0
+CONTRACT_MULTIPLIER: float = 100.0  # Default; prefer leg.contract_multiplier
 
 
 class OptionsBacktestEngine:
@@ -56,13 +56,14 @@ class OptionsBacktestEngine:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         if not sorted_bars:
             return BacktestExecutionResult(
-                summary=build_summary(config.account_size, config.account_size, [], [], risk_free_rate=config.risk_free_rate),
+                summary=build_summary(float(config.account_size), float(config.account_size), [], [], risk_free_rate=config.risk_free_rate),
                 trades=[], equity_curve=[]
             )
 
         warnings: list[dict[str, Any]] = []
         warning_codes: set[str] = set()
-        cash = config.account_size
+        # Precision loss: Decimal->float for engine arithmetic (mixed with position_value, etc.)
+        cash = float(config.account_size)
         peak_equity = cash
         position: OpenMultiLegPosition | None = None
         trades: list[TradeResult] = []
@@ -86,6 +87,13 @@ class OptionsBacktestEngine:
                     exit_prices[stock_leg.symbol] = stock_leg.last_price
 
                 entry_cost = self._entry_value_per_unit(position) * position.quantity
+                if not math.isfinite(position_value):
+                    logger.warning("engine.nan_position_value_exit_guard", bar_date=str(bar.trade_date))
+                    position_value = entry_cost
+                if not math.isfinite(entry_cost):
+                    logger.warning("engine.nan_entry_cost", bar_date=str(bar.trade_date))
+                    entry_cost = 0.0
+                    position_value = 0.0
                 capital_at_risk = position.capital_required_per_unit * position.quantity
                 should_exit, exit_reason = self._resolve_exit(
                     bar=bar,
@@ -151,15 +159,15 @@ class OptionsBacktestEngine:
                     else:
                         ev_per_unit = self._entry_value_per_unit(candidate)
                         contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
-                        commission_per_unit = config.commission_per_contract * contracts_per_unit
+                        commission_per_unit = float(config.commission_per_contract) * contracts_per_unit
                         gross_notional_per_unit = (
-                            sum(abs(leg.entry_mid * CONTRACT_MULTIPLIER) * leg.quantity_per_unit for leg in candidate.option_legs)
+                            sum(abs(leg.entry_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)) * leg.quantity_per_unit for leg in candidate.option_legs)
                             + sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in candidate.stock_legs)
                         )
                         quantity = self._resolve_position_size(
                             available_cash=cash,
-                            account_size=config.account_size,
-                            risk_per_trade_pct=config.risk_per_trade_pct,
+                            account_size=float(config.account_size),
+                            risk_per_trade_pct=float(config.risk_per_trade_pct),
                             capital_required_per_unit=candidate.capital_required_per_unit,
                             max_loss_per_unit=candidate.max_loss_per_unit,
                             entry_cost_per_unit=abs(ev_per_unit),
@@ -178,7 +186,7 @@ class OptionsBacktestEngine:
                         else:
                             candidate.quantity = quantity
                             candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
-                            entry_commission = self._option_commission_total(candidate, config.commission_per_contract)
+                            entry_commission = self._option_commission_total(candidate, float(config.commission_per_contract))
                             candidate.entry_commission_total = entry_commission
                             slippage_cost = gross_notional_per_unit * quantity * (config.slippage_pct / 100.0)
                             total_entry_cost = (ev_per_unit * quantity) + entry_commission + slippage_cost
@@ -255,9 +263,9 @@ class OptionsBacktestEngine:
                 "Position force-closed at last available bar price. Actual settlement price may differ significantly.",
             )
 
-        ending_equity = equity_curve[-1].equity if equity_curve else config.account_size
+        ending_equity = equity_curve[-1].equity if equity_curve else float(config.account_size)
         summary = build_summary(
-            config.account_size, ending_equity, trades, equity_curve, risk_free_rate=config.risk_free_rate,
+            float(config.account_size), ending_equity, trades, equity_curve, risk_free_rate=config.risk_free_rate,
             warnings=warnings,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
@@ -282,11 +290,12 @@ class OptionsBacktestEngine:
                     missing_quote_tickers.append(leg.ticker)
             else:
                 current_mid = quote.mid_price
-                if not math.isfinite(current_mid):
+                if not math.isfinite(current_mid) or current_mid < 0:
                     current_mid = leg.last_mid
                     missing_quote_tickers.append(leg.ticker)
             leg.last_mid = current_mid
-            option_value += leg.side * leg.quantity_per_unit * current_mid * CONTRACT_MULTIPLIER * position.quantity
+            multiplier = getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)
+            option_value += leg.side * leg.quantity_per_unit * current_mid * multiplier * position.quantity
 
         if missing_quote_tickers:
             self._add_warning_once(
@@ -310,7 +319,7 @@ class OptionsBacktestEngine:
     @staticmethod
     def _current_position_value(position: OpenMultiLegPosition, underlying_close: float) -> float:
         option_value = sum(
-            leg.side * leg.quantity_per_unit * leg.last_mid * CONTRACT_MULTIPLIER * position.quantity for leg in position.option_legs
+            leg.side * leg.quantity_per_unit * leg.last_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER) * position.quantity for leg in position.option_legs
         )
         stock_value = sum(
             leg.side * leg.share_quantity_per_unit * underlying_close * position.quantity for leg in position.stock_legs
@@ -332,8 +341,11 @@ class OptionsBacktestEngine:
         slippage_pct: float = 0.0,
         gross_notional_per_unit: float = 0.0,
     ) -> int:
-        if capital_required_per_unit <= 0:
+        if capital_required_per_unit < 0:
             return 0
+        _MIN_CAPITAL_PER_UNIT = 50.0
+        if capital_required_per_unit < _MIN_CAPITAL_PER_UNIT:
+            capital_required_per_unit = _MIN_CAPITAL_PER_UNIT
         risk_budget = account_size * (risk_per_trade_pct / 100.0)
         effective_risk = (
             max_loss_per_unit if max_loss_per_unit is not None and max_loss_per_unit > 0 else capital_required_per_unit
@@ -358,13 +370,13 @@ class OptionsBacktestEngine:
         exit_reason: str,
     ) -> tuple[TradeResult, float]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
-        exit_commission = self._option_commission_total(position, config.commission_per_contract)
-        option_exit_notional = sum(abs(leg.last_mid * CONTRACT_MULTIPLIER) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
+        exit_commission = self._option_commission_total(position, float(config.commission_per_contract))
+        option_exit_notional = sum(abs(leg.last_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
         stock_exit_notional = sum(abs(leg.last_price * leg.share_quantity_per_unit) for leg in position.stock_legs) * position.quantity if position.stock_legs else 0.0
         exit_gross_notional = option_exit_notional + stock_exit_notional
         exit_slippage = exit_gross_notional * (config.slippage_pct / 100.0)
         entry_value_per_unit = self._entry_value_per_unit(position)
-        option_entry_notional = sum(abs(leg.entry_mid * CONTRACT_MULTIPLIER) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
+        option_entry_notional = sum(abs(leg.entry_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
         stock_entry_notional = sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in position.stock_legs) * position.quantity if position.stock_legs else 0.0
         entry_gross_notional = option_entry_notional + stock_entry_notional
         entry_slippage = entry_gross_notional * (config.slippage_pct / 100.0)
@@ -433,7 +445,7 @@ class OptionsBacktestEngine:
 
     @staticmethod
     def _entry_value_per_unit(position: OpenMultiLegPosition) -> float:
-        option_value = sum(leg.side * leg.quantity_per_unit * leg.entry_mid * CONTRACT_MULTIPLIER for leg in position.option_legs)
+        option_value = sum(leg.side * leg.quantity_per_unit * leg.entry_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER) for leg in position.option_legs)
         stock_value = sum(leg.side * leg.share_quantity_per_unit * leg.entry_price for leg in position.stock_legs)
         return option_value + stock_value
 

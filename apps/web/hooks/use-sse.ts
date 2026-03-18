@@ -1,3 +1,11 @@
+/**
+ * SSE hook for real-time job status updates with polling fallback.
+ *
+ * Used by sweep-job-poller for real-time progress tracking. Falls back
+ * to polling via `usePolling` if the SSE connection fails.
+ *
+ * @see hooks/use-polling.ts for the polling fallback mechanism
+ */
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -36,11 +44,15 @@ export function useSSE<T>({
   autoStart = true,
   pollingFallback,
 }: UseSSEOptions<T>): UseSSEReturn {
+  const MAX_RETRIES = 3;
+  const HEARTBEAT_TIMEOUT_MS = 90_000;
   const [status, setStatus] = useState<SSEStatus>(autoStart ? "connecting" : "done");
   const [useFallback, setUseFallback] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const mountedRef = useRef(true);
   const completedRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onProgressRef = useRef(onProgress);
   const onCompleteRef = useRef(onComplete);
   const isTerminalRef = useRef(isTerminal);
@@ -66,67 +78,114 @@ export function useSSE<T>({
     if (!autoStart) return;
     setUseFallback(false);
     completedRef.current = false;
+    retryCountRef.current = 0;
     mountedRef.current = true;
 
     const url = `/api/events/${resourceType}/${resourceId}`;
     const es = new EventSource(url);
     esRef.current = es;
+    let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 
-    es.onopen = () => {
-      if (!mountedRef.current) return;
-      setStatus("streaming");
+    const resetHeartbeat = (target: EventSource) => {
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      heartbeatTimer = setTimeout(() => {
+        if (!mountedRef.current) return;
+        target.close();
+        esRef.current = null;
+        setStatus("polling");
+        setUseFallback(true);
+        startPolling();
+      }, HEARTBEAT_TIMEOUT_MS);
     };
 
-    es.addEventListener("status", (event) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(event.data) as Record<string, unknown>;
-        onProgressRef.current?.(data);
-        const eventStatus = String(data.status ?? "");
-        if (isTerminalRef.current(eventStatus)) {
-          setStatus("done");
-          es.close();
-          esRef.current = null;
-          if (!completedRef.current) {
-            completedRef.current = true;
-            onCompleteRef.current();
+    const attachEventHandlers = (target: EventSource) => {
+      target.onopen = () => {
+        if (!mountedRef.current) return;
+        setStatus("streaming");
+        resetHeartbeat(target);
+      };
+
+      target.addEventListener("status", (event) => {
+        if (!mountedRef.current) return;
+        retryCountRef.current = 0;
+        resetHeartbeat(target);
+        try {
+          const data = JSON.parse(event.data) as Record<string, unknown>;
+          onProgressRef.current?.(data);
+          const eventStatus = String(data.status ?? "");
+          if (isTerminalRef.current(eventStatus)) {
+            setStatus("done");
+            target.close();
+            esRef.current = null;
+            if (!completedRef.current) {
+              completedRef.current = true;
+              onCompleteRef.current();
+            }
+          }
+        } catch (parseErr) {
+          if (process.env.NODE_ENV === "development") {
+            console.warn("[SSE] Failed to parse event data", parseErr);
           }
         }
-      } catch {
-        // ignore parse errors
-      }
-    });
+      });
 
-    es.addEventListener("done", () => {
-      if (!mountedRef.current) return;
-      es.close();
-      esRef.current = null;
-      setStatus("done");
-      if (!completedRef.current) {
-        completedRef.current = true;
-        onCompleteRef.current();
-      }
-    });
-
-    es.onerror = () => {
-      if (!mountedRef.current) return;
-      es.close();
-      esRef.current = null;
-      setStatus("polling");
-      setUseFallback(true);
-      startPolling();
+      target.addEventListener("done", () => {
+        if (!mountedRef.current) return;
+        retryCountRef.current = 0;
+        if (heartbeatTimer) clearTimeout(heartbeatTimer);
+        target.close();
+        esRef.current = null;
+        setStatus("done");
+        if (!completedRef.current) {
+          completedRef.current = true;
+          onCompleteRef.current();
+        }
+      });
     };
+
+    attachEventHandlers(es);
+
+    const setupEventSource = (eventSource: EventSource) => {
+      eventSource.onerror = () => {
+        if (!mountedRef.current) return;
+        eventSource.close();
+        esRef.current = null;
+        if (retryCountRef.current < MAX_RETRIES) {
+          retryCountRef.current += 1;
+          const delay = 1000 * Math.pow(2, retryCountRef.current - 1);
+          if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+          retryTimeoutRef.current = setTimeout(() => {
+            if (!mountedRef.current) return;
+            const retryUrl = `/api/events/${resourceType}/${resourceId}`;
+            const newEs = new EventSource(retryUrl);
+            esRef.current = newEs;
+            attachEventHandlers(newEs);
+            setupEventSource(newEs);
+          }, delay);
+        } else {
+          setStatus("polling");
+          setUseFallback(true);
+          startPolling();
+        }
+      };
+    };
+
+    setupEventSource(es);
 
     return () => {
       mountedRef.current = false;
-      es.close();
-      esRef.current = null;
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
       cancelPolling();
     };
   }, [autoStart, resourceType, resourceId, startPolling, cancelPolling]);
 
   useEffect(() => {
-    if (useFallback) {
+    if (useFallback && mountedRef.current) {
       if (pollStatus === "done") setStatus("done");
       else if (pollStatus === "error" || pollStatus === "timeout") setStatus("error");
     }

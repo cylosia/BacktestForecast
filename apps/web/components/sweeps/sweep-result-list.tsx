@@ -1,27 +1,19 @@
+import type { SweepResultResponse } from "@backtestforecast/api-client";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-interface SweepResultItem {
-  id: string;
-  rank: number;
-  score: string | number;
-  strategy_type: string;
-  delta?: number | null;
-  width_mode?: string | null;
-  width_value?: string | number | null;
-  entry_rule_set_name?: string;
-  exit_rule_set_name?: string | null;
-  profit_target_pct?: number | null;
-  stop_loss_pct?: number | null;
-  summary: Record<string, any>;
-  warnings?: any[];
-  trades_json?: any[];
-  equity_curve?: any[];
+interface LegData {
+  contract_type?: string;
+  asset_type?: string;
+  side?: string;
+  strike_offset?: number;
+  expiration_offset?: number;
+  quantity_ratio?: number;
 }
 
-function LegTable({ legs }: { legs: any[] }) {
+function LegTable({ legs }: { legs: LegData[] }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -35,7 +27,7 @@ function LegTable({ legs }: { legs: any[] }) {
           </tr>
         </thead>
         <tbody>
-          {legs.map((leg: any, i: number) => (
+          {legs.map((leg: LegData, i: number) => (
             <tr key={i} className="border-b border-border/40">
               <td className="py-1.5 pr-3 font-medium">{leg.contract_type ?? leg.asset_type}</td>
               <td className="py-1.5 pr-3">
@@ -54,7 +46,7 @@ function LegTable({ legs }: { legs: any[] }) {
   );
 }
 
-export function SweepResultList({ items }: { items: SweepResultItem[] }) {
+export function SweepResultList({ items }: { items: SweepResultResponse[] }) {
   if (items.length === 0) {
     return (
       <Card>
@@ -81,7 +73,7 @@ export function SweepResultList({ items }: { items: SweepResultItem[] }) {
       </CardHeader>
       <CardContent className="space-y-4">
         {items.map((result) => {
-          const params = (result as any).parameter_snapshot_json ?? result;
+          const params = result.parameter_snapshot_json ?? result;
           const customLegs = params.custom_legs;
           const isGenetic = params.mode === "genetic";
 
@@ -152,7 +144,7 @@ export function SweepResultList({ items }: { items: SweepResultItem[] }) {
                     {(result.warnings ?? []).length} warning(s)
                   </p>
                   <ul className="list-disc list-inside text-xs text-amber-700 dark:text-amber-400">
-                    {(result.warnings ?? []).map((w: any, i: number) => (
+                    {(result.warnings ?? []).map((w: Record<string, unknown>, i: number) => (
                       <li key={i}>{typeof w === "string" ? w : String(w.message ?? JSON.stringify(w))}</li>
                     ))}
                   </ul>

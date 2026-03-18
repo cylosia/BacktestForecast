@@ -19,9 +19,10 @@ def _make_export_job(*, storage_key: str | None = "s3://key", status: str = "suc
 
 
 def test_cleanup_skips_job_when_s3_delete_fails() -> None:
-    """When storage delete raises a caught exception, the job IS still marked
-    expired but the storage_key is preserved so a future reconciliation can
-    retry the S3 deletion."""
+    """DB is committed first (storage_key set to None), then S3 delete is
+    attempted best-effort. If S3 delete fails, the DB is already committed
+    so the storage_key is None. The orphaned S3 object is cleaned up by the
+    periodic reconciliation job."""
     from backtestforecast.services.exports import ExportService
 
     job = _make_export_job(storage_key="s3://bucket/key")
@@ -40,7 +41,7 @@ def test_cleanup_skips_job_when_s3_delete_fails() -> None:
 
     assert cleaned == 1
     assert job.status == "expired"
-    assert job.storage_key == "s3://bucket/key", "storage_key must be preserved for retry"
+    assert job.storage_key is None, "storage_key cleared in DB before S3 delete (DB-first pattern)"
     assert job.content_bytes is None
 
 

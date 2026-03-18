@@ -66,6 +66,7 @@ select = [
     "SIM",  # flake8-simplify
     "T20",  # flake8-print (catch stray print() calls)
     "RUF",  # Ruff-specific rules
+    "S",    # flake8-bandit security checks
 ]
 ignore = [
     "E501",   # line length handled by formatter
@@ -75,8 +76,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "alembic/versions/*" = ["E501", "UP"]
-"tests/**" = ["T20"]
-"scripts/**" = ["T20"]
+"tests/**" = ["T20", "S101", "S105", "S106", "S107", "S110", "S311"]
+"scripts/**" = ["T20", "S105", "S106"]
+"src/backtestforecast/config.py" = ["S105", "S106"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["backtestforecast"]

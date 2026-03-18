@@ -12,9 +12,13 @@ export function CheckoutSuccessBanner() {
     if (searchParams.get("checkout") === "success") {
       setVisible(true);
       // Clean the URL param without a full page reload
-      const url = new URL(window.location.href);
-      url.searchParams.delete("checkout");
-      window.history.replaceState({}, "", url.toString());
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("checkout");
+        window.history.replaceState({}, "", url.toString());
+      } catch {
+        // Ignore URL parsing errors; banner still shows
+      }
     }
   }, [searchParams]);
 
@@ -34,6 +38,7 @@ export function CheckoutSuccessBanner() {
           </p>
         </div>
         <button
+          aria-label="Dismiss success banner"
           className="ml-auto text-xs text-muted-foreground hover:text-foreground"
           onClick={() => setVisible(false)}
           type="button"

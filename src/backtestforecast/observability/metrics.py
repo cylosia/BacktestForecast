@@ -111,7 +111,6 @@ S3_STREAM_OPEN = Gauge("s3_stream_open", "Number of currently open S3 body strea
 FORECAST_FALLBACK_TOTAL = Counter(
     "forecast_fallback_total",
     "Forecasts that fell back to 0-analog empty response",
-    ["symbol"],
 )
 
 REAPER_DURATION_SECONDS = Histogram(
@@ -198,10 +197,31 @@ BILLING_EVENTS_TOTAL = Counter(
     ["event_type"],
 )
 
+ACCOUNT_DELETIONS_TOTAL = Counter(
+    "account_deletions_total",
+    "Total account deletions",
+    ["stripe_cleanup_result"],
+)
+
 REDIS_CONNECTION_ERRORS_TOTAL = Counter(
     "redis_connection_errors_total",
     "Total Redis connection errors",
     ["operation"],
+)
+
+EVENT_PUBLISH_FAILURES_TOTAL = Counter(
+    "event_publish_failures_total",
+    "Non-Redis failures during event publishing",
+)
+
+DAILY_RECOMMENDATIONS_COUNT = Gauge(
+    "daily_recommendations_count",
+    "Number of rows in the daily_recommendations table",
+)
+
+OPTION_CACHE_ENTRIES = Gauge(
+    "option_cache_entries",
+    "Number of entries across all in-memory option gateway caches",
 )
 
 NIGHTLY_PIPELINE_RUNS_TOTAL = Counter(
@@ -216,6 +236,11 @@ DB_STATEMENT_TIMEOUTS_TOTAL = Counter(
     ["task_name"],
 )
 
+MIGRATION_HEAD_MATCH = Gauge(
+    "migration_head_match",
+    "1 if the DB migration version matches the code head, 0 if drifted",
+)
+
 EXTERNAL_API_REQUESTS_TOTAL = Counter(
     "external_api_requests_total",
     "Total external API requests (Massive, Stripe) by service and result",
@@ -228,6 +253,22 @@ EXTERNAL_API_LATENCY_SECONDS = Histogram(
     ["service"],
     buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
 )
+
+# Fixed set of reason values for SCAN_CANDIDATE_FAILURES_TOTAL to avoid high cardinality.
+# Maps unknown AppError codes to "unknown"; use "internal" for non-AppError exceptions.
+SCAN_CANDIDATE_FAILURE_REASONS = frozenset({
+    "internal", "unknown",
+    "validation_error", "data_unavailable", "external_service_error",
+    "configuration_error", "not_found", "quota_exceeded", "rate_limited",
+    "conflict", "service_unavailable", "authentication_error", "authorization_error",
+    "feature_locked",
+})
+
+
+def _normalize_scan_failure_reason(reason: str) -> str:
+    """Return a validated reason for SCAN_CANDIDATE_FAILURES_TOTAL labels."""
+    return reason if reason in SCAN_CANDIDATE_FAILURE_REASONS else "unknown"
+
 
 SCAN_CANDIDATE_FAILURES_TOTAL = Counter(
     "backtestforecast_scan_candidate_failures_total",
@@ -246,6 +287,36 @@ MARKET_DATA_CACHE_MISSES = Counter(
     ["cache_type"],
 )
 
+SCAN_EXECUTION_DURATION_SECONDS = Histogram(
+    "backtestforecast_scan_execution_duration_seconds",
+    "Time to execute a scanner job end-to-end",
+    buckets=[10, 30, 60, 120, 300, 600],
+)
+
+SWEEP_EXECUTION_DURATION_SECONDS = Histogram(
+    "sweep_execution_duration_seconds",
+    "Time to execute a sweep job end-to-end",
+    buckets=[1, 5, 10, 30, 60, 120, 300, 600],
+)
+
+SWEEP_CANDIDATE_FAILURES_TOTAL = Counter(
+    "sweep_candidate_failures_total",
+    "Sweep candidates that failed during evaluation",
+    ["symbol"],
+)
+
+BACKTEST_EXECUTION_DURATION_SECONDS = Histogram(
+    "backtest_execution_duration_seconds",
+    "Time to execute a backtest run end-to-end",
+    buckets=[0.1, 0.5, 1, 2.5, 5, 10, 30, 60],
+)
+
+EXPORT_EXECUTION_DURATION_SECONDS = Histogram(
+    "export_execution_duration_seconds",
+    "Time to execute an export job end-to-end",
+    buckets=[0.5, 1, 2.5, 5, 10, 30, 60],
+)
+
 
 _RE_UUID = re.compile(
     r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -261,6 +332,7 @@ _KNOWN_PATH_PREFIXES = frozenset({
     "/v1/backtests", "/v1/scans", "/v1/exports", "/v1/analysis",
     "/v1/forecasts", "/v1/templates", "/v1/me", "/v1/billing",
     "/v1/daily-picks", "/v1/catalog", "/v1/events", "/v1/meta",
+    "/v1/sweeps", "/v1/account",
     "/health", "/admin", "/metrics", "/meta",
 })
 

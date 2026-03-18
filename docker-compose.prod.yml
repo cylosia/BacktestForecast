@@ -29,21 +29,22 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # NOTE: Redis connections are currently unencrypted. For deployments where
-    # Redis is on a separate host, enable TLS by using rediss:// URLs in
-    # REDIS_URL and REDIS_CACHE_URL, and configuring Redis with --tls-port,
-    # --tls-cert-file, --tls-key-file, and --tls-ca-cert-file.
-    # NOTE: --requirepass exposes the password in process listings. For hardened
-    # deployments, mount a redis.conf file with 'requirepass' set instead.
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
+    # SECURITY: Redis connections are unencrypted. For deployments where Redis
+    # is on a separate host, enable TLS:
+    # 1. Generate/obtain TLS certificates
+    # 2. Add to redis.conf: tls-port 6380, tls-cert-file, tls-key-file, tls-ca-cert-file
+    # 3. Update REDIS_URL to use rediss:// scheme
+    # 4. Set tls=True in Redis client configuration
+    command: ["sh", "-c", "echo requirepass \"$REDIS_PASSWORD\" > /tmp/redis.conf && cat /usr/local/etc/redis/redis.conf >> /tmp/redis.conf && redis-server /tmp/redis.conf"]
     volumes:
       - redis_data:/data
+      - ./infra/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     networks:
       - backend
     deploy:
       resources:
         limits:
-          memory: 256m
+          memory: 384m
           cpus: '1.0'
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping"]

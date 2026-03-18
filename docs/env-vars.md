@@ -76,24 +76,40 @@ All environment variables recognised by BacktestForecast. Variables marked **req
 | `TRUSTED_PROXY_CIDRS` | Comma-separated CIDRs for trusted reverse proxies | RFC 1918 ranges | — |
 | `IP_HASH_SALT` | Salt for hashing client IPs in logs/rate limiting (>= 16 chars) | Placeholder (must change in production) | Production |
 
+### IP_HASH_SALT
+
+**Required in production.** HMAC key used to hash client IP addresses for
+audit trail storage. The default value is insecure and must be replaced with
+a unique random secret.
+
+Generate a value: `python -c "import secrets; print(secrets.token_hex(32))"`
+
+Failure to set this in production will generate a startup warning.
+
 ## Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATE_LIMIT_PREFIX` | `bff:rate-limit` | Redis key prefix for rate limit counters |
+| `RATE_LIMIT_FAIL_CLOSED` | `false` | If true, block requests when Redis is unavailable |
+| `RATE_LIMIT_MEMORY_MAX_KEYS` | `10000` | Max in-memory rate limit keys when Redis is down |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Default sliding window for rate limits |
+| `BACKTEST_CREATE_RATE_LIMIT` | `10` | Max backtest creations per window |
+| `SCAN_CREATE_RATE_LIMIT` | `6` | Max scan creations per window |
+| `SWEEP_CREATE_RATE_LIMIT` | `3` | Max sweep creations per window |
+| `EXPORT_CREATE_RATE_LIMIT` | `20` | Max export creations per window |
+| `SSE_RATE_LIMIT` | `30` | Max SSE connection attempts per window |
+
+When `RATE_LIMIT_FAIL_CLOSED=true`, the API returns 503 if Redis is unreachable. When `false` (default), it falls back to in-memory counting which is per-process only.
 
 | Variable | Description | Default | Required in |
 |---|---|---|---|
-| `RATE_LIMIT_PREFIX` | Redis key prefix for rate-limit counters | `bff:rate-limit` | — |
-| `RATE_LIMIT_FAIL_CLOSED` | Reject requests when Redis is unavailable (fail-open by default; set `true` for strict security) | `false` | — |
-| `RATE_LIMIT_MEMORY_MAX_KEYS` | Maximum keys in the in-memory fallback rate limiter | `10000` | — |
-| `RATE_LIMIT_WINDOW_SECONDS` | Default sliding window for rate limits | `60` | — |
-| `BACKTEST_CREATE_RATE_LIMIT` | Max backtest create requests per window | `10` | — |
-| `SCAN_CREATE_RATE_LIMIT` | Max scan create requests per window | `6` | — |
-| `EXPORT_CREATE_RATE_LIMIT` | Max export create requests per window | `20` | — |
 | `BILLING_CREATE_RATE_LIMIT` | Max billing requests per window | `10` | — |
 | `TEMPLATE_MUTATE_RATE_LIMIT` | Max template mutation requests per window | `20` | — |
 | `ANALYSIS_CREATE_RATE_LIMIT` | Max deep analysis requests per window | `10` | — |
 | `ANALYSIS_RATE_LIMIT_WINDOW_SECONDS` | Window for analysis rate limit | `3600` | — |
 | `FORECAST_RATE_LIMIT` | Max forecast requests per window | `6` | — |
 | `DAILY_PICKS_RATE_LIMIT` | Max daily picks requests per window | `30` | — |
-| `SSE_RATE_LIMIT` | Max SSE connection requests per window | `30` | — |
 | `SSE_REDIS_MAX_CONNECTIONS` | Maximum Redis connections for SSE pub/sub pool | `50` | — |
 | `SSE_REDIS_SOCKET_TIMEOUT` | Socket timeout (seconds) for SSE Redis connections | `10.0` | — |
 | `SSE_REDIS_CONNECT_TIMEOUT` | Connect timeout (seconds) for SSE Redis connections | `5.0` | — |

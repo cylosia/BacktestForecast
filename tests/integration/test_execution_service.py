@@ -21,13 +21,14 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def mock_massive_client():
     """Create a mock MassiveClient that returns realistic bar data."""
-    from datetime import date
+    from datetime import date, timedelta
     from backtestforecast.market_data.types import DailyBar
 
     client = MagicMock()
+    start = date(2024, 1, 2)
     bars = [
         DailyBar(
-            trade_date=date(2024, 1, 2 + i),
+            trade_date=start + timedelta(days=i),
             open_price=100.0 + i,
             high_price=102.0 + i,
             low_price=99.0 + i,
@@ -71,13 +72,12 @@ def test_execution_service_produces_valid_summary(mock_massive_client):
     # the request into a BacktestConfig and passes it to the engine.
     # The actual execution may produce zero trades (no option chains)
     # but should not crash.
+    from backtestforecast.errors import DataUnavailableError
+
     try:
         result = service.execute_request(request)
         assert result is not None
         assert hasattr(result, "summary")
         assert result.summary.starting_equity > 0
-    except Exception as e:
-        # If it fails, it should be a data issue, not a wiring issue
-        assert "option" in str(e).lower() or "chain" in str(e).lower() or "bar" in str(e).lower(), (
-            f"Unexpected wiring error: {e}"
-        )
+    except DataUnavailableError:
+        pytest.skip("No option/chain data available (expected in CI without MASSIVE)")

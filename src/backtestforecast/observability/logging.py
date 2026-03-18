@@ -27,13 +27,22 @@ _SENSITIVE_KEYS = frozenset({
 _REDACTED = "[REDACTED]"
 
 
+def _deep_sanitize_value(value: Any, _logger: Any, _method: str) -> Any:
+    """Recursively sanitize dicts (and dicts nested within lists)."""
+    if isinstance(value, dict):
+        return _sanitize_sensitive_keys(_logger, _method, dict(value))
+    if isinstance(value, list):
+        return [_deep_sanitize_value(item, _logger, _method) for item in value]
+    return value
+
+
 def _sanitize_sensitive_keys(
     _logger: Any, _method: str, event_dict: dict[str, Any],
 ) -> dict[str, Any]:
     """Drop or redact values whose keys suggest they contain secrets.
 
-    Nested dicts are shallow-copied before mutation to avoid corrupting
-    shared objects that other code paths may still reference.
+    Nested dicts and lists are shallow-copied before mutation to avoid
+    corrupting shared objects that other code paths may still reference.
     """
     for key in list(event_dict):
         lower = key.lower()
@@ -41,6 +50,8 @@ def _sanitize_sensitive_keys(
             event_dict[key] = _REDACTED
         elif isinstance(event_dict[key], dict):
             event_dict[key] = _sanitize_sensitive_keys(_logger, _method, dict(event_dict[key]))
+        elif isinstance(event_dict[key], list):
+            event_dict[key] = [_deep_sanitize_value(item, _logger, _method) for item in event_dict[key]]
     return event_dict
 
 

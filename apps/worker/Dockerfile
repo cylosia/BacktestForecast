@@ -1,6 +1,7 @@
-# TODO: Pin base images to SHA digests for reproducible builds in production.
-# Example: FROM python:3.12-slim@sha256:<digest> AS builder
-FROM python:3.12-slim AS builder
+# Pin base images to SHA digests for reproducible builds.
+# To update: docker pull python:3.12.8-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.12.8-slim
+ARG PYTHON_BASE_DIGEST=sha256:2578148b0dca1066e91384ed13dee56cea3ccca234513f3af907bd7d92ce554a
+FROM python:3.12.8-slim@${PYTHON_BASE_DIGEST} AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -16,10 +17,13 @@ COPY alembic /build/alembic
 COPY alembic.ini /build/alembic.ini
 
 COPY constraints.txt /build/constraints.txt
-RUN pip install --upgrade pip && pip install --constraint constraints.txt ".[s3,sentry]"
+RUN pip install --upgrade "pip>=24.0,<25.0" && pip install --constraint constraints.txt ".[s3,sentry]"
 
-FROM python:3.12-slim AS runner
+FROM python:3.12.8-slim@${PYTHON_BASE_DIGEST} AS runner
 
+# PROMETHEUS_MULTIPROC_DIR is not set because the worker runs its own
+# single-process HTTP metrics server, not the multiprocess Prometheus
+# client used by the API.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

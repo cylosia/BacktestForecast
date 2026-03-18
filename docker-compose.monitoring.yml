@@ -6,6 +6,10 @@
 # Prerequisites:
 #   - Create infra/prometheus/secrets/metrics_token containing the METRICS_TOKEN value.
 #   - Customize infra/alertmanager/alertmanager.yml with your receiver config.
+#
+# NOTE: The Grafana HealthReadyDegraded alert requires a blackbox exporter
+# (probe_success metric). Add a blackbox-exporter service or disable the
+# alert in infra/grafana/alerts/rules.yml.
 
 services:
   prometheus:
@@ -72,9 +76,20 @@ services:
       timeout: 5s
       retries: 3
 
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - monitoring
+    restart: unless-stopped
+
 networks:
   backend:
     external: true
+    # The external network name must match the main docker-compose project.
+    # Override COMPOSE_PROJECT_NAME if needed.
     name: ${COMPOSE_PROJECT_NAME:-backtestforecast}_backend
   monitoring:
 

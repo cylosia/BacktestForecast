@@ -13,16 +13,17 @@ from backtestforecast.schemas.common import PlanTier, sanitize_error_message
 from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
-    BacktestTradeResponse,
     EntryRule,
     EquityCurvePointResponse,
-    RunStatus,
+    JobStatus,
     StrategyType,
+    TradeJsonResponse,
     validate_entry_rule_collection,
 )
 
 
-ScannerJobStatus = RunStatus
+# Alias kept for backward compatibility with existing imports
+ScannerJobStatus = JobStatus
 
 
 class RuleSetDefinition(BaseModel):
@@ -62,7 +63,7 @@ class CreateScannerJobRequest(BaseModel):
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
     max_recommendations: int = Field(default=10, ge=1, le=30)
     refresh_daily: bool = False
-    refresh_priority: int = Field(default=50, ge=0, le=100)
+    refresh_priority: int = Field(default=0, ge=0, le=100)
     idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
 
     @field_validator("name")
@@ -104,6 +105,8 @@ class CreateScannerJobRequest(BaseModel):
             raise ValueError("start_date must be earlier than end_date")
         if (self.end_date - self.start_date).days < 30:
             raise ValueError("Scanner window must be at least 30 days for meaningful results")
+        # Enforced here and NOT in CreateBacktestRunRequest (which uses max_backtest_window_days).
+        # The scanner has a separate, typically shorter window limit.
         if (self.end_date - self.start_date).days > get_settings().max_scanner_window_days:
             raise ValueError(
                 f"scanner window exceeds the configured maximum of {get_settings().max_scanner_window_days} days"
@@ -115,6 +118,15 @@ class CreateScannerJobRequest(BaseModel):
         rule_names = [rule_set.name.lower() for rule_set in self.rule_sets]
         if len(set(rule_names)) != len(rule_names):
             raise ValueError("rule_sets must not contain duplicate names")
+        # Each scanner rule set must have at least one entry rule so that
+        # candidates are filtered by a signal (unlike sweeps, which
+        # intentionally allow empty rules to test parameter combinations).
+        for rule_set in self.rule_sets:
+            if not rule_set.entry_rules:
+                raise ValueError(
+                    f"Rule set '{rule_set.name}' must contain at least one entry rule. "
+                    "Scanner rule sets require signal-based entry criteria."
+                )
         return self
 
 
@@ -142,7 +154,18 @@ class HistoricalAnalogForecastResponse(BaseModel):
     positive_outcome_rate_pct: Decimal | None = None
     summary: str
     disclaimer: str
-    analog_dates: list[date] = Field(default_factory=list)
+    analog_dates: list[date] = Field(
+        default_factory=list,
+        description="Up to 5 representative analog dates (subset of all analogs used).",
+    )
+    analog_dates_shown: int | None = Field(
+        default=None,
+        description="Number of analog dates included in analog_dates (max 5).",
+    )
+    analog_dates_total: int | None = Field(
+        default=None,
+        description="Total number of analogs used in the forecast calculation.",
+    )
 
 
 class RankingBreakdownResponse(BaseModel):
@@ -166,12 +189,16 @@ class ScannerRecommendationResponse(BaseModel):
     historical_performance: HistoricalPerformanceResponse
     forecast: HistoricalAnalogForecastResponse
     ranking_breakdown: RankingBreakdownResponse
-    trades: list[BacktestTradeResponse] = Field(default_factory=list)
+    trades: list[TradeJsonResponse] = Field(default_factory=list)
     equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list)
+    trades_truncated: bool = False
 
 
 class ScannerRecommendationListResponse(BaseModel):
     items: list[ScannerRecommendationResponse]
+    total: int = 0
+    offset: int = 0
+    limit: int = 100
 
 
 class ScannerJobResponse(BaseModel):
@@ -196,6 +223,16 @@ class ScannerJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
+
+
+class ScannerJobStatusResponse(BaseModel):
+    id: UUID
+    status: ScannerJobStatus
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ScannerJobListResponse(BaseModel):

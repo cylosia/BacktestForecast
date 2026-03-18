@@ -29,7 +29,7 @@ class ScannerMode(str, Enum):
 
 PAID_STATUSES = {"active", "trialing"}
 PAST_DUE_GRACE_DAYS = 7
-ACTIVE_RENEWAL_GRACE = timedelta(hours=6)
+ACTIVE_RENEWAL_GRACE = timedelta(hours=24)
 INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete", "incomplete_expired", "paused"}
 
 
@@ -46,16 +46,16 @@ class FeaturePolicy:
     advanced_scanner_access: bool
 
 
-BASIC_SCANNER_STRATEGIES = {
+BASIC_SCANNER_STRATEGIES: frozenset[str] = frozenset({
     "long_call",
     "long_put",
     "covered_call",
     "cash_secured_put",
     "bull_call_debit_spread",
     "bear_put_debit_spread",
-}
+})
 
-ADVANCED_SCANNER_STRATEGIES = BASIC_SCANNER_STRATEGIES | {
+ADVANCED_SCANNER_STRATEGIES: frozenset[str] = BASIC_SCANNER_STRATEGIES | frozenset({
     "bull_put_credit_spread",
     "bear_call_credit_spread",
     "iron_condor",
@@ -186,9 +186,10 @@ def normalize_plan_tier(
             )
             return PlanTier.FREE
         # Within grace window — skip the period-end check and resolve tier directly
-        if plan_tier == PlanTier.PREMIUM.value:
+        tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
+        if tier_lower == PlanTier.PREMIUM.value:
             return PlanTier.PREMIUM
-        if plan_tier == PlanTier.PRO.value:
+        if tier_lower == PlanTier.PRO.value:
             return PlanTier.PRO
         return PlanTier.FREE
     elif subscription_status is not None and subscription_status not in PAID_STATUSES:
@@ -200,14 +201,16 @@ def normalize_plan_tier(
         return PlanTier.FREE
     elif subscription_status is None:
         return PlanTier.FREE
-    if (
-        subscription_current_period_end is not None
-        and subscription_current_period_end + ACTIVE_RENEWAL_GRACE < datetime.now(UTC)
-    ):
-        return PlanTier.FREE
-    if plan_tier == PlanTier.PREMIUM.value:
+    if subscription_current_period_end is not None:
+        period_end = subscription_current_period_end
+        if period_end.tzinfo is None:
+            period_end = period_end.replace(tzinfo=UTC)
+        if period_end + ACTIVE_RENEWAL_GRACE < datetime.now(UTC):
+            return PlanTier.FREE
+    tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
+    if tier_lower == PlanTier.PREMIUM.value:
         return PlanTier.PREMIUM
-    if plan_tier == PlanTier.PRO.value:
+    if tier_lower == PlanTier.PRO.value:
         return PlanTier.PRO
     return PlanTier.FREE
 
@@ -251,6 +254,25 @@ def ensure_forecasting_access(
         )
 
 
+def ensure_sweep_access(
+    plan_tier: str | None,
+    subscription_status: str | None,
+    subscription_current_period_end: datetime | None = None,
+) -> None:
+    """Sweeps require at least Pro tier.
+
+    NOTE: Currently gates on ``forecasting_access`` from the feature policy.
+    If sweeps are ever offered as a standalone feature or add-on, this should
+    check a dedicated ``sweep_access`` flag instead.
+    """
+    feature_policy = resolve_feature_policy(plan_tier, subscription_status, subscription_current_period_end)
+    if not feature_policy.forecasting_access:
+        raise FeatureLockedError(
+            "Sweeps require Pro or Premium.",
+            required_tier="pro",
+        )
+
+
 def resolve_scanner_policy(
     plan_tier: str | None,
     requested_mode: str,
@@ -260,8 +282,8 @@ def resolve_scanner_policy(
     tier = normalize_plan_tier(plan_tier, subscription_status, subscription_current_period_end)
     try:
         mode = ScannerMode(requested_mode)
-    except ValueError:
-        raise ValidationError(f"Invalid scanner mode: {requested_mode}")
+    except ValueError as exc:
+        raise ValidationError(f"Invalid scanner mode: {requested_mode}") from exc
     policy = POLICIES.get((tier, mode))
     if policy is None:
         if tier == PlanTier.FREE:

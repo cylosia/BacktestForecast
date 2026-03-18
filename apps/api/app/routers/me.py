@@ -23,8 +23,8 @@ def get_me(
     get_rate_limiter().check(
         bucket="me:read",
         actor_key=str(user.id),
-        limit=120,
+        limit=settings.backtest_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    # Read-only — execution service not initialized, no cleanup needed.
-    return BacktestService(db).to_current_user_response(user)
+    with BacktestService(db) as service:
+        return service.to_current_user_response(user)

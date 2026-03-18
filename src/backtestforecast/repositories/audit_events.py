@@ -12,6 +12,8 @@ from backtestforecast.observability.metrics import AUDIT_DEDUPE_CONFLICTS_TOTAL
 
 logger = structlog.get_logger("audit_events")
 
+_MAX_PAGE_SIZE = 200
+
 
 class AuditEventRepository:
     def __init__(self, session: Session) -> None:
@@ -62,17 +64,20 @@ class AuditEventRepository:
             )
             return event, False
 
-    def list_recent(self, *, limit: int = 50) -> list[AuditEvent]:
-        """Return the most recent audit events, newest first."""
-        stmt = (
-            select(AuditEvent)
-            .order_by(AuditEvent.created_at.desc())
-            .limit(limit)
-        )
+    def list_recent(self, *, user_id: UUID | None = None, limit: int = 50) -> list[AuditEvent]:
+        """Return the most recent audit events, newest first.
+
+        When *user_id* is provided the results are scoped to that user.
+        """
+        limit = min(limit, _MAX_PAGE_SIZE)
+        stmt = select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(limit)
+        if user_id is not None:
+            stmt = stmt.where(AuditEvent.user_id == user_id)
         return list(self.session.scalars(stmt))
 
     def list_for_user(self, user_id: UUID, *, limit: int = 50) -> list[AuditEvent]:
         """Return audit events for a specific user."""
+        limit = min(limit, _MAX_PAGE_SIZE)
         stmt = (
             select(AuditEvent)
             .where(AuditEvent.user_id == user_id)
@@ -83,6 +88,7 @@ class AuditEventRepository:
 
     def list_by_type(self, event_type: str, *, limit: int = 50) -> list[AuditEvent]:
         """Return audit events of a specific type."""
+        limit = min(limit, _MAX_PAGE_SIZE)
         stmt = (
             select(AuditEvent)
             .where(AuditEvent.event_type == event_type)

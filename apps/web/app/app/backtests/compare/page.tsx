@@ -19,20 +19,33 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CompareEquityCurves } from "@/components/backtests/compare-equity-curves";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const GRID_COLS: Record<number, string> = {
   1: "md:grid-cols-1",
   2: "md:grid-cols-2",
   3: "md:grid-cols-3",
+  4: "md:grid-cols-2 xl:grid-cols-4",
+  5: "md:grid-cols-3 xl:grid-cols-5",
+  6: "md:grid-cols-3 xl:grid-cols-6",
+  7: "md:grid-cols-4 xl:grid-cols-7",
+  8: "md:grid-cols-4 xl:grid-cols-8",
 };
 
 function safeCurrency(v: unknown): string {
-  return v != null ? formatCurrency(v as NumericValue) : "—";
+  if (v == null) return "—";
+  const n = Number(v);
+  return Number.isFinite(n) ? formatCurrency(n) : "—";
 }
 function safePercent(v: unknown): string {
-  return v != null ? formatPercent(v as NumericValue) : "—";
+  if (v == null) return "—";
+  const n = Number(v);
+  return Number.isFinite(n) ? formatPercent(n) : "—";
 }
 function safeNum(v: unknown): string {
-  return v != null ? formatNumber(v as NumericValue) : "—";
+  if (v == null) return "—";
+  const n = Number(v);
+  return Number.isFinite(n) ? formatNumber(n) : "—";
 }
 function safeRatio(v: unknown): string {
   if (v == null) return "—";
@@ -79,7 +92,8 @@ function bestIndex(runs: BacktestRunDetailResponse[], key: keyof BacktestSummary
     const raw = runs[i].summary?.[key];
     if (raw == null) continue;
     const n = typeof raw === "number" ? raw : Number(raw);
-    const val = Number.isFinite(n) ? n : 0;
+    if (!Number.isFinite(n)) continue;
+    const val = n;
     if (best === -1 || (higherIsBetter ? val > bestVal : val < bestVal)) {
       best = i;
       bestVal = val;
@@ -99,7 +113,12 @@ export default async function ComparePage({
 }) {
   const params = await searchParams;
   const idsParam = params.ids ?? "";
-  const runIds = idsParam.split(",").filter(Boolean);
+  const allIds = idsParam.split(",").map((s) => s.trim()).filter(Boolean);
+  const validIds = allIds.filter((id) => UUID_RE.test(id));
+  const invalidCount = allIds.length - validIds.length;
+  const MAX_COMPARE_IDS = 10;
+  const runIds = validIds.slice(0, MAX_COMPARE_IDS);
+  const truncated = validIds.length > MAX_COMPARE_IDS;
 
   if (runIds.length < 2) {
     return (
@@ -126,7 +145,7 @@ export default async function ComparePage({
     const data = await compareBacktests(runIds);
     const runs = data.items;
 
-    if (runs.length === 0) {
+    if (runs.length < 2) {
       return (
         <div className="space-y-6">
           <Button asChild className="px-0" variant="ghost">
@@ -165,6 +184,16 @@ export default async function ComparePage({
             <p className="mt-2 text-muted-foreground">
               Comparing {runs.length} runs (plan limit: {data.comparison_limit}).
             </p>
+            {invalidCount > 0 ? (
+              <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
+                {invalidCount} invalid ID{invalidCount === 1 ? "" : "s"} removed (must be valid UUID format).
+              </p>
+            ) : null}
+            {truncated ? (
+              <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
+                Only the first 10 run IDs were used. Extra IDs were ignored.
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -204,6 +233,7 @@ export default async function ComparePage({
             </CardDescription>
           </CardHeader>
           <CardContent>
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -241,6 +271,7 @@ export default async function ComparePage({
                 })}
               </TableBody>
             </Table>
+            </div>
           </CardContent>
         </Card>
 

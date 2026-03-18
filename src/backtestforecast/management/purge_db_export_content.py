@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.config import get_settings
-from backtestforecast.db.session import SessionLocal
+from backtestforecast.db.session import create_session
 from backtestforecast.exports.storage import ExportStorage, get_export_storage
 from backtestforecast.models import ExportJob
 
@@ -38,7 +38,8 @@ def purge_db_export_content(
     then sets content_bytes = None and commits.
 
     Returns:
-        Count of purged rows.
+        Count of purged rows. In dry-run mode, the count represents rows that
+        would be purged (matched), not rows actually purged.
     """
     purged = 0
 
@@ -106,7 +107,7 @@ def main() -> int:
     settings = get_settings()
     storage = get_export_storage(settings)
 
-    with SessionLocal() as session:
+    with create_session() as session:
         count = purge_db_export_content(
             session,
             storage,

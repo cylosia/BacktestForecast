@@ -22,10 +22,27 @@
 - [ ] All env vars with secrets use a proper secret manager (not `.env` files in production).
 - [ ] Clerk authorized parties match only the deployed web app origin.
 
+### CSRF Protection
+
+Current approach: Cookie-based authentication uses `X-Requested-With: XMLHttpRequest`
+header verification for state-changing requests, plus origin allowlist checking.
+
+This is effective because browsers block custom cross-origin headers without CORS
+preflight. The production CORS configuration prevents wildcard origins.
+
+**Limitation**: GET endpoints with side effects would be vulnerable. Currently all
+GET endpoints are read-only so this is acceptable.
+
+**Future consideration**: Migrate to proper CSRF tokens if cookie-based auth is
+expanded or if GET endpoints gain side effects.
+
+## Known operational risks
+- **Pipeline symbol override via Redis:** The nightly pipeline reads `bff:pipeline:symbols` from Redis to override the default symbol list. Anyone with Redis access can change which symbols the pipeline processes. Mitigate by restricting Redis network access and using `REDIS_PASSWORD`.
+
 ## Infrastructure
 - [ ] TLS terminates at the edge and internal traffic uses private networking where possible.
 - [ ] PostgreSQL backups and restore drills are in place.
-- [ ] Redis is deployed with auth and network restrictions.
+- [ ] Redis is deployed with auth and network restrictions (also protects `bff:pipeline:symbols` override).
 - [ ] Worker, beat, and API use separate deploy units and health checks.
 - [ ] Container images are pinned to digest or specific tags.
 

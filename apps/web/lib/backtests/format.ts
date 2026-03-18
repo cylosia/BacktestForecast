@@ -176,7 +176,9 @@ const TERMINAL_STATUSES = new Set<string>(["succeeded", "failed", "cancelled", "
 
 export function isTerminalStatus(status: RunStatus | string): boolean {
   if (!KNOWN_STATUSES.has(status)) {
-    console.warn(`[isTerminalStatus] Unknown status: "${status}". Treating as non-terminal.`);
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`[isTerminalStatus] Unknown status: "${status}". Treating as non-terminal.`);
+    }
   }
   return TERMINAL_STATUSES.has(status);
 }

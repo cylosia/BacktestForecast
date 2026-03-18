@@ -24,10 +24,10 @@ class TestToDecimalInfiniteHandling:
         with pytest.raises(ValueError, match="Non-finite"):
             to_decimal(float("inf"))
 
-    def test_nan_always_raises(self):
+    def test_nan_returns_none(self):
         from backtestforecast.services.backtests import to_decimal
-        with pytest.raises(ValueError, match="Non-finite"):
-            to_decimal(float("nan"), allow_infinite=True)
+        result = to_decimal(float("nan"), allow_infinite=True)
+        assert result is None
 
     def test_decimal_infinite_with_allow_returns_none(self):
         from backtestforecast.services.backtests import to_decimal

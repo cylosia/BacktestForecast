@@ -1,4 +1,4 @@
-const PLAN_ERROR_CODES = new Set(["quota_exceeded", "feature_locked"]);
+const PLAN_ERROR_CODES = new Set(["quota_exceeded", "feature_locked", "plan_limit"]);
 
 /**
  * Returns true if an API error code indicates a plan-limit issue that

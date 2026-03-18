@@ -120,29 +120,38 @@ class OptionDataPrefetcher:
             futures = {
                 pool.submit(_fetch_date, td): td for td in trade_dates
             }
-            for future in as_completed(futures):
-                td = futures[future]
-                try:
-                    date_result = future.result()
-                except Exception:
-                    logger.warning("prefetch.worker_error", date=str(td), exc_info=True)
-                    date_result = _DateResult(errors=[f"{symbol} {td}: worker exception"])
+            try:
+                for future in as_completed(futures, timeout=300):
+                    td = futures[future]
+                    try:
+                        date_result = future.result()
+                    except Exception:
+                        logger.warning("prefetch.worker_error", date=str(td), exc_info=True)
+                        date_result = _DateResult(errors=[f"{symbol} {td}: worker exception"])
 
-                with counter_lock:
-                    summary.dates_processed += 1
-                    summary.contracts_fetched += date_result.contracts_fetched
-                    summary.quotes_fetched += date_result.quotes_fetched
-                    summary.errors.extend(date_result.errors)
+                    with counter_lock:
+                        summary.dates_processed += 1
+                        summary.contracts_fetched += date_result.contracts_fetched
+                        summary.quotes_fetched += date_result.quotes_fetched
+                        summary.errors.extend(date_result.errors)
 
-                    if summary.dates_processed % 50 == 0:
-                        logger.info(
-                            "prefetch.progress",
-                            symbol=symbol,
-                            dates_done=summary.dates_processed,
-                            dates_total=len(trade_dates),
-                            contracts=summary.contracts_fetched,
-                            quotes=summary.quotes_fetched,
-                        )
+                        if summary.dates_processed % 50 == 0:
+                            logger.info(
+                                "prefetch.progress",
+                                symbol=symbol,
+                                dates_done=summary.dates_processed,
+                                dates_total=len(trade_dates),
+                                contracts=summary.contracts_fetched,
+                                quotes=summary.quotes_fetched,
+                            )
+            except TimeoutError:
+                logger.warning(
+                    "prefetch.timeout",
+                    symbol=symbol,
+                    dates_done=summary.dates_processed,
+                    dates_total=len(trade_dates),
+                )
+                summary.errors.append(f"{symbol}: prefetch timed out after 300s")
 
         logger.info(
             "prefetch.completed",

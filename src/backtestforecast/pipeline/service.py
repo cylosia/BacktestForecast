@@ -152,6 +152,7 @@ class NightlyPipelineService:
             trade_date=trade_date,
             status="running",
             stage="universe_screen",
+            started_at=datetime.now(UTC),
         )
         self.session.add(run)
         try:
@@ -172,12 +173,14 @@ class NightlyPipelineService:
         self.session.refresh(run)
         _run_id = run.id
 
+        max_workers = max(1, get_settings().pipeline_max_workers)
+        executor = ThreadPoolExecutor(max_workers=max_workers)
         try:
             # Stage 1: Universe screening
             run.stage = "universe_screen"
             run.symbols_screened = len(symbols)
 
-            regime_snapshots = self._stage1_screen(symbols, trade_date)
+            regime_snapshots = self._stage1_screen(symbols, trade_date, executor=executor)
             run.symbols_after_screen = len(regime_snapshots)
             logger.info(
                 "pipeline.stage1_complete",
@@ -201,7 +204,7 @@ class NightlyPipelineService:
             # Stage 3: Quick backtests
             run.stage = "quick_backtest"
 
-            quick_results = self._stage3_quick_backtest(pairs, trade_date)
+            quick_results = self._stage3_quick_backtest(pairs, trade_date, executor=executor)
             run.quick_backtests_run = len(quick_results)
 
             if not quick_results and pairs:
@@ -225,7 +228,7 @@ class NightlyPipelineService:
             # Stage 4: Full backtests
             run.stage = "full_backtest"
 
-            full_results = self._stage4_full_backtest(top_candidates, trade_date)
+            full_results = self._stage4_full_backtest(top_candidates, trade_date, executor=executor)
             run.full_backtests_run = len(full_results)
             self.session.flush()
             logger.info(
@@ -237,7 +240,7 @@ class NightlyPipelineService:
             # Stage 5: Forecast + ranking
             run.stage = "forecast_rank"
 
-            final_ranked = self._stage5_forecast_and_rank(full_results, trade_date)
+            final_ranked = self._stage5_forecast_and_rank(full_results, trade_date, executor=executor)
             final_ranked = final_ranked[:max_recommendations]
 
             # Persist recommendations
@@ -302,6 +305,8 @@ class NightlyPipelineService:
                 self.session.rollback()
             logger.exception("pipeline.failed", run_id=str(run.id))
             raise
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
 
         self.session.refresh(run)
         return run
@@ -314,6 +319,8 @@ class NightlyPipelineService:
         self,
         symbols: list[str],
         trade_date: date,
+        *,
+        executor: ThreadPoolExecutor,
     ) -> list[RegimeSnapshot]:
         """Fetch bars and classify regime for each symbol.
         Skip symbols with insufficient data.
@@ -338,32 +345,30 @@ class NightlyPipelineService:
                 return None
 
         results: list[RegimeSnapshot] = []
-        max_workers = min(get_settings().pipeline_max_workers, len(symbols)) if symbols else 1
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_screen_one, s): s for s in symbols}
-            collected: set[int] = set()
-            try:
-                for future in as_completed(futures, timeout=300):
-                    collected.add(id(future))
+        futures = {executor.submit(_screen_one, s): s for s in symbols}
+        collected: set[int] = set()
+        try:
+            for future in as_completed(futures, timeout=300):
+                collected.add(id(future))
+                try:
+                    snapshot = future.result(timeout=300)
+                except Exception:
+                    logger.warning("pipeline.screen_task_failed", exc_info=True)
+                    continue
+                if snapshot is not None:
+                    results.append(snapshot)
+        except TimeoutError:
+            logger.warning("pipeline.stage1_timeout", completed=len(results), total=len(symbols))
+            for f in futures:
+                if id(f) in collected:
+                    continue
+                if f.done() and not f.cancelled():
                     try:
-                        snapshot = future.result(timeout=300)
+                        snapshot = f.result(timeout=0)
+                        if snapshot is not None:
+                            results.append(snapshot)
                     except Exception:
-                        logger.warning("pipeline.screen_task_failed", exc_info=True)
-                        continue
-                    if snapshot is not None:
-                        results.append(snapshot)
-            except TimeoutError:
-                logger.warning("pipeline.stage1_timeout", completed=len(results), total=len(symbols))
-                for f in futures:
-                    if id(f) in collected:
-                        continue
-                    if f.done() and not f.cancelled():
-                        try:
-                            snapshot = f.result(timeout=0)
-                            if snapshot is not None:
-                                results.append(snapshot)
-                        except Exception:
-                            pass
+                        pass
 
         return results
 
@@ -398,6 +403,8 @@ class NightlyPipelineService:
         self,
         pairs: list[SymbolStrategyPair],
         trade_date: date,
+        *,
+        executor: ThreadPoolExecutor,
     ) -> list[QuickBacktestResult]:
         """Run short-lookback backtests with a small parameter grid."""
         lookback_start = trade_date - timedelta(days=90)
@@ -467,32 +474,30 @@ class NightlyPipelineService:
                 return None
 
         results: list[QuickBacktestResult] = []
-        max_workers = min(get_settings().pipeline_max_workers, len(work_items)) if work_items else 1
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_run_one, item): item for item in work_items}
-            collected: set[int] = set()
-            try:
-                for future in as_completed(futures, timeout=300):
-                    collected.add(id(future))
+        futures = {executor.submit(_run_one, item): item for item in work_items}
+        collected: set[int] = set()
+        try:
+            for future in as_completed(futures, timeout=300):
+                collected.add(id(future))
+                try:
+                    result = future.result(timeout=300)
+                except Exception:
+                    logger.warning("pipeline.quick_backtest_task_failed", exc_info=True)
+                    continue
+                if result is not None:
+                    results.append(result)
+        except TimeoutError:
+            logger.warning("pipeline.stage3_timeout", completed=len(results), total=len(work_items))
+            for f in futures:
+                if id(f) in collected:
+                    continue
+                if f.done() and not f.cancelled():
                     try:
-                        result = future.result(timeout=300)
+                        result = f.result(timeout=0)
+                        if result is not None:
+                            results.append(result)
                     except Exception:
-                        logger.warning("pipeline.quick_backtest_task_failed", exc_info=True)
-                        continue
-                    if result is not None:
-                        results.append(result)
-            except TimeoutError:
-                logger.warning("pipeline.stage3_timeout", completed=len(results), total=len(work_items))
-                for f in futures:
-                    if id(f) in collected:
-                        continue
-                    if f.done() and not f.cancelled():
-                        try:
-                            result = f.result(timeout=0)
-                            if result is not None:
-                                results.append(result)
-                        except Exception:
-                            pass
+                        pass
 
         return results
 
@@ -504,6 +509,8 @@ class NightlyPipelineService:
         self,
         candidates: list[QuickBacktestResult],
         trade_date: date,
+        *,
+        executor: ThreadPoolExecutor,
     ) -> list[FullBacktestResult]:
         """Run full-lookback backtests on the top candidates."""
         lookback_start = trade_date - timedelta(days=365)
@@ -555,32 +562,30 @@ class NightlyPipelineService:
                 return None
 
         results: list[FullBacktestResult] = []
-        max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_run_one, c): c for c in candidates}
-            collected: set[int] = set()
-            try:
-                for future in as_completed(futures, timeout=300):
-                    collected.add(id(future))
+        futures = {executor.submit(_run_one, c): c for c in candidates}
+        collected: set[int] = set()
+        try:
+            for future in as_completed(futures, timeout=300):
+                collected.add(id(future))
+                try:
+                    result = future.result(timeout=300)
+                except Exception:
+                    logger.warning("pipeline.full_backtest_task_failed", exc_info=True)
+                    continue
+                if result is not None:
+                    results.append(result)
+        except TimeoutError:
+            logger.warning("pipeline.stage4_timeout", completed=len(results), total=len(candidates))
+            for f in futures:
+                if id(f) in collected:
+                    continue
+                if f.done() and not f.cancelled():
                     try:
-                        result = future.result(timeout=300)
+                        result = f.result(timeout=0)
+                        if result is not None:
+                            results.append(result)
                     except Exception:
-                        logger.warning("pipeline.full_backtest_task_failed", exc_info=True)
-                        continue
-                    if result is not None:
-                        results.append(result)
-            except TimeoutError:
-                logger.warning("pipeline.stage4_timeout", completed=len(results), total=len(candidates))
-                for f in futures:
-                    if id(f) in collected:
-                        continue
-                    if f.done() and not f.cancelled():
-                        try:
-                            result = f.result(timeout=0)
-                            if result is not None:
-                                results.append(result)
-                        except Exception:
-                            pass
+                        pass
 
         return results
 
@@ -592,6 +597,8 @@ class NightlyPipelineService:
         self,
         candidates: list[FullBacktestResult],
         trade_date: date,
+        *,
+        executor: ThreadPoolExecutor,
     ) -> list[FullBacktestResult]:
         """Overlay forecast data and produce the final ranked list."""
         if self.forecaster is not None:
@@ -612,51 +619,49 @@ class NightlyPipelineService:
                     )
                     return candidate, None
 
-            max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(_fetch_forecast, c): c for c in candidates}
-                collected: set[int] = set()
+            futures = {executor.submit(_fetch_forecast, c): c for c in candidates}
+            collected: set[int] = set()
 
-                def _apply_forecast(candidate: FullBacktestResult, forecast: dict[str, Any]) -> None:
-                    candidate.forecast_json = forecast
-                    median_return = forecast.get("expected_return_median_pct", 0)
-                    positive_rate = forecast.get("positive_outcome_rate_pct", 50)
-                    backtest_roi = candidate.summary.get("total_roi_pct", 0)
-                    forecast_supports = float(median_return) > 0
-                    if candidate.strategy_type in BEARISH_STRATEGIES:
-                        forecast_supports = float(median_return) < 0
-                    adjusted_score = candidate.score
-                    if backtest_roi > 0 and float(median_return) != 0 and forecast_supports:
-                        adjusted_score *= 1.2
-                    effective_rate = float(positive_rate)
-                    if candidate.strategy_type in BEARISH_STRATEGIES:
-                        effective_rate = 100.0 - effective_rate
-                    if effective_rate > 60:
-                        adjusted_score *= 1.0 + (effective_rate - 60) / 200.0
-                    candidate.score = adjusted_score
+            def _apply_forecast(candidate: FullBacktestResult, forecast: dict[str, Any]) -> None:
+                candidate.forecast_json = forecast
+                median_return = forecast.get("expected_return_median_pct", 0)
+                positive_rate = forecast.get("positive_outcome_rate_pct", 50)
+                backtest_roi = candidate.summary.get("total_roi_pct", 0)
+                forecast_supports = float(median_return) > 0
+                if candidate.strategy_type in BEARISH_STRATEGIES:
+                    forecast_supports = float(median_return) < 0
+                adjusted_score = candidate.score
+                if backtest_roi > 0 and float(median_return) != 0 and forecast_supports:
+                    adjusted_score *= 1.2
+                effective_rate = float(positive_rate)
+                if candidate.strategy_type in BEARISH_STRATEGIES:
+                    effective_rate = 100.0 - effective_rate
+                if effective_rate > 60:
+                    adjusted_score *= 1.0 + (effective_rate - 60) / 200.0
+                candidate.score = adjusted_score
 
-                try:
-                    for future in as_completed(futures, timeout=300):
-                        collected.add(id(future))
+            try:
+                for future in as_completed(futures, timeout=300):
+                    collected.add(id(future))
+                    try:
+                        candidate, forecast = future.result(timeout=300)
+                    except Exception:
+                        logger.warning("pipeline.forecast_task_failed", exc_info=True)
+                        continue
+                    if forecast:
+                        _apply_forecast(candidate, forecast)
+            except TimeoutError:
+                logger.warning("pipeline.stage5_timeout", completed=len(collected), total=len(futures))
+                for f in futures:
+                    if id(f) in collected:
+                        continue
+                    if f.done() and not f.cancelled():
                         try:
-                            candidate, forecast = future.result(timeout=300)
+                            candidate, forecast = f.result(timeout=0)
+                            if forecast:
+                                _apply_forecast(candidate, forecast)
                         except Exception:
-                            logger.warning("pipeline.forecast_task_failed", exc_info=True)
-                            continue
-                        if forecast:
-                            _apply_forecast(candidate, forecast)
-                except TimeoutError:
-                    logger.warning("pipeline.stage5_timeout", completed=len(collected), total=len(futures))
-                    for f in futures:
-                        if id(f) in collected:
-                            continue
-                        if f.done() and not f.cancelled():
-                            try:
-                                candidate, forecast = f.result(timeout=0)
-                                if forecast:
-                                    _apply_forecast(candidate, forecast)
-                            except Exception:
-                                pass
+                            pass
 
         # Final sort
         candidates.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))

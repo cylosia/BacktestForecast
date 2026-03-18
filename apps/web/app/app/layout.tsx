@@ -5,6 +5,7 @@ import { AppNavLink } from "@/components/app-nav-link";
 import { MobileNav, type NavItem } from "@/components/mobile-nav";
 import { Badge } from "@/components/ui/badge";
 import { getCurrentUser } from "@/lib/api/server";
+import type { PlanTier } from "@backtestforecast/api-client";
 import { planBadgeVariant, planLabel } from "@/lib/plan";
 
 const NAV_ITEMS: NavItem[] = [
@@ -21,14 +22,14 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  let planTier: string | null = null;
+  let planTier: PlanTier | null = null;
 
   let planError = false;
   try {
     const user = await getCurrentUser();
-    planTier = user.plan_tier;
-  } catch (error) {
-    console.error("Failed to fetch user plan tier:", error);
+    planTier = user.plan_tier as PlanTier;
+  } catch {
+    console.error("Failed to fetch user plan tier");
     planError = true;
   }
 

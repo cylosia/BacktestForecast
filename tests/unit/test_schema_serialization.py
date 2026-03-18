@@ -77,14 +77,58 @@ def test_validate_json_shape_wheel_force_close_no_legs():
 
 
 def test_validate_json_shape_wheel_force_close_missing_entry_mid():
-    """Even without legs, a 'phase' dict missing required keys should still
-    pass because the phase-without-legs short-circuit returns True."""
+    """A dict with 'phase' and 'entry_date' but no 'legs' should short-circuit
+    to True.  Without 'entry_date' the short-circuit does not apply and
+    missing required keys are flagged."""
     from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
 
-    data = {"phase": "covered_call"}
+    data_with_entry_date = {"phase": "covered_call", "entry_date": "2025-03-14"}
     result = validate_json_shape(
-        data,
+        data_with_entry_date,
         "BacktestTrade.detail_json",
         required_keys=_TRADE_DETAIL_REQUIRED_KEYS,
     )
-    assert result is True, "phase-only dict should short-circuit to True"
+    assert result is True, "phase + entry_date dict should short-circuit to True"
+
+    data_without_entry_date = {"phase": "covered_call"}
+    result2 = validate_json_shape(
+        data_without_entry_date,
+        "BacktestTrade.detail_json",
+        required_keys=_TRADE_DETAIL_REQUIRED_KEYS,
+    )
+    assert result2 is False, "phase-only dict without entry_date should fail validation"
+
+
+def test_serialize_trade_roundtrips_through_trade_json_response():
+    """Verify serialize_trade output is compatible with TradeJsonResponse (no id field needed)."""
+    from backtestforecast.schemas.backtests import TradeJsonResponse
+    from backtestforecast.services.serialization import serialize_trade
+    from types import SimpleNamespace
+    from datetime import date
+
+    trade = SimpleNamespace(
+        option_ticker="O:AAPL250321C00170000",
+        strategy_type="long_call",
+        underlying_symbol="AAPL",
+        entry_date=date(2025, 1, 2),
+        exit_date=date(2025, 1, 15),
+        expiration_date=date(2025, 3, 21),
+        quantity=1,
+        dte_at_open=78,
+        holding_period_days=13,
+        entry_underlying_close=170.0,
+        exit_underlying_close=175.0,
+        entry_mid=5.50,
+        exit_mid=8.20,
+        gross_pnl=270.0,
+        net_pnl=268.70,
+        total_commissions=1.30,
+        entry_reason="signal",
+        exit_reason="profit_target",
+        detail_json={"legs": [{"type": "call", "strike": 170}]},
+    )
+
+    serialized = serialize_trade(trade)
+    response = TradeJsonResponse.model_validate(serialized)
+    assert response.option_ticker == "O:AAPL250321C00170000"
+    assert response.net_pnl > 0

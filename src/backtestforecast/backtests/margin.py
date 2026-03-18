@@ -1,6 +1,8 @@
 """Reg T margin calculations for options positions.
 
 Reference: CBOE Margin Manual, FINRA Rule 4210.
+Naked option formulas use a 25% factor (conservative broker estimate,
+e.g. Schwab/TDA).  FINRA Rule 4210 minimum is 20% for equity options.
 
 All functions return margin per contract (i.e., per 100 shares of underlying).
 Callers multiply by contract quantity as needed.
@@ -33,15 +35,18 @@ def naked_call_margin(
 ) -> float:
     """Reg T margin for a naked (uncovered) short call.
 
+    Uses a 25% factor (conservative broker estimate, e.g. Schwab/TDA).
+    FINRA Rule 4210 minimum is 20% for equity, 15% for broad-based index.
+
     Greater of:
-      A) 20% of underlying − OTM amount + premium
+      A) 25% of underlying − OTM amount + premium
       B) 10% of underlying + premium
 
     Returns margin per contract (× 100).
     """
     _require_non_negative(underlying_price=underlying_price, strike=strike, premium_per_share=premium_per_share)
     otm_amount = max(strike - underlying_price, 0.0)
-    method_a = 0.20 * underlying_price - otm_amount + premium_per_share
+    method_a = 0.25 * underlying_price - otm_amount + premium_per_share
     method_b = 0.10 * underlying_price + premium_per_share
     per_share = max(method_a, method_b)
     return max(max(per_share, 0.0) * 100.0, _MIN_MARGIN_PER_CONTRACT)
@@ -54,15 +59,18 @@ def naked_put_margin(
 ) -> float:
     """Reg T margin for a naked (uncovered) short put.
 
+    Uses a 25% factor (conservative broker estimate, e.g. Schwab/TDA).
+    FINRA Rule 4210 minimum is 20% for equity, 15% for broad-based index.
+
     Greater of:
-      A) 20% of underlying − OTM amount + premium
+      A) 25% of underlying − OTM amount + premium
       B) 10% of strike + premium
 
     Returns margin per contract (× 100).
     """
     _require_non_negative(underlying_price=underlying_price, strike=strike, premium_per_share=premium_per_share)
     otm_amount = max(underlying_price - strike, 0.0)
-    method_a = 0.20 * underlying_price - otm_amount + premium_per_share
+    method_a = 0.25 * underlying_price - otm_amount + premium_per_share
     method_b = 0.10 * strike + premium_per_share
     per_share = max(method_a, method_b)
     return max(max(per_share, 0.0) * 100.0, _MIN_MARGIN_PER_CONTRACT)

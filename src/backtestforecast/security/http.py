@@ -8,12 +8,19 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from backtestforecast.observability import REQUEST_ID_HEADER
 
 BODY_LIMIT_OVERRIDES: dict[str, int] = {
-    "/v1/billing/webhook": 256_000,
+    "/v1/billing/webhook": 512_000,
 }
 
 
 class _BodyTooLarge(Exception):
     pass
+
+
+# NOTE: Response body size is not limited at the middleware level.
+# Large responses (e.g., compare endpoint with 10 runs × 10K trades)
+# are bounded by trade_limit parameters at the service layer.
+# Consider adding response compression (gzip) middleware if response
+# sizes become a concern in production.
 
 
 class RequestBodyLimitMiddleware:
@@ -138,15 +145,21 @@ class ApiSecurityHeadersMiddleware:
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("X-Frame-Options", "DENY")
                 headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-                headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+                headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
                 headers.setdefault("Cache-Control", "no-store")
-                headers.setdefault("Content-Security-Policy", "default-src 'self'")
-                headers["X-API-Version"] = API_VERSION
+                headers.setdefault(
+                    "Content-Security-Policy",
+                    "default-src 'self'; frame-ancestors 'none'",
+                )
+                headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+                headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
                 if self._is_production:
                     headers.setdefault(
                         "Strict-Transport-Security",
-                        "max-age=63072000; includeSubDomains; preload",
+                        "max-age=31536000; includeSubDomains",
                     )
+                if not self._is_production:
+                    headers["X-API-Version"] = API_VERSION
             await send(message)
 
         await self.app(scope, receive, send_with_headers)

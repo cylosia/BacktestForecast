@@ -311,6 +311,11 @@ class DoubleDiagonalStrategy(StrategyDefinition):
                 scq.mid_price,  # type: ignore[union-attr]
                 spq.mid_price,  # type: ignore[union-attr]
             )
+            # The long far-dated legs reduce risk vs a naked short straddle.
+            # Apply a 50% reduction to approximate the margin benefit of the
+            # protective long legs. A precise calculation would require
+            # modeling the long legs' delta/gamma offset.
+            capital = int(capital * 0.50)
             max_loss = None
 
         return OpenMultiLegPosition(

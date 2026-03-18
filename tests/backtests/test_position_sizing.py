@@ -39,7 +39,7 @@ class TestResolvePositionSize:
             capital_required_per_unit=0,
             max_loss_per_unit=100,
         )
-        assert result == 0
+        assert result == 5
 
     def test_none_max_loss_uses_capital(self):
         result = self._call(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
@@ -8,7 +8,7 @@ import { createScannerJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import type { CreateScannerJobRequest, ScannerMode, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
-import { parseSymbols, validateScannerForm } from "@/lib/scanner/validation";
+import { parseSymbols, validateScannerForm, type PlanTier } from "@/lib/scanner/validation";
 import { daysAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -105,8 +105,10 @@ const ADVANCED_STRATEGIES = ADVANCED_STRATEGY_GROUPS.flatMap((g) => g.strategies
 
 export function ScannerForm({
   scannerModes,
+  planTier = "pro",
 }: {
   scannerModes: Array<"basic" | "advanced">;
+  planTier?: PlanTier;
 }) {
   const router = useRouter();
   const { getToken } = useAuth();
@@ -181,7 +183,7 @@ export function ScannerForm({
     });
   }, [form.mode]);
 
-  function toggleStrategy(value: string) {
+  const toggleStrategy = useCallback((value: string) => {
     setSelectedStrategies((prev) => {
       const next = new Set(prev);
       if (next.has(value)) {
@@ -191,18 +193,23 @@ export function ScannerForm({
       }
       return next;
     });
-  }
+  }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (submittingRef.current) return;
+
+    const allowed = new Set(
+      (form.mode === "advanced" ? ADVANCED_STRATEGIES : BASIC_STRATEGIES).map((s) => s.value),
+    );
+    const effectiveStrategies = new Set([...selectedStrategies].filter((v) => allowed.has(v)));
 
     const symbols = parseSymbols(form.symbolsText);
 
     const errors = validateScannerForm({
       mode: form.mode,
       symbolsText: form.symbolsText,
-      selectedStrategies,
+      selectedStrategies: effectiveStrategies,
       startDate: form.startDate,
       endDate: form.endDate,
       targetDte: form.targetDte,
@@ -212,11 +219,11 @@ export function ScannerForm({
       riskPct: form.riskPct,
       commission: form.commission,
       maxRecs: form.maxRecs,
-    });
+    }, planTier);
 
     if (errors.length > 0) {
       setStatus("error");
-      setErrorMessage(errors.length === 1 ? errors[0] : errors.map((e, i) => `${i + 1}. ${e}`).join("\n"));
+      setErrorMessage(errors.join(" • "));
       return;
     }
 
@@ -252,7 +259,7 @@ export function ScannerForm({
       name: form.name.trim() || null,
       mode: form.mode,
       symbols,
-      strategy_types: Array.from(selectedStrategies) as StrategyType[],
+      strategy_types: Array.from(effectiveStrategies) as StrategyType[],
       rule_sets: [{ name: form.ruleSetName.trim() || "Default", entry_rules: entryRules }],
       start_date: form.startDate,
       end_date: form.endDate,
@@ -291,7 +298,7 @@ export function ScannerForm({
     } finally {
       submittingRef.current = false;
     }
-  }
+  }, [form, selectedStrategies, getToken, router]);
 
   return (
     <form className="space-y-6" noValidate onSubmit={handleSubmit} aria-label="Scanner configuration">

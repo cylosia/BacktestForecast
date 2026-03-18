@@ -13,11 +13,11 @@ from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
     EquityCurvePointResponse,
-    RunStatus,
+    JobStatus,
     SpreadWidthMode,
     StrategyType,
 )
-from backtestforecast.schemas.common import sanitize_error_message
+from backtestforecast.schemas.common import PlanTier, sanitize_error_message
 from backtestforecast.schemas.scans import RuleSetDefinition
 
 
@@ -53,8 +53,8 @@ class WidthGridItem(BaseModel):
 class ExitRuleSet(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=120)
-    profit_target_pct: float | None = Field(default=None, ge=1.0, le=500.0)
-    stop_loss_pct: float | None = Field(default=None, ge=1.0, le=100.0)
+    profit_target_pct: Decimal | None = Field(default=None, ge=1, le=500)
+    stop_loss_pct: Decimal | None = Field(default=None, ge=1, le=100)
 
 
 class GeneticSweepConfig(BaseModel):
@@ -98,7 +98,7 @@ class CreateSweepRequest(BaseModel):
     exit_rule_sets: list[ExitRuleSet] = Field(default_factory=list, max_length=10)
     genetic_config: GeneticSweepConfig | None = Field(default=None)
     max_results: int = Field(default=20, ge=1, le=100)
-    slippage_pct: float = Field(default=0.0, ge=0.0, le=5.0)
+    slippage_pct: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("5"))
     idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
 
     @field_validator("symbol")
@@ -139,13 +139,12 @@ class CreateSweepRequest(BaseModel):
         return self
 
 
-SweepJobStatus = RunStatus
+SweepJobStatus = JobStatus
 
 
-# Fields like delta, width_mode, width_value, entry_rule_set_name are
-# extracted from parameter_snapshot_json in the service layer — they do
-# not exist as ORM columns. Changes to the JSON shape must be reflected
-# here and in SweepService._build_result_response.
+# Built manually in SweepService._build_result_response — NOT directly from
+# ORM attributes.  Fields like delta, width_mode, entry_rule_set_name are
+# extracted from parameter_snapshot_json in the service layer.
 class SweepResultResponse(BaseModel):
     id: UUID
     rank: int
@@ -154,24 +153,30 @@ class SweepResultResponse(BaseModel):
     delta: int | None = None
     width_mode: str | None = None
     width_value: Decimal | None = None
-    entry_rule_set_name: str
+    entry_rule_set_name: str = "default"
     exit_rule_set_name: str | None = None
     profit_target_pct: float | None = None
     stop_loss_pct: float | None = None
+    parameter_snapshot_json: dict[str, Any] = Field(default_factory=dict)
     summary: BacktestSummaryResponse
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     trades_json: list[dict[str, Any]] = Field(default_factory=list)
     equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list)
+    trades_truncated: bool = False
 
 
 class SweepResultListResponse(BaseModel):
     items: list[SweepResultResponse]
+    total: int = 0
+    offset: int = 0
+    limit: int = 100
 
 
 class SweepJobResponse(BaseModel):
     id: UUID
     status: SweepJobStatus
     symbol: str
+    plan_tier_snapshot: PlanTier
     candidate_count: int
     evaluated_candidate_count: int
     result_count: int
@@ -186,6 +191,16 @@ class SweepJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
+
+
+class SweepJobStatusResponse(BaseModel):
+    id: UUID
+    status: SweepJobStatus
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SweepJobListResponse(BaseModel):

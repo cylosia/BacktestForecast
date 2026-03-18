@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import type { SweepResultResponse } from "@backtestforecast/api-client";
 import { getSweepJob, getSweepResults } from "@/lib/api/server";
 import { formatDateTime, isTerminalStatus, statusLabel } from "@/lib/backtests/format";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +23,7 @@ export default async function SweepDetailPage({
     const job = await getSweepJob(jobId);
     const isComplete = isTerminalStatus(job.status);
 
-    let results: any[] = [];
+    let results: SweepResultResponse[] = [];
     let resultsError: string | null = null;
     if (job.status === "succeeded") {
       try {

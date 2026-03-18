@@ -37,6 +37,11 @@ return count
 """
 
 
+# Future enhancement: log requests that are near the rate limit threshold
+# (e.g., 80%+ of limit) to detect potential abuse patterns before they
+# hit the hard limit.
+
+
 class RateLimiter:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -136,6 +141,21 @@ class RateLimiter:
             REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="ping").inc()
             return False
 
+    def get_pool_stats(self) -> dict[str, int]:
+        """Return Redis connection pool statistics for monitoring."""
+        redis = self._get_redis()
+        if redis is None:
+            return {"status": "disconnected"}
+        try:
+            pool = redis.connection_pool
+            return {
+                "status": "connected",
+                "max_connections": getattr(pool, "max_connections", -1),
+                "current_connections": len(getattr(pool, "_available_connections", [])) + len(getattr(pool, "_in_use_connections", [])),
+            }
+        except Exception:
+            return {"status": "error"}
+
     def close(self) -> None:
         """Release Redis connection resources."""
         with self._redis_lock:
@@ -190,8 +210,12 @@ class RateLimiter:
                     del self._memory_counters[k]
                 if len(self._memory_counters) > max_keys * 2:
                     keep_count = max_keys
-                    items = list(self._memory_counters.items())
-                    self._memory_counters = dict(items[-keep_count:])
+                    sorted_items = sorted(
+                        self._memory_counters.items(),
+                        key=lambda kv: kv[1][0],
+                        reverse=True,
+                    )
+                    self._memory_counters = dict(sorted_items[:keep_count])
             counter_bucket, counter_value = self._memory_counters.get(namespaced, (bucket, 0))
             if counter_bucket != bucket:
                 counter_value = 0

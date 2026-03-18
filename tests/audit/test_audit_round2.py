@@ -20,11 +20,11 @@ from backtestforecast.backtests.types import (
 class TestToDecimalEdgeCases:
     """Item 61: to_decimal(NaN) and to_decimal(Inf) behavior."""
 
-    def test_nan_raises(self):
+    def test_nan_returns_none(self):
         from backtestforecast.services.backtests import to_decimal
 
-        with pytest.raises(ValueError, match="Non-finite"):
-            to_decimal(float("nan"))
+        result = to_decimal(float("nan"))
+        assert result is None
 
     def test_inf_raises(self):
         from backtestforecast.services.backtests import to_decimal
@@ -38,11 +38,11 @@ class TestToDecimalEdgeCases:
         with pytest.raises(ValueError, match="Non-finite"):
             to_decimal(float("-inf"))
 
-    def test_decimal_nan_raises(self):
+    def test_decimal_nan_returns_none(self):
         from backtestforecast.services.backtests import to_decimal
 
-        with pytest.raises(ValueError, match="Non-finite"):
-            to_decimal(Decimal("NaN"))
+        result = to_decimal(Decimal("NaN"))
+        assert result is None
 
     def test_normal_float_quantized(self):
         from backtestforecast.services.backtests import to_decimal
@@ -145,12 +145,13 @@ class TestSlippageInPositionSizing:
 
 
 class TestSortinoDenominator:
-    """Item 64: Sortino ratio denominator correctness."""
+    """Item 64: Sortino ratio denominator uses count of downside returns
+    (population convention)."""
 
-    def test_sortino_uses_full_sample_count(self):
+    def test_sortino_uses_downside_count(self):
         from backtestforecast.backtests.summary import _compute_sharpe_sortino
 
-        equities = [10000, 10100, 10200, 10150, 10300, 10400, 10500, 10600, 10700, 10800]
+        equities = [10000, 10100, 10200, 10150, 10300, 10250, 10400, 10500, 10600, 10700]
         curve = [
             EquityPointResult(
                 trade_date=date(2024, 1, 1) + timedelta(days=i),

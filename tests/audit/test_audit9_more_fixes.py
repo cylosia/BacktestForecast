@@ -102,12 +102,12 @@ class TestSanitizeSensitiveKeysNoMutation:
 class TestMetricsServerBindsToLocalhost:
     """Fix 37: Worker metrics server must bind to 127.0.0.1 to prevent external access."""
 
-    def test_metrics_server_binds_localhost(self):
+    def test_metrics_server_bind_is_configurable(self):
         source = inspect.getsource(
             __import__("apps.worker.app.celery_app", fromlist=["_start_worker_metrics_server"])._start_worker_metrics_server
         )
-        assert '("127.0.0.1"' in source or "('127.0.0.1'" in source, (
-            "Metrics server must bind to 127.0.0.1"
+        assert "WORKER_METRICS_BIND" in source, (
+            "Metrics server bind address must be configurable via WORKER_METRICS_BIND env var"
         )
 
 

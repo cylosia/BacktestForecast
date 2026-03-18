@@ -5,12 +5,14 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
+from backtestforecast.errors import NotFoundError
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
@@ -32,7 +34,9 @@ def list_backtests(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
-    offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+    # Aligned with other list endpoints. For deeper pagination, use cursor-based
+    # pagination (TODO).
+    offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunListResponse:
     get_rate_limiter().check(
@@ -93,7 +97,9 @@ def compare_backtests(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> CompareBacktestsResponse:
-    # Derived limit: comparison is cheaper than creation so we allow 2x the create limit.
+    if not settings.feature_backtests_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Backtesting is temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="backtests:compare",
         actor_key=str(user.id),
@@ -124,6 +130,7 @@ def get_backtest_status(
 @router.get("/{run_id}", response_model=BacktestRunDetailResponse)
 def get_backtest(
     run_id: UUID,
+    response: Response,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     trade_limit: int = Query(default=10_000, ge=0, le=50_000),
@@ -136,4 +143,24 @@ def get_backtest(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:
-        return service.get_run(user, run_id, trade_limit=trade_limit)
+        result = service.get_run(user, run_id, trade_limit=trade_limit)
+    response.headers["Cache-Control"] = "private, no-store"
+    return result
+
+
+@router.delete("/{run_id}", status_code=204)
+def delete_backtest(
+    run_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Delete a backtest run and its associated data."""
+    get_rate_limiter().check(
+        bucket="backtests:delete",
+        actor_key=str(user.id),
+        limit=60,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with BacktestService(db) as service:
+        service.delete_for_user(run_id, user.id)

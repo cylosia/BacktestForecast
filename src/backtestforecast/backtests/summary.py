@@ -15,6 +15,12 @@ def build_summary(
     risk_free_rate: float = 0.045,
     warnings: list[dict[str, str]] | None = None,
 ) -> BacktestSummary:
+    """Build a summary of backtest results from trade and equity data.
+
+    Break-even trades (net_pnl == 0) are excluded from both wins and losses.
+    This can inflate win rate when many trades break even, as the effective
+    sample size is reduced. Consider this when interpreting results.
+    """
     win_pnls: list[float] = []
     loss_pnls: list[float] = []
     total_net_pnl = 0.0
@@ -78,8 +84,9 @@ def build_summary(
 
     return BacktestSummary(
         trade_count=trade_count,
+        decided_trades=decided,
         win_rate=win_rate,
-        total_roi_pct=((ending_equity - starting_equity) / starting_equity * 100.0) if starting_equity else 0.0,
+        total_roi_pct=((ending_equity - starting_equity) / starting_equity * 100.0) if starting_equity > 0 else 0.0,
         average_win_amount=avg_win,
         average_loss_amount=avg_loss,
         average_holding_period_days=(sum_holding / trade_count) if trade_count else 0.0,
@@ -111,6 +118,13 @@ def _compute_sharpe_sortino(
     risk_free_rate: float,
     trade_count: int,
 ) -> tuple[float | None, float | None]:
+    """Compute annualised Sharpe and Sortino ratios.
+
+    Both ratios use sample standard deviation (N-1 denominator) for
+    consistency so they are directly comparable.  The downside deviation
+    sums squared negative excess returns across all N observations but
+    divides by N-1, following the sample-statistic convention.
+    """
     if trade_count < _MIN_TRADES_FOR_RATIOS or len(equity_curve) < 2:
         return None, None
 
@@ -126,22 +140,17 @@ def _compute_sharpe_sortino(
     if len(excess) < 2:
         return None, None
 
-    mean_excess = sum(excess) / len(excess)
-    variance = sum((x - mean_excess) ** 2 for x in excess) / (len(excess) - 1)
+    n = len(excess)
+    mean_excess = sum(excess) / n
+    variance = sum((x - mean_excess) ** 2 for x in excess) / (n - 1)
     stddev = math.sqrt(variance) if variance > 0 else 0.0
     ann = math.sqrt(252.0)
 
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
-    # Downside deviation per Sortino & van der Meer (1991): divides sum of
-    # squared negative excess returns by the total number of observations (N),
-    # not by the count of negative observations only. This matches the
-    # original paper but differs from some industry implementations that
-    # use N_negative. Displayed Sortino ratios may appear higher than
-    # platforms using the alternative convention.
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
-    if downside_sq_sum > 0:
-        down_dev = math.sqrt(downside_sq_sum / max(len(excess) - 1, 1))
+    if downside_sq_sum > 0 and n > 1:
+        down_dev = math.sqrt(downside_sq_sum / (n - 1))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None
@@ -159,7 +168,7 @@ def _compute_cagr(
     if starting_equity <= 0:
         return None
     if ending_equity <= 0:
-        return -100.0
+        return None
     calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
     # Require at least 60 calendar days to avoid misleadingly large annualised
     # returns from very short observation windows.  For example, a 10% return

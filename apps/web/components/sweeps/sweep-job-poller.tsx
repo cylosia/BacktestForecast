@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
+import type { SweepJobResponse } from "@backtestforecast/api-client";
 import { fetchSweepJob } from "@/lib/api/client";
 import { isTerminalStatus, statusLabel } from "@/lib/backtests/format";
 import { useSSE } from "@/hooks/use-sse";
@@ -32,11 +33,11 @@ export function SweepJobPoller({
     return fetchSweepJob(token, jobId, signal);
   }, [getToken, jobId]);
 
-  const { status: sseStatus } = useSSE<any>({
+  const { status: sseStatus } = useSSE<SweepJobResponse>({
     resourceType: "sweeps",
     resourceId: jobId,
-    onProgress: (data: any) => {
-      if (data.status) setStatus(data.status);
+    onProgress: (data: Record<string, unknown>) => {
+      if (data.status) setStatus(String(data.status));
       if (typeof data.evaluated_candidate_count === "number") {
         setEvaluated(data.evaluated_candidate_count);
       }
@@ -47,11 +48,11 @@ export function SweepJobPoller({
     pollingFallback: {
       fetcher,
       onComplete: () => router.refresh(),
-      onProgress: (job: any) => {
+      onProgress: (job: SweepJobResponse) => {
         setStatus(job.status);
         setEvaluated(job.evaluated_candidate_count);
       },
-      isComplete: (job: any) => isTerminalStatus(job.status),
+      isComplete: (job: SweepJobResponse) => isTerminalStatus(job.status),
       interval: POLL_INTERVAL_MS,
       maxAttempts: MAX_POLLS,
     },

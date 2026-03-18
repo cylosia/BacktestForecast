@@ -51,6 +51,6 @@ class UserRepository:
                 existing = self.get_by_clerk_user_id(clerk_user_id)
                 if existing is not None:
                     return existing
-                _time.sleep(0.05 * (_attempt + 1))
+                _time.sleep(0.02 * (_attempt + 1))
             raise
         return user

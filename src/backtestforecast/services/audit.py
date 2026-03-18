@@ -26,11 +26,14 @@ class AuditService:
         user_id: UUID | None = None,
         request_id: str | None = None,
         ip_address: str | None = None,
+        user_agent: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AuditEvent | None:
         """Record an audit event. Returns ``None`` when the event was deduplicated."""
         subject_value = None if subject_id is None else str(subject_id)
-        payload = metadata or {}
+        payload = dict(metadata) if metadata else {}
+        if user_agent:
+            payload["user_agent"] = user_agent[:512]
         event = AuditEvent(
             user_id=user_id,
             request_id=request_id,
@@ -67,11 +70,14 @@ class AuditService:
         user_id: UUID | None = None,
         request_id: str | None = None,
         ip_address: str | None = None,
+        user_agent: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AuditEvent:
         """Record an audit event without deduplication (append-only)."""
         subject_value = None if subject_id is None else str(subject_id)
-        payload = metadata or {}
+        payload = dict(metadata) if metadata else {}
+        if user_agent:
+            payload["user_agent"] = user_agent[:512]
         event = AuditEvent(
             user_id=user_id,
             request_id=request_id,

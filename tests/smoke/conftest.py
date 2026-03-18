@@ -59,6 +59,19 @@ def _is_sqlite(engine) -> bool:
     return engine.dialect.name == "sqlite"
 
 
+def _strip_partial_indexes_for_sqlite(engine) -> None:
+    """Remove PostgreSQL-specific partial indexes so SQLite create_all succeeds."""
+    if engine.dialect.name != "sqlite":
+        return
+    for table in Base.metadata.tables.values():
+        indexes_to_remove = [
+            idx for idx in table.indexes
+            if idx.dialect_options.get("postgresql", {}).get("where") is not None
+        ]
+        for idx in indexes_to_remove:
+            table.indexes.discard(idx)
+
+
 @pytest.fixture(scope="module")
 def smoke_engine():
     """Create engine for smoke tests. Skip if infra unavailable."""
@@ -78,6 +91,7 @@ def smoke_engine():
 @pytest.fixture(scope="module")
 def smoke_session_factory(smoke_engine):
     """Session factory for smoke tests."""
+    _strip_partial_indexes_for_sqlite(smoke_engine)
     Base.metadata.create_all(smoke_engine)
     return sessionmaker(bind=smoke_engine, autoflush=False, expire_on_commit=False)
 

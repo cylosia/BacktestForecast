@@ -121,12 +121,10 @@ def test_handle_webhook_side_effects_only_once(billing_service, db_session, test
 def test_recover_stale_claim_ignores_processed_events(db_session):
     """A StripeEvent with status 'processed' older than 5 min should NOT be
     reset by _recover_stale_claim — only 'processing' events are recovered."""
-    from datetime import timezone
-
     from backtestforecast.models import StripeEvent
     from backtestforecast.repositories.stripe_events import StripeEventRepository
 
-    old_time = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    old_time = datetime(2025, 1, 1, 0, 0, 0)
 
     processed_event = StripeEvent(
         stripe_event_id="evt_processed_stable",
@@ -156,14 +154,12 @@ def test_recover_stale_claim_ignores_processed_events(db_session):
 
 
 def test_recover_stale_claim_resets_processing_events(db_session):
-    """A StripeEvent with status 'processing' older than 5 min should be
-    reset to 'error' by _recover_stale_claim."""
-    from datetime import timezone
-
+    """A StripeEvent with status 'processing' older than the TTL should be
+    deleted by _recover_stale_claim so a fresh claim can be inserted."""
     from backtestforecast.models import StripeEvent
     from backtestforecast.repositories.stripe_events import StripeEventRepository
 
-    old_time = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    old_time = datetime(2025, 1, 1, 0, 0, 0)
 
     processing_event = StripeEvent(
         stripe_event_id="evt_processing_stale",
@@ -181,12 +177,11 @@ def test_recover_stale_claim_resets_processing_events(db_session):
         .values(created_at=old_time)
     )
     db_session.flush()
+    db_session.expunge(processing_event)
 
     repo = StripeEventRepository(db_session)
     recovered = repo._recover_stale_claim("evt_processing_stale")
     assert recovered is True, "Stale processing events must be recovered"
 
-    db_session.expire_all()
     event = repo.get_by_stripe_id("evt_processing_stale")
-    assert event is not None
-    assert event.idempotency_status == "error"
+    assert event is None, "Stale event should be deleted, not updated"

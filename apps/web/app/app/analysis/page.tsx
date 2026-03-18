@@ -8,7 +8,11 @@ async function AnalysisHistorySection() {
     const history = await getAnalysisHistory();
     return <AnalysisHistory data={history} />;
   } catch {
-    return null;
+    return (
+      <div className="rounded-lg border p-4 text-sm text-muted-foreground">
+        Unable to load analysis history. Please try again later.
+      </div>
+    );
   }
 }
 

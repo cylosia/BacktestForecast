@@ -10,13 +10,30 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # NOTE: Unit tests that touch Postgres-specific features (check constraints,
+  # JSONB columns, trigger functions) need the real Postgres service below.
+  # Tests that only need SQLite-compatible SQL can run without DATABASE_URL.
   backend-and-web:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: backtest_unit
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       PYTHONPATH: src:.
       APP_ENV: test
       LOG_JSON: false
+      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_unit
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
@@ -37,7 +54,9 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e '.[dev]'
+          python -m pip install --constraint constraints.txt -e '.[dev]'
+
+      # TODO: Execute load tests (locust) in CI to catch performance regressions.
 
       - name: Lint Python (ruff)
         run: python -m ruff check .
@@ -45,8 +64,11 @@ jobs:
       - name: Typecheck Python (mypy)
         run: python -m mypy src apps --ignore-missing-imports
 
+      - name: Run Alembic migrations (for unit tests needing Postgres)
+        run: alembic upgrade head
+
       - name: Run Python tests
-        run: pytest -q -m "not integration" --ignore=tests/integration --cov=src --cov-report=term --cov-fail-under=60
+        run: pytest -q -m "not integration" --ignore=tests/integration --cov=src --cov-report=term --cov-fail-under=80
 
       - name: Check service close() methods
         run: python scripts/check_service_close.py
@@ -94,6 +116,16 @@ jobs:
             exit 1
           fi
 
+      - name: Validate alertmanager config has no placeholder URLs
+        run: |
+          if grep -q 'localhost' infra/alertmanager/alertmanager.yml; then
+            echo "WARNING: alertmanager.yml contains localhost references."
+            echo "These must be replaced via envsubst before production deployment."
+          fi
+          if grep -q 'NOT-CONFIGURED' infra/alertmanager/alertmanager.yml; then
+            echo "OK: alertmanager.yml uses NOT-CONFIGURED failsafe for unconfigured URLs."
+          fi
+
       - name: Check generated API client types drift
         run: |
           pnpm --filter @backtestforecast/api-client generate
@@ -111,6 +143,8 @@ jobs:
       - name: Build web app
         run: pnpm --filter @backtestforecast/web build
 
+  # NOTE: Integration tests run against a real Postgres 16 service container.
+  # The postgres-integration job uses services: postgres: to provide DATABASE_URL.
   postgres-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -145,7 +179,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e '.[dev]'
+          python -m pip install --constraint constraints.txt -e '.[dev]'
 
       - name: Run Alembic migrations
         run: alembic upgrade head
@@ -175,6 +209,11 @@ jobs:
       - name: Run integration tests against Postgres
         run: pytest tests/integration/ -q
 
+      - name: Run billing/audit/backtest tests against Postgres
+        run: pytest tests/billing/ tests/audit/ tests/backtests/ -q --ignore=tests/backtests/conftest.py
+        env:
+          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
+
       - name: Worker task registration smoke check
         run: python scripts/check_worker_tasks.py
 
@@ -196,7 +235,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e '.[dev]'
+          python -m pip install --constraint constraints.txt -e '.[dev]'
 
       - name: Audit Python dependencies (pip-audit)
         run: |
@@ -216,6 +255,9 @@ jobs:
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check Python dependency licenses
+        run: pip install pip-licenses && pip-licenses --fail-on="GPL-3.0" --allow-only="MIT;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;PSF-2.0;LGPL-2.1;MPL-2.0;Python-2.0"
 
       - name: Audit JS dependencies (pnpm audit)
         run: pnpm audit --prod --audit-level=high
@@ -254,7 +296,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e '.[dev]'
+          python -m pip install --constraint constraints.txt -e '.[dev]'
 
       - name: Run alembic upgrade head
         run: alembic upgrade head
@@ -273,6 +315,20 @@ jobs:
       - name: Check non-nullable columns have server_default
         run: python scripts/check_migration_defaults.py
 
+      - name: Check migration file naming convention
+        run: |
+          for f in alembic/versions/*.py; do
+            basename=$(basename "$f")
+            if [[ "$basename" == "__init__.py" ]] || [[ "$basename" == "README.md" ]]; then
+              continue
+            fi
+            if ! [[ "$basename" =~ ^[0-9]{8}_[0-9]{4}_ ]]; then
+              echo "ERROR: Migration file $basename does not follow naming convention YYYYMMDD_NNNN_description.py"
+              exit 1
+            fi
+          done
+          echo "All migration files follow naming convention"
+
   e2e-tests:
     # E2E tests run by default. To disable, set DISABLE_E2E_TESTS=true
     # as a repository variable in GitHub > Settings > Variables > Actions.
@@ -280,8 +336,23 @@ jobs:
     if: ${{ vars.DISABLE_E2E_TESTS != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: e2e
+          POSTGRES_PASSWORD: e2e
+          POSTGRES_DB: e2e_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U e2e"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       CI: true
+      DATABASE_URL: postgresql+psycopg://e2e:e2e@localhost:5432/e2e_test
       CLERK_TESTING_TOKEN: ${{ secrets.CLERK_TESTING_TOKEN }}
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
@@ -323,7 +394,10 @@ jobs:
       - name: Install Python dependencies for API
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e '.[dev]'
+          python -m pip install --constraint constraints.txt -e '.[dev]'
+
+      - name: Run database migrations
+        run: alembic upgrade head
 
       - name: Start API and web servers, run E2E tests
         env:
@@ -364,7 +438,7 @@ jobs:
   trivy-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: container-smoke
+    needs: [backend-and-web]
     steps:
       # NOTE: These images are rebuilt here rather than reused from container-smoke.
       # For optimization, consider using docker save/load via artifacts.

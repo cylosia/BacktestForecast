@@ -103,6 +103,10 @@ class PipelineBacktestExecutor:
                 (k, json.dumps(v, sort_keys=True) if isinstance(v, (dict, list)) else str(v))
                 for k, v in d.items()
             ))
+        entry_rules_key = tuple(sorted(
+            tuple(sorted(r.model_dump(mode="json").items()))
+            for r in (request.entry_rules or [])
+        )) if request.entry_rules else ()
         return (
             request.symbol,
             request.start_date,
@@ -112,6 +116,7 @@ class PipelineBacktestExecutor:
             request.max_holding_days,
             request.dte_tolerance_days,
             overrides_key,
+            entry_rules_key,
         )
 
     def _get_bundle(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
@@ -124,11 +129,11 @@ class PipelineBacktestExecutor:
 
         with self._bundle_fetch_locks_lock:
             fetch_lock = self._bundle_fetch_locks.setdefault(key, threading.Lock())
-            if len(self._bundle_fetch_locks) > self._MAX_BUNDLE_CACHE_SIZE:
+            if len(self._bundle_fetch_locks) > self._MAX_BUNDLE_CACHE_SIZE * 2:
                 keys_to_remove = [
-                    k for k in list(self._bundle_fetch_locks.keys())[:len(self._bundle_fetch_locks) - self._MAX_BUNDLE_CACHE_SIZE]
+                    k for k in list(self._bundle_fetch_locks.keys())
                     if k != key and not self._bundle_fetch_locks[k].locked()
-                ]
+                ][:len(self._bundle_fetch_locks) - self._MAX_BUNDLE_CACHE_SIZE]
                 for k in keys_to_remove:
                     self._bundle_fetch_locks.pop(k, None)
 
@@ -311,11 +316,11 @@ class PipelineForecaster:
             if bars is None:
                 with self._bar_fetch_locks_lock:
                     fetch_lock = self._bar_fetch_locks.setdefault(cache_key, threading.Lock())
-                    if len(self._bar_fetch_locks) > 500:
+                    if len(self._bar_fetch_locks) > 1000:
                         keys_to_remove = [
-                            k for k in list(self._bar_fetch_locks.keys())[:len(self._bar_fetch_locks) - 500]
+                            k for k in list(self._bar_fetch_locks.keys())
                             if k != cache_key and not self._bar_fetch_locks[k].locked()
-                        ]
+                        ][:len(self._bar_fetch_locks) - 500]
                         for k in keys_to_remove:
                             self._bar_fetch_locks.pop(k, None)
                 with fetch_lock:

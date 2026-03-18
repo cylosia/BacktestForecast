@@ -1,5 +1,20 @@
+"""De facto E2E integration suite: full lifecycle tests via the HTTP API.
+
+Covers the synchronous path end-to-end:
+  create backtest → execute inline → GET detail → list runs → compare runs
+  create scan → execute inline → GET recommendations
+  create export → execute inline → download file
+  create template → CRUD lifecycle
+  Stripe webhook → plan upgrade/downgrade
+  cross-user data isolation
+
+A Celery-inclusive E2E test is not feasible here because it requires a live
+Redis broker and worker process. The ``e2e-tests`` CI job exercises that
+path via Playwright against a running API + web server.
+"""
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -8,7 +23,7 @@ from uuid import UUID
 
 import pytest
 
-from apps.api.app.dependencies import token_verifier
+from apps.api.app.dependencies import get_token_verifier
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 from backtestforecast.backtests.types import (
     BacktestExecutionResult,
@@ -146,7 +161,7 @@ class FakeStripeModule:
                         "customer": "cus_test_123",
                         "status": "active",
                         "cancel_at_period_end": False,
-                        "current_period_end": int(datetime(2026, 4, 1, tzinfo=UTC).timestamp()),
+                        "current_period_end": int((datetime.now(UTC) + timedelta(days=30)).timestamp()),
                         "metadata": {"user_id": ""},
                         "items": {"data": [{"price": {"id": "price_pro_monthly", "recurring": {"interval": "month"}}}]},
                     }
@@ -728,7 +743,7 @@ def test_stripe_webhook_subscription_deleted_downgrades_to_free(
                         "status": "canceled",
                         "cancel_at_period_end": False,
                         "current_period_end": int(
-                            datetime(2026, 4, 1, tzinfo=UTC).timestamp()
+                            (datetime.now(UTC) + timedelta(days=30)).timestamp()
                         ),
                         "metadata": {
                             "user_id": user_id,
@@ -962,24 +977,30 @@ _USER_B_CLERK_ID = "clerk_other_user"
 _USER_B_EMAIL = "other@example.com"
 
 
+_AS_USER_LOCK = threading.Lock()
+
+
 @contextmanager
 def _as_user(clerk_id: str, email: str):
     """Temporarily switch the authenticated user returned by token verification."""
-    original = token_verifier.verify_bearer_token
+    verifier = get_token_verifier()
+    with _AS_USER_LOCK:
+        original = verifier.verify_bearer_token
 
-    def _verify(_token: str) -> AuthenticatedPrincipal:
-        return AuthenticatedPrincipal(
-            clerk_user_id=clerk_id,
-            session_id=f"sess_{clerk_id}",
-            email=email,
-            claims={"sub": clerk_id, "email": email},
-        )
+        def _verify(_token: str) -> AuthenticatedPrincipal:
+            return AuthenticatedPrincipal(
+                clerk_user_id=clerk_id,
+                session_id=f"sess_{clerk_id}",
+                email=email,
+                claims={"sub": clerk_id, "email": email},
+            )
 
-    token_verifier.verify_bearer_token = _verify
+        verifier.verify_bearer_token = _verify
     try:
         yield
     finally:
-        token_verifier.verify_bearer_token = original
+        with _AS_USER_LOCK:
+            verifier.verify_bearer_token = original
 
 
 def test_backtest_not_visible_to_other_user(client, auth_headers, immediate_backtest_execution):
@@ -1094,8 +1115,9 @@ def test_ticker_with_digits_accepted_by_forecast_endpoint(
     client.get("/v1/me", headers=auth_headers)
     _set_user_plan(db_session, tier="pro", subscription_status="active")
     resp = client.get("/v1/forecasts/SPY3", headers=auth_headers)
-    assert resp.status_code in (200, 422, 500), (
-        f"SPY3 should not return 422 for invalid ticker format, got {resp.status_code}"
+    # 500 is never acceptable — it means an unhandled server error
+    assert resp.status_code in (200, 422), (
+        f"SPY3 should not return 500; got {resp.status_code}"
     )
 
 

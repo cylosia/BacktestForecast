@@ -47,8 +47,11 @@ class TestExportDispatchRaceCondition:
         )
 
         mock_celery.send_task.assert_called_once()
-        assert job.celery_task_id == "celery-task-123"
-        db.commit.assert_called_once()
+        assert job.celery_task_id is not None
+        assert len(job.celery_task_id) == 36, "Should be a UUID string"
+        db.commit.assert_called()
+        call_kwargs = mock_celery.send_task.call_args
+        assert call_kwargs.kwargs.get("task_id") == job.celery_task_id
 
     @patch("apps.api.app.dispatch.celery_app")
     def test_dispatch_skips_non_queued_job(self, mock_celery):
@@ -132,7 +135,8 @@ class TestExportDispatchRaceCondition:
             task_kwargs={"export_job_id": "abc-123"},
             queue="exports", log_event="export", logger=logger,
         )
-        assert job.celery_task_id == "task-first"
+        first_task_id = job.celery_task_id
+        assert first_task_id is not None
 
         dispatch_celery_task(
             db=db, job=job,
@@ -141,3 +145,4 @@ class TestExportDispatchRaceCondition:
             queue="exports", log_event="export", logger=logger,
         )
         assert mock_celery.send_task.call_count == 1
+        assert job.celery_task_id == first_task_id

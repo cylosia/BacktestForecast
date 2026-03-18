@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from apps.api.app.dependencies import get_db, token_verifier
+from apps.api.app.dependencies import get_db, get_token_verifier as _get_token_verifier
 from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 from backtestforecast.security.rate_limits import get_rate_limiter
@@ -76,7 +76,8 @@ def client(
             claims={"sub": "clerk_test_user", "email": "test@example.com"},
         )
 
-    monkeypatch.setattr(token_verifier, "verify_bearer_token", fake_verify)
+    _verifier = _get_token_verifier()
+    monkeypatch.setattr(_verifier, "verify_bearer_token", fake_verify)
     app.dependency_overrides[get_db] = override_get_db
     # NOTE: Resetting the rate limiter here means integration tests never
     # exercise rate-limit enforcement. See test_rate_limit_enforcement.py
@@ -104,9 +105,14 @@ class _FakeCeleryApp:
 
         handler = self._handlers.get(name)
         if handler is None:
-            import warnings
-            warnings.warn(f"FakeCeleryApp: unregistered task '{name}' — returning noop", stacklevel=2)
-            return types.SimpleNamespace(id="noop-task-id")
+            import structlog
+            structlog.get_logger("tests").warning(
+                "fake_celery.unregistered_task",
+                task_name=name,
+                hint="Task dispatched but no handler registered — returning noop. "
+                     "Register it with _fake_celery.register() if you need inline execution.",
+            )
+            return types.SimpleNamespace(id=f"noop-{name}")
         handler(name, kwargs)  # type: ignore[operator]
         return types.SimpleNamespace(id="fake-task-id")
 

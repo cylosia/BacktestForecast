@@ -10,6 +10,7 @@ from datetime import date, timedelta
 import structlog
 
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError
+from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
 from backtestforecast.schemas.backtests import (
@@ -38,6 +39,16 @@ class HistoricalDataBundle:
 _GATEWAY_CONTRACT_CACHE_MAX = 2_000
 _GATEWAY_QUOTE_CACHE_MAX = 10_000
 _GATEWAY_SNAPSHOT_CACHE_MAX = 5_000
+_GATEWAY_IV_CACHE_MAX = 50_000
+
+_global_cache_entries = 0
+_global_cache_lock = threading.Lock()
+_GLOBAL_CACHE_BUDGET = 50_000
+
+
+def get_global_cache_entries() -> int:
+    """Return the approximate number of entries across all gateway caches."""
+    return _global_cache_entries
 
 
 class MassiveOptionGateway:
@@ -53,9 +64,63 @@ class MassiveOptionGateway:
         self._contract_cache: OrderedDict[tuple[date, str, int, int], list[OptionContractRecord]] = OrderedDict()
         self._quote_cache: OrderedDict[tuple[str, date], OptionQuoteRecord | None] = OrderedDict()
         self._snapshot_cache: OrderedDict[str, OptionSnapshotRecord | None] = OrderedDict()
+        self._iv_cache: OrderedDict[tuple[str, date], float | None] = OrderedDict()
         self._chain_snapshot_loaded: bool = False
-        self._iv_cache: dict[tuple[str, date], float | None] = {}
         self._lock = threading.Lock()
+        self._tracked_entries = 0
+
+    def _track_add(self, count: int = 1) -> None:
+        global _global_cache_entries
+        with _global_cache_lock:
+            _global_cache_entries = max(0, _global_cache_entries + count)
+        self._tracked_entries = max(0, self._tracked_entries + count)
+
+    def _track_remove(self, count: int = 1) -> None:
+        global _global_cache_entries
+        with _global_cache_lock:
+            _global_cache_entries = max(0, _global_cache_entries - count)
+        self._tracked_entries = max(0, self._tracked_entries - count)
+
+    def _is_over_budget(self) -> bool:
+        return _global_cache_entries > _GLOBAL_CACHE_BUDGET
+
+    def clear_caches(self) -> None:
+        """Release all in-memory cache entries for this gateway."""
+        with self._lock:
+            total = (
+                len(self._contract_cache) + len(self._quote_cache)
+                + len(self._snapshot_cache) + len(self._iv_cache)
+            )
+            self._contract_cache.clear()
+            self._quote_cache.clear()
+            self._snapshot_cache.clear()
+            self._iv_cache.clear()
+            self._chain_snapshot_loaded = False
+            self._track_remove(total)
+
+    def store_iv(self, key: tuple[str, date], value: float | None) -> None:
+        """Store an IV estimate in the bounded LRU cache (thread-safe)."""
+        with self._lock:
+            if key in self._iv_cache:
+                self._iv_cache.move_to_end(key)
+                self._iv_cache[key] = value
+                return
+            if len(self._iv_cache) >= _GATEWAY_IV_CACHE_MAX:
+                evicted = 0
+                for _ in range(len(self._iv_cache) // 4):
+                    self._iv_cache.popitem(last=False)
+                    evicted += 1
+                self._track_remove(evicted)
+            self._iv_cache[key] = value
+            self._track_add(1)
+
+    def get_iv(self, key: tuple[str, date]) -> tuple[bool, float | None]:
+        """Look up an IV estimate. Returns (found, value)."""
+        with self._lock:
+            if key in self._iv_cache:
+                self._iv_cache.move_to_end(key)
+                return True, self._iv_cache[key]
+        return False, None
 
     def list_contracts(
         self,
@@ -79,9 +144,11 @@ class MassiveOptionGateway:
                 self.symbol, entry_date, contract_type, expiration_gte, expiration_lte,
             )
             if cached is not None:
+                MARKET_DATA_CACHE_HITS.labels(cache_type="contracts").inc()
                 contracts = [c for c in cached if c.shares_per_contract == 100]
                 self._store_contracts_in_memory(cache_key, contracts)
                 return contracts
+            MARKET_DATA_CACHE_MISSES.labels(cache_type="contracts").inc()
 
         contracts = self.client.list_option_contracts(
             symbol=self.symbol,
@@ -106,10 +173,14 @@ class MassiveOptionGateway:
         contracts: list[OptionContractRecord],
     ) -> None:
         with self._lock:
-            if len(self._contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX:
+            if len(self._contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX or self._is_over_budget():
+                evicted = 0
                 for _ in range(len(self._contract_cache) // 4):
                     self._contract_cache.popitem(last=False)
+                    evicted += 1
+                self._track_remove(evicted)
             self._contract_cache[cache_key] = contracts
+            self._track_add(1)
 
     def select_contract(
         self,
@@ -167,8 +238,10 @@ class MassiveOptionGateway:
             from backtestforecast.market_data.redis_cache import CACHE_MISS
             redis_result = self._redis_cache.get_quote(option_ticker, trade_date)
             if redis_result is not CACHE_MISS:
+                MARKET_DATA_CACHE_HITS.labels(cache_type="quotes").inc()
                 self._store_quote_in_memory(cache_key, redis_result)
                 return redis_result
+            MARKET_DATA_CACHE_MISSES.labels(cache_type="quotes").inc()
 
         quote = self.client.get_option_quote_for_date(option_ticker, trade_date)
 
@@ -184,10 +257,14 @@ class MassiveOptionGateway:
         quote: OptionQuoteRecord | None,
     ) -> None:
         with self._lock:
-            if len(self._quote_cache) >= _GATEWAY_QUOTE_CACHE_MAX:
+            if len(self._quote_cache) >= _GATEWAY_QUOTE_CACHE_MAX or self._is_over_budget():
+                evicted = 0
                 for _ in range(len(self._quote_cache) // 4):
                     self._quote_cache.popitem(last=False)
+                    evicted += 1
+                self._track_remove(evicted)
             self._quote_cache[cache_key] = quote
+            self._track_add(1)
 
     def get_snapshot(self, option_ticker: str) -> OptionSnapshotRecord | None:
         """Return a real-time snapshot (greeks, IV) for a single option contract.
@@ -200,10 +277,14 @@ class MassiveOptionGateway:
                 return self._snapshot_cache[option_ticker]
         snapshot = self.client.get_option_snapshot(self.symbol, option_ticker)
         with self._lock:
-            if len(self._snapshot_cache) >= _GATEWAY_SNAPSHOT_CACHE_MAX:
+            if len(self._snapshot_cache) >= _GATEWAY_SNAPSHOT_CACHE_MAX or self._is_over_budget():
+                evicted = 0
                 for _ in range(len(self._snapshot_cache) // 4):
                     self._snapshot_cache.popitem(last=False)
+                    evicted += 1
+                self._track_remove(evicted)
             self._snapshot_cache[option_ticker] = snapshot
+            self._track_add(1)
         return snapshot
 
     def get_chain_delta_lookup(
@@ -218,17 +299,19 @@ class MassiveOptionGateway:
         assignment when multiple expirations share the same strike.
         """
         with self._lock:
-            already_loaded = self._chain_snapshot_loaded
-        if not already_loaded:
-            chain = self.client.get_option_chain_snapshot(self.symbol)
-            with self._lock:
-                if not self._chain_snapshot_loaded:
-                    for snap in chain:
-                        if snap.ticker not in self._snapshot_cache:
-                            self._snapshot_cache[snap.ticker] = snap
-                    while len(self._snapshot_cache) > _GATEWAY_SNAPSHOT_CACHE_MAX:
-                        self._snapshot_cache.popitem(last=False)
-                    self._chain_snapshot_loaded = True
+            if not self._chain_snapshot_loaded:
+                chain = self.client.get_option_chain_snapshot(self.symbol)
+                added = 0
+                for snap in chain:
+                    if snap.ticker not in self._snapshot_cache:
+                        self._snapshot_cache[snap.ticker] = snap
+                        added += 1
+                evicted = 0
+                while len(self._snapshot_cache) > _GATEWAY_SNAPSHOT_CACHE_MAX:
+                    self._snapshot_cache.popitem(last=False)
+                    evicted += 1
+                self._chain_snapshot_loaded = True
+                self._track_add(max(0, added - evicted))
 
         lookup: dict[tuple[float, date], float] = {}
         for contract in contracts:
@@ -257,6 +340,8 @@ class MassiveOptionGateway:
 
 class MarketDataService:
     _MAX_BARS_CACHE_SIZE = 500
+    _MAX_BARS_ERRORS_SIZE = 10_000
+    _BARS_ERROR_TTL = 60
 
     def __init__(self, client: MassiveClient) -> None:
         self.client = client
@@ -265,6 +350,14 @@ class MarketDataService:
         self._bars_inflight: dict[tuple[str, date, date], threading.Event] = {}
         self._bars_errors: dict[tuple[str, date, date], tuple[Exception, float]] = {}
         self._redis_cache: OptionDataRedisCache | None = self._build_redis_cache()
+
+    def close(self) -> None:
+        """Release Redis cache resources."""
+        if hasattr(self, '_redis_cache') and self._redis_cache is not None:
+            try:
+                self._redis_cache.close()
+            except Exception:
+                pass
 
     @staticmethod
     def _build_redis_cache() -> OptionDataRedisCache | None:
@@ -301,22 +394,24 @@ class MarketDataService:
             else:
                 am_fetcher = False
 
-        if not am_fetcher:
-            inflight_event.wait(timeout=600)
-            with self._bars_cache_lock:
-                cached = self._bars_cache.get(cache_key)
-                if cached is not None:
-                    self._bars_cache.move_to_end(cache_key)
-                    return cached
-                error_entry = self._bars_errors.get(cache_key)
-            if error_entry is not None:
-                raise error_entry[0]
-            from backtestforecast.errors import DataUnavailableError
-            raise DataUnavailableError(
-                f"Market data fetch for {symbol} timed out or completed without caching results."
-            )
-
         try:
+            if not am_fetcher:
+                inflight_event.wait(timeout=600)
+                with self._bars_cache_lock:
+                    cached = self._bars_cache.get(cache_key)
+                    if cached is not None:
+                        self._bars_cache.move_to_end(cache_key)
+                        return cached
+                    error_entry = self._bars_errors.get(cache_key)
+                if error_entry is not None:
+                    cached_exc = error_entry[0]
+                    raise DataUnavailableError(
+                        f"Market data fetch failed: {cached_exc}"
+                    ) from cached_exc
+                raise DataUnavailableError(
+                    f"Market data fetch for {symbol} timed out or completed without caching results."
+                )
+
             raw_bars = self.client.get_stock_daily_bars(symbol, start, end)
             with self._bars_cache_lock:
                 if cache_key not in self._bars_cache:
@@ -326,17 +421,24 @@ class MarketDataService:
                 self._bars_cache.move_to_end(cache_key)
                 return self._bars_cache[cache_key]
         except Exception as exc:
-            with self._bars_cache_lock:
-                self._bars_errors[cache_key] = (exc, time.monotonic())
-                now = time.monotonic()
-                stale_keys = [k for k, (_, t) in self._bars_errors.items() if now - t > 300]
-                for k in stale_keys:
-                    self._bars_errors.pop(k, None)
+            if am_fetcher:
+                with self._bars_cache_lock:
+                    self._bars_errors[cache_key] = (exc, time.monotonic())
+                    now = time.monotonic()
+                    stale_keys = [k for k, (_, t) in self._bars_errors.items()
+                                  if now - t > self._BARS_ERROR_TTL]
+                    for k in stale_keys:
+                        self._bars_errors.pop(k, None)
+                    if len(self._bars_errors) > self._MAX_BARS_ERRORS_SIZE:
+                        by_age = sorted(self._bars_errors.items(), key=lambda kv: kv[1][1])
+                        for k, _ in by_age[:len(self._bars_errors) - self._MAX_BARS_ERRORS_SIZE]:
+                            self._bars_errors.pop(k, None)
             raise
         finally:
-            inflight_event.set()
-            with self._bars_cache_lock:
-                self._bars_inflight.pop(cache_key, None)
+            if am_fetcher:
+                inflight_event.set()
+                with self._bars_cache_lock:
+                    self._bars_inflight.pop(cache_key, None)
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
 

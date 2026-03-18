@@ -22,6 +22,17 @@ Generated TypeScript types from the FastAPI OpenAPI schema.
    import type { paths, components } from "@backtestforecast/api-client";
    ```
 
+## Type Generation (Planned)
+
+The types in `src/index.ts` are currently maintained manually. To reduce drift:
+
+1. Export the OpenAPI schema: `python scripts/export_openapi.py > openapi.json`
+2. Generate TypeScript types: `npx openapi-typescript openapi.json -o src/generated.ts`
+3. Update `src/index.ts` to re-export from generated types
+
+The sweep types are manually defined because the OpenAPI spec doesn't include
+`/v1/sweeps` endpoints yet.
+
 ## CI
 
 The `backend-and-web` CI job runs `python scripts/export_openapi.py` as a smoke

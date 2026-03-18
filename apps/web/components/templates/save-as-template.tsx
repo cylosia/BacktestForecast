@@ -18,21 +18,23 @@ function formValuesToTemplateConfig(
   const entryRules: EntryRule[] = [];
 
   if (values.rsiEnabled) {
-    entryRules.push({
-      type: "rsi",
+    const rsiRule: EntryRule = {
+      type: "rsi" as const,
       operator: values.rsiOperator,
       threshold: Number(values.rsiThreshold),
       period: Number(values.rsiPeriod),
-    } as EntryRule);
+    };
+    entryRules.push(rsiRule);
   }
 
   if (values.movingAverageEnabled) {
-    entryRules.push({
-      type: values.movingAverageType,
+    const maRule: EntryRule = {
+      type: values.movingAverageType as "sma_crossover" | "ema_crossover",
       fast_period: Number(values.fastPeriod),
       slow_period: Number(values.slowPeriod),
       direction: values.crossoverDirection,
-    } as EntryRule);
+    };
+    entryRules.push(maRule);
   }
 
   return {

@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default function TemplatesError({ error, reset }: { error: Error; reset: () => void }) {
+export default function TemplatesError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  useEffect(() => { console.error(error); }, [error]);
+
   const displayMessage =
     error != null && typeof error === "object" && "status" in error && typeof (error as any).message === "string" && (error as any).message.length < 200
       ? error.message

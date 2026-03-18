@@ -11,6 +11,7 @@ Usage (one-time):
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import structlog
@@ -19,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import EquityPointResult, TradeResult
-from backtestforecast.db.session import SessionLocal
+from backtestforecast.db.session import create_session
 from backtestforecast.models import BacktestRun
 
 logger = structlog.get_logger("backfill_metrics")
@@ -34,8 +35,23 @@ def _to_decimal(v: float | None) -> Decimal | None:
 
 
 def backfill() -> int:
+    # Soft guard: warn if running during peak business hours (9-16 ET)
+    now_utc = datetime.now(UTC)
+    try:
+        import zoneinfo
+        et = zoneinfo.ZoneInfo("America/New_York")
+        hour_et = now_utc.astimezone(et).hour
+        if 9 <= hour_et < 17:
+            logger.warning(
+                "backfill.peak_hours",
+                hour_et=hour_et,
+                message="Running during peak business hours (9-16 ET). Consider running off-peak.",
+            )
+    except Exception:
+        pass
+
     updated = 0
-    with SessionLocal() as session:
+    with create_session() as session:
         stmt = (
             select(BacktestRun.id)
             .where(

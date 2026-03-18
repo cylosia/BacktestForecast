@@ -21,7 +21,7 @@ export function SymbolInput({
         value={value}
         aria-invalid={!!error}
         aria-describedby={error ? "symbol-error" : undefined}
-        onChange={(event) => onChange(event.target.value.toUpperCase())}
+        onChange={(event) => onChange(event.target.value.toUpperCase().replace(/[^A-Z0-9./^-]/g, ""))}
       />
       <p className="text-xs text-muted-foreground">Use an underlying ticker like SPY, QQQ, or AAPL.</p>
       {error ? <p id="symbol-error" className="text-sm text-destructive">{error}</p> : null}

@@ -97,7 +97,7 @@ def downsample_equity_curve(
     if n <= max_points:
         return [serialize_equity_point(p) for p in curve]
     step = max(1, -(-n // max_points))
-    max_dd_idx = max(range(n), key=lambda i: curve[i].drawdown_pct)
+    max_dd_idx = max(range(n), key=lambda i: curve[i].drawdown_pct if curve[i].drawdown_pct is not None else 0)
     sampled: list[dict[str, Any]] = []
     for i, point in enumerate(curve):
         if i % step == 0 or i == n - 1 or i == max_dd_idx:

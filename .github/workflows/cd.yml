@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-production
   cancel-in-progress: false
 
 jobs:
@@ -110,22 +110,106 @@ jobs:
             NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/app/dashboard
             NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/app/dashboard
 
-  deploy:
+  # NOTE: Configure the `staging` GitHub Environment with required reviewers
+  # so production cannot deploy without staging verification. See:
+  # Settings → Environments → staging → Required reviewers
+  deploy-staging:
     needs: [build-api, build-worker, build-web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Verify staging secrets
+        run: |
+          if [ -z "${{ secrets.STAGING_DATABASE_URL }}" ]; then
+            echo "::error::STAGING_DATABASE_URL secret is not configured. Staging deployment cannot proceed."
+            exit 1
+          fi
+          if [ -z "${{ secrets.STAGING_DEPLOY_COMMAND }}" ]; then
+            echo "::error::STAGING_DEPLOY_COMMAND secret is not configured. Staging deployment cannot proceed."
+            exit 1
+          fi
+
+      - name: Run staging migrations
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --constraint constraints.txt -e '.[dev]'
+          alembic upgrade head
+        env:
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      - name: Deploy to staging
+        env:
+          DEPLOY_COMMAND: ${{ secrets.STAGING_DEPLOY_COMMAND }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          bash -c "${DEPLOY_COMMAND}"
+
+      - name: Staging smoke test
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+        run: |
+          if [ -z "${STAGING_URL}" ]; then
+            echo "Staging URL not configured. Skipping smoke test."
+            exit 0
+          fi
+          for i in 1 2 3 4 5; do
+            if curl -sf "${STAGING_URL}/health/live" > /dev/null 2>&1; then
+              echo "Staging health check passed"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Staging health check failed after 5 attempts"
+          exit 1
+
+  deploy:
+    needs: [deploy-staging]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
     steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --constraint constraints.txt -e '.[dev]'
+
+      - name: Run database migrations
+        run: alembic upgrade head
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Verify deploy command configured
+        if: env.DEPLOY_COMMAND == ''
+        run: |
+          echo "::error::DEPLOY_COMMAND secret is not set. Deployment skipped."
+          exit 1
+        env:
+          DEPLOY_COMMAND: ${{ secrets.DEPLOY_COMMAND }}
+
       - name: Deploy to production
         env:
           DEPLOY_COMMAND: ${{ secrets.DEPLOY_COMMAND }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          if [ -z "${DEPLOY_COMMAND}" ]; then
-            echo "::warning::DEPLOY_COMMAND secret is not set. Skipping deployment."
-            echo "Images have been pushed. Deploy manually or configure DEPLOY_COMMAND."
-            exit 0
-          fi
+          set -euo pipefail
           bash -c "${DEPLOY_COMMAND}"
 
   post-deploy-smoke:
@@ -166,6 +250,25 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check migration state before rollback
+        if: failure() && steps.smoke.outcome == 'failure' && vars.ROLLBACK_TAG != ''
+        env:
+          REPO: ghcr.io/${{ github.repository }}
+          ROLLBACK_TAG: ${{ vars.ROLLBACK_TAG }}
+        run: |
+          echo "Checking if the failed deployment ran migrations that differ from rollback tag..."
+          set +e
+          FAILED_HEADS=$(docker run --rm "${REPO}/api:${{ github.sha }}" alembic heads 2>/dev/null | tr -d ' \n' || echo "unknown")
+          ROLLBACK_HEADS=$(docker run --rm "${REPO}/api:${ROLLBACK_TAG}" alembic heads 2>/dev/null | tr -d ' \n' || echo "unknown")
+          set -e
+          if [ "${FAILED_HEADS}" != "${ROLLBACK_HEADS}" ] && [ "${FAILED_HEADS}" != "unknown" ] && [ "${ROLLBACK_HEADS}" != "unknown" ]; then
+            echo "::warning::Migration mismatch detected. The failed deployment ran migrations (head: ${FAILED_HEADS}) that differ from the rollback tag (head: ${ROLLBACK_HEADS})."
+            echo "::warning::Manual downgrade may be required before proceeding. Run: alembic downgrade <target_revision>"
+            echo "::warning::See the rollback step comments for full manual migration rollback instructions."
+          else
+            echo "Migration heads match or could not be determined. Proceeding with image rollback."
+          fi
 
       - name: Rollback on failure
         if: failure() && steps.smoke.outcome == 'failure' && vars.ROLLBACK_TAG != ''

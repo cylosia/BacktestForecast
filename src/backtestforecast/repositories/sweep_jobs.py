@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, noload, selectinload
 
-from backtestforecast.models import SweepJob
+from backtestforecast.models import SweepJob, SweepResult
 
 _MAX_PAGE_SIZE = 200
 
@@ -57,5 +58,69 @@ class SweepJobRepository:
         stmt = select(SweepJob).where(
             SweepJob.user_id == user_id,
             SweepJob.idempotency_key == idempotency_key,
+            SweepJob.status.notin_(["failed", "cancelled"]),
         )
         return self.session.scalar(stmt)
+
+    def count_results(self, job_id: UUID) -> int:
+        stmt = select(func.count(SweepResult.id)).where(SweepResult.sweep_job_id == job_id)
+        return int(self.session.scalar(stmt) or 0)
+
+    def list_results(
+        self, job_id: UUID, *, limit: int = 100, offset: int = 0,
+    ) -> list[SweepResult]:
+        limit = min(limit, _MAX_PAGE_SIZE)
+        stmt = (
+            select(SweepResult)
+            .where(SweepResult.sweep_job_id == job_id)
+            .order_by(SweepResult.rank)
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
+    def find_recent_duplicate(
+        self,
+        user_id: UUID,
+        symbol: str,
+        request_snapshot: dict,
+        since: datetime,
+    ) -> SweepJob | None:
+        """Find a recently created sweep with matching parameters."""
+        stmt = (
+            select(SweepJob)
+            .where(
+                SweepJob.user_id == user_id,
+                SweepJob.symbol == symbol,
+                SweepJob.created_at >= since,
+                SweepJob.status.in_(["queued", "running"]),
+            )
+            .order_by(desc(SweepJob.created_at))
+            .limit(5)
+        )
+        for job in self.session.scalars(stmt):
+            if job.request_snapshot_json == request_snapshot:
+                return job
+        return None
+
+    def delete_results(self, job_id: UUID, *, user_id: UUID | None = None) -> None:
+        """Remove all results for a sweep job (for re-run cleanup).
+
+        When *user_id* is provided, the method first verifies that the job
+        belongs to the given user.  Worker code may omit *user_id* because
+        the task already validated ownership at dispatch time.
+        """
+        from sqlalchemy import delete as sa_delete, exists as sa_exists
+
+        if user_id is not None:
+            owns = self.session.scalar(
+                select(sa_exists().where(SweepJob.id == job_id, SweepJob.user_id == user_id))
+            )
+            if not owns:
+                return
+
+        self.session.execute(
+            sa_delete(SweepResult)
+            .where(SweepResult.sweep_job_id == job_id)
+            .execution_options(synchronize_session="fetch")
+        )

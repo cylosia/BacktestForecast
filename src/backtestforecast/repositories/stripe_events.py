@@ -14,7 +14,10 @@ from backtestforecast.observability.metrics import STRIPE_WEBHOOK_DEDUPE_TOTAL
 
 logger = structlog.get_logger("stripe_events")
 
-STALE_CLAIM_TTL = timedelta(minutes=5)
+# Longer TTL gives legitimate handlers more time; shorter TTL recovers stuck events faster.
+# 15 minutes exceeds typical webhook processing time while allowing recovery of lost workers.
+STALE_CLAIM_TTL = timedelta(minutes=15)
+_MAX_PAGE_SIZE = 200
 
 
 class StripeEventRepository:
@@ -22,21 +25,23 @@ class StripeEventRepository:
         self.session = session
 
     def _recover_stale_claim(self, stripe_event_id: str) -> bool:
-        """Reset a stale *in-flight* claim (older than 5 minutes) to allow reprocessing.
+        """Delete a stale claim (older than 15 minutes) to allow reprocessing.
 
-        Only targets events with ``idempotency_status='processing'`` — never
-        ``'processed'`` (success) or ``'error'`` (permanent failure).
+        Targets events with ``idempotency_status`` of ``'processing'`` (stuck
+        in-flight) or ``'error'`` (failed on a previous attempt — Stripe may
+        legitimately retry).  Never deletes ``'processed'`` events.
         Returns True if a stale claim was recovered.
         """
+        from sqlalchemy import delete as sa_delete
+
         cutoff = datetime.now(timezone.utc) - STALE_CLAIM_TTL
         result = self.session.execute(
-            update(StripeEvent)
+            sa_delete(StripeEvent)
             .where(
                 StripeEvent.stripe_event_id == stripe_event_id,
-                StripeEvent.idempotency_status == "processing",
+                StripeEvent.idempotency_status.in_(("processing", "error")),
                 StripeEvent.created_at < cutoff,
             )
-            .values(idempotency_status="error", error_detail="stale claim recovered")
         )
         if result.rowcount > 0:
             logger.warning(
@@ -63,7 +68,7 @@ class StripeEventRepository:
         Returns the persisted ``StripeEvent`` on success, or ``None`` if
         this event was already claimed (duplicate delivery).
 
-        Stale claims older than 5 minutes are automatically recovered to
+        Stale claims older than 15 minutes are automatically recovered to
         allow reprocessing of events that may have been lost.
         """
         self._recover_stale_claim(stripe_event_id)
@@ -89,23 +94,34 @@ class StripeEventRepository:
             return None
 
     def mark_processed(self, stripe_event_id: str) -> None:
-        """Mark a claimed event as successfully processed."""
+        """Mark a claimed event as successfully processed.
+
+        Only transitions from ``processing`` to ``processed`` to avoid
+        overwriting a concurrent ``error`` status.
+        """
         self.session.execute(
             update(StripeEvent)
-            .where(StripeEvent.stripe_event_id == stripe_event_id)
+            .where(
+                StripeEvent.stripe_event_id == stripe_event_id,
+                StripeEvent.idempotency_status == "processing",
+            )
             .values(idempotency_status="processed")
         )
 
-    def mark_error(self, stripe_event_id: str, error_detail: str) -> None:
+    def mark_error(self, stripe_event_id: str, error_detail: str) -> Any:
         """Update a previously claimed event to record a processing error."""
-        self.session.execute(
+        return self.session.execute(
             update(StripeEvent)
-            .where(StripeEvent.stripe_event_id == stripe_event_id)
+            .where(
+                StripeEvent.stripe_event_id == stripe_event_id,
+                StripeEvent.idempotency_status == "processing",
+            )
             .values(idempotency_status="error", error_detail=error_detail[:2000])
         )
 
     def list_recent(self, *, limit: int = 50) -> list[StripeEvent]:
         """Return the most recent Stripe events, newest first."""
+        limit = min(limit, _MAX_PAGE_SIZE)
         stmt = (
             select(StripeEvent)
             .order_by(StripeEvent.created_at.desc())

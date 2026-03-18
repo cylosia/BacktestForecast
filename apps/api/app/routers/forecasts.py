@@ -9,7 +9,7 @@ from apps.api.app.dependencies import get_current_user
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import ValidationError
+from backtestforecast.errors import FeatureLockedError, ValidationError
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import StrategyType
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
@@ -18,21 +18,24 @@ from backtestforecast.services.scans import ScanService
 
 router = APIRouter(prefix="/forecasts", tags=["forecasts"])
 
-_TICKER_RE = re.compile(r"^[A-Za-z0-9./^]{1,16}$")
+
+def _require_forecasts_enabled(settings: Settings = Depends(get_settings)) -> None:
+    if not settings.feature_forecasts_enabled:
+        raise FeatureLockedError("Forecasts are temporarily disabled.", required_tier="free")
+
+_TICKER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9./^-]{0,15}$")
 
 
 @router.get("/{ticker}", response_model=ForecastEnvelopeResponse)
 def get_forecast(
     ticker: str,
     user: User = Depends(get_current_user),
+    _: None = Depends(_require_forecasts_enabled),
     db: Session = Depends(get_db),
     strategy_type: StrategyType | None = Query(default=None),
     horizon_days: int = Query(default=20, ge=5, le=90),
     settings: Settings = Depends(get_settings),
 ) -> ForecastEnvelopeResponse:
-    if not settings.feature_forecasts_enabled:
-        from backtestforecast.errors import FeatureLockedError
-        raise FeatureLockedError("Forecasts are temporarily disabled.", required_tier="free")
     if not _TICKER_RE.match(ticker):
         raise ValidationError("Ticker must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
     get_rate_limiter().check(

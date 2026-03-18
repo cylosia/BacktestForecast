@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import re
+import time as _time
 from datetime import UTC, datetime, timedelta
 from typing import Self
 from uuid import UUID
@@ -15,13 +16,14 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat, ensure_export_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.errors import AppError, NotFoundError, ValidationError
+from backtestforecast.errors import AppError, ConflictError, NotFoundError, ValidationError
 from backtestforecast.exports.storage import DatabaseStorage, ExportStorage, get_storage
 from backtestforecast.models import ExportJob, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
 from backtestforecast.schemas.backtests import BacktestRunDetailResponse
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
+from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
 
@@ -75,7 +77,7 @@ class ExportService:
         if payload.idempotency_key:
             existing = self.exports.get_by_idempotency_key(user.id, payload.idempotency_key)
             if existing is not None:
-                return self._to_response(existing)
+                return self.to_response(existing)
 
         run = self.backtests.get_lightweight_for_user(payload.run_id, user.id)
         if run is None:
@@ -114,12 +116,17 @@ class ExportService:
         except IntegrityError:
             self.session.rollback()
             if payload.idempotency_key:
-                existing = self.exports.get_by_idempotency_key(user.id, payload.idempotency_key)
+                from sqlalchemy import select
+                stmt = select(ExportJob).where(
+                    ExportJob.user_id == user.id,
+                    ExportJob.idempotency_key == payload.idempotency_key,
+                )
+                existing = self.session.scalar(stmt)
                 if existing is not None:
-                    return self._to_response(existing)
+                    return self.to_response(existing)
             raise
         self.session.refresh(export_job)
-        return self._to_response(export_job)
+        return self.to_response(export_job)
 
     def execute_export_by_id(self, export_job_id: UUID) -> ExportJob:
         """Generate the export content. Called by the Celery worker."""
@@ -133,6 +140,43 @@ class ExportService:
             logger.info("export.execute_skipped", export_job_id=str(export_job_id), status=export_job.status)
             return export_job
 
+        user = self.session.get(User, export_job.user_id)
+        if user is None:
+            self.session.execute(
+                sa_update(ExportJob)
+                .where(ExportJob.id == export_job_id)
+                .values(
+                    status="failed",
+                    error_code="user_not_found",
+                    error_message="User account not found.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
+            self.session.commit()
+            self.session.refresh(export_job)
+            return export_job
+
+        try:
+            ensure_export_access(
+                user.plan_tier, user.subscription_status,
+                ExportFormat(export_job.export_format),
+                user.subscription_current_period_end,
+            )
+        except AppError:
+            self.session.execute(
+                sa_update(ExportJob)
+                .where(ExportJob.id == export_job_id)
+                .values(
+                    status="failed",
+                    error_code="entitlement_revoked",
+                    error_message="Subscription no longer active.",
+                    completed_at=datetime.now(UTC),
+                )
+            )
+            self.session.commit()
+            self.session.refresh(export_job)
+            return export_job
+
         rows = self.session.execute(
             sa_update(ExportJob)
             .where(ExportJob.id == export_job_id, ExportJob.status == "queued")
@@ -144,6 +188,7 @@ class ExportService:
             return export_job
         self.session.refresh(export_job)
 
+        _exec_start = _time.monotonic()
         try:
             detail = self.backtest_service.get_run_for_owner(
                 user_id=export_job.user_id, run_id=export_job.backtest_run_id
@@ -165,11 +210,18 @@ class ExportService:
             storage_key = self._storage.put(export_job.id, content, export_job.file_name)
             if isinstance(self._storage, DatabaseStorage):
                 export_job.content_bytes = content
-            export_job.storage_key = storage_key
-            export_job.size_bytes = len(content)
-            export_job.sha256_hex = hashlib.sha256(content).hexdigest()
-            export_job.status = "succeeded"
-            export_job.completed_at = datetime.now(UTC)
+            success_rows = self.session.execute(
+                sa_update_top(ExportJob)
+                .where(ExportJob.id == export_job.id, ExportJob.status == "running")
+                .values(
+                    status="succeeded",
+                    storage_key=storage_key,
+                    size_bytes=len(content),
+                    sha256_hex=hashlib.sha256(content).hexdigest(),
+                    completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+            )
             try:
                 self.session.commit()
             except Exception:
@@ -235,18 +287,23 @@ class ExportService:
             )
             self.session.commit()
             raise
+        finally:
+            EXPORT_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - _exec_start)
 
         self.session.refresh(export_job)
         return export_job
 
-    _CLEANUP_COMMIT_INTERVAL = 10
-
     def cleanup_expired_exports(self, *, batch_size: int = 100, max_batches: int = 100) -> int:
-        """Delete storage content for expired exports. Returns count cleaned."""
+        """Delete storage content for expired exports. Returns count cleaned.
+
+        Commits DB status changes first, then deletes storage objects. This
+        ordering ensures a commit failure never leaves orphaned storage
+        deletions; the worst case is an orphaned storage object that the
+        periodic reconciliation job will clean up.
+        """
         cleaned = 0
         now = datetime.now(UTC)
         batch_count = 0
-        pending_commit = 0
 
         while batch_count < max_batches:
             batch_count += 1
@@ -254,56 +311,43 @@ class ExportService:
             if not jobs:
                 break
 
+            storage_keys_to_delete: list[str] = []
+            job_ids: list[object] = []
             for job in jobs:
-                old_storage_key = job.storage_key
+                if job.storage_key:
+                    storage_keys_to_delete.append(job.storage_key)
+                job_ids.append(job.id)
 
-                storage_deleted = True
-                if old_storage_key:
-                    try:
-                        self._storage.delete(old_storage_key)
-                    except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
-                        logger.warning(
-                            "cleanup.storage_delete_failed",
-                            export_job_id=str(job.id),
-                            storage_key=old_storage_key,
-                            error=str(exc),
-                        )
-                        storage_deleted = False
-
-                job.content_bytes = None
-                if storage_deleted:
-                    job.storage_key = None
-                job.status = "expired"
-                job.size_bytes = 0
-                job.sha256_hex = None
-                cleaned += 1
-                pending_commit += 1
-                logger.info(
-                    "cleanup.expired",
-                    export_job_id=str(job.id),
-                    storage_deleted=storage_deleted,
-                    expires_at=str(job.expires_at) if job.expires_at else None,
+            self.session.execute(
+                sa_update_top(ExportJob)
+                .where(ExportJob.id.in_(job_ids))
+                .values(
+                    content_bytes=None,
+                    storage_key=None,
+                    status="expired",
+                    size_bytes=0,
+                    sha256_hex=None,
                 )
+            )
 
-                if pending_commit >= self._CLEANUP_COMMIT_INTERVAL:
-                    try:
-                        self.session.commit()
-                    except Exception:
-                        self.session.rollback()
-                        cleaned -= pending_commit
-                        logger.warning("cleanup.batch_commit_failed", pending=pending_commit, exc_info=True)
-                    pending_commit = 0
+            try:
+                self.session.commit()
+                cleaned += len(jobs)
+            except Exception:
+                self.session.rollback()
+                logger.warning("cleanup.batch_commit_failed", batch=batch_count, count=len(jobs), exc_info=True)
+                continue
+
+            for key in storage_keys_to_delete:
+                try:
+                    self._storage.delete(key)
+                except Exception:
+                    logger.warning("cleanup.storage_delete_failed", storage_key=key, exc_info=True)
+
+            logger.info("cleanup.batch_completed", batch=batch_count, cleaned=len(jobs), storage_deleted=len(storage_keys_to_delete))
 
             if len(jobs) < batch_size:
                 break
-
-        if pending_commit > 0:
-            try:
-                self.session.commit()
-            except Exception:
-                self.session.rollback()
-                cleaned -= pending_commit
-                logger.warning("cleanup.final_commit_failed", pending=pending_commit, exc_info=True)
 
         return cleaned
 
@@ -312,7 +356,29 @@ class ExportService:
         export_job = self.exports.get_for_user(export_job_id, user.id)
         if export_job is None:
             raise NotFoundError("Export not found.")
-        return self._to_response(export_job)
+        return self.to_response(export_job)
+
+    def delete_for_user(self, export_job_id: UUID, user_id: UUID) -> None:
+        export_job = self.exports.get_for_user(export_job_id, user_id)
+        if export_job is None:
+            raise NotFoundError("Export not found.")
+        if export_job.status in ("queued", "running"):
+            raise ConflictError(
+                "Cannot delete a job that is currently queued or running. Cancel it first."
+            )
+        storage_key = export_job.storage_key
+        self.session.delete(export_job)
+        self.session.commit()
+        if storage_key and not isinstance(self._storage, DatabaseStorage):
+            try:
+                self._storage.delete(storage_key)
+            except Exception:
+                logger.warning(
+                    "export.delete_storage_cleanup_failed",
+                    export_job_id=str(export_job_id),
+                    storage_key=storage_key,
+                    exc_info=True,
+                )
 
     def create_export(
         self,
@@ -322,7 +388,11 @@ class ExportService:
         request_id: str | None = None,
         ip_address: str | None = None,
     ) -> ExportJobResponse:
-        """Synchronous create-and-execute. Preserved for tests/fallback."""
+        """Synchronous create-and-execute for tests only.
+
+        WARNING: Do not call from production code paths. Use
+        ``enqueue_export`` followed by the Celery task instead.
+        """
         enqueued = self.enqueue_export(user, payload, request_id=request_id, ip_address=ip_address)
         export_job = self.execute_export_by_id(enqueued.id)
         if export_job.status == "succeeded":
@@ -340,7 +410,7 @@ class ExportService:
                 },
             )
             self.session.commit()
-        return self._to_response(export_job)
+        return self.to_response(export_job)
 
     def get_export_for_download(
         self,
@@ -358,10 +428,14 @@ class ExportService:
             raise NotFoundError("Export not found.")
         if export_job.status != "succeeded":
             raise NotFoundError("Export content is not available.")
-        if use_db_content and not export_job.content_bytes:
+        if use_db_content and export_job.content_bytes is None:
             raise NotFoundError("Export content is not available.")
         if not use_db_content and not export_job.storage_key:
             raise NotFoundError("Export content is not available.")
+        # Audit event is recorded before the response streams.  This is
+        # intentionally optimistic: if the response fails mid-stream, the
+        # audit event is still recorded.  Deferring the commit would require
+        # holding the DB session open during streaming, which is worse.
         self.audit.record_always(
             event_type="export.downloaded",
             subject_type="export_job",
@@ -379,10 +453,8 @@ class ExportService:
 
     @staticmethod
     def _build_file_name(symbol: str, strategy_type: str, export_format: ExportFormat) -> str:
-        import re
-
-        safe_symbol = re.sub(r'[<>:"/\\|?*\s]', "-", symbol).strip("-").lower()
-        safe_strategy = re.sub(r'[<>:"/\\|?*\s]', "-", strategy_type).strip("-").lower()
+        safe_symbol = re.sub(r'[<>:"/\\|?*\s\x00]', "-", symbol).strip("-").lower()
+        safe_strategy = re.sub(r'[<>:"/\\|?*\s\x00]', "-", strategy_type).strip("-").lower()
         extension = "csv" if export_format == ExportFormat.CSV else "pdf"
         return f"{safe_symbol}-{safe_strategy}-backtest.{extension}"
 
@@ -393,6 +465,14 @@ class ExportService:
         return "application/pdf"
 
     def _build_csv(self, detail: BacktestRunDetailResponse) -> bytes:
+        estimated_rows = len(detail.trades) + len(detail.equity_curve) + 30
+        estimated_bytes = estimated_rows * 200
+        if estimated_bytes > _MAX_EXPORT_BYTES:
+            raise ValueError(
+                f"Estimated CSV size ({estimated_bytes // (1024 * 1024)} MB) exceeds "
+                f"the {_MAX_EXPORT_BYTES // (1024 * 1024)} MB limit. "
+                f"Trades: {len(detail.trades)}, equity points: {len(detail.equity_curve)}."
+            )
         output = io.StringIO()
         writer = csv.writer(output)
 
@@ -403,8 +483,8 @@ class ExportService:
         writer.writerow(safe_row(["run", "symbol", detail.symbol]))
         writer.writerow(safe_row(["run", "strategy_type", detail.strategy_type]))
         writer.writerow(safe_row(["run", "status", detail.status]))
-        writer.writerow(safe_row(["run", "date_from", detail.date_from.isoformat()]))
-        writer.writerow(safe_row(["run", "date_to", detail.date_to.isoformat()]))
+        writer.writerow(safe_row(["run", "date_from", detail.start_date.isoformat()]))
+        writer.writerow(safe_row(["run", "date_to", detail.end_date.isoformat()]))
         writer.writerow(safe_row(["summary", "trade_count", detail.summary.trade_count]))
         writer.writerow(safe_row(["summary", "win_rate", detail.summary.win_rate]))
         writer.writerow(safe_row(["summary", "total_roi_pct", detail.summary.total_roi_pct]))
@@ -415,6 +495,20 @@ class ExportService:
         writer.writerow(safe_row(["summary", "sortino_ratio", detail.summary.sortino_ratio]))
         writer.writerow(safe_row(["summary", "expectancy", detail.summary.expectancy]))
         writer.writerow(safe_row(["summary", "cagr_pct", detail.summary.cagr_pct]))
+        if hasattr(detail.summary, "decided_trades") and detail.summary.decided_trades is not None:
+            writer.writerow(safe_row(["summary", "decided_trades", detail.summary.decided_trades]))
+        writer.writerow([])
+        writer.writerow(safe_row([
+            "note", "entry_value_per_share and exit_value_per_share represent the per-unit position value "
+            "divided by 100 (the contract multiplier). To reconstruct trade cost: value * 100 * quantity. "
+            "These are NOT raw option mid-prices from the exchange.",
+        ]))
+        writer.writerow(safe_row([
+            "note", "Sharpe ratio uses sample standard deviation (N-1 denominator). "
+            "Sortino ratio uses population downside deviation (N denominator). "
+            "Win rate excludes break-even trades (net_pnl == 0) from the denominator. "
+            "Values may differ from other platforms.",
+        ]))
         writer.writerow([])
         writer.writerow(
             safe_row(
@@ -424,8 +518,8 @@ class ExportService:
                     "entry_date",
                     "exit_date",
                     "quantity",
-                    "entry_mid",
-                    "exit_mid",
+                    "entry_value_per_share",
+                    "exit_value_per_share",
                     "gross_pnl",
                     "net_pnl",
                     "holding_period_days",
@@ -516,35 +610,50 @@ class ExportService:
                 pdf.showPage()
                 y = height - 0.75 * inch
 
+        def _fmt(val: object) -> str:
+            if val is None:
+                return "N/A"
+            return f"{float(val):,.2f}"
+
+        def _fmt_pct(val: object) -> str:
+            if val is None:
+                return "N/A"
+            return f"{float(val):.2f}%"
+
+        def _fmt_usd(val: object) -> str:
+            if val is None:
+                return "N/A"
+            return f"${float(val):,.2f}"
+
         line("BacktestForecast.com Export", bold=True, step=22.0)
         line(f"Symbol: {detail.symbol}")
         line(f"Strategy: {detail.strategy_type}")
         line(f"Status: {detail.status}")
-        line(f"Date range: {detail.date_from.isoformat()} to {detail.date_to.isoformat()}")
+        line(f"Date range: {detail.start_date.isoformat()} to {detail.end_date.isoformat()}")
         line(f"Created: {detail.created_at.isoformat()}")
         line("")
         line("Summary", bold=True, step=20.0)
         line(f"Trades: {detail.summary.trade_count}")
-        line(f"Win rate: {detail.summary.win_rate}%")
-        line(f"ROI: {detail.summary.total_roi_pct}%")
-        line(f"Net P&L: {detail.summary.total_net_pnl}")
-        line(f"Max drawdown: {detail.summary.max_drawdown_pct}%")
+        line(f"Win rate: {_fmt_pct(detail.summary.win_rate)}")
+        line(f"ROI: {_fmt_pct(detail.summary.total_roi_pct)}")
+        line(f"Net P&L: {_fmt_usd(detail.summary.total_net_pnl)}")
+        line(f"Max drawdown: {_fmt_pct(detail.summary.max_drawdown_pct)}")
         s = detail.summary
         if s.profit_factor is not None:
-            line(f"Profit factor: {s.profit_factor}")
+            line(f"Profit factor: {_fmt(s.profit_factor)}")
         if s.sharpe_ratio is not None:
-            line(f"Sharpe ratio: {s.sharpe_ratio}")
+            line(f"Sharpe ratio: {_fmt(s.sharpe_ratio)}")
         if s.sortino_ratio is not None:
-            line(f"Sortino ratio: {s.sortino_ratio}")
-        line(f"Expectancy: {s.expectancy}")
+            line(f"Sortino ratio: {_fmt(s.sortino_ratio)}")
+        line(f"Expectancy: {_fmt_usd(s.expectancy)}")
         if s.cagr_pct is not None:
-            line(f"CAGR: {s.cagr_pct}%")
+            line(f"CAGR: {_fmt_pct(s.cagr_pct)}")
         line("")
         line("Trades", bold=True, step=20.0)
         for trade in detail.trades[:_MAX_PDF_TRADES]:
             line(
                 f"{trade.entry_date.isoformat()} -> {trade.exit_date.isoformat()} | "
-                f"{trade.option_ticker} | qty {trade.quantity} | net {trade.net_pnl}",
+                f"{trade.option_ticker} | qty {trade.quantity} | net {_fmt_usd(trade.net_pnl)}",
                 step=14.0,
             )
         if len(detail.trades) > _MAX_PDF_TRADES:
@@ -556,11 +665,11 @@ class ExportService:
             equities = [p.equity for p in detail.equity_curve]
             peak = max(equities)
             trough = min(equities)
-            line(f"Starting equity: {detail.equity_curve[0].equity}")
-            line(f"Ending equity: {detail.equity_curve[-1].equity}")
-            line(f"Peak equity: {peak}")
-            line(f"Trough equity: {trough}")
-            line(f"Max drawdown: {detail.summary.max_drawdown_pct}%")
+            line(f"Starting equity: {_fmt_usd(detail.equity_curve[0].equity)}")
+            line(f"Ending equity: {_fmt_usd(detail.equity_curve[-1].equity)}")
+            line(f"Peak equity: {_fmt_usd(peak)}")
+            line(f"Trough equity: {_fmt_usd(trough)}")
+            line(f"Max drawdown: {_fmt_pct(detail.summary.max_drawdown_pct)}")
             line(f"Data points: {len(detail.equity_curve)}")
 
         pdf.showPage()
@@ -569,6 +678,8 @@ class ExportService:
 
     @staticmethod
     def _sanitize_csv_cell(value: object) -> object:
+        if isinstance(value, str):
+            value = value.replace("\x00", "")
         if not isinstance(value, str):
             return value
         original_first = value[:1]
@@ -584,7 +695,7 @@ class ExportService:
         return sanitized
 
     @staticmethod
-    def _to_response(job: ExportJob) -> ExportJobResponse:
+    def to_response(job: ExportJob) -> ExportJobResponse:
         return ExportJobResponse(
             id=job.id,
             run_id=job.backtest_run_id,

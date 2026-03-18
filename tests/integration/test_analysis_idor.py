@@ -41,7 +41,7 @@ def test_user_b_cannot_see_user_a_analysis(client, auth_headers, db_session, mon
         return user_b
 
     monkeypatch.setattr(
-        dependencies.token_verifier,
+        dependencies.get_token_verifier(),
         "verify_bearer_token",
         lambda _: _make_principal("clerk_user_b"),
     )

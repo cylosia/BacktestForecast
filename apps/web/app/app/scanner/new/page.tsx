@@ -36,7 +36,7 @@ export default async function NewScanPage() {
         </p>
       </div>
 
-      <ScannerForm scannerModes={scannerModes} />
+      <ScannerForm scannerModes={scannerModes} planTier={user.plan_tier as "free" | "pro" | "premium"} />
     </div>
   );
 }

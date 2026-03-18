@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from backtestforecast.pipeline.adapters import PipelineBacktestExecutor
-from backtestforecast.schemas.backtests import CreateBacktestRunRequest, StrategyType
+from backtestforecast.schemas.backtests import CreateBacktestRunRequest, RsiRule, StrategyType
 
 
 _BASE = {
@@ -19,6 +19,7 @@ _BASE = {
     "account_size": Decimal("10000"),
     "risk_per_trade_pct": Decimal("10"),
     "commission_per_contract": Decimal("1"),
+    "entry_rules": [RsiRule(type="rsi", operator="lte", threshold=Decimal("40"), period=14)],
 }
 
 
@@ -83,8 +84,8 @@ def test_equivalent_dicts_different_insertion_order_same_key() -> None:
     order must produce the same cache key (deterministic hashing)."""
     from collections import OrderedDict
 
-    overrides_a = {"spread_width": {"mode": "strike_steps", "value": Decimal("2")}, "strike_selection": {"mode": "nearest_otm"}}
-    overrides_b = {"strike_selection": {"mode": "nearest_otm"}, "spread_width": {"mode": "strike_steps", "value": Decimal("2")}}
+    overrides_a = {"spread_width": {"mode": "strike_steps", "value": Decimal("2")}, "short_call_strike": {"mode": "nearest_otm"}}
+    overrides_b = {"short_call_strike": {"mode": "nearest_otm"}, "spread_width": {"mode": "strike_steps", "value": Decimal("2")}}
 
     req_a = _base_request(strategy_overrides=overrides_a)
     req_b = _base_request(strategy_overrides=overrides_b)

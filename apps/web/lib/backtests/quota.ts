@@ -13,7 +13,9 @@ export interface BacktestQuota {
 export function buildBacktestQuota(user: CurrentUserResponse): BacktestQuota {
   const rawTier = user.plan_tier as string;
   if (!KNOWN_TIERS.has(rawTier)) {
-    console.warn(`[buildBacktestQuota] Unknown plan_tier: "${rawTier}". Defaulting to "free".`);
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`[buildBacktestQuota] Unknown plan_tier: "${rawTier}". Defaulting to "free".`);
+    }
   }
   const tier: PlanTier = KNOWN_TIERS.has(rawTier) ? (rawTier as PlanTier) : ("free" as PlanTier);
   const limit = user.features.monthly_backtest_quota ?? null;

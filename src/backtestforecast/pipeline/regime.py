@@ -8,7 +8,7 @@ evaluation on the most recent bar window.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 from backtestforecast.indicators.calculations import (
@@ -47,7 +47,6 @@ class RegimeSnapshot:
     iv_rank_proxy: float | None = None
     volume_ratio: float | None = None
     close_price: float = 0.0
-    detail: dict[str, object] = field(default_factory=dict)
 
 
 # Minimum bars required for classification

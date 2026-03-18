@@ -1,3 +1,6 @@
+"use client";
+
+import { useMemo } from "react";
 import type { BacktestRunDetailResponse } from "@backtestforecast/api-client";
 import { formatCurrency, strategyLabel, toNumber } from "@/lib/backtests/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +19,10 @@ const COLORS = [
   "hsl(190 90% 40%)",   // teal
   "hsl(330 81% 60%)",   // pink
   "hsl(25 95% 53%)",    // orange
+  "hsl(173 80% 36%)",   // emerald
+  "hsl(47 96% 53%)",    // yellow
+  "hsl(292 84% 61%)",   // fuchsia
+  "hsl(210 40% 50%)",   // slate-blue
 ];
 
 export function CompareEquityCurves({
@@ -23,9 +30,11 @@ export function CompareEquityCurves({
 }: {
   runs: BacktestRunDetailResponse[];
 }) {
-  const nonEmptyRuns = runs.filter((r) => r.equity_curve.length > 0);
+  const nonEmptyEntries = runs
+    .map((r, i) => ({ run: r, originalIndex: i }))
+    .filter((entry) => entry.run.equity_curve.length > 0);
 
-  if (nonEmptyRuns.length === 0) {
+  if (nonEmptyEntries.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -36,12 +45,11 @@ export function CompareEquityCurves({
     );
   }
 
-  // Compute global min/max equity across all runs
   let globalMin = Infinity;
   let globalMax = -Infinity;
   let maxPointCount = 0;
 
-  for (const run of nonEmptyRuns) {
+  for (const { run } of nonEmptyEntries) {
     for (const point of run.equity_curve) {
       const raw = toNumber(point.equity);
       const eq = Number.isFinite(raw) ? raw : 0;
@@ -57,22 +65,24 @@ export function CompareEquityCurves({
   if (!Number.isFinite(globalMax)) globalMax = 0;
   const range = globalMax - globalMin || 1;
 
-  function toPath(run: BacktestRunDetailResponse): string {
-    const points = run.equity_curve;
-    const count = points.length;
-    return points
-      .map((point, index) => {
-        const raw = toNumber(point.equity);
-        const eq = Number.isFinite(raw) ? raw : 0;
-        const x = PADDING_X + (index / Math.max(count - 1, 1)) * (WIDTH - PADDING_X * 2);
-        const y =
-          HEIGHT -
-          PADDING_Y -
-          ((eq - globalMin) / range) * (HEIGHT - PADDING_Y * 2);
-        return `${index === 0 ? "M" : "L"} ${x} ${y}`;
-      })
-      .join(" ");
-  }
+  const toPath = useMemo(() => {
+    return (run: BacktestRunDetailResponse): string => {
+      const points = run.equity_curve;
+      const count = points.length;
+      return points
+        .map((point, index) => {
+          const raw = toNumber(point.equity);
+          const eq = Number.isFinite(raw) ? raw : 0;
+          const x = PADDING_X + (index / Math.max(count - 1, 1)) * (WIDTH - PADDING_X * 2);
+          const y =
+            HEIGHT -
+            PADDING_Y -
+            ((eq - globalMin) / range) * (HEIGHT - PADDING_Y * 2);
+          return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+        })
+        .join(" ");
+    };
+  }, [globalMin, range, maxPointCount]);
 
   return (
     <Card>
@@ -83,14 +93,14 @@ export function CompareEquityCurves({
             <CardDescription>Overlaid curves normalized to the same y-axis scale.</CardDescription>
           </div>
           <div className="flex flex-wrap gap-3 text-sm">
-            {nonEmptyRuns.map((run, index) => (
+            {nonEmptyEntries.map(({ run, originalIndex }, colorIdx) => (
               <div key={run.id} className="flex items-center gap-2">
                 <div
                   className="h-2.5 w-5 rounded-sm"
-                  style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                  style={{ backgroundColor: COLORS[colorIdx % COLORS.length] }}
                 />
                 <span className="text-muted-foreground">
-                  {String.fromCharCode(65 + index)} {run.symbol}
+                  {String.fromCharCode(65 + originalIndex)} {run.symbol}
                 </span>
               </div>
             ))}
@@ -101,7 +111,6 @@ export function CompareEquityCurves({
         <div className="overflow-hidden rounded-xl border border-border/70 bg-background/60 p-3">
           <svg className="h-auto w-full" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img">
             <title>Overlaid equity curves</title>
-            {/* Gridlines */}
             {[0.25, 0.5, 0.75].map((step) => {
               const y = PADDING_Y + step * (HEIGHT - PADDING_Y * 2);
               return (
@@ -116,13 +125,12 @@ export function CompareEquityCurves({
                 />
               );
             })}
-            {/* Curves */}
-            {nonEmptyRuns.map((run, index) => (
+            {nonEmptyEntries.map(({ run }, colorIdx) => (
               <path
                 key={run.id}
                 d={toPath(run)}
                 fill="none"
-                stroke={COLORS[index % COLORS.length]}
+                stroke={COLORS[colorIdx % COLORS.length]}
                 strokeLinecap="round"
                 strokeWidth="2.5"
                 opacity="0.85"
@@ -140,16 +148,16 @@ export function CompareEquityCurves({
             <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Y-axis max</p>
             <p className="mt-1 font-medium">{formatCurrency(globalMax)}</p>
           </div>
-          {nonEmptyRuns.map((run, index) => (
+          {nonEmptyEntries.map(({ run, originalIndex }, colorIdx) => (
             <div key={run.id} className="rounded-lg border border-border/70 p-3">
               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
                 <div
                   className="h-2 w-4 rounded-sm"
-                  style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                  style={{ backgroundColor: COLORS[colorIdx % COLORS.length] }}
                 />
-                {String.fromCharCode(65 + index)} ending
+                {String.fromCharCode(65 + originalIndex)} ending
               </div>
-              <p className="mt-1 font-medium">{formatCurrency(run.summary.ending_equity)}</p>
+              <p className="mt-1 font-medium">{run.summary ? formatCurrency(run.summary.ending_equity) : "—"}</p>
             </div>
           ))}
         </div>

@@ -14,8 +14,8 @@
 - `APP_ENV=production`
 - `APP_PUBLIC_URL`
 - `API_PUBLIC_URL`
-- `WEB_CORS_ORIGINS`
-- `API_ALLOWED_HOSTS`
+- `WEB_CORS_ORIGINS_RAW`
+- `API_ALLOWED_HOSTS_RAW`
 - `REQUEST_MAX_BODY_BYTES`
 - Clerk verification env vars
 - Stripe secret + webhook secret + price ids
@@ -126,6 +126,17 @@ Before deploying:
 1. Create `infra/prometheus/secrets/metrics_token` containing the `METRICS_TOKEN` value.
 2. Customize `infra/alertmanager/alertmanager.yml` with your receiver config (Slack, PagerDuty, email, etc.).
 3. Alert rules are at `infra/grafana/alerts/rules.yml` and are auto-loaded by Prometheus.
+
+## Deploy command
+
+The CD pipeline evaluates the `DEPLOY_COMMAND` GitHub secret. This must be
+set to a valid shell command (e.g., `ssh deploy@host ./deploy.sh`). If unset,
+the deploy step fails hard to prevent silent no-op deployments.
+
+Run migrations before shifting traffic:
+```bash
+alembic upgrade head
+```
 
 ## Rollback
 - Roll back web and API images independently.

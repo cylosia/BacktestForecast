@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import BillingInterval
 from backtestforecast.billing.entitlements import PlanTier as EntitlementPlanTier
@@ -22,6 +22,13 @@ class CheckoutSessionResponse(BaseModel):
     billing_interval: str
     expires_at: datetime | None = None
 
+    @field_validator("checkout_url")
+    @classmethod
+    def validate_checkout_url(cls, v: str) -> str:
+        if not v.startswith("https://"):
+            raise ValueError("checkout_url must be an HTTPS URL")
+        return v
+
 
 class CreatePortalSessionRequest(BaseModel):
     return_path: str | None = Field(default="/app/settings/billing", max_length=200, pattern=r"^/[^\s]*$")
@@ -29,6 +36,13 @@ class CreatePortalSessionRequest(BaseModel):
 
 class PortalSessionResponse(BaseModel):
     portal_url: str
+
+    @field_validator("portal_url")
+    @classmethod
+    def validate_portal_url(cls, v: str) -> str:
+        if not v.startswith("https://"):
+            raise ValueError("portal_url must be an HTTPS URL")
+        return v
 
 
 class BillingStateResponse(BaseModel):
@@ -43,5 +57,5 @@ class WebhookResponse(BaseModel):
     """Typed response for the Stripe webhook endpoint."""
     status: str
     event_type: str | None = None
-    reason: str | None = None
+    reason: str | None = Field(default=None, max_length=500)
     code: str | None = None

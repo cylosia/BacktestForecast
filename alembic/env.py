@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 import backtestforecast.models  # noqa: F401
 from alembic import context
@@ -48,10 +48,14 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True, compare_server_default=True)
+        connection.execute(text("SELECT pg_advisory_lock(2817513)"))
+        try:
+            context.configure(connection=connection, target_metadata=target_metadata, compare_type=True, compare_server_default=True)
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            connection.execute(text("SELECT pg_advisory_unlock(2817513)"))
 
 
 if context.is_offline_mode():

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { PlusCircle } from "lucide-react";
 import { getCurrentUser, getSweepJobs } from "@/lib/api/server";
-import type { SweepJobListResponse } from "@/lib/api/client";
+import type { SweepJobListResponse } from "@backtestforecast/api-client";
 import { formatDateTime, statusLabel } from "@/lib/backtests/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ export default async function SweepsPage() {
   } catch {
     return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
   }
-  const hasAccess = user.plan_tier !== "free";
+  const hasAccess = user.plan_tier !== "free" && user.features.forecasting_access === true;
 
   let jobs: SweepJobListResponse | null = null;
   let jobsError: string | null = null;

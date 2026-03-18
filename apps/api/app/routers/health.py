@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.db.session import ping_database
-from backtestforecast.security.rate_limits import ping_redis
+from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
 
 router = APIRouter(tags=["health"])
 
@@ -57,18 +57,65 @@ def _ping_broker_redis() -> bool:
                 _broker_redis = None
         return False
 
-def _check_massive_config(settings) -> bool:
-    """Non-blocking check: verify Massive API key is configured and circuit breaker is not open."""
-    if not settings.massive_api_key:
-        return False
+def _get_redis_pool_stats() -> dict[str, int] | None:
+    """Return connection pool stats from the rate-limiter Redis client, or None if unavailable."""
     try:
-        from backtestforecast.integrations.massive_client import MassiveClient
-        cb = getattr(MassiveClient, "_circuit_breaker", None)
-        if cb is not None and getattr(cb, "state", None) == "open":
-            return False
+        rl = get_rate_limiter()
+        redis_client = rl.get_redis()
+        if redis_client is None:
+            return None
+        pool = redis_client.connection_pool
+        return {
+            "current_connections": len(pool._in_use_connections),
+            "available_connections": len(pool._available_connections),
+            "max_connections": pool.max_connections,
+        }
     except Exception:
-        pass
-    return True
+        return None
+
+
+def _check_massive_health(settings) -> str:
+    """Lightweight Massive API health: check config and circuit breaker state.
+
+    Returns "ok", "degraded" (circuit open/half-open), or "unconfigured".
+    """
+    if not settings.massive_api_key:
+        return "unconfigured"
+    try:
+        from backtestforecast.integrations.massive_client import _massive_sync_circuit
+        from backtestforecast.resilience.circuit_breaker import CircuitState
+        state = _massive_sync_circuit.state
+        if state == CircuitState.OPEN:
+            return "circuit_open"
+        if state == CircuitState.HALF_OPEN:
+            return "circuit_half_open"
+    except Exception:
+        return "degraded"
+    return "ok"
+
+
+def _check_migration_drift() -> bool:
+    """Return True if DB migration version matches the code's Alembic head."""
+    try:
+        from alembic.config import Config
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+        from backtestforecast.db.session import _get_engine
+        from backtestforecast.observability.metrics import MIGRATION_HEAD_MATCH
+
+        config = Config("alembic.ini")
+        script = ScriptDirectory.from_config(config)
+        head = script.get_current_head()
+        with _get_engine().connect() as conn:
+            context = MigrationContext.configure(conn)
+            current = context.get_current_revision()
+        match = current == head
+        MIGRATION_HEAD_MATCH.set(1 if match else 0)
+        return match
+    except Exception:
+        import structlog
+        structlog.get_logger("health").warning("health.migration_check_failed", exc_info=True)
+        return False
 
 
 _HEALTH_MAX_RPM = 120
@@ -135,18 +182,44 @@ def ready(request: Request) -> JSONResponse:
     else:
         rl_mode = "in_memory_fallback"
 
-    massive_ok = _check_massive_config(settings)
+    massive_status = _check_massive_health(settings)
 
-    all_ok = redis_up and broker_up
+    all_ok = redis_up and broker_up and massive_status in ("ok", "unconfigured")
     payload: dict[str, str] = {
         "status": "ok" if all_ok else "degraded",
         "version": HEALTH_VERSION,
     }
-    if settings.app_env not in ("production", "staging"):
+    show_details = settings.app_env not in ("production", "staging")
+    if show_details and settings.metrics_token:
+        from fastapi import Query as _Q
+        token = request.query_params.get("token", "")
+        if token != settings.metrics_token:
+            show_details = False
+    if show_details:
         payload["environment"] = settings.app_env
         payload["database"] = "up"
         payload["redis"] = "up" if redis_up else "degraded"
         payload["broker"] = "up" if broker_up else "down"
         payload["rate_limit_mode"] = rl_mode
-        payload["massive_api"] = "ok" if massive_ok else "degraded"
+        payload["massive_api"] = massive_status
+        try:
+            from backtestforecast.db.session import get_pool_stats
+            payload["pool_stats"] = get_pool_stats()
+        except Exception:
+            pass
+        redis_pool = _get_redis_pool_stats()
+        if redis_pool is not None:
+            payload["redis_pool_stats"] = redis_pool
+        try:
+            from backtestforecast.market_data.redis_cache import OptionDataRedisCache
+            from backtestforecast.config import get_settings as _gs
+            _s = _gs()
+            if _s.option_cache_enabled and _s.redis_cache_url:
+                _cache = OptionDataRedisCache(_s.redis_cache_url, _s.option_cache_ttl_seconds)
+                payload["option_cache_freshness"] = _cache.check_freshness("SPY")
+                _cache.close()
+        except Exception:
+            pass
+        if settings.app_env not in ("development",):
+            payload["migration_aligned"] = _check_migration_drift()
     return JSONResponse(status_code=200, content=payload)

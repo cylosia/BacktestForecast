@@ -204,30 +204,37 @@ class BillingService:
                 "customer.subscription.paused",
                 "customer.subscription.resumed",
             }:
-                self._sync_subscription(data_object)
+                event_created_ts = event.get("created")
+                self._sync_subscription(data_object, event_created_ts=event_created_ts)
             else:
                 logger.info("billing.webhook.ignored", event_type=event_type)
         except ExternalServiceError as ese:
             self.session.rollback()
-            self._mark_stripe_event_error(event_id, str(ese))
+            self._mark_stripe_event_error(event_id, str(ese), event_type=event_type, livemode=bool(event.get("livemode")))
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
             if not isinstance(ese.__cause__, NotFoundError) and "not found" not in str(ese).lower():
                 self._trip_stripe_circuit()
             raise
         except NotFoundError as nfe:
             self.session.rollback()
-            self._mark_stripe_event_error(event_id, str(nfe))
+            self._mark_stripe_event_error(event_id, str(nfe), event_type=event_type, livemode=bool(event.get("livemode")))
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
             raise
         except Exception:
             self.session.rollback()
-            self._mark_stripe_event_error(event_id, "Unhandled processing error")
+            self._mark_stripe_event_error(event_id, "Unhandled processing error", event_type=event_type, livemode=bool(event.get("livemode")))
             logger.exception("billing.webhook.processing_error", event_id=event_id, event_type=event_type)
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
             raise
 
         self.stripe_events.mark_processed(event_id)
         self.session.commit()
+
+        pending = getattr(self, "_pending_cancellation_events", [])
+        if pending:
+            self.publish_cancellation_events(pending)
+            self._pending_cancellation_events = []
+
         STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ok").inc()
         return {"status": "ok", "event_type": event_type}
 
@@ -269,7 +276,9 @@ class BillingService:
                 self.session.flush()
         return user
 
-    def _sync_subscription(self, subscription: Any) -> User | None:
+    def _sync_subscription(
+        self, subscription: Any, *, event_created_ts: int | None = None,
+    ) -> User | None:
         user = self._find_user_by_metadata(subscription)
         if user is None:
             subscription_id = self._coerce_stripe_id(subscription.get("id"))
@@ -284,10 +293,16 @@ class BillingService:
             raise NotFoundError(
                 "User not found for subscription event; Stripe should retry this webhook."
             )
-        self._apply_subscription_to_user(user, subscription)
+        self._apply_subscription_to_user(user, subscription, event_created_ts=event_created_ts)
         return user
 
-    def _apply_subscription_to_user(self, user: User, subscription: Any) -> None:
+    def _apply_subscription_to_user(
+        self,
+        user: User,
+        subscription: Any,
+        *,
+        event_created_ts: int | None = None,
+    ) -> None:
         locked_user = self.session.scalar(
             select(User).where(User.id == user.id).with_for_update()
         )
@@ -304,7 +319,9 @@ class BillingService:
         effective_tier = self._configured_tier_for_price(price_id) or self._tier_from_metadata(subscription)
         if effective_tier is None:
             effective_tier = PlanTier.FREE.value
-        if status not in PAID_STATUSES:
+        if status == "past_due":
+            pass
+        elif status not in PAID_STATUSES:
             effective_tier = PlanTier.FREE.value
 
         if (
@@ -316,12 +333,17 @@ class BillingService:
             and user.subscription_current_period_end is not None
             and self._normalize_utc(current_period_end) < self._normalize_utc(user.subscription_current_period_end)
         ):
-            logger.info(
-                "billing.subscription.stale_subscription_event_skipped",
+            logger.warning(
+                "billing.subscription.stale_event_skipped_may_need_reconciliation",
                 user_id=str(user.id),
                 incoming_subscription_id=subscription_id,
+                incoming_period_end=current_period_end.isoformat() if current_period_end else None,
                 current_subscription_id=user.stripe_subscription_id,
+                current_period_end=user.subscription_current_period_end.isoformat() if user.subscription_current_period_end else None,
                 current_status=user.subscription_status,
+                current_plan_tier=user.plan_tier,
+                hint="If this was a plan change (upgrade/downgrade), the user's entitlements may be wrong. "
+                     "Verify via Stripe dashboard and correct the user's plan_tier if needed.",
             )
             return
 
@@ -340,6 +362,25 @@ class BillingService:
                 existing_period_end=user.subscription_current_period_end.isoformat(),
             )
             return
+
+        if (
+            not is_terminal
+            and event_created_ts is not None
+            and current_period_end is not None
+            and user.subscription_current_period_end is not None
+            and self._normalize_utc(current_period_end) == self._normalize_utc(user.subscription_current_period_end)
+            and subscription_id == user.stripe_subscription_id
+            and user.plan_updated_at is not None
+        ):
+            event_created_dt = self._timestamp_to_datetime(event_created_ts)
+            if event_created_dt is not None and event_created_dt < user.plan_updated_at:
+                logger.info(
+                    "billing.subscription.same_period_older_event_skipped",
+                    user_id=str(user.id),
+                    event_created=event_created_dt.isoformat(),
+                    plan_updated_at=user.plan_updated_at.isoformat(),
+                )
+                return
 
         old_state = {
             "plan_tier": user.plan_tier,
@@ -363,8 +404,14 @@ class BillingService:
         self.session.add(user)
         self.session.flush()
 
-        if effective_tier == PlanTier.FREE.value and old_state.get("plan_tier") != PlanTier.FREE.value:
-            self._cancel_in_flight_jobs(user.id)
+        cancelled_ids: list[tuple[str, UUID]] = []
+        if (
+            effective_tier == PlanTier.FREE.value
+            and old_state.get("plan_tier") != PlanTier.FREE.value
+            and status != "past_due"
+        ):
+            cancelled_ids = self.cancel_in_flight_jobs(user.id)
+        self._pending_cancellation_events = cancelled_ids
 
         try:
             log_billing_event(
@@ -372,24 +419,17 @@ class BillingService:
                 event_type="subscription.synced",
                 subscription_id=subscription_id,
                 old_state=old_state,
-                new_state={"plan_tier": effective_tier, "subscription_status": status},
+                new_state={
+                    "plan_tier": effective_tier,
+                    "subscription_status": status,
+                    "billing_interval": billing_interval,
+                    "price_id": price_id,
+                    "cancel_at_period_end": cancel_at_period_end,
+                },
+                session=self.session,
             )
         except Exception:
             logger.warning("billing.log_event_failed", user_id=str(user.id), exc_info=True)
-
-        self.audit.record_always(
-            event_type="billing.subscription.synced",
-            subject_type="stripe_subscription",
-            subject_id=subscription_id,
-            user_id=user.id,
-            metadata={
-                "plan_tier": effective_tier,
-                "status": status,
-                "billing_interval": billing_interval,
-                "price_id": price_id,
-                "cancel_at_period_end": cancel_at_period_end,
-            },
-        )
         logger.info(
             "billing.subscription.synced",
             user_id=str(user.id),
@@ -398,46 +438,120 @@ class BillingService:
             status=status,
         )
 
-    def _cancel_in_flight_jobs(self, user_id: UUID) -> None:
-        """Cancel queued/running jobs when a user's subscription is revoked."""
+    _JOB_TYPE_FOR_MODEL: dict[str, str] = {
+        "BacktestRun": "backtest",
+        "ScannerJob": "scan",
+        "ExportJob": "export",
+        "SymbolAnalysis": "analysis",
+        "SweepJob": "sweep",
+    }
+
+    def cancel_in_flight_jobs(self, user_id: UUID) -> list[tuple[str, UUID]]:
+        """Cancel queued/running jobs when a user's subscription is revoked.
+
+        Flushes cancellations and revokes Celery tasks, but does NOT publish
+        SSE events.  The caller must call :meth:`publish_cancellation_events`
+        after the enclosing transaction commits so SSE consumers never see
+        "cancelled" for jobs that might be rolled back.
+
+        Returns the list of ``(job_type, job_id)`` pairs that were cancelled,
+        for the caller to pass to :meth:`publish_cancellation_events`.
+        """
         from sqlalchemy import update as sa_update
-        from backtestforecast.models import BacktestRun, ScannerJob, ExportJob, SymbolAnalysis
+        from backtestforecast.models import BacktestRun, ScannerJob, ExportJob, SymbolAnalysis, SweepJob
+
         _ACTIVE = ("queued", "running")
         task_ids: list[str] = []
         cancelled = 0
-        for model_cls in (BacktestRun, ScannerJob, ExportJob, SymbolAnalysis):
-            rows = self.session.execute(
-                select(model_cls.celery_task_id).where(
-                    model_cls.user_id == user_id,
-                    model_cls.status.in_(_ACTIVE),
-                    model_cls.celery_task_id.isnot(None),
-                )
-            ).scalars().all()
-            task_ids.extend(rows)
+        cancelled_job_ids: list[tuple[str, UUID]] = []
+        now = datetime.now(UTC)
+        for model_cls in (BacktestRun, ScannerJob, ExportJob, SymbolAnalysis, SweepJob):
+            cancel_values: dict[str, object] = {
+                "status": "cancelled",
+                "completed_at": now,
+                "updated_at": now,
+                "error_code": "subscription_revoked",
+                "error_message": "Subscription cancelled; in-flight jobs were stopped.",
+            }
+            has_celery_task_id = hasattr(model_cls, "celery_task_id")
+            returning_cols = [model_cls.id]
+            if has_celery_task_id:
+                returning_cols.append(model_cls.celery_task_id)
             result = self.session.execute(
                 sa_update(model_cls)
                 .where(model_cls.user_id == user_id, model_cls.status.in_(_ACTIVE))
-                .values(status="cancelled")
+                .values(**cancel_values)
+                .returning(*returning_cols)
             )
-            cancelled += result.rowcount
+            cancelled_rows = result.all()
+            for row in cancelled_rows:
+                row_id = row[0]
+                row_task_id = row[1] if has_celery_task_id and len(row) > 1 else None
+                job_type = self._JOB_TYPE_FOR_MODEL.get(model_cls.__name__, "unknown")
+                cancelled_job_ids.append((job_type, row_id))
+                if row_task_id is not None:
+                    task_ids.append(row_task_id)
+            cancelled += len(cancelled_rows)
+
+        self.session.flush()
+
         if task_ids:
             try:
                 from apps.worker.app.celery_app import celery_app
-            except ImportError:
+            except Exception:
                 logger.warning(
                     "billing.celery_import_unavailable",
                     user_id=str(user_id),
                     task_count=len(task_ids),
-                    msg="Cannot revoke Celery tasks: worker module not importable in this process.",
+                    msg="Cannot revoke Celery tasks: worker module not available in this process.",
                 )
             else:
                 try:
                     for tid in task_ids:
-                        celery_app.control.revoke(tid, terminate=True, signal="SIGTERM")
+                        celery_app.control.revoke(tid, terminate=False)
                 except Exception:
                     logger.warning("billing.celery_revoke_failed", user_id=str(user_id), task_count=len(task_ids))
         if cancelled > 0:
             logger.info("billing.in_flight_jobs_cancelled", user_id=str(user_id), count=cancelled)
+            try:
+                from backtestforecast.services.audit import AuditService
+                audit = AuditService(self.session)
+                for job_type, job_id in cancelled_job_ids:
+                    audit.record_always(
+                        event_type="job.cancelled_by_billing",
+                        subject_type=job_type,
+                        subject_id=job_id,
+                        user_id=user_id,
+                        metadata={
+                            "reason": "subscription_revoked",
+                            "job_type": job_type,
+                        },
+                    )
+                self.session.flush()
+            except Exception:
+                logger.warning(
+                    "billing.audit_record_failed",
+                    user_id=str(user_id),
+                    count=cancelled,
+                    exc_info=True,
+                )
+        return cancelled_job_ids
+
+    @staticmethod
+    def publish_cancellation_events(cancelled_job_ids: list[tuple[str, UUID]]) -> None:
+        """Publish SSE "cancelled" events for jobs that were cancelled.
+
+        Must be called AFTER the transaction that cancelled the jobs has been
+        committed, so SSE consumers never see a "cancelled" event for a job
+        whose cancellation was rolled back.
+        """
+        from backtestforecast.events import publish_job_status
+
+        for job_type, job_id in cancelled_job_ids:
+            try:
+                publish_job_status(job_type, job_id, "cancelled", metadata={"error_code": "subscription_revoked"})
+            except Exception:
+                logger.debug("billing.sse_publish_failed", job_type=job_type, job_id=str(job_id))
 
     def _get_or_create_customer(self, user: User) -> str:
         if user.stripe_customer_id:
@@ -459,16 +573,16 @@ class BillingService:
         )
         self.session.flush()
         if result.rowcount == 0:
-            import time as _time
             for _attempt in range(2):
                 try:
                     client.customers.delete(customer.id)
                     break
                 except Exception:
-                    if _attempt == 0:
-                        _time.sleep(1)
-                    else:
-                        logger.warning("billing.orphan_customer_cleanup_failed", customer_id=customer.id)
+                    logger.warning(
+                        "billing.orphan_customer_cleanup_failed",
+                        customer_id=customer.id,
+                        attempt=_attempt + 1,
+                    )
             self.session.refresh(user)
             if user.stripe_customer_id is None:
                 raise ExternalServiceError(
@@ -605,14 +719,36 @@ class BillingService:
         self._stripe_client = stripe.StripeClient(self.settings.stripe_secret_key)
         return self._stripe_client
 
-    def _mark_stripe_event_error(self, stripe_event_id: str, detail: str) -> None:
+    def _mark_stripe_event_error(self, stripe_event_id: str, detail: str, *, event_type: str = "unknown", livemode: bool = False) -> None:
         """Best-effort: mark a claimed stripe event as errored."""
+        rows_updated = 0
         try:
-            self.stripe_events.mark_error(stripe_event_id, detail)
+            result = self.stripe_events.mark_error(stripe_event_id, detail)
+            rows_updated = result.rowcount if hasattr(result, 'rowcount') else 0
             self.session.commit()
         except Exception:
             self.session.rollback()
-            logger.debug("billing.stripe_event_error_mark_failed", event_id=stripe_event_id)
+
+        if rows_updated == 0:
+            try:
+                from backtestforecast.models import StripeEvent
+                error_event = StripeEvent(
+                    stripe_event_id=stripe_event_id,
+                    event_type=event_type,
+                    livemode=livemode,
+                    idempotency_status="error",
+                    error_detail=detail[:2000] if detail else None,
+                )
+                nested = self.session.begin_nested()
+                self.session.add(error_event)
+                try:
+                    nested.commit()
+                    self.session.commit()
+                except Exception:
+                    nested.rollback()
+            except Exception:
+                self.session.rollback()
+                logger.debug("billing.stripe_event_error_mark_failed", event_id=stripe_event_id)
 
     def _trip_stripe_circuit(self) -> None:
         try:

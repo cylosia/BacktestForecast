@@ -12,3 +12,10 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+    def __repr__(self) -> str:
+        try:
+            pk = getattr(self, "id", "?")
+        except Exception:
+            pk = "?"
+        return f"<{self.__class__.__name__} id={pk}>"

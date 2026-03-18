@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import sqlite3
 import uuid
 
 import pytest
+import sqlalchemy
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -18,9 +20,30 @@ from backtestforecast.schemas.templates import (
 from backtestforecast.services.templates import BacktestTemplateService
 
 
+def _strip_partial_indexes_for_sqlite(engine) -> None:
+    """Remove PostgreSQL-specific partial indexes so SQLite create_all succeeds."""
+    if engine.dialect.name != "sqlite":
+        return
+    for table in Base.metadata.tables.values():
+        indexes_to_remove = [
+            idx for idx in table.indexes
+            if idx.dialect_options.get("postgresql", {}).get("where") is not None
+        ]
+        for idx in indexes_to_remove:
+            table.indexes.discard(idx)
+
+
 @pytest.fixture()
 def db_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+
+    @sqlalchemy.event.listens_for(engine, "connect")
+    def _register_pg_functions(dbapi_conn, connection_record):
+        if isinstance(dbapi_conn, sqlite3.Connection):
+            dbapi_conn.create_function("hashtext", 1, lambda x: hash(x))
+            dbapi_conn.create_function("pg_advisory_xact_lock", 1, lambda _: None)
+
+    _strip_partial_indexes_for_sqlite(engine)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
     try:

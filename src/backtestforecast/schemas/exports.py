@@ -29,7 +29,7 @@ class ExportJobResponse(BaseModel):
     status: ExportJobStatus
     file_name: str
     mime_type: str
-    size_bytes: int = 0
+    size_bytes: int | None = None
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime

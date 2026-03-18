@@ -55,6 +55,93 @@ describe("scanner form status lifecycle", () => {
   });
 });
 
+describe("backtest form submission edge cases", () => {
+  it("rejects account size below minimum (100)", () => {
+    const values = { ...getDefaultBacktestFormValues(), accountSize: "50" };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.accountSize).toBeDefined();
+    expect(errors.accountSize).toContain("at least");
+  });
+
+  it("rejects account size above maximum (100M)", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      accountSize: "200000000",
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.accountSize).toBeDefined();
+  });
+
+  it("rejects end date before start date", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      startDate: "2025-06-01",
+      endDate: "2025-01-01",
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.endDate).toBeDefined();
+    expect(errors.endDate).toContain("later");
+  });
+
+  it("rejects date range exceeding 20 years", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      startDate: "2000-01-01",
+      endDate: "2025-01-01",
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.endDate).toBeDefined();
+    expect(errors.endDate).toContain("20 years");
+  });
+
+  it("rejects non-numeric account size", () => {
+    const values = { ...getDefaultBacktestFormValues(), accountSize: "abc" };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.accountSize).toBeDefined();
+  });
+
+  it("rejects risk per trade of zero (exclusive minimum)", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      riskPerTradePct: "0",
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.riskPerTradePct).toBeDefined();
+    expect(errors.riskPerTradePct).toContain("greater than");
+  });
+
+  it("accepts valid payload and returns correct symbol normalization", () => {
+    const values = { ...getDefaultBacktestFormValues(), symbol: "aapl" };
+    const { errors, payload } = validateBacktestForm(values);
+    expect(Object.keys(errors)).toHaveLength(0);
+    expect(payload).toBeDefined();
+    expect(payload!.symbol).toBe("AAPL");
+  });
+
+  it("rejects DTE tolerance >= target DTE", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      targetDte: "30",
+      dteToleranceDays: "30",
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.dteToleranceDays).toBeDefined();
+    expect(errors.dteToleranceDays).toContain("less than");
+  });
+
+  it("rejects symbol with special characters", () => {
+    const values = { ...getDefaultBacktestFormValues(), symbol: "SPY!" };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.symbol).toBeDefined();
+  });
+
+  it("rejects empty symbol", () => {
+    const values = { ...getDefaultBacktestFormValues(), symbol: "  " };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.symbol).toBeDefined();
+  });
+});
+
 describe("isPlanLimitError", () => {
   it("identifies quota_exceeded as a plan limit error", () => {
     expect(isPlanLimitError("quota_exceeded")).toBe(true);

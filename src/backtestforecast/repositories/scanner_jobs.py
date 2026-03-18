@@ -58,6 +58,7 @@ class ScannerJobRepository:
         stmt = select(ScannerJob).where(
             ScannerJob.user_id == user_id,
             ScannerJob.idempotency_key == idempotency_key,
+            ScannerJob.status.notin_(["failed", "cancelled"]),
         )
         return self.session.scalar(stmt)
 
@@ -91,12 +92,24 @@ class ScannerJobRepository:
         )
 
     def list_refresh_sources(self, limit: int = 100) -> list[ScannerJob]:
-        stmt = (
-            select(ScannerJob)
+        deduped = (
+            select(ScannerJob.id)
             .where(
                 ScannerJob.refresh_daily.is_(True),
                 ScannerJob.status == "succeeded",
             )
+            .distinct(ScannerJob.user_id, ScannerJob.request_hash, ScannerJob.mode)
+            .order_by(
+                ScannerJob.user_id,
+                ScannerJob.request_hash,
+                ScannerJob.mode,
+                desc(ScannerJob.completed_at),
+            )
+            .subquery()
+        )
+        stmt = (
+            select(ScannerJob)
+            .where(ScannerJob.id.in_(select(deduped.c.id)))
             .order_by(desc(ScannerJob.refresh_priority), desc(ScannerJob.completed_at), desc(ScannerJob.created_at))
             .limit(limit)
         )

@@ -183,7 +183,7 @@ class EntryRuleEvaluator:
             else:
                 metric = ((current_value - window_min) / (window_max - window_min)) * 100.0
         else:
-            below_count = sum(1 for value in lookback_values if value <= current_value)
+            below_count = sum(1 for value in lookback_values if value < current_value)
             metric = (below_count / len(lookback_values)) * 100.0
 
         return compare(metric, float(rule.threshold), rule.operator)
@@ -275,15 +275,16 @@ def build_estimated_iv_series(
     risk_free_rate: float = 0.045,
     sample_interval: int = 1,
 ) -> list[float | None]:
+    _SENTINEL = object()
     results: list[float | None] = []
     last_iv: float | None = None
     last_index = len(bars) - 1
-    iv_cache: dict[date, float | None] = {}
+    iv_cache: dict[date, float | None | object] = {}
     for index, bar in enumerate(bars):
         if index % sample_interval == 0 or index == last_index:
-            cached = iv_cache.get(bar.trade_date)
-            if cached is not None:
-                iv_value = cached
+            cached = iv_cache.get(bar.trade_date, _SENTINEL)
+            if cached is not _SENTINEL:
+                iv_value = cached  # type: ignore[assignment]
             else:
                 iv_value = estimate_atm_iv_for_date(
                     trade_date=bar.trade_date,
@@ -381,10 +382,7 @@ def implied_volatility_from_price(
 
     low = 0.01
     high = 5.0
-    # 60 bisection iterations reduce the search interval by ~2^60 ≈ 1e18, far
-    # exceeding the 1e-4 tolerance for any volatility in [0.01, 5.0].  The
-    # fallback return below should therefore only be reached in degenerate cases
-    # (e.g. deep ITM/OTM where the price function is extremely flat).
+    _CONVERGENCE_TOL = 1e-4
     for _ in range(60):
         midpoint = (low + high) / 2.0
         theoretical = black_scholes_price(
@@ -395,13 +393,25 @@ def implied_volatility_from_price(
             volatility=midpoint,
             risk_free_rate=risk_free_rate,
         )
-        if abs(theoretical - option_price) < 1e-4:
+        if abs(theoretical - option_price) < _CONVERGENCE_TOL:
             return midpoint
         if theoretical > option_price:
             high = midpoint
         else:
             low = midpoint
-    return (low + high) / 2.0
+    final = (low + high) / 2.0
+    residual_threshold = max(_CONVERGENCE_TOL * 100, option_price * 0.05)
+    final_theoretical = black_scholes_price(
+        option_type=option_type,
+        underlying_price=underlying_price,
+        strike_price=strike_price,
+        time_to_expiry_years=time_to_expiry_years,
+        volatility=final,
+        risk_free_rate=risk_free_rate,
+    )
+    if abs(final_theoretical - option_price) > residual_threshold:
+        return None
+    return final
 
 
 def black_scholes_price(

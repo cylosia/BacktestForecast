@@ -1,15 +1,27 @@
-// Canonical PlanTier is in @backtestforecast/api-client. This local definition
-// exists for modules that cannot import from the package.
-export type PlanTier = "free" | "pro" | "premium";
+import type { PlanTier } from "@backtestforecast/api-client";
 
-export function planLabel(planTier: PlanTier | string): string {
-  if (planTier === "premium") return "Premium";
-  if (planTier === "pro") return "Pro";
-  return "Free";
+export function planLabel(planTier: PlanTier): string {
+  switch (planTier) {
+    case "premium": return "Premium";
+    case "pro": return "Pro";
+    case "free": return "Free";
+    default: {
+      const raw = planTier as string;
+      console.warn(`Unknown plan tier: ${raw}`);
+      return raw.charAt(0).toUpperCase() + raw.slice(1);
+    }
+  }
 }
 
-export function planBadgeVariant(planTier: PlanTier | string): "success" | "default" | "secondary" {
-  if (planTier === "premium") return "success";
-  if (planTier === "pro") return "default";
-  return "secondary";
+export function planBadgeVariant(planTier: PlanTier): "success" | "default" | "secondary" {
+  switch (planTier) {
+    case "premium": return "success";
+    case "pro": return "default";
+    case "free": return "secondary";
+    default: {
+      const raw = planTier as string;
+      console.warn(`Unknown plan tier: ${raw}`);
+      return "secondary";
+    }
+  }
 }

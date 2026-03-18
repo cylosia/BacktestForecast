@@ -74,9 +74,13 @@ class TestPartialStageCommit:
         mock_regime.volume_ratio = 1.2
         mock_regime.close_price = 150.0
 
+        mock_policy = MagicMock()
+        mock_policy.forecasting_access = True
+
         with patch.object(service, "_market_data") as mock_md, \
              patch("backtestforecast.pipeline.deep_analysis.classify_regime", return_value=mock_regime), \
              patch("backtestforecast.pipeline.deep_analysis.validate_json_shape"), \
+             patch("backtestforecast.billing.entitlements.resolve_feature_policy", return_value=mock_policy), \
              patch("backtestforecast.utils.dates.market_date_today", return_value=datetime(2025, 6, 1).date()), \
              patch.object(service, "_build_landscape", return_value=[]), \
              patch.object(service, "_deep_dive", return_value=[]):
@@ -154,9 +158,13 @@ class TestPartialStageCommit:
 
         session.commit.side_effect = commit_side_effect
 
+        mock_policy = MagicMock()
+        mock_policy.forecasting_access = True
+
         with patch.object(service, "_market_data") as mock_md, \
              patch("backtestforecast.pipeline.deep_analysis.classify_regime", return_value=mock_regime), \
              patch("backtestforecast.pipeline.deep_analysis.validate_json_shape"), \
+             patch("backtestforecast.billing.entitlements.resolve_feature_policy", return_value=mock_policy), \
              patch("backtestforecast.utils.dates.market_date_today", return_value=datetime(2025, 6, 1).date()), \
              patch.object(service, "_build_landscape", return_value=[]), \
              patch.object(service, "_deep_dive", return_value=[mock_top_result]):

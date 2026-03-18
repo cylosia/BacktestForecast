@@ -5,16 +5,16 @@ groups:
   - name: backtestforecast
     rules:
       - alert: DLQDepthHigh
-        expr: bff_dlq_messages_total > 0
+        expr: dlq_depth > 0
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Dead-letter queue has unprocessed messages"
-          description: "{{ $labels.task_name }} has {{ $value }} DLQ entries in the last 5 minutes. Inspect via GET /admin/dlq."
+          description: "DLQ has {{ $value }} entries. Inspect via GET /admin/dlq."
 
       - alert: CircuitBreakerTripped
-        expr: rate(bff_circuit_breaker_trips_total[5m]) > 0
+        expr: rate(circuit_breaker_trips_total[5m]) > 0
         for: 2m
         labels:
           severity: critical
@@ -23,16 +23,22 @@ groups:
           description: "The circuit breaker for {{ $labels.service }} has tripped. External service may be unavailable."
 
       - alert: HighTaskFailureRate
-        expr: rate(bff_celery_tasks_total{status="failed"}[10m]) / rate(bff_celery_tasks_total[10m]) > 0.2
+        expr: |
+          (
+            sum(rate(celery_tasks_total{status="failed"}[5m]))
+            / sum(rate(celery_tasks_total[5m]))
+            > 0.1
+          )
+          and sum(rate(celery_tasks_total[5m])) > 0.01
         for: 5m
         labels:
-          severity: warning
+          severity: critical
         annotations:
-          summary: "High Celery task failure rate for {{ $labels.task_name }}"
-          description: "More than 20% of {{ $labels.task_name }} tasks are failing."
+          summary: "Celery task failure rate >10%"
+          description: "More than 10% of Celery tasks are failing. Check worker logs."
 
       - alert: DuplicateTaskExecutions
-        expr: rate(bff_duplicate_task_execution_total[10m]) > 0.5
+        expr: rate(duplicate_task_execution_total[10m]) > 0.5
         for: 5m
         labels:
           severity: warning
@@ -41,7 +47,7 @@ groups:
           description: "Task {{ $labels.task_name }} is being delivered multiple times."
 
       - alert: ValidateJsonShapeWarningRateHigh
-        expr: rate(bff_validate_json_shape_warnings_total[10m]) > 1
+        expr: rate(validate_json_shape_warnings_total[10m]) > 1
         for: 5m
         labels:
           severity: warning
@@ -50,7 +56,7 @@ groups:
           description: "More than 1 warning/sec from validate_json_shape over the last 10 minutes. Check for schema drift or malformed payloads."
 
       - alert: RateLimiterMemoryCounterHigh
-        expr: bff_rate_limit_memory_counter_size > 50000
+        expr: rate_limit_memory_counter_size > 50000
         for: 5m
         labels:
           severity: warning
@@ -59,7 +65,7 @@ groups:
           description: "The in-memory rate-limit fallback counter has {{ $value }} entries. This may indicate Redis is down and the fallback is accumulating unbounded state. See docs/RUNBOOK.md for remediation."
 
       - alert: ReaperTaskFailed
-        expr: increase(celery_task_failed_total{task="maintenance.reap_stale_jobs"}[15m]) > 0
+        expr: increase(celery_tasks_total{task_name="maintenance.reap_stale_jobs", status="failed"}[15m]) > 0
         for: 5m
         labels:
           severity: critical
@@ -86,7 +92,7 @@ groups:
           description: "Fewer than 5 S3 connections available. Check for stream leaks in export downloads."
 
       - alert: ReaperCycleTooSlow
-        expr: histogram_quantile(0.95, rate(backtestforecast_reaper_duration_seconds_bucket[1h])) > 300
+        expr: histogram_quantile(0.95, rate(reaper_duration_seconds_bucket[1h])) > 300
         for: 10m
         labels:
           severity: warning
@@ -95,13 +101,35 @@ groups:
           description: "The stale job reaper p95 duration exceeded 5 minutes. Check for DB lock contention or excessive stale jobs."
 
       - alert: DLQDepthCritical
-        expr: backtestforecast_dlq_depth > 100
+        expr: dlq_depth > 100
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "Dead letter queue has more than 100 items"
           description: "{{ $value }} failed tasks in the DLQ. Review and replay or clear."
+
+      - alert: CancelledJobsMissingCompletedAt
+        expr: |
+          (backtestforecast_jobs_cancelled_total - backtestforecast_jobs_cancelled_with_completed_at_total) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cancelled jobs found without completed_at timestamp"
+          description: "{{ $value }} cancelled jobs are missing completed_at, indicating a billing cancellation code path issue."
+
+      # Future enhancement: add an UpdatedAtStaleness alert once the
+      # job_updated_at_seconds metric is instrumented.
+      # expr: time() - max(job_updated_at_seconds) > 7200
+
+      - alert: DBConnectionPoolExhaustion
+        expr: backtestforecast_pool_checked_out / backtestforecast_pool_size > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool >80% utilized"
 
       - alert: WorkerMemoryHigh
         expr: process_resident_memory_bytes{job="worker"} > 400 * 1024 * 1024
@@ -111,3 +139,86 @@ groups:
         annotations:
           summary: "Worker memory usage exceeds 400MB"
           description: "Worker {{ $labels.instance }} is using {{ $value | humanize1024 }}B. Consider increasing worker_max_memory_per_child or investigating memory leaks."
+
+      - alert: ScanCandidateFailureRate
+        expr: rate(backtestforecast_scan_candidate_failures_total[15m]) > 5
+        # NOTE: This metric name intentionally uses the backtestforecast_ prefix
+        # to match the Prometheus metric definition in observability/metrics.py
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High scan candidate failure rate"
+          description: "Scan candidates are failing at {{ $value }}/s, which may indicate a data provider outage or misconfiguration."
+
+      - alert: WorkerHeartbeatGap
+        expr: backtestforecast_celery_workers_online < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Celery workers detected"
+          description: "No worker heartbeats found in Redis. Job processing is halted."
+
+      - alert: DLQGrowthRate
+        expr: rate(dlq_messages_total[1h]) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead-letter queue is growing"
+          description: "DLQ is accumulating messages at {{ $value }} per hour, indicating persistent task failures."
+
+      - alert: EphemeralPortExhaustion
+        expr: rate(external_api_requests_total[5m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High external API request rate suggesting port pressure"
+          description: "External API request rate is {{ $value }}/s over 5m. May indicate ephemeral port exhaustion."
+
+      - alert: RedisMemoryHigh
+        expr: redis_pool_in_use > 40
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis connection pool usage"
+          description: "Redis pool has {{ $value }} connections in use. May indicate connection leaks or high concurrency."
+
+      - alert: PostgresPoolExhausted
+        expr: db_pool_checked_out / (db_pool_size + db_pool_max_overflow) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connection pool >80% utilized"
+          description: "DB pool utilization is {{ $value }}. Consider increasing pool_size or max_overflow."
+
+      - alert: AccountDeletionStripeFailure
+        expr: increase(api_errors_total{code="account_stripe_cleanup_failed"}[1h]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Account deletion failed to clean up Stripe resources"
+          description: "An account was deleted but Stripe subscription/customer cleanup failed. Check audit_events for the Stripe IDs and clean up manually in the Stripe dashboard."
+
+      - alert: AccountDeletionRateHigh
+        expr: increase(http_requests_total{method="DELETE",path="/v1/account/me",status="204"}[1h]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusually high account deletion rate"
+          description: "{{ $value }} accounts deleted in the last hour. Investigate if this is expected or an abuse pattern."
+
+      - alert: MigrationVersionDrift
+        expr: migration_head_match == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database migration version does not match code"
+          description: "The database is not at the expected Alembic head revision. Run `alembic upgrade head` to resolve."

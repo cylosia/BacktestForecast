@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import threading
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -17,30 +18,37 @@ from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
 
 _token_verifier: ClerkTokenVerifier | None = None
+_verifier_lock = threading.Lock()
 
 
 def get_token_verifier() -> ClerkTokenVerifier:
     global _token_verifier
     if _token_verifier is None:
-        _token_verifier = ClerkTokenVerifier()
+        with _verifier_lock:
+            if _token_verifier is None:
+                _token_verifier = ClerkTokenVerifier()
     return _token_verifier
 
 
 def reset_token_verifier() -> None:
     """Clear the cached verifier so it is recreated on next use."""
     global _token_verifier
-    _token_verifier = None
+    with _verifier_lock:
+        _token_verifier = None
 
 
 _trusted_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] | None = None
+_trusted_networks_lock = threading.Lock()
 
 
 def _get_trusted_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
     global _trusted_networks
     if _trusted_networks is None:
-        raw = get_settings().trusted_proxy_cidrs
-        entries = [cidr.strip() for cidr in raw.split(",") if cidr.strip()]
-        _trusted_networks = [ipaddress.ip_network(cidr, strict=False) for cidr in entries]
+        with _trusted_networks_lock:
+            if _trusted_networks is None:
+                raw = get_settings().trusted_proxy_cidrs
+                entries = [cidr.strip() for cidr in raw.split(",") if cidr.strip()]
+                _trusted_networks = [ipaddress.ip_network(cidr, strict=False) for cidr in entries]
     return _trusted_networks
 
 
@@ -106,6 +114,17 @@ def get_request_metadata(request: Request) -> RequestMetadata:
     return RequestMetadata(request_id=request_id, ip_address=_extract_client_ip(request))
 
 
+def _normalize_origin(value: str) -> str:
+    """Normalize an origin for comparison: lowercase, strip trailing slashes,
+    and remove default ports (:443 for https, :80 for http)."""
+    v = value.strip().lower().rstrip("/")
+    if v.startswith("https://") and v.endswith(":443"):
+        v = v[:-4]
+    elif v.startswith("http://") and v.endswith(":80"):
+        v = v[:-3]
+    return v
+
+
 def get_current_user(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
@@ -139,8 +158,8 @@ def get_current_user(
         if token:
             origin = request.headers.get("origin")
             if origin:
-                normalized_origin = origin.strip().lower().rstrip("/")
-                allowed_origins = [o.strip().lower().rstrip("/") for o in get_settings().web_cors_origins_raw.split(",") if o.strip()]
+                normalized_origin = _normalize_origin(origin)
+                allowed_origins = [_normalize_origin(o) for o in get_settings().web_cors_origins]
                 if normalized_origin not in allowed_origins:
                     raise AuthenticationError(
                         "Cookie-based request origin not in allowed list."
@@ -149,11 +168,9 @@ def get_current_user(
     if not token:
         raise AuthenticationError()
 
-    # NOTE: verify_bearer_token may perform an HTTP fetch to the Clerk JWKS
-    # endpoint via PyJWKClient. That client does not expose a request-level
-    # timeout knob; its default urllib timeout applies.  If latency becomes a
-    # concern, configure PyJWKClient with a custom ``urllib.request.Request``
-    # or switch to an httpx-based JWKS fetcher with explicit timeouts.
+    if len(token) > 8192:
+        raise AuthenticationError("Token too large.")
+
     principal = get_token_verifier().verify_bearer_token(token)
     repository = UserRepository(db)
     user = repository.get_or_create(principal.clerk_user_id, principal.email)
@@ -167,7 +184,3 @@ def get_current_user(
     db.refresh(user)
     structlog.contextvars.bind_contextvars(user_id=str(user.id), clerk_user_id=user.clerk_user_id)
     return user
-
-
-def require_authenticated_user(user: User = Depends(get_current_user)) -> str:
-    return str(user.id)

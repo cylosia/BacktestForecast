@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import re
-from typing import Annotated, Any
+from contextlib import contextmanager
+from typing import Annotated, Any, Generator
 from uuid import UUID
 
 import structlog
@@ -22,12 +22,21 @@ from backtestforecast.schemas.analysis import (
     AnalysisSummaryResponse,
     CreateAnalysisRequest,
 )
+from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
 from backtestforecast.security import get_rate_limiter
-
-_SYMBOL_RE = re.compile(r"^[A-Za-z0-9./^]{1,16}$")
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 logger = structlog.get_logger("api.analysis")
+
+
+@contextmanager
+def _analysis_service(db: Session) -> Generator[SymbolDeepAnalysisService, None, None]:
+    svc = SymbolDeepAnalysisService(db, market_data_fetcher=None, backtest_executor=None)
+    try:
+        yield svc
+    finally:
+        if hasattr(svc, "close"):
+            svc.close()
 
 
 @router.post("", response_model=AnalysisSummaryResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -52,35 +61,31 @@ def create_analysis(
     )
 
     symbol = payload.symbol.strip().upper()
-    if not _SYMBOL_RE.match(symbol):
+    if not SYMBOL_ALLOWED_CHARS.match(symbol):
         raise ValidationError("Symbol must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
 
     idempotency_key = payload.idempotency_key
 
-    service = SymbolDeepAnalysisService(
-        db,
-        market_data_fetcher=None,
-        backtest_executor=None,
-    )
-    analysis = service.create_analysis(user, symbol, idempotency_key=idempotency_key)
+    with _analysis_service(db) as service:
+        analysis = service.create_analysis(user, symbol, idempotency_key=idempotency_key)
 
-    dispatch_celery_task(
-        db=db,
-        job=analysis,
-        task_name="analysis.deep_symbol",
-        task_kwargs={"analysis_id": str(analysis.id)},
-        queue="research",
-        log_event="analysis",
-        logger=logger,
-        request_id=metadata.request_id,
-        traceparent=request.headers.get("traceparent"),
-    )
+        dispatch_celery_task(
+            db=db,
+            job=analysis,
+            task_name="analysis.deep_symbol",
+            task_kwargs={"analysis_id": str(analysis.id)},
+            queue="research",
+            log_event="analysis",
+            logger=logger,
+            request_id=metadata.request_id,
+            traceparent=request.headers.get("traceparent"),
+        )
 
-    db.refresh(analysis)
-    if analysis.status == "failed":
-        from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": analysis.error_message or "Unable to dispatch job."})
-    return _to_summary(analysis)
+        db.refresh(analysis)
+        if analysis.status == "failed":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": analysis.error_message or "Unable to dispatch job."})
+        return _to_summary(analysis)
 
 
 @router.get("/{analysis_id}", response_model=AnalysisDetailResponse)
@@ -98,23 +103,19 @@ def get_analysis(
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-    service = SymbolDeepAnalysisService(
-        db,
-        market_data_fetcher=None,
-        backtest_executor=None,
-    )
-    analysis = service.get_analysis(user, analysis_id)
+    with _analysis_service(db) as service:
+        analysis = service.get_analysis(user, analysis_id)
 
-    summary = _to_summary(analysis)
-    detail_kwargs = summary.model_dump()
-    if analysis.status == "succeeded":
-        detail_kwargs.update(
-            regime=analysis.regime_json,
-            landscape=analysis.landscape_json,
-            top_results=analysis.top_results_json,
-            forecast=analysis.forecast_json,
-        )
-    return AnalysisDetailResponse(**detail_kwargs)
+        summary = _to_summary(analysis)
+        detail_kwargs = summary.model_dump()
+        if analysis.status == "succeeded":
+            detail_kwargs.update(
+                regime=analysis.regime_json,
+                landscape=analysis.landscape_json,
+                top_results=analysis.top_results_json,
+                forecast=analysis.forecast_json,
+            )
+        return AnalysisDetailResponse(**detail_kwargs)
 
 
 @router.get("/{analysis_id}/status", response_model=AnalysisSummaryResponse)
@@ -132,13 +133,28 @@ def get_analysis_status(
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-    service = SymbolDeepAnalysisService(
-        db,
-        market_data_fetcher=None,
-        backtest_executor=None,
+    with _analysis_service(db) as service:
+        analysis = service.get_analysis(user, analysis_id)
+        return _to_summary(analysis)
+
+
+@router.delete("/{analysis_id}", status_code=204)
+def delete_analysis(
+    analysis_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Delete an analysis. Fails with 409 if the analysis is queued or running."""
+    get_rate_limiter().check(
+        bucket="analysis:delete",
+        actor_key=str(user.id),
+        limit=60,
+        window_seconds=settings.rate_limit_window_seconds,
     )
-    analysis = service.get_analysis(user, analysis_id)
-    return _to_summary(analysis)
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+    with _analysis_service(db) as service:
+        service.delete_for_user(analysis_id, user.id)
 
 
 @router.get("", response_model=AnalysisListResponse)
@@ -157,19 +173,15 @@ def list_analyses(
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-    service = SymbolDeepAnalysisService(
-        db,
-        market_data_fetcher=None,
-        backtest_executor=None,
-    )
-    analyses = service.list_for_user(user, limit=limit, offset=offset)
-    total = service.count_for_user(user)
-    return {
-        "items": [_to_summary(a) for a in analyses],
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-    }
+    with _analysis_service(db) as service:
+        analyses = service.list_for_user(user, limit=limit, offset=offset)
+        total = service.count_for_user(user)
+        return AnalysisListResponse(
+            items=[_to_summary(a) for a in analyses],
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
 
 
 def _to_summary(analysis: Any) -> AnalysisSummaryResponse:

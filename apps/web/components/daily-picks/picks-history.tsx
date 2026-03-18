@@ -1,3 +1,5 @@
+// TODO: Add client-side pagination for large history tables.
+
 import type { PipelineHistoryResponse } from "@backtestforecast/api-client";
 import { formatDateTime } from "@/lib/backtests/format";
 import { Badge } from "@/components/ui/badge";
@@ -48,7 +50,7 @@ export function PicksHistory({ data }: { data: PipelineHistoryResponse }) {
           <TableBody>
             {data.items.map((item) => (
               <TableRow key={item.id}>
-                <TableCell className="font-medium">{item.trade_date}</TableCell>
+                <TableCell className="font-medium">{formatDateTime(item.trade_date)}</TableCell>
                 <TableCell>
                   <Badge variant={statusVariant(item.status)}>
                     {item.status}
@@ -56,7 +58,7 @@ export function PicksHistory({ data }: { data: PipelineHistoryResponse }) {
                 </TableCell>
                 <TableCell>{item.recommendations_produced}</TableCell>
                 <TableCell className="text-muted-foreground">
-                  {item.duration_seconds != null ? `${Math.round(item.duration_seconds)}s` : "—"}
+                  {item.duration_seconds != null ? (Math.round(item.duration_seconds) < 1 ? "<1s" : `${Math.round(item.duration_seconds)}s`) : "—"}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {formatDateTime(item.completed_at)}

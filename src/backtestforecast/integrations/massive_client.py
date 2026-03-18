@@ -1,3 +1,8 @@
+# TODO: MassiveClient (sync) and AsyncMassiveClient (async) duplicate nearly
+# identical logic. Refactor to a shared implementation — e.g., a sync base
+# with async wrappers using asyncio.to_thread, or generate both from a
+# common template.
+
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +31,23 @@ logger = structlog.get_logger("massive_client")
 
 MAX_PAGINATION_PAGES = 100
 
+
+def _get_traceparent_from_context() -> str | None:
+    """Get traceparent from structlog context vars if bound (e.g. from Celery task headers)."""
+    ctx = structlog.contextvars.get_contextvars()
+    return ctx.get("traceparent")
+
+
+def _parse_finite_float(value: object, field: str) -> float:
+    """Convert *value* to float, raising ValueError on inf/nan."""
+    result = float(value)  # type: ignore[arg-type]
+    if math.isinf(result) or math.isnan(result):
+        raise ValueError(f"Invalid market data value for {field}: {result}")
+    return result
+
+# Circuit breakers protect against cascading failures when the Massive API
+# is down. Both sync and async clients share independent breakers so that
+# a failure in one path does not block the other.
 _massive_sync_circuit = CircuitBreaker(name="massive_sync_api", failure_threshold=5, recovery_timeout=30.0)
 _massive_async_circuit = CircuitBreaker(name="massive_async_api", failure_threshold=5, recovery_timeout=30.0)
 
@@ -43,7 +65,17 @@ class MassiveClient:
         self.timeout = settings.massive_timeout_seconds
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
-        self._http = httpx.Client(timeout=self.timeout)
+        # NOTE: This client instance should be shared across threads when used in
+        # concurrent contexts (e.g., scan ThreadPoolExecutor). httpx.Client is
+        # thread-safe for read operations.
+        self._http = httpx.Client(
+            timeout=self.timeout,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30,
+            ),
+        )
         self._circuit = _massive_sync_circuit
 
     def close(self) -> None:
@@ -76,11 +108,11 @@ class MassiveClient:
                 bars.append(
                     DailyBar(
                         trade_date=trade_date,
-                        open_price=float(row["o"]),
-                        high_price=float(row["h"]),
-                        low_price=float(row["l"]),
-                        close_price=float(row["c"]),
-                        volume=float(row.get("v", 0)),
+                        open_price=_parse_finite_float(row["o"], "open"),
+                        high_price=_parse_finite_float(row["h"], "high"),
+                        low_price=_parse_finite_float(row["l"], "low"),
+                        close_price=_parse_finite_float(row["c"], "close"),
+                        volume=_parse_finite_float(row.get("v", 0), "volume"),
                     )
                 )
             except (KeyError, ValueError, TypeError):
@@ -230,13 +262,13 @@ class MassiveClient:
             )
 
         iv_raw = result.get("implied_volatility")
-        implied_volatility = float(iv_raw) if iv_raw is not None else None
+        implied_volatility = _parse_finite_float(iv_raw, "implied_volatility") if iv_raw is not None else None
 
         last_quote = result.get("last_quote", {})
         bid = last_quote.get("bid") if isinstance(last_quote, dict) else None
         ask = last_quote.get("ask") if isinstance(last_quote, dict) else None
-        bid_f = float(bid) if bid is not None else None
-        ask_f = float(ask) if ask is not None else None
+        bid_f = _parse_finite_float(bid, "snapshot_bid") if bid is not None else None
+        ask_f = _parse_finite_float(ask, "snapshot_ask") if ask is not None else None
 
         break_even_raw = result.get("break_even_price")
         open_interest_raw = result.get("open_interest")
@@ -246,7 +278,7 @@ class MassiveClient:
             underlying_ticker=underlying_ticker,
             greeks=greeks,
             implied_volatility=implied_volatility,
-            break_even_price=float(break_even_raw) if break_even_raw is not None else None,
+            break_even_price=_parse_finite_float(break_even_raw, "break_even_price") if break_even_raw is not None else None,
             open_interest=int(open_interest_raw) if open_interest_raw is not None else None,
             bid_price=bid_f,
             ask_price=ask_f,
@@ -270,7 +302,7 @@ class MassiveClient:
             try:
                 response = self._http.get(url, headers=headers)
             except httpx.HTTPError as exc:
-                self._circuit.record_failure()
+                self._circuit.record_failure(is_transient=True)
                 retryable_message = "Massive request failed due to a network error."
                 if attempt < self.max_retries:
                     self._sleep_before_retry(attempt, None)
@@ -278,7 +310,7 @@ class MassiveClient:
                 raise ExternalServiceError(retryable_message) from exc
 
             if response.status_code == 429 or response.status_code >= 500:
-                self._circuit.record_failure()
+                self._circuit.record_failure(is_transient=True)
                 retryable_message = (
                     "Massive rate limit reached. Retry later."
                     if response.status_code == 429
@@ -289,7 +321,7 @@ class MassiveClient:
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 400:
-                self._circuit.record_failure()
+                self._circuit.record_failure(is_transient=False)
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code} for market holidays."
                 )
@@ -396,6 +428,9 @@ class MassiveClient:
 
         url = path if path.startswith("http") else f"{self.base_url}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        traceparent = _get_traceparent_from_context()
+        if traceparent:
+            headers["traceparent"] = traceparent
         retryable_message: str | None = None
 
         for attempt in range(self.max_retries + 1):
@@ -406,7 +441,7 @@ class MassiveClient:
                     headers=headers,
                 )
             except httpx.HTTPError as exc:
-                self._circuit.record_failure()
+                self._circuit.record_failure(is_transient=True)
                 retryable_message = "Massive request failed due to a network error."
                 if attempt < self.max_retries:
                     self._sleep_before_retry(attempt, None)
@@ -414,20 +449,19 @@ class MassiveClient:
                 raise ExternalServiceError(retryable_message) from exc
 
             if response.status_code in {401, 403}:
-                self._circuit.record_failure()
                 raise ExternalServiceError("Massive rejected the request. Verify API key and entitlements.")
             if response.status_code == 404:
                 # 404 does not trip circuit breaker: data-not-found is not a service failure.
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
-                self._circuit.record_failure()
+                self._circuit.record_failure(is_transient=True)
                 retryable_message = "Massive rate limit reached. Retry later."
                 if attempt < self.max_retries:
                     self._sleep_before_retry(attempt, response.headers.get("Retry-After"))
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 500:
-                self._circuit.record_failure()
+                self._circuit.record_failure(is_transient=True)
                 retryable_message = "Massive is currently unavailable."
                 if attempt < self.max_retries:
                     self._sleep_before_retry(attempt, response.headers.get("Retry-After"))
@@ -441,15 +475,15 @@ class MassiveClient:
                     detail=response.text[:500],
                     url=safe_url,
                 )
-                self._circuit.record_failure()
+                self._circuit.record_failure(is_transient=False)
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )
 
             try:
                 data = response.json()
-            except (ValueError, Exception) as exc:
-                self._circuit.record_failure()
+            except Exception as exc:
+                self._circuit.record_failure(is_transient=True)
                 raise ExternalServiceError(f"Invalid JSON response from Massive API: {exc}") from exc
             self._circuit.record_success()
             if not isinstance(data, dict):
@@ -498,7 +532,14 @@ class AsyncMassiveClient:
         self.timeout = settings.massive_timeout_seconds
         self.max_retries = settings.massive_max_retries
         self.retry_backoff_seconds = settings.massive_retry_backoff_seconds
-        self._http = httpx.AsyncClient(timeout=self.timeout)
+        self._http = httpx.AsyncClient(
+            timeout=self.timeout,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30,
+            ),
+        )
         self._circuit = _massive_async_circuit
 
     async def close(self) -> None:
@@ -526,11 +567,11 @@ class AsyncMassiveClient:
                 bars.append(
                     DailyBar(
                         trade_date=trade_date,
-                        open_price=float(row["o"]),
-                        high_price=float(row["h"]),
-                        low_price=float(row["l"]),
-                        close_price=float(row["c"]),
-                        volume=float(row.get("v", 0)),
+                        open_price=_parse_finite_float(row["o"], "open"),
+                        high_price=_parse_finite_float(row["h"], "high"),
+                        low_price=_parse_finite_float(row["l"], "low"),
+                        close_price=_parse_finite_float(row["c"], "close"),
+                        volume=_parse_finite_float(row.get("v", 0), "volume"),
                     )
                 )
             except (KeyError, ValueError, TypeError):
@@ -595,7 +636,7 @@ class AsyncMassiveClient:
             try:
                 response = await self._http.get(url, headers=headers)
             except httpx.HTTPError as exc:
-                await self._circuit.record_failure_async()
+                await self._circuit.record_failure_async(is_transient=True)
                 retryable_message = "Massive request failed due to a network error."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, None)
@@ -603,7 +644,7 @@ class AsyncMassiveClient:
                 raise ExternalServiceError(retryable_message) from exc
 
             if response.status_code == 429 or response.status_code >= 500:
-                await self._circuit.record_failure_async()
+                await self._circuit.record_failure_async(is_transient=True)
                 retryable_message = (
                     "Massive rate limit reached. Retry later."
                     if response.status_code == 429
@@ -614,7 +655,7 @@ class AsyncMassiveClient:
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 400:
-                await self._circuit.record_failure_async()
+                await self._circuit.record_failure_async(is_transient=False)
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code} for market holidays."
                 )
@@ -744,13 +785,16 @@ class AsyncMassiveClient:
 
         url = path if path.startswith("http") else f"{self.base_url}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        traceparent = _get_traceparent_from_context()
+        if traceparent:
+            headers["traceparent"] = traceparent
         retryable_message: str | None = None
 
         for attempt in range(self.max_retries + 1):
             try:
                 response = await self._http.get(url, params=params, headers=headers)
             except httpx.HTTPError as exc:
-                await self._circuit.record_failure_async()
+                await self._circuit.record_failure_async(is_transient=True)
                 retryable_message = "Massive request failed due to a network error."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, None)
@@ -758,20 +802,19 @@ class AsyncMassiveClient:
                 raise ExternalServiceError(retryable_message) from exc
 
             if response.status_code in {401, 403}:
-                await self._circuit.record_failure_async()
                 raise ExternalServiceError("Massive rejected the request. Verify API key and entitlements.")
             if response.status_code == 404:
                 # 404 does not trip circuit breaker: data-not-found is not a service failure.
                 raise ExternalServiceError("Required Massive endpoint or data was not found.")
             if response.status_code == 429:
-                await self._circuit.record_failure_async()
+                await self._circuit.record_failure_async(is_transient=True)
                 retryable_message = "Massive rate limit reached. Retry later."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, response.headers.get("Retry-After"))
                     continue
                 raise ExternalServiceError(retryable_message)
             if response.status_code >= 500:
-                await self._circuit.record_failure_async()
+                await self._circuit.record_failure_async(is_transient=True)
                 retryable_message = "Massive is currently unavailable."
                 if attempt < self.max_retries:
                     await self._async_sleep_before_retry(attempt, response.headers.get("Retry-After"))
@@ -785,15 +828,15 @@ class AsyncMassiveClient:
                     detail=response.text[:500],
                     url=safe_url,
                 )
-                await self._circuit.record_failure_async()
+                await self._circuit.record_failure_async(is_transient=False)
                 raise ExternalServiceError(
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )
 
             try:
                 data = response.json()
-            except (ValueError, Exception) as exc:
-                await self._circuit.record_failure_async()
+            except Exception as exc:
+                await self._circuit.record_failure_async(is_transient=True)
                 raise ExternalServiceError(f"Invalid JSON response from Massive API: {exc}") from exc
             await self._circuit.record_success_async()
             if not isinstance(data, dict):

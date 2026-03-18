@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time as _time
 from typing import Annotated, Generator
 from uuid import UUID
 
@@ -18,6 +19,8 @@ from backtestforecast.models import User
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobListResponse, ExportJobResponse
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.exports import ExportService
+
+_MAX_EXPORT_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 logger = structlog.get_logger("api.exports")
@@ -41,7 +44,7 @@ def list_exports(
         jobs = service.exports.list_for_user(user.id, limit=limit, offset=offset)
         total = service.exports.count_for_user(user.id)
         return ExportJobListResponse(
-            items=[service._to_response(j) for j in jobs],
+            items=[service.to_response(j) for j in jobs],
             total=total,
             offset=offset,
             limit=limit,
@@ -74,7 +77,7 @@ def create_export(
             ip_address=metadata.ip_address,
         )
 
-        export_job = service.exports.get(job_response.id)
+        export_job = service.exports.get_for_user(job_response.id, user.id)
         if export_job is not None:
             dispatch_celery_task(
                 db=db,
@@ -113,6 +116,24 @@ def get_export_status(
     )
     with ExportService(db) as service:
         return service.get_export_status(user, export_job_id)
+
+
+@router.delete("/{export_job_id}", status_code=204)
+def delete_export(
+    export_job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Delete an export job."""
+    get_rate_limiter().check(
+        bucket="exports:delete",
+        actor_key=str(user.id),
+        limit=60,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with ExportService(db) as service:
+        service.delete_for_user(export_job_id, user.id)
 
 
 @router.get(
@@ -155,7 +176,7 @@ def download_export(
             request_id=metadata.request_id,
             ip_address=metadata.ip_address,
         )
-        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", export_job.file_name)
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", export_job.file_name.replace("\r", "").replace("\n", ""))
         safe_name = safe_name.lstrip(".").replace("..", "_") or "export"
         allowed_mime_types = {"text/csv", "text/csv; charset=utf-8", "application/pdf"}
         mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
@@ -174,25 +195,40 @@ def download_export(
                 content_length = s3_obj.get("ContentLength")
 
                 if content_length is not None and export_job.size_bytes > 0 and content_length != export_job.size_bytes:
-                    logger.warning(
+                    logger.error(
                         "export.s3_size_mismatch",
                         export_job_id=str(export_job_id),
                         expected=export_job.size_bytes,
                         actual=content_length,
                     )
+                    from backtestforecast.errors import ExternalServiceError
+                    raise ExternalServiceError(
+                        "Export file integrity check failed. Please re-export."
+                    )
 
                 headers = {
                     "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
+                    "X-Accel-Buffering": "no",
                 }
                 if content_length is not None:
                     headers["Content-Length"] = str(content_length)
 
                 _CHUNK_SIZE = 32_768  # 32 KB
+                _STREAM_TIMEOUT_SECONDS = 300  # 5 minutes
 
                 def _stream_s3() -> Generator[bytes, None, None]:
                     body = s3_obj["Body"]
+                    stream_start = _time.monotonic()
                     try:
                         while True:
+                            elapsed = _time.monotonic() - stream_start
+                            if elapsed > _STREAM_TIMEOUT_SECONDS:
+                                logger.warning(
+                                    "export.stream_timeout",
+                                    export_job_id=str(export_job_id),
+                                    elapsed_seconds=round(elapsed, 1),
+                                )
+                                break
                             chunk = body.read(_CHUNK_SIZE)
                             if not chunk:
                                 break
@@ -212,13 +248,23 @@ def download_export(
                 from backtestforecast.errors import ExternalServiceError
                 raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.")
 
-        if not content:
+        # TODO: For large exports (>10MB), consider using StreamingResponse with chunked
+        # reads from the database to avoid loading the full file into memory.
+        # Currently bounded by _MAX_EXPORT_SIZE_BYTES but could still cause memory
+        # pressure under concurrent downloads.
+
+        if content is None:
             from backtestforecast.errors import NotFoundError
             raise NotFoundError("Export file is not available.")
+
+        if len(content) > _MAX_EXPORT_SIZE_BYTES:
+            from backtestforecast.errors import ValidationError
+            raise ValidationError("Export file exceeds maximum allowed size.")
 
         headers = {
             "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
             "Content-Length": str(len(content)),
+            "X-Accel-Buffering": "no",
         }
 
         _FALLBACK_CHUNK_SIZE = 32_768  # 32 KB

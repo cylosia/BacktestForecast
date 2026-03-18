@@ -4,9 +4,10 @@ import { CheckoutButton } from "@/components/billing/checkout-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-// Prices are hard-coded to match Stripe configuration. If Stripe prices
-// change, update these values. A future improvement would fetch from a
-// /api/pricing endpoint to guarantee parity.
+// IMPORTANT: Prices are hard-coded to match Stripe configuration.
+// If Stripe prices change, update these values manually.
+// A future improvement would fetch from a /api/pricing endpoint to guarantee parity.
+// Tests use data-testid="price-pro" and data-testid="price-premium" to detect drift.
 const plans = [
   {
     title: "Free",
@@ -70,7 +71,12 @@ export default function PricingPage() {
             <CardHeader>
               <CardTitle>{plan.title}</CardTitle>
               <CardDescription>{plan.subtitle}</CardDescription>
-              <p className="pt-3 text-3xl font-semibold tracking-tight">{plan.price}</p>
+              <p
+                className="pt-3 text-3xl font-semibold tracking-tight"
+                data-testid={plan.title === "Pro" ? "price-pro" : plan.title === "Premium" ? "price-premium" : undefined}
+              >
+                {plan.price}
+              </p>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-3">
@@ -96,7 +102,7 @@ export default function PricingPage() {
               ) : (
                 <div className="space-y-3">
                   <Button asChild className="w-full" variant="outline">
-                    <Link href="/sign-in">
+                    <Link href="/sign-in?redirect_url=%2Fpricing">
                       Sign in to get started
                       <ArrowRight className="h-4 w-4" />
                     </Link>

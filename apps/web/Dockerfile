@@ -1,6 +1,7 @@
-# TODO: Pin base images to SHA digests for reproducible builds in production.
-# Example: FROM node:20-alpine@sha256:<digest> AS builder
-FROM node:20-alpine AS builder
+# Pin base images to SHA digests for reproducible builds.
+# To update: docker pull node:20.18-alpine && docker inspect --format='{{index .RepoDigests 0}}' node:20.18-alpine
+ARG NODE_BASE_DIGEST=sha256:e1adb20254e31e35e34e175d18a72360e4e38ef2daad374569a8fc2f94498e33
+FROM node:20.18-alpine@${NODE_BASE_DIGEST} AS builder
 
 WORKDIR /app
 RUN corepack enable
@@ -27,7 +28,7 @@ ARG NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL
 
 RUN pnpm --filter @backtestforecast/web run build
 
-FROM node:20-alpine AS runner
+FROM node:20.18-alpine@${NODE_BASE_DIGEST} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 

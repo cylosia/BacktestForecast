@@ -50,3 +50,11 @@ if abs(stored.updated_at - expected_updated_at) > tolerance:
 - **Con**: The 2 ms window theoretically allows a race if two updates
   happen within 2 ms of each other, but this is extremely unlikely in
   practice given network latency.
+
+## HTTP Connection Reuse
+
+MassiveClient uses httpx connection pooling with `max_connections=20`,
+`max_keepalive_connections=10`, and `keepalive_expiry=30`. Each Celery
+task still creates its own client instance, but the connection pool
+within each instance reuses connections for multiple API calls within
+the same task.

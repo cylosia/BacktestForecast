@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from apps.api.app.dependencies import get_db, token_verifier
+from apps.api.app.dependencies import get_db, get_token_verifier
 from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 from backtestforecast.db.base import Base
@@ -49,7 +49,7 @@ def rate_limit_client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, 
             claims={"sub": "rate_limit_test_user", "email": "ratelimit@test.com"},
         )
 
-    monkeypatch.setattr(token_verifier, "verify_bearer_token", fake_verify)
+    monkeypatch.setattr(get_token_verifier(), "verify_bearer_token", fake_verify)
     app.dependency_overrides[get_db] = override_get_db
     try:
         with TestClient(app, base_url="http://localhost") as test_client:

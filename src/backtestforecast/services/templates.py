@@ -12,6 +12,7 @@ from backtestforecast.errors import ConfigurationError, ConflictError, NotFoundE
 from backtestforecast.models import BacktestTemplate, User
 from backtestforecast.repositories.templates import BacktestTemplateRepository
 from backtestforecast.schemas.templates import (
+    TEMPLATE_SCHEMA_VERSION,
     UNSET,
     CreateTemplateRequest,
     TemplateListResponse,
@@ -50,6 +51,7 @@ class BacktestTemplateService:
 
         self._enforce_template_limit(user)
         config_data = request.config.model_dump(mode="json")
+        config_data["_schema_version"] = TEMPLATE_SCHEMA_VERSION
 
         template = BacktestTemplate(
             user_id=user.id,
@@ -61,9 +63,12 @@ class BacktestTemplateService:
         self.repository.add(template)
         try:
             self.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             self.session.rollback()
-            raise ValidationError(f"A template named '{request.name}' already exists.")
+            exc_str = str(exc).lower()
+            if "unique" in exc_str or "duplicate" in exc_str:
+                raise ValidationError(f"A template named '{request.name}' already exists.")
+            raise
         self.session.refresh(template)
         return self._to_response(template)
 
@@ -100,7 +105,14 @@ class BacktestTemplateService:
             raise NotFoundError("Template not found.")
 
         if request.expected_updated_at is not None:
-            if abs((template.updated_at - request.expected_updated_at).total_seconds()) > 0.002:
+            expected = request.expected_updated_at
+            actual = template.updated_at
+            from datetime import timezone
+            if expected.tzinfo is None:
+                expected = expected.replace(tzinfo=timezone.utc)
+            if actual is not None and actual.tzinfo is None:
+                actual = actual.replace(tzinfo=timezone.utc)
+            if actual is not None and abs((actual - expected).total_seconds()) > 1.0:
                 raise ConflictError(
                     "Template was modified by another request. Please refresh and try again."
                 )
@@ -114,7 +126,9 @@ class BacktestTemplateService:
             changed = True
         if request.config is not None:
             template.strategy_type = request.config.strategy_type.value
-            template.config_json = request.config.model_dump(mode="json")
+            updated_config = request.config.model_dump(mode="json")
+            updated_config["_schema_version"] = TEMPLATE_SCHEMA_VERSION
+            template.config_json = updated_config
             changed = True
         if changed:
             template.updated_at = datetime.now(UTC)  # type: ignore[assignment]
@@ -144,6 +158,12 @@ class BacktestTemplateService:
         ).scalar_one_or_none()
         if locked_user is None:
             raise NotFoundError("User not found.")
+
+        from sqlalchemy import text
+        self.session.execute(
+            text("SELECT pg_advisory_xact_lock(('x' || left(md5(:key), 16))::bit(64)::bigint)"),
+            {"key": f"template_limit:{user.id}"},
+        )
 
         limit = _resolve_template_limit(
             locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,

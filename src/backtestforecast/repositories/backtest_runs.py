@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import desc, func, select
-from sqlalchemy.orm import Session, noload, selectinload
+from sqlalchemy.orm import Session, defer, noload, selectinload
 
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade
 
@@ -36,6 +36,7 @@ class BacktestRunRepository:
         stmt = select(BacktestRun).where(
             BacktestRun.user_id == user_id,
             BacktestRun.idempotency_key == idempotency_key,
+            BacktestRun.status.notin_(["failed", "cancelled"]),
         )
         return self.session.scalar(stmt)
 
@@ -53,6 +54,7 @@ class BacktestRunRepository:
             .options(
                 noload(BacktestRun.trades),
                 noload(BacktestRun.equity_points),
+                defer(BacktestRun.input_snapshot_json),
             )
         )
         if created_since is not None:
@@ -115,9 +117,11 @@ class BacktestRunRepository:
     def get_many_for_user(self, run_ids: list[UUID], user_id: UUID) -> list[BacktestRun]:
         if not run_ids:
             return []
+        run_ids = run_ids[:50]
         stmt = (
             select(BacktestRun)
             .where(BacktestRun.id.in_(run_ids), BacktestRun.user_id == user_id)
+            .options(noload(BacktestRun.trades), noload(BacktestRun.equity_points))
             .order_by(BacktestRun.created_at.desc())
         )
         return list(self.session.scalars(stmt))

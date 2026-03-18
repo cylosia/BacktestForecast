@@ -20,9 +20,23 @@ from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade, User
 
 
+def _strip_partial_indexes_for_sqlite(engine) -> None:
+    """Remove PostgreSQL-specific partial indexes so SQLite create_all succeeds."""
+    if engine.dialect.name != "sqlite":
+        return
+    for table in Base.metadata.tables.values():
+        indexes_to_remove = [
+            idx for idx in table.indexes
+            if idx.dialect_options.get("postgresql", {}).get("where") is not None
+        ]
+        for idx in indexes_to_remove:
+            table.indexes.discard(idx)
+
+
 @pytest.fixture()
 def db_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    _strip_partial_indexes_for_sqlite(engine)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine)
     session = factory()
@@ -143,6 +157,17 @@ def _seed_run_with_trades(session, user_id) -> BacktestRun:
     return run
 
 
+def _fake_create_session(session):
+    """Return a context-manager factory that yields *session* without closing it."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _factory():
+        yield session
+
+    return _factory
+
+
 def test_backfill_updates_missing_metrics(db_session):
     """Runs with profit_factor=None should be updated by the backfill script."""
     user = _seed_user(db_session)
@@ -152,8 +177,8 @@ def test_backfill_updates_missing_metrics(db_session):
     run_id = run.id
 
     with patch(
-        "backtestforecast.management.backfill_metrics.SessionLocal",
-        return_value=db_session,
+        "backtestforecast.management.backfill_metrics.create_session",
+        _fake_create_session(db_session),
     ):
         from backtestforecast.management.backfill_metrics import backfill
 
@@ -175,8 +200,8 @@ def test_backfill_skips_already_filled(db_session):
     db_session.commit()
 
     with patch(
-        "backtestforecast.management.backfill_metrics.SessionLocal",
-        return_value=db_session,
+        "backtestforecast.management.backfill_metrics.create_session",
+        _fake_create_session(db_session),
     ):
         from backtestforecast.management.backfill_metrics import backfill
 

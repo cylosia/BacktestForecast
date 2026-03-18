@@ -83,6 +83,7 @@ celery_app.conf.task_routes = {
     "pipeline.nightly_scan": {"queue": "pipeline"},
     "analysis.deep_symbol": {"queue": "research"},
     "maintenance.cleanup_audit_events": {"queue": "maintenance"},
+    "maintenance.cleanup_daily_recommendations": {"queue": "maintenance"},
     "maintenance.refresh_market_holidays": {"queue": "maintenance"},
 }
 
@@ -92,14 +93,14 @@ celery_app.conf.task_routes = {
 celery_app.conf.beat_schedule = {
     "refresh-prioritized-scans-daily": {
         "task": "scans.refresh_prioritized",
-        "schedule": crontab(hour=6, minute=5),
+        "schedule": crontab(hour=6, minute=30),
     },
-    # Runs at 4:00 UTC (midnight ET / 11 PM EDT). Market data providers may not
-    # have finalized end-of-day prices at this time. Consider running at 6:00 UTC
-    # or later if stale close prices are observed in pipeline results.
+    # Runs at 6:00 UTC (~2 AM ET / 1 AM EDT) to ensure end-of-day prices
+    # from market data providers are fully finalized before the pipeline
+    # consumes them.
     "nightly-scan-pipeline": {
         "task": "pipeline.nightly_scan",
-        "schedule": crontab(hour=4, minute=0),
+        "schedule": crontab(hour=6, minute=0),
         "kwargs": {"max_recommendations": 20},
     },
     "reap-stale-jobs": {
@@ -118,6 +119,10 @@ celery_app.conf.beat_schedule = {
         "task": "maintenance.refresh_market_holidays",
         "schedule": crontab(hour=1, minute=0, day_of_week=0),
     },
+    "cleanup-daily-recommendations-weekly": {
+        "task": "maintenance.cleanup_daily_recommendations",
+        "schedule": crontab(hour=2, minute=30, day_of_week=0),
+    },
 }
 
 
@@ -130,6 +135,9 @@ def _bind_task_context(task_id, task, *args, **kwargs):  # type: ignore[no-untyp
         origin_request_id = headers.get("request_id")
         if origin_request_id:
             ctx["origin_request_id"] = origin_request_id
+        traceparent = headers.get("traceparent")
+        if traceparent:
+            ctx["traceparent"] = traceparent
     structlog.contextvars.bind_contextvars(**ctx)
 
 
@@ -150,6 +158,10 @@ def _start_worker_metrics_server() -> None:
     class _MetricsHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/metrics":
+                if not metrics_token and settings.app_env in ("production", "staging"):
+                    self.send_response(403)
+                    self.end_headers()
+                    return
                 if metrics_token:
                     auth = self.headers.get("Authorization", "")
                     token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
@@ -173,7 +185,8 @@ def _start_worker_metrics_server() -> None:
     if not metrics_token:
         _shutdown_logger.warning("worker.metrics_server_no_auth", msg="Metrics server started without authentication token")
 
-    server = HTTPServer(("0.0.0.0", port), _MetricsHandler)
+    bind_host = os.environ.get("WORKER_METRICS_BIND", "127.0.0.1")
+    server = HTTPServer((bind_host, port), _MetricsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     _shutdown_logger.info(
@@ -215,8 +228,13 @@ def _start_heartbeat_loop() -> None:
                     except Exception:
                         pass
                     conn = None
-            sleep_secs = min(30 * (2 ** consecutive_errors), 60)
+            sleep_secs = min(15 * (2 ** consecutive_errors), 45)
             _heartbeat_stop.wait(sleep_secs)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     global _heartbeat_thread
     t = threading.Thread(target=_loop, daemon=True)
@@ -242,13 +260,21 @@ def _on_worker_ready(**kwargs):  # type: ignore[no-untyped-def]
 
 
 def _seed_market_holidays() -> None:
-    """Dispatch a one-off holiday refresh so the cache is warm on first boot."""
+    """Dispatch a one-off holiday refresh so the cache is warm on first boot.
+
+    Uses a SET NX lock so that only the first worker to start dispatches the
+    refresh task, avoiding duplicate dispatches from concurrent workers.
+    """
     from redis import Redis
 
     r = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=3)
     try:
         if r.exists("bff:market_holidays"):
             _shutdown_logger.info("worker.market_holidays_already_cached")
+            return
+        acquired = r.set("bff:market_holidays_seed_lock", "1", nx=True, ex=300)
+        if not acquired:
+            _shutdown_logger.info("worker.market_holidays_seed_already_dispatched")
             return
     finally:
         r.close()
@@ -275,8 +301,10 @@ def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
         try:
             from redis import Redis
             r = Redis.from_url(settings.redis_url, socket_timeout=5)
-            r.delete(_worker_heartbeat_key)
-            r.close()
+            try:
+                r.delete(_worker_heartbeat_key)
+            finally:
+                r.close()
         except Exception:
             pass
     try:

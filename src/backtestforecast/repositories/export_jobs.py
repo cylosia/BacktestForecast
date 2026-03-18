@@ -37,7 +37,11 @@ class ExportJobRepository:
     def get_by_idempotency_key(self, user_id: UUID, idempotency_key: str) -> ExportJob | None:
         stmt = (
             select(ExportJob)
-            .where(ExportJob.user_id == user_id, ExportJob.idempotency_key == idempotency_key)
+            .where(
+                ExportJob.user_id == user_id,
+                ExportJob.idempotency_key == idempotency_key,
+                ExportJob.status.notin_(["failed", "cancelled", "expired"]),
+            )
             .options(defer(ExportJob.content_bytes))
         )
         return self.session.scalar(stmt)
@@ -69,5 +73,6 @@ class ExportJobRepository:
             .options(defer(ExportJob.content_bytes))
             .order_by(asc(ExportJob.created_at))
             .limit(limit)
+            .with_for_update(skip_locked=True)
         )
         return list(self.session.scalars(stmt))

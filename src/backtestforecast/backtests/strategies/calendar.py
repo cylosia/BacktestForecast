@@ -28,6 +28,10 @@ class CalendarSpreadStrategy(StrategyDefinition):
     strategy_type: str = "calendar_spread"
     margin_warning_message: str | None = None
 
+    # TODO: Add support for put calendar spreads. Currently only call calendars
+    # are supported. A `contract_type` parameter would enable put calendars for
+    # bearish/neutral market views.
+
     def build_position(
         self,
         config: BacktestConfig,

@@ -64,13 +64,14 @@ class WheelStrategyBacktestEngine:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         if not sorted_bars:
             return BacktestExecutionResult(
-                summary=build_summary(config.account_size, config.account_size, [], [], risk_free_rate=config.risk_free_rate),
+                summary=build_summary(float(config.account_size), float(config.account_size), [], [], risk_free_rate=config.risk_free_rate),
                 trades=[], equity_curve=[]
             )
 
         warnings: list[dict[str, Any]] = []
         warning_codes: set[str] = set()
-        cash = config.account_size
+        # Precision loss: Decimal->float for engine arithmetic (mixed with option_value, etc.)
+        cash = float(config.account_size)
         peak_equity = cash
         active_option: OpenShortOptionPhase | None = None
         held_shares: HeldShares | None = None
@@ -118,6 +119,8 @@ class WheelStrategyBacktestEngine:
                 active_option.last_mid = current_mid
                 option_value = -current_mid * 100.0 * active_option.quantity
 
+                capital_at_risk = active_option.entry_mid * active_option.quantity * 100.0
+                position_pnl = (active_option.entry_mid - current_mid) * active_option.quantity * 100.0
                 should_exit, exit_reason = self._resolve_exit(
                     bar=bar,
                     position=active_option,
@@ -125,11 +128,15 @@ class WheelStrategyBacktestEngine:
                     backtest_end_date=config.end_date,
                     last_bar_date=sorted_bars[-1].trade_date,
                     current_bar_index=index,
+                    profit_target_pct=config.profit_target_pct,
+                    stop_loss_pct=config.stop_loss_pct,
+                    capital_at_risk=capital_at_risk,
+                    current_value=capital_at_risk + position_pnl,
                 )
                 if should_exit:
                     exit_mid = current_mid
-                    exit_commission = config.commission_per_contract * active_option.quantity
-                    entry_commission = config.commission_per_contract * active_option.quantity
+                    exit_commission = float(config.commission_per_contract) * active_option.quantity
+                    entry_commission = float(config.commission_per_contract) * active_option.quantity
                     option_gross_pnl = (active_option.entry_mid - exit_mid) * 100.0 * active_option.quantity
                     entry_slippage = active_option.entry_mid * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
                     exit_slippage = abs(exit_mid) * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
@@ -188,7 +195,7 @@ class WheelStrategyBacktestEngine:
                                 exit_mid=exit_mid,
                                 gross_pnl=option_gross_pnl,
                                 net_pnl=option_net_pnl,
-                                total_commissions=config.commission_per_contract * active_option.quantity,
+                                total_commissions=float(config.commission_per_contract) * active_option.quantity,
                                 entry_reason="entry_rules_met",
                                 exit_reason="assignment",
                                 detail_json={**option_detail, "assignment": True, "unit_convention": "per_share_option_premium"},
@@ -222,7 +229,7 @@ class WheelStrategyBacktestEngine:
                                 exit_mid=exit_mid,
                                 gross_pnl=option_gross_pnl,
                                 net_pnl=option_net_pnl,
-                                total_commissions=config.commission_per_contract * active_option.quantity,
+                                total_commissions=float(config.commission_per_contract) * active_option.quantity,
                                 entry_reason="entry_rules_met",
                                 exit_reason="call_assignment",
                                 detail_json={**option_detail, "assignment": True, "unit_convention": "per_share_option_premium"},
@@ -281,7 +288,7 @@ class WheelStrategyBacktestEngine:
                                 exit_mid=exit_mid,
                                 gross_pnl=option_gross_pnl,
                                 net_pnl=option_net_pnl,
-                                total_commissions=(config.commission_per_contract * active_option.quantity)
+                                total_commissions=(float(config.commission_per_contract) * active_option.quantity)
                                 + exit_commission,
                                 entry_reason="entry_rules_met",
                                 exit_reason=exit_reason,
@@ -310,7 +317,7 @@ class WheelStrategyBacktestEngine:
                         active_option = position
                         entry_slip = position.entry_mid * 100.0 * position.quantity * (config.slippage_pct / 100.0)
                         cash += (position.entry_mid * 100.0 * position.quantity) - (
-                            config.commission_per_contract * position.quantity
+                            float(config.commission_per_contract) * position.quantity
                         ) - entry_slip
                 else:
                     position = self._open_covered_call(
@@ -320,7 +327,7 @@ class WheelStrategyBacktestEngine:
                         active_option = position
                         entry_slip = position.entry_mid * 100.0 * position.quantity * (config.slippage_pct / 100.0)
                         cash += (position.entry_mid * 100.0 * position.quantity) - (
-                            config.commission_per_contract * position.quantity
+                            float(config.commission_per_contract) * position.quantity
                         ) - entry_slip
 
             option_value = 0.0
@@ -352,8 +359,8 @@ class WheelStrategyBacktestEngine:
         if active_option is not None:
             final_bar = sorted_bars[-1]
             exit_mid = active_option.last_mid
-            entry_commission = config.commission_per_contract * active_option.quantity
-            exit_commission = config.commission_per_contract * active_option.quantity
+            entry_commission = float(config.commission_per_contract) * active_option.quantity
+            exit_commission = float(config.commission_per_contract) * active_option.quantity
             option_gross = (active_option.entry_mid - exit_mid) * 100.0 * active_option.quantity
             liq_entry_slip = active_option.entry_mid * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
             liq_exit_slip = abs(exit_mid) * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
@@ -438,7 +445,7 @@ class WheelStrategyBacktestEngine:
             )
 
         summary = build_summary(
-            starting_equity=config.account_size,
+            starting_equity=float(config.account_size),
             ending_equity=ending_equity,
             trades=trades,
             equity_curve=equity_curve,
@@ -499,10 +506,10 @@ class WheelStrategyBacktestEngine:
             return None
 
         capital_required_per_unit = contract.strike_price * 100.0
-        commission_per_unit = config.commission_per_contract * 2
+        commission_per_unit = float(config.commission_per_contract) * 2
         total_cost_per_unit = capital_required_per_unit + commission_per_unit - (quote.mid_price * 100.0)
         max_loss_per_unit = max((contract.strike_price - quote.mid_price) * 100.0, 0.0)
-        risk_budget = config.account_size * (config.risk_per_trade_pct / 100.0)
+        risk_budget = float(config.account_size) * (float(config.risk_per_trade_pct) / 100.0)
         by_risk = int(risk_budget // max_loss_per_unit) if max_loss_per_unit > 0 else 0
         by_cash = int(cash // total_cost_per_unit) if total_cost_per_unit > 0 else 0
         quantity = max(0, min(by_risk, by_cash))
@@ -606,9 +613,26 @@ class WheelStrategyBacktestEngine:
         backtest_end_date: date,
         last_bar_date: date,
         current_bar_index: int | None = None,
+        *,
+        profit_target_pct: float | None = None,
+        stop_loss_pct: float | None = None,
+        capital_at_risk: float | None = None,
+        current_value: float | None = None,
     ) -> tuple[bool, str]:
         if bar.trade_date >= position.expiration_date:
             return True, "expiration"
+
+        if (
+            capital_at_risk is not None
+            and current_value is not None
+            and capital_at_risk > 0
+        ):
+            unrealised_pnl = current_value - capital_at_risk
+            pnl_pct = (unrealised_pnl / capital_at_risk) * 100.0
+            if profit_target_pct is not None and pnl_pct >= profit_target_pct:
+                return True, "profit_target"
+            if stop_loss_pct is not None and pnl_pct <= -stop_loss_pct:
+                return True, "stop_loss"
         # Count trading days (bars) instead of calendar days to avoid
         # premature exits over weekends and holidays.
         if current_bar_index is not None:

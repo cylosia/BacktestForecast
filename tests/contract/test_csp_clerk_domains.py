@@ -1,5 +1,9 @@
-"""Canary test: verify that the CSP header in next.config.ts includes
-both clerk.dev and clerk.com domains so Clerk works in dev and production."""
+"""Canary test: verify that the CSP header in middleware.ts includes
+both clerk.dev and clerk.com domains so Clerk works in dev and production.
+
+CSP was moved from next.config.ts static headers to middleware.ts where it
+is generated per-request with a unique nonce via ``buildCSP()``.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-NEXT_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "apps" / "web" / "next.config.ts"
+MIDDLEWARE_PATH = Path(__file__).resolve().parent.parent.parent / "apps" / "web" / "middleware.ts"
 
 REQUIRED_CLERK_DOMAINS = [
     "clerk.dev",
@@ -18,10 +22,10 @@ REQUIRED_CLERK_DOMAINS = [
 
 @pytest.fixture
 def csp_value() -> str:
-    """Extract the raw Content-Security-Policy value string from next.config.ts."""
-    content = NEXT_CONFIG_PATH.read_text(encoding="utf-8")
-    match = re.search(r'"Content-Security-Policy".*?value:\s*`([^`]+)`', content, re.DOTALL)
-    assert match, "Could not find Content-Security-Policy value in next.config.ts"
+    """Extract the CSP directives from the buildCSP function in middleware.ts."""
+    content = MIDDLEWARE_PATH.read_text(encoding="utf-8")
+    match = re.search(r"function\s+buildCSP[^{]*\{(.*?)\n\}", content, re.DOTALL)
+    assert match, "Could not find buildCSP function in middleware.ts"
     return match.group(1)
 
 
@@ -29,16 +33,14 @@ def csp_value() -> str:
 def test_csp_includes_clerk_domain(csp_value: str, domain: str) -> None:
     assert domain in csp_value, (
         f"CSP header must include '{domain}' for Clerk to function. "
-        f"Check apps/web/next.config.ts Content-Security-Policy value."
+        f"Check apps/web/middleware.ts buildCSP function."
     )
 
 
-def test_csp_script_src_includes_unsafe_inline(csp_value: str) -> None:
-    """Item 91: script-src must include 'unsafe-inline' for Next.js inline scripts."""
-    script_src_match = re.search(r"script-src\s+([^;]+)", csp_value)
-    assert script_src_match, "CSP header must contain a script-src directive"
-    script_src = script_src_match.group(1)
-    assert "'unsafe-inline'" in script_src, (
-        f"script-src must include 'unsafe-inline' for Next.js inline scripts. "
-        f"Got: script-src {script_src}"
+def test_csp_script_src_includes_strict_dynamic(csp_value: str) -> None:
+    """script-src must include 'strict-dynamic' for nonce-based CSP."""
+    assert "script-src" in csp_value, "CSP must contain a script-src directive"
+    assert "'strict-dynamic'" in csp_value, (
+        "script-src must include 'strict-dynamic' for nonce-based CSP. "
+        "Check apps/web/middleware.ts buildCSP function."
     )

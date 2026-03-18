@@ -9,12 +9,14 @@ import type {
   CreateExportRequest,
   CreatePortalSessionRequest,
   CreateScannerJobRequest,
+  CreateSweepRequest,
   CreateTemplateRequest,
   ExportJobResponse,
   ForecastEnvelopeResponse,
   PortalSessionResponse,
   ScannerJobResponse,
   ScannerRecommendationListResponse,
+  SweepJobResponse,
   SymbolAnalysisFullResponse,
   SymbolAnalysisSummary,
   TemplateListResponse,
@@ -65,7 +67,7 @@ export async function createCheckoutSession(
 
 export async function createPortalSession(
   token: string,
-  payload: Partial<CreatePortalSessionRequest> = {},
+  payload: Pick<CreatePortalSessionRequest, "return_path"> = {},
 ): Promise<PortalSessionResponse> {
   const body: Record<string, unknown> = {};
   if (payload.return_path != null) {
@@ -90,7 +92,10 @@ export async function createExport(
 }
 
 export async function downloadExport(token: string, exportJobId: string, signal?: AbortSignal): Promise<Response> {
-  return apiDownload(`/v1/exports/${encodeURIComponent(exportJobId)}`, token, signal ? { signal } : undefined);
+  return apiDownload(`/v1/exports/${encodeURIComponent(exportJobId)}`, token, {
+    ...(signal ? { signal } : {}),
+    timeoutMs: 120_000,
+  });
 }
 
 export async function fetchExportStatus(
@@ -154,80 +159,14 @@ export async function fetchScannerJob(
 export async function fetchScannerRecommendations(
   token: string,
   jobId: string,
+  signal?: AbortSignal,
 ): Promise<ScannerRecommendationListResponse> {
-  return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token);
-}
-
-// FIXME(audit): These types MUST be generated from the OpenAPI schema via
-// packages/api-client. They are manually defined and will silently drift
-// from the backend. Run `python scripts/export_openapi.py` and regenerate
-// schema.d.ts after ensuring sweep routers are included.
-export interface SweepJobResponse {
-  id: string;
-  status: string;
-  symbol: string;
-  candidate_count: number;
-  evaluated_candidate_count: number;
-  result_count: number;
-  prefetch_summary: Record<string, unknown> | null;
-  warnings: Record<string, unknown>[];
-  error_code: string | null;
-  error_message: string | null;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-}
-
-export interface SweepJobListResponse {
-  items: SweepJobResponse[];
-  total: number;
-  offset: number;
-  limit: number;
-}
-
-export interface SweepResultResponse {
-  id: string;
-  rank: number;
-  score: string;
-  strategy_type: string;
-  delta: number | null;
-  width_mode: string | null;
-  width_value: string | null;
-  entry_rule_set_name: string;
-  exit_rule_set_name: string | null;
-  profit_target_pct: number | null;
-  stop_loss_pct: number | null;
-  summary: Record<string, unknown>;
-  warnings: Record<string, unknown>[];
-  trades_json: Record<string, unknown>[];
-  equity_curve: { date: string; equity: number }[];
-}
-
-export interface SweepResultListResponse {
-  items: SweepResultResponse[];
-}
-
-export interface CreateSweepJobPayload {
-  symbol: string;
-  start_date: string;
-  end_date: string;
-  strategy_types: string[];
-  account_size: number;
-  risk_per_trade_pct: number;
-  commission_per_contract: number;
-  target_dte?: number;
-  dte_tolerance_days?: number;
-  max_holding_days?: number;
-  max_generations?: number;
-  population_size?: number;
-  num_legs?: number;
-  delta_range?: [number, number];
-  spread_width_range?: [number, number];
+  return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, signal ? { signal } : undefined);
 }
 
 export async function createSweepJob(
   token: string,
-  payload: CreateSweepJobPayload,
+  payload: CreateSweepRequest,
   signal?: AbortSignal,
 ): Promise<SweepJobResponse> {
   return apiRequest<SweepJobResponse>("/v1/sweeps", token, {
@@ -288,4 +227,15 @@ export async function fetchAnalysisFull(
   signal?: AbortSignal,
 ): Promise<SymbolAnalysisFullResponse> {
   return apiRequest<SymbolAnalysisFullResponse>(`/v1/analysis/${encodeURIComponent(analysisId)}`, token, signal ? { signal } : undefined);
+}
+
+export async function deleteAccount(
+  token: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await apiRequest<void>("/v1/account/me", token, {
+    method: "DELETE",
+    headers: { "X-Confirm-Delete": "permanently-delete-my-account" },
+    signal,
+  });
 }

@@ -35,14 +35,18 @@ def test_cors_allows_x_requested_with(cors_client):
 
 
 def test_csp_includes_clerk_domains():
-    """Verify that the Next.js config CSP string includes clerk.com domains
-    for script-src, connect-src, and frame-src directives."""
+    """Verify that the middleware.ts CSP string includes clerk.com domains
+    for script-src, connect-src, and frame-src directives.
+
+    CSP was moved from next.config.ts static headers to middleware.ts where
+    it is generated per-request with a unique nonce.
+    """
     from pathlib import Path
 
-    next_config_path = Path(__file__).resolve().parents[2] / "apps" / "web" / "next.config.ts"
-    assert next_config_path.exists(), f"next.config.ts not found at {next_config_path}"
+    middleware_path = Path(__file__).resolve().parents[2] / "apps" / "web" / "middleware.ts"
+    assert middleware_path.exists(), f"middleware.ts not found at {middleware_path}"
 
-    content = next_config_path.read_text(encoding="utf-8")
+    content = middleware_path.read_text(encoding="utf-8")
 
     assert "clerk.com" in content, "CSP must reference clerk.com"
     assert "*.clerk.com" in content or "clerk.com" in content, (

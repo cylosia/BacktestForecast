@@ -92,6 +92,7 @@ class _StubExecutionService:
         )
         summary = BacktestSummary(
             trade_count=1,
+            decided_trades=1,
             win_rate=100.0,
             total_roi_pct=9.9,
             average_win_amount=99.0,

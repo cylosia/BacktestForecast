@@ -129,7 +129,7 @@ class IronCondorStrategy(StrategyDefinition):
             from backtestforecast.observability import get_logger
             get_logger("strategies.iron_condor").warning(
                 "iron_condor.debit_entry_rejected",
-                symbol=bar.ticker,
+                symbol=config.symbol,
                 trade_date=str(bar.trade_date),
                 entry_value=entry_value_per_unit,
             )

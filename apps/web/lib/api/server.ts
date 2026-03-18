@@ -12,20 +12,17 @@ import type {
   ScannerJobResponse,
   ScannerRecommendationListResponse,
   StrategyCatalogResponse,
-  TemplateListResponse,
-} from "@backtestforecast/api-client";
-import type {
   SweepJobListResponse,
   SweepJobResponse,
   SweepResultListResponse,
-} from "@/lib/api/client";
+  TemplateListResponse,
+} from "@backtestforecast/api-client";
 
 async function getServerToken(): Promise<string> {
   const { isAuthenticated, getToken, redirectToSignIn } = await auth();
 
   if (!isAuthenticated) {
-    redirectToSignIn();
-    throw new Error("Authentication required.");
+    return redirectToSignIn() as never;
   }
 
   const token = await getToken();
@@ -39,7 +36,11 @@ async function getServerToken(): Promise<string> {
 
 export async function getCurrentUser(): Promise<CurrentUserResponse> {
   const token = await getServerToken();
-  return apiRequest<CurrentUserResponse>("/v1/me", token, { cache: "no-store" });
+  const user = await apiRequest<CurrentUserResponse>("/v1/me", token, { cache: "no-store" });
+  if (!user || typeof user.id !== "string" || typeof user.plan_tier !== "string") {
+    throw new Error("Invalid user response shape from API");
+  }
+  return user;
 }
 
 export async function getBacktestHistory(limit = 50, offset = 0): Promise<BacktestRunListResponse> {
@@ -114,13 +115,13 @@ export async function getDailyPicks(): Promise<DailyPicksResponse> {
 
 export async function getAnalysisHistory(limit = 10, offset = 0) {
   const token = await getServerToken();
-  const safeLimit = Math.max(1, Math.min(limit, 100));
+  const safeLimit = Math.max(1, Math.min(limit, 50));
   const safeOffset = Math.max(0, offset);
   return apiRequest<AnalysisListResponse>(`/v1/analysis?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
 }
 
 export async function getDailyPicksHistory(limit = 10) {
   const token = await getServerToken();
-  const safeLimit = Math.max(1, Math.min(limit, 100));
+  const safeLimit = Math.max(1, Math.min(limit, 30));
   return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?limit=${safeLimit}`, token, { cache: "no-store" });
 }

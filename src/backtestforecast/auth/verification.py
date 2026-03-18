@@ -13,13 +13,13 @@ from backtestforecast.errors import AuthenticationError, ConfigurationError
 
 _logger = structlog.get_logger("auth.verification")
 
-_jwks_client: PyJWKClient | None = None
+_jwks_generation = 0
 
 
 def _invalidate_jwks() -> None:
-    """Reset the JWKS client so it reconnects with updated settings."""
-    global _jwks_client
-    _jwks_client = None
+    """Bump the generation counter so existing verifier instances re-create their JWKS clients."""
+    global _jwks_generation
+    _jwks_generation += 1
 
 
 register_invalidation_callback(_invalidate_jwks)
@@ -38,6 +38,7 @@ class ClerkTokenVerifier:
         self.settings = settings or get_settings()
         self._jwks_client: PyJWKClient | None = None
         self._jwks_lock = threading.Lock()
+        self._jwks_generation = _jwks_generation
 
     def verify_bearer_token(self, token: str) -> AuthenticatedPrincipal:
         signing_key = self._resolve_signing_key(token)
@@ -48,11 +49,11 @@ class ClerkTokenVerifier:
         audience = self.settings.clerk_audience or None
         issuer = self.settings.clerk_issuer or None
         is_prod = self.settings.app_env in ("production", "staging")
-        if self.settings.clerk_audience is not None and self.settings.clerk_audience == "":
+        if self.settings.clerk_audience is not None and self.settings.clerk_audience.strip() == "":
             if is_prod:
                 raise ConfigurationError("CLERK_AUDIENCE must not be empty in production/staging; set a valid audience or remove the variable.")
             _logger.warning("auth.empty_clerk_audience", hint="CLERK_AUDIENCE is set to an empty string; audience verification is disabled")
-        if self.settings.clerk_issuer is not None and self.settings.clerk_issuer == "":
+        if self.settings.clerk_issuer is not None and self.settings.clerk_issuer.strip() == "":
             if is_prod:
                 raise ConfigurationError("CLERK_ISSUER must not be empty in production/staging; set a valid issuer or remove the variable.")
             _logger.warning("auth.empty_clerk_issuer", hint="CLERK_ISSUER is set to an empty string; issuer verification is disabled")
@@ -68,6 +69,13 @@ class ClerkTokenVerifier:
             decode_options["verify_iss"] = True
         else:
             decode_options["verify_iss"] = False
+
+        if not audience or not issuer:
+            from backtestforecast.config import get_settings as _get_settings
+            if _get_settings().app_env == "production":
+                raise ConfigurationError(
+                    "CLERK_AUDIENCE and CLERK_ISSUER must be set in production."
+                )
 
         try:
             claims = jwt.decode(
@@ -96,7 +104,8 @@ class ClerkTokenVerifier:
         email: str | None = None
         raw_email = claims.get("email") or claims.get("primary_email_address")
         if isinstance(raw_email, str) and raw_email:
-            email = raw_email
+            if "@" in raw_email and len(raw_email) <= 320:
+                email = raw_email
 
         session_id = claims.get("sid") if isinstance(claims.get("sid"), str) else None
 
@@ -119,13 +128,26 @@ class ClerkTokenVerifier:
             return key
 
         jwks_client = self._get_jwks_client()
-        try:
-            signing_key = jwks_client.get_signing_key_from_jwt(token)
-        except Exception as exc:  # pragma: no cover - external lib surface
-            raise AuthenticationError("Unable to resolve Clerk signing key.") from exc
+        for _attempt in range(2):
+            try:
+                signing_key = jwks_client.get_signing_key_from_jwt(token)
+                break
+            except Exception as exc:
+                if _attempt == 0:
+                    _logger.warning("auth.jwks_fetch_retry", exc_info=True)
+                    with self._jwks_lock:
+                        self._jwks_client = None
+                    jwks_client = self._get_jwks_client()
+                    continue
+                raise AuthenticationError("Unable to resolve Clerk signing key.") from exc
         return signing_key.key
 
     def _get_jwks_client(self) -> PyJWKClient:
+        if self._jwks_generation != _jwks_generation:
+            with self._jwks_lock:
+                if self._jwks_generation != _jwks_generation:
+                    self._jwks_client = None
+                    self._jwks_generation = _jwks_generation
         if self._jwks_client is not None:
             return self._jwks_client
 
@@ -142,7 +164,8 @@ class ClerkTokenVerifier:
                     raise ConfigurationError("Set CLERK_JWT_KEY or CLERK_JWKS_URL (or CLERK_ISSUER) to enable auth.")
 
             self._jwks_client = PyJWKClient(
-                jwks_url, timeout=5, cache_jwk_set=True, lifespan=300,
+                jwks_url, timeout=self.settings.clerk_jwks_fetch_timeout,
+                cache_jwk_set=True, lifespan=300,
             )
             return self._jwks_client
 

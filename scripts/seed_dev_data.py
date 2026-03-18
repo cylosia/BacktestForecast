@@ -16,6 +16,8 @@ from backtestforecast.models import (
     ExportJob,
     ScannerJob,
     ScannerRecommendation,
+    SweepJob,
+    SweepResult,
     User,
 )
 
@@ -65,6 +67,7 @@ def ensure_user(session, *, clerk_user_id: str, email: str, plan_tier: str) -> U
 def reset_user_data(session, user: User) -> None:
     session.execute(delete(AuditEvent).where(AuditEvent.user_id == user.id))
     session.execute(delete(ExportJob).where(ExportJob.user_id == user.id))
+    session.execute(delete(SweepJob).where(SweepJob.user_id == user.id))
     session.execute(delete(ScannerJob).where(ScannerJob.user_id == user.id))
     session.execute(delete(BacktestRun).where(BacktestRun.user_id == user.id))
     session.flush()
@@ -260,6 +263,58 @@ def seed_scanner(session, user: User, runs: list[BacktestRun]) -> ScannerJob:
     return job
 
 
+def seed_sweep(session, user: User) -> SweepJob:
+    created_at = datetime.now(UTC) - timedelta(days=2)
+    job = SweepJob(
+        user_id=user.id,
+        symbol="AAPL",
+        status="succeeded",
+        candidate_count=8,
+        evaluated_candidate_count=8,
+        result_count=2,
+        request_snapshot_json={
+            "symbol": "AAPL",
+            "strategy_types": ["long_call", "covered_call", "bull_call_debit_spread"],
+            "parameter_ranges": {"target_dte": [20, 30, 45], "risk_per_trade_pct": [2, 5]},
+        },
+        warnings_json=[],
+        engine_version="options-multileg-v2",
+        created_at=created_at,
+        started_at=created_at + timedelta(minutes=1),
+        completed_at=created_at + timedelta(minutes=5),
+    )
+    session.add(job)
+    session.flush()
+
+    for rank in range(1, 3):
+        session.add(
+            SweepResult(
+                sweep_job_id=job.id,
+                rank=rank,
+                score=Decimal(str(95 - (rank * 8))),
+                strategy_type="long_call" if rank == 1 else "covered_call",
+                parameter_snapshot_json={
+                    "target_dte": 30,
+                    "risk_per_trade_pct": 5,
+                    "max_holding_days": 10,
+                },
+                summary_json={
+                    "trade_count": 6,
+                    "win_rate": 58.0,
+                    "total_roi_pct": 8.3,
+                    "max_drawdown_pct": 3.9,
+                    "total_net_pnl": 830.0,
+                },
+                warnings_json=[],
+                trades_json=[],
+                equity_curve_json=[],
+                created_at=created_at + timedelta(minutes=5),
+            )
+        )
+    session.flush()
+    return job
+
+
 def seed_export_job(session, user: User, run: BacktestRun) -> ExportJob:
     export = ExportJob(
         user_id=user.id,
@@ -303,14 +358,16 @@ def main() -> None:
 
         runs = seed_backtests(session, user)
         scanner_job = seed_scanner(session, user, runs)
+        sweep_job = seed_sweep(session, user)
         export_job = seed_export_job(session, user, runs[0])
         session.commit()
 
         print(
             f"Seeded user {user.clerk_user_id} ({user.plan_tier}) with "
-            f"{len(runs)} backtests, 1 scanner job, and export job {export_job.id}."
+            f"{len(runs)} backtests, 1 scanner job, 1 sweep job, and export job {export_job.id}."
         )
         print(f"Latest scanner job: {scanner_job.id}")
+        print(f"Latest sweep job: {sweep_job.id}")
 
 
 if __name__ == "__main__":

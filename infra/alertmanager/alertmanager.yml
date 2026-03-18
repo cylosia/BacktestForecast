@@ -1,8 +1,13 @@
+# CI VALIDATION: The deploy pipeline MUST run envsubst on this file.
+# If any receiver URL still contains "localhost" after processing, the
+# deployment MUST fail. See .github/workflows/cd.yml for the check.
+#
 # Alertmanager configuration.
 #
-# Both receivers use a generic webhook endpoint that MUST be configured via
-# the ALERT_WEBHOOK_URL environment variable before deploying.
-# Common targets: Opsgenie, PagerDuty webhook relay, Slack incoming webhook, or a custom service.
+# Receiver URLs are templated for envsubst pre-processing.
+# Before deploying, run:
+#   envsubst < alertmanager.yml.tpl > alertmanager.yml
+# or replace the URLs below with your actual webhook endpoints.
 #
 # Docs: https://prometheus.io/docs/alerting/latest/configuration/
 
@@ -23,14 +28,18 @@ route:
       repeat_interval: 1h
 
 receivers:
+  # IMPORTANT: These URLs MUST be replaced before production deployment.
+  # Option 1: Use envsubst to substitute $ALERT_WEBHOOK_URL at deploy time.
+  # Option 2: Directly replace with your Opsgenie / PagerDuty / Slack webhook URL.
+  # Leaving localhost URLs will cause ALL alerts to be silently lost.
   - name: default
     webhook_configs:
-      - url: "${ALERT_WEBHOOK_URL:-http://localhost:9095/alert}"
+      - url: "${ALERT_WEBHOOK_URL:-http://ALERT-WEBHOOK-NOT-CONFIGURED.invalid/alert}"
         send_resolved: true
 
   - name: critical
     webhook_configs:
-      - url: "${ALERT_WEBHOOK_CRITICAL_URL:-${ALERT_WEBHOOK_URL:-http://localhost:9095/alert}}"
+      - url: "${ALERT_WEBHOOK_URL_CRITICAL:-${ALERT_WEBHOOK_URL:-http://ALERT-WEBHOOK-NOT-CONFIGURED.invalid/alert}}"
         send_resolved: true
 
 inhibit_rules:

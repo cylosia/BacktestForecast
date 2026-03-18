@@ -33,32 +33,33 @@ class Settings(BaseSettings):
     # Separate Redis URL for non-broker usage (rate limiting, SSE pub/sub, caching).
     # Defaults to redis_url when not set.  In production, point this at a dedicated
     # Redis instance or database number to isolate cache/SSE traffic from Celery broker traffic.
-    redis_cache_url: str | None = None
+    redis_cache_url: str | None = Field(default=None, repr=False)
 
     web_cors_origins_raw: str = "http://localhost:3000"
     api_allowed_hosts_raw: str = "localhost,127.0.0.1"
     request_max_body_bytes: int = 1_048_576
 
-    clerk_secret_key: str | None = None
+    clerk_secret_key: str | None = Field(default=None, repr=False)
     clerk_issuer: str | None = None
     clerk_audience: str | None = None
     clerk_jwks_url: str | None = None
-    clerk_jwt_key: str | None = None
+    clerk_jwt_key: str | None = Field(default=None, repr=False)
+    clerk_jwks_fetch_timeout: float = 10.0
     clerk_authorized_parties_raw: str = Field(default="http://localhost:3000")
 
-    stripe_secret_key: str | None = None
-    stripe_webhook_secret: str | None = None
+    stripe_secret_key: str | None = Field(default=None, repr=False)
+    stripe_webhook_secret: str | None = Field(default=None, repr=False)
     stripe_pro_monthly_price_id: str | None = None
     stripe_pro_yearly_price_id: str | None = None
     stripe_premium_monthly_price_id: str | None = None
     stripe_premium_yearly_price_id: str | None = None
 
-    massive_api_key: str | None = None
+    massive_api_key: str | None = Field(default=None, repr=False)
     massive_base_url: str = "https://api.massive.com"
     massive_timeout_seconds: float = 30.0
     massive_max_retries: int = 2
     massive_retry_backoff_seconds: float = 0.5
-    earnings_api_key: str | None = None
+    earnings_api_key: str | None = Field(default=None, repr=False)
 
     option_cache_enabled: bool = True
     # 7 days. There is currently no staleness visibility: cached data is
@@ -179,15 +180,15 @@ class Settings(BaseSettings):
 
     ip_hash_salt: str = Field(default="backtestforecast-default-ip-salt-change-me")
 
-    db_pool_size: int = 5
-    db_pool_max_overflow: int = Field(default=10, ge=1)
+    db_pool_size: int = Field(default=5, ge=1, le=100)
+    db_pool_max_overflow: int = Field(default=10, ge=1, le=100)
     db_pool_recycle: int = 1800
     db_pool_timeout: int = Field(default=10, ge=1, le=120)
 
     trusted_proxy_cidrs: str = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
     rate_limit_prefix: str = "bff:rate-limit"
-    rate_limit_fail_closed: bool = False
+    rate_limit_fail_closed: bool = True
     rate_limit_memory_max_keys: int = 10_000
     backtest_create_rate_limit: int = 10
     backtest_read_rate_limit: int = 60
@@ -213,6 +214,9 @@ class Settings(BaseSettings):
     pipeline_max_workers: int = Field(default=20, ge=1, le=64)
 
     scan_timeout_seconds: int = 540
+    sweep_timeout_seconds: int = Field(default=3600, ge=1)
+    sweep_genetic_timeout_seconds: int = Field(default=3600, ge=1)
+    max_concurrent_sweeps: int = Field(default=10, ge=1, le=100)
 
     max_concurrent_analyses_default: int = Field(default=3, ge=1, le=20)
     max_concurrent_analyses_premium: int = Field(default=5, ge=1, le=20)
@@ -228,7 +232,7 @@ class Settings(BaseSettings):
     s3_region: str | None = None
     s3_endpoint_url: str | None = None
     aws_access_key_id: str | None = None
-    aws_secret_access_key: str | None = None
+    aws_secret_access_key: str | None = Field(default=None, repr=False)
 
     # Runtime feature flags — toggle via env vars without code deployment.
     feature_backtests_enabled: bool = True
@@ -274,6 +278,7 @@ class Settings(BaseSettings):
         "sse_rate_limit", "sse_redis_max_connections",
         "scan_timeout_seconds",
         "forecast_max_analogs",
+        "option_cache_ttl_seconds",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
@@ -282,7 +287,7 @@ class Settings(BaseSettings):
             raise ValueError(f"Value must be >= 1, got {v}")
         return v
 
-    @field_validator("massive_timeout_seconds", "sse_redis_socket_timeout", "sse_redis_connect_timeout")
+    @field_validator("massive_timeout_seconds", "sse_redis_socket_timeout", "sse_redis_connect_timeout", "clerk_jwks_fetch_timeout")
     @classmethod
     def validate_positive_floats(cls, value: float) -> float:
         v = float(value)
@@ -310,8 +315,8 @@ class Settings(BaseSettings):
     @classmethod
     def validate_retry_backoff(cls, value: float) -> float:
         v = float(value)
-        if v < 0.0:
-            raise ValueError(f"massive_retry_backoff_seconds must be >= 0.0, got {v}")
+        if v <= 0.0:
+            raise ValueError(f"massive_retry_backoff_seconds must be > 0, got {v}")
         return v
 
     @field_validator("risk_free_rate")
@@ -355,6 +360,8 @@ class Settings(BaseSettings):
 
     @property
     def web_cors_origins(self) -> list[str]:
+        # NOTE: This re-parses on every access. Acceptable since Settings is a
+        # cached singleton and the parse is trivially fast.
         raw = self.web_cors_origins_raw.strip()
         if not raw:
             return []
@@ -376,15 +383,21 @@ class Settings(BaseSettings):
 
     @property
     def api_allowed_hosts(self) -> list[str]:
+        # NOTE: This re-parses on every access. Acceptable since Settings is a
+        # cached singleton and the parse is trivially fast.
         hosts = [host.strip() for host in self.api_allowed_hosts_raw.split(",") if host.strip()]
         return hosts or ["localhost", "127.0.0.1"]
 
     @property
     def clerk_authorized_parties(self) -> list[str]:
+        # NOTE: This re-parses on every access. Acceptable since Settings is a
+        # cached singleton and the parse is trivially fast.
         return [party.strip() for party in self.clerk_authorized_parties_raw.split(",") if party.strip()]
 
     @property
     def stripe_price_lookup(self) -> dict[tuple[str, str], str]:
+        # NOTE: This re-parses on every access. Acceptable since Settings is a
+        # cached singleton and the parse is trivially fast.
         mapping: dict[tuple[str, str], str] = {}
         if self.stripe_pro_monthly_price_id:
             mapping[("pro", "monthly")] = self.stripe_pro_monthly_price_id
@@ -416,7 +429,7 @@ class Settings(BaseSettings):
             parsed = [s.strip() for s in self.pipeline_default_symbols_csv.split(",") if s.strip()]
             validated: list[str] = []
             for s in parsed:
-                if re.match(r'^[A-Z][A-Z0-9./^]{0,15}$', s):
+                if re.match(r'^[A-Z][A-Z0-9./^-]{0,15}$', s):
                     validated.append(s)
                 else:
                     logger.warning("config.invalid_symbol_skipped", symbol=s)
@@ -461,6 +474,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
+        _production_warnings: list[str] = []
+        if self.ip_hash_salt == "backtestforecast-default-ip-salt-change-me":
+            _production_warnings.append(
+                "IP_HASH_SALT is using the default value; set a unique secret in production."
+            )
+        if _production_warnings:
+            for w in _production_warnings:
+                logger.warning("config.production_warning", msg=w)
         if self.app_env in {"production", "staging"}:
             if not self.clerk_issuer:
                 raise ValueError("Production-like environments require CLERK_ISSUER for JWT issuer verification.")
@@ -484,19 +505,22 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
             if not self.clerk_authorized_parties:
                 raise ValueError("Production-like environments require at least one CLERK_AUTHORIZED_PARTIES entry.")
+            if self.clerk_authorized_parties_raw == "http://localhost:3000":
+                raise ValueError(
+                    "CLERK_AUTHORIZED_PARTIES is using the default value. "
+                    "Set the actual authorized party URLs for production."
+                )
+            if not self.massive_base_url.startswith("https://"):
+                raise ValueError("MASSIVE_BASE_URL must use HTTPS in production.")
             if "backtestforecast:backtestforecast" in self.database_url:
                 raise ValueError(
                     "DATABASE_URL contains the default password 'backtestforecast:backtestforecast'. "
                     "Production-like environments require a strong, unique database password."
                 )
             if not self.rate_limit_fail_closed:
-                logger.warning(
-                    "config.rate_limit_fail_open_in_production",
-                    hint=(
-                        "rate_limit_fail_closed is False in a production-like environment. "
-                        "If Redis is unavailable, rate limiting will be bypassed (fail-open). "
-                        "Consider setting RATE_LIMIT_FAIL_CLOSED=true to enforce limits even during outages."
-                    ),
+                raise ValueError(
+                    "Production-like environments require RATE_LIMIT_FAIL_CLOSED=true "
+                    "to enforce rate limits even when Redis is unavailable."
                 )
             if self.feature_billing_enabled:
                 _stripe_fields = [
@@ -514,6 +538,22 @@ class Settings(BaseSettings):
                         f"are not set: {', '.join(_missing)}"
                     )
 
+            if self.feature_exports_enabled and self.s3_bucket:
+                _s3_fields = [
+                    ("s3_region", self.s3_region),
+                ]
+                _s3_missing = [name for name, val in _s3_fields if not val]
+                if _s3_missing:
+                    raise ValueError(
+                        f"S3 export storage is configured (s3_bucket={self.s3_bucket!r}) but "
+                        f"the following env vars are not set: {', '.join(_s3_missing)}"
+                    )
+            if self.app_public_url and not self.app_public_url.startswith("https://"):
+                raise ValueError(
+                    f"APP_PUBLIC_URL must use HTTPS in production/staging, "
+                    f"got: {self.app_public_url!r}"
+                )
+
             import re as _re
             _sslmode_match = _re.search(r"sslmode=(\w+)", self.database_url)
             if not _sslmode_match or _sslmode_match.group(1) not in (
@@ -524,6 +564,30 @@ class Settings(BaseSettings):
                     "sslmode=verify-ca, or sslmode=verify-full in DATABASE_URL "
                     "to encrypt Postgres traffic in transit."
                 )
+            _data_features = (
+                self.feature_backtests_enabled
+                or self.feature_scanner_enabled
+                or self.feature_sweeps_enabled
+                or self.feature_analysis_enabled
+            )
+            if _data_features and not self.massive_api_key:
+                raise ValueError(
+                    "MASSIVE_API_KEY is required when any data-fetching feature "
+                    "(backtests, scanner, sweeps, analysis) is enabled in production."
+                )
+
+            for _url_name, _url_val in [
+                ("redis_url", self.redis_url),
+                ("redis_cache_url", self.redis_cache_url),
+            ]:
+                if _url_val and not _url_val.startswith("rediss://"):
+                    logger.warning(
+                        "config.redis_tls_warning",
+                        msg=(
+                            f"{_url_name} uses unencrypted redis:// in production. "
+                            f"Consider using rediss:// for TLS encryption."
+                        ),
+                    )
         return self
 
 
@@ -533,7 +597,8 @@ _invalidation_callbacks: list[Callable[[], None]] = []
 
 
 def register_invalidation_callback(callback: Callable[[], None]) -> None:
-    _invalidation_callbacks.append(callback)
+    with _settings_lock:
+        _invalidation_callbacks.append(callback)
 
 
 def get_settings() -> Settings:

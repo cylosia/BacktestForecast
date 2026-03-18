@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
+from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
@@ -16,12 +17,19 @@ from backtestforecast.schemas.sweeps import (
     CreateSweepRequest,
     SweepJobListResponse,
     SweepJobResponse,
+    SweepJobStatusResponse,
     SweepResultListResponse,
 )
+from backtestforecast.errors import FeatureLockedError
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("api.sweeps")
+
+
+def _require_sweeps_enabled(settings: Settings = Depends(get_settings)) -> None:
+    if not settings.feature_sweeps_enabled:
+        raise FeatureLockedError("Sweeps are temporarily disabled.", required_tier="free")
 
 router = APIRouter(prefix="/sweeps", tags=["sweeps"])
 
@@ -49,19 +57,18 @@ def create_sweep(
     payload: CreateSweepRequest,
     request: Request,
     user: User = Depends(get_current_user),
+    _: None = Depends(_require_sweeps_enabled),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobResponse:
-    if not settings.feature_sweeps_enabled:
-        from backtestforecast.errors import FeatureLockedError
-        raise FeatureLockedError("Sweeps are temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="sweeps:create",
         actor_key=str(user.id),
         limit=settings.sweep_create_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
+    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     with SweepService(db) as service:
         job = service.create_job(user, payload)
         dispatch_celery_task(
@@ -85,6 +92,30 @@ def create_sweep(
         return service.get_job(user, job.id)
 
 
+@router.get("/{job_id}/status", response_model=SweepJobStatusResponse)
+def get_sweep_status(
+    job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> SweepJobStatusResponse:
+    get_rate_limiter().check(
+        bucket="sweeps:read",
+        actor_key=str(user.id),
+        limit=settings.sweep_read_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with SweepService(db) as service:
+        job = service.get_job(user, job_id)
+        return SweepJobStatusResponse(
+            id=job.id,
+            status=job.status,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+        )
+
+
 @router.get("/{job_id}", response_model=SweepJobResponse)
 def get_sweep(
     job_id: UUID,
@@ -100,6 +131,24 @@ def get_sweep(
     )
     with SweepService(db) as service:
         return service.get_job(user, job_id)
+
+
+@router.delete("/{job_id}", status_code=204)
+def delete_sweep(
+    job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Delete a sweep job and its results."""
+    get_rate_limiter().check(
+        bucket="sweeps:delete",
+        actor_key=str(user.id),
+        limit=60,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with SweepService(db) as service:
+        service.delete_for_user(job_id, user.id)
 
 
 @router.get("/{job_id}/results", response_model=SweepResultListResponse)

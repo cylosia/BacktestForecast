@@ -4,8 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
+import type { CreateSweepRequest } from "@backtestforecast/api-client";
 import { createSweepJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
+import { TICKER_RE } from "@/lib/validation-constants";
+import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { daysAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,6 +58,7 @@ export function SweepForm() {
   const { getToken } = useAuth();
   const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const [errorCode, setErrorCode] = useState<string | undefined>();
   const [selectedStrategies, setSelectedStrategies] = useState<Set<string>>(
     new Set(["bull_put_credit_spread", "bear_call_credit_spread"]),
   );
@@ -80,8 +84,14 @@ export function SweepForm() {
     maxResults: "20",
   });
 
-  const update = (field: keyof FormState, value: string | number) =>
+  const update = (field: keyof FormState, value: string | number) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+    if (status === "error") {
+      setStatus("idle");
+      setErrorMessage("");
+      setErrorCode(undefined);
+    }
+  };
 
   const toggleStrategy = (val: string) => {
     setSelectedStrategies((prev) => {
@@ -106,7 +116,7 @@ export function SweepForm() {
     if (submittingRef.current) return;
 
     const symbol = form.symbol.trim().toUpperCase();
-    if (!symbol || !/^[A-Z][A-Z0-9./^-]{0,15}$/.test(symbol)) {
+    if (!symbol || !TICKER_RE.test(symbol)) {
       setStatus("error");
       setErrorMessage("Enter a valid ticker symbol (1-16 characters, letters/digits/./-/^).");
       return;
@@ -144,6 +154,11 @@ export function SweepForm() {
     if (!Number.isFinite(dteTolerance) || dteTolerance < 0 || dteTolerance > 60) {
       setStatus("error");
       setErrorMessage("DTE tolerance must be between 0 and 60.");
+      return;
+    }
+    if (Number.isFinite(dteTolerance) && Number.isFinite(targetDte) && dteTolerance >= targetDte) {
+      setStatus("error");
+      setErrorMessage("DTE tolerance must be less than target DTE.");
       return;
     }
     const maxHoldingDays = Number(form.maxHoldingDays);
@@ -207,7 +222,7 @@ export function SweepForm() {
       const token = await getToken();
       if (!token) throw new Error("Authentication required.");
 
-      const payload: Record<string, unknown> = {
+      const basePayload: Omit<CreateSweepRequest, "strategy_types" | "delta_grid" | "genetic_config"> = {
         mode: form.mode,
         symbol,
         start_date: form.startDate,
@@ -220,11 +235,16 @@ export function SweepForm() {
         commission_per_contract: commission,
         slippage_pct: Number(form.slippage),
         max_results: Number(form.maxResults),
+        // Sweeps use empty entry_rules ("no_filter") intentionally: the sweep grid
+        // tests parameter combinations (delta, width, exit rules) while entering
+        // on every eligible date. This differs from backtests which require at
+        // least one signal-based entry rule.
         entry_rule_sets: [{ name: "no_filter", entry_rules: [] }],
+        idempotency_key: crypto.randomUUID(),
       };
 
+      let payload: CreateSweepRequest;
       if (form.mode === "grid") {
-        payload.strategy_types = Array.from(selectedStrategies);
         const deltaParts = form.deltas.split(",").map((s) => s.trim()).filter(Boolean);
         for (const part of deltaParts) {
           if (!Number.isFinite(Number(part))) {
@@ -235,17 +255,25 @@ export function SweepForm() {
           }
         }
         const deltas = deltaParts.map((s) => ({ value: Number(s) }));
-        if (deltas.length > 0) payload.delta_grid = deltas;
+        payload = {
+          ...basePayload,
+          strategy_types: Array.from(selectedStrategies),
+          ...(deltas.length > 0 ? { delta_grid: deltas } : {}),
+        };
       } else {
         const legType = `custom_${form.numLegs}_leg`;
-        payload.strategy_types = [legType];
-        payload.genetic_config = {
-          num_legs: form.numLegs,
-          population_size: Number(form.populationSize),
-          max_generations: Number(form.maxGenerations),
-          mutation_rate: Number(form.mutationRate),
-          crossover_rate: Number(form.crossoverRate),
-          max_workers: 10,
+        payload = {
+          ...basePayload,
+          strategy_types: [legType],
+          genetic_config: {
+            num_legs: form.numLegs,
+            population_size: Number(form.populationSize),
+            max_generations: Number(form.maxGenerations),
+            mutation_rate: Number(form.mutationRate),
+            crossover_rate: Number(form.crossoverRate),
+            // max_workers is intentionally omitted — the backend GeneticSweepConfig
+            // provides a validated default (10) that respects server-side limits.
+          },
         };
       }
 
@@ -254,6 +282,7 @@ export function SweepForm() {
     } catch (err) {
       if (controller.signal.aborted) return;
       setStatus("error");
+      setErrorCode(err instanceof ApiError ? err.code ?? undefined : undefined);
       if (err instanceof ApiError) {
         setErrorMessage(err.message);
       } else {
@@ -265,7 +294,7 @@ export function SweepForm() {
   }, [form, selectedStrategies, getToken, router]);
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6" aria-label="Parameter sweep configuration">
       <Card>
         <CardHeader>
           <CardTitle>Sweep mode</CardTitle>
@@ -298,7 +327,7 @@ export function SweepForm() {
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-2">
             <Label htmlFor="symbol">Symbol</Label>
-            <Input id="symbol" value={form.symbol} onChange={(e) => update("symbol", e.target.value)} />
+            <Input id="symbol" maxLength={16} value={form.symbol} onChange={(e) => update("symbol", e.target.value.toUpperCase().replace(/[^A-Z0-9./^-]/g, ""))} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="startDate">Start date</Label>
@@ -310,7 +339,7 @@ export function SweepForm() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="targetDte">Target DTE</Label>
-            <Input id="targetDte" type="number" min={0} value={form.targetDte} onChange={(e) => update("targetDte", e.target.value)} />
+            <Input id="targetDte" type="number" min={1} value={form.targetDte} onChange={(e) => update("targetDte", e.target.value)} />
           </div>
         </CardContent>
       </Card>
@@ -421,10 +450,14 @@ export function SweepForm() {
         </Card>
       )}
 
-      {status === "error" ? (
-        <Card>
+      {status === "error" && !(errorCode && ["quota_exceeded", "feature_locked"].includes(errorCode)) ? (
+        <Card role="alert">
           <CardContent className="p-4 text-destructive text-sm">{errorMessage}</CardContent>
         </Card>
+      ) : null}
+
+      {errorCode && ["quota_exceeded", "feature_locked"].includes(errorCode) ? (
+        <UpgradePrompt message="Sweep optimization requires a Pro or Premium plan." />
       ) : null}
 
       <Button type="submit" disabled={status === "submitting"} className="w-full sm:w-auto">

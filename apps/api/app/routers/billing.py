@@ -75,10 +75,10 @@ def create_portal_session(
 @router.post("/webhook", status_code=status.HTTP_200_OK, response_model=WebhookResponse)
 def stripe_webhook(
     request: Request,
-    payload: bytes = Body(..., media_type="application/json", max_length=256_000),
-    signature: str | None = Header(alias="Stripe-Signature"),
+    payload: bytes = Body(..., media_type="application/json", max_length=512_000),
+    signature: str | None = Header(default=None, alias="Stripe-Signature"),
     db: Session = Depends(get_db),
-) -> WebhookResponse | dict[str, str]:
+) -> WebhookResponse:
     if signature is None:
         raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
 

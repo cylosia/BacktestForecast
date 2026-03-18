@@ -15,6 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
 from apps.api.app.routers import (
+    account,
     analysis,
     backtests,
     billing,
@@ -57,7 +58,8 @@ if settings.sentry_dsn:
     except Exception:
         logger.warning("sentry.init_failed", exc_info=True)
 
-_is_dev = settings.app_env in ("development", "test")
+def _is_dev() -> bool:
+    return get_settings().app_env in ("development", "test")
 
 
 @asynccontextmanager
@@ -115,9 +117,9 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="BacktestForecast API — options backtesting, scanning, forecasting, and portfolio analysis.",
-    openapi_url="/openapi.json" if _is_dev else None,
-    docs_url="/docs" if _is_dev else None,
-    redoc_url="/redoc" if _is_dev else None,
+    openapi_url="/openapi.json" if settings.app_env in ("development", "test") else None,
+    docs_url="/docs" if settings.app_env in ("development", "test") else None,
+    redoc_url="/redoc" if settings.app_env in ("development", "test") else None,
     lifespan=_lifespan,
 )
 
@@ -179,13 +181,59 @@ def _custom_openapi():
 
 app.openapi = _custom_openapi
 
+
+class _CancelledErrorMiddleware:
+    """Return 499 when the client disconnects mid-request.
+
+    asyncio.CancelledError is a BaseException (not Exception) in Python 3.9+,
+    so it cannot be registered via ``@app.exception_handler``.  This pure-ASGI
+    middleware catches it at the outermost layer instead.
+    """
+
+    def __init__(self, app_inner: FastAPI) -> None:
+        self.app = app_inner
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        response_started = False
+        original_send = send
+
+        async def tracked_send(message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await original_send(message)
+
+        try:
+            await self.app(scope, receive, tracked_send)
+        except asyncio.CancelledError:
+            if not response_started:
+                try:
+                    response = JSONResponse(
+                        status_code=499,
+                        content={
+                            "error": {
+                                "code": "client_disconnected",
+                                "message": "Client closed connection",
+                                "request_id": None,
+                            }
+                        },
+                    )
+                    await response(scope, receive, original_send)
+                except Exception:
+                    pass
+
+
 # Middleware execution order (outermost to innermost):
-# 1. PrometheusMiddleware — records request metrics
-# 2. RequestContextMiddleware — binds request_id to structlog context
-# 3. TrustedHostMiddleware — rejects requests with invalid Host headers
-# 4. CORSMiddleware — handles cross-origin preflight and response headers
-# 5. RequestBodyLimitMiddleware — enforces max request body size
-# 6. ApiSecurityHeadersMiddleware — adds security response headers
+# 1. PrometheusMiddleware — records request metrics (including 499s)
+# 2. _CancelledErrorMiddleware — converts CancelledError to 499
+# 3. RequestContextMiddleware — binds request_id to structlog context
+# 4. TrustedHostMiddleware — rejects requests with invalid Host headers
+# 5. CORSMiddleware — handles cross-origin preflight and response headers
+# 6. RequestBodyLimitMiddleware — enforces max request body size
+# 7. ApiSecurityHeadersMiddleware — adds security response headers
 #
 # Starlette builds middleware LIFO: the last add_middleware call is outermost.
 app.add_middleware(ApiSecurityHeadersMiddleware)
@@ -205,6 +253,7 @@ app.add_middleware(
 # domains that legitimate CORS requests target.
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(_CancelledErrorMiddleware)
 app.add_middleware(PrometheusMiddleware)
 
 app.include_router(health.router)
@@ -221,6 +270,7 @@ app.include_router(daily_picks.router, prefix="/v1")
 app.include_router(analysis.router, prefix="/v1")
 app.include_router(billing.router, prefix="/v1")
 app.include_router(events.router, prefix="/v1")
+app.include_router(account.router, prefix="/v1")
 
 
 def _error_payload(request: Request, *, code: str, message: str) -> dict[str, object]:
@@ -313,14 +363,6 @@ def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSO
     return response
 
 
-@app.exception_handler(asyncio.CancelledError)
-async def cancelled_exception_handler(request: Request, exc: asyncio.CancelledError) -> JSONResponse:
-    return JSONResponse(
-        status_code=499,
-        content=_error_payload(request, code="client_disconnected", message="Client closed connection"),
-    )
-
-
 @app.exception_handler(Exception)
 def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     API_ERRORS_TOTAL.labels(code="internal_server_error").inc()
@@ -353,6 +395,24 @@ def prometheus_metrics(request: Request) -> Response:
     return metrics_response()
 
 
+_dlq_redis: "Redis | None" = None
+_dlq_redis_lock = __import__("threading").Lock()
+
+
+def _get_dlq_redis():
+    global _dlq_redis
+    if _dlq_redis is None:
+        with _dlq_redis_lock:
+            if _dlq_redis is None:
+                from redis import Redis
+                _dlq_redis = Redis.from_url(
+                    get_settings().redis_cache_url,
+                    socket_timeout=5,
+                    decode_responses=False,
+                )
+    return _dlq_redis
+
+
 @app.get("/admin/dlq", include_in_schema=False)
 def dlq_status(request: Request) -> Response:
     """Inspect the dead-letter queue depth and recent items.
@@ -370,26 +430,17 @@ def dlq_status(request: Request) -> Response:
     try:
         import json
 
-        fallback_redis = None
-        r = get_rate_limiter().get_redis()
-        if r is None:
-            from redis import Redis
-            r = Redis.from_url(settings.redis_cache_url or settings.redis_url, socket_timeout=5, decode_responses=False)
-            fallback_redis = r
-        try:
-            depth = r.llen("bff:dead_letter_queue")
-            recent_raw = r.lrange("bff:dead_letter_queue", 0, 9)
+        r = _get_dlq_redis()
+        depth = r.llen("bff:dead_letter_queue")
+        recent_raw = r.lrange("bff:dead_letter_queue", 0, 9)
 
-            recent = []
-            for raw in recent_raw:
-                try:
-                    recent.append(json.loads(raw))
-                except (ValueError, TypeError, UnicodeDecodeError):
-                    recent.append({"raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)})
-            return JSONResponse(content={"depth": depth, "recent": recent})
-        finally:
-            if fallback_redis is not None:
-                fallback_redis.close()
+        recent = []
+        for raw in recent_raw:
+            try:
+                recent.append(json.loads(raw))
+            except (ValueError, TypeError, UnicodeDecodeError):
+                recent.append({"raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)})
+        return JSONResponse(content={"depth": depth, "recent": recent})
     except Exception:
         logger.exception("admin.dlq_unavailable")
         return JSONResponse(status_code=503, content={"error": "dlq_unavailable"})
@@ -402,6 +453,6 @@ def root() -> dict[str, str]:
         "status": "ok",
         "health": "/health/ready",
     }
-    if _is_dev:
+    if _is_dev():
         payload["docs"] = "/docs"
     return payload

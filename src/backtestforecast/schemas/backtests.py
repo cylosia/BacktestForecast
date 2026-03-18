@@ -10,7 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import PlanTier, sanitize_error_message
+from backtestforecast.schemas.common import JobStatus, PlanTier, sanitize_error_message
 
 SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^-]{0,15}$")
 
@@ -409,20 +409,20 @@ class CreateBacktestRunRequest(BaseModel):
     end_date: date
     target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
-    max_holding_days: int = Field(ge=1, le=120)
-    account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
+    max_holding_days: int = Field(ge=1, le=120, description="Maximum holding period in trading days (weekdays only). 30 trading days ≈ 6 calendar weeks.")
+    account_size: Decimal = Field(ge=Decimal("100"), le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
-    entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
-    idempotency_key: str | None = Field(default=None, min_length=1, max_length=80)
+    entry_rules: list[EntryRule] = Field(min_length=1, max_length=8)
+    idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
     custom_legs: list[CustomLegDefinition] | None = Field(default=None, max_length=8)
-    slippage_pct: float = Field(default=0.0, ge=0.0, le=5.0, description="Slippage percentage applied to entry and exit prices.")
-    profit_target_pct: float | None = Field(
-        default=None, ge=1.0, le=500.0,
+    slippage_pct: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("5"), description="Slippage percentage applied to entry and exit prices.")
+    profit_target_pct: Decimal | None = Field(
+        default=None, ge=Decimal("1"), le=Decimal("500"),
         description="Close position when unrealized profit reaches this percentage of capital at risk. None disables.",
     )
-    stop_loss_pct: float | None = Field(
-        default=None, ge=1.0, le=100.0,
+    stop_loss_pct: Decimal | None = Field(
+        default=None, ge=Decimal("1"), le=Decimal("100"),
         description="Close position when unrealized loss reaches this percentage of capital at risk. None disables.",
     )
     strategy_overrides: StrategyOverrides | None = Field(
@@ -463,6 +463,12 @@ class CreateBacktestRunRequest(BaseModel):
         elif self.custom_legs:
             raise ValueError("custom_legs should only be provided for custom_N_leg strategy types")
 
+        if self.custom_legs:
+            long_count = sum(1 for leg in self.custom_legs if leg.side == "long")
+            short_count = sum(1 for leg in self.custom_legs if leg.side == "short")
+            if long_count == 0 and short_count == 0:
+                raise ValueError("custom_legs must contain at least one leg with a defined side")
+
         return self
 
 
@@ -475,6 +481,7 @@ class FeatureAccessResponse(BaseModel):
     forecasting_access: bool
     export_formats: list[str] = Field(default_factory=list)
     scanner_modes: list[str] = Field(default_factory=list)
+    cancel_at_period_end: bool = False
 
 
 class UsageSummaryResponse(BaseModel):
@@ -511,26 +518,27 @@ class BacktestSummaryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     trade_count: int
-    win_rate: Decimal
-    total_roi_pct: Decimal
-    average_win_amount: Decimal
-    average_loss_amount: Decimal
-    average_holding_period_days: Decimal
-    average_dte_at_open: Decimal
-    max_drawdown_pct: Decimal
+    decided_trades: int | None = None
+    win_rate: Decimal | None = None
+    total_roi_pct: Decimal | None = None
+    average_win_amount: Decimal | None = None
+    average_loss_amount: Decimal | None = None
+    average_holding_period_days: Decimal | None = None
+    average_dte_at_open: Decimal | None = None
+    max_drawdown_pct: Decimal | None = None
     total_commissions: Decimal
     total_net_pnl: Decimal
     starting_equity: Decimal
     ending_equity: Decimal
     profit_factor: Decimal | None = None
     payoff_ratio: Decimal | None = None
-    expectancy: Decimal = Decimal("0")
+    expectancy: Decimal | None = None
     sharpe_ratio: Decimal | None = None
     sortino_ratio: Decimal | None = None
     cagr_pct: Decimal | None = None
     calmar_ratio: Decimal | None = None
-    max_consecutive_wins: int = 0
-    max_consecutive_losses: int = 0
+    max_consecutive_wins: int | None = None
+    max_consecutive_losses: int | None = None
     recovery_factor: Decimal | None = None
 
 
@@ -559,6 +567,36 @@ class BacktestTradeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TradeJsonResponse(BaseModel):
+    """Trade response model for JSON-serialized trades (scan/sweep recommendations).
+
+    Unlike ``BacktestTradeResponse``, this model does NOT require ``id`` because
+    trades stored as JSON blobs inside recommendation rows have no individual
+    database primary key.
+    """
+    option_ticker: str
+    strategy_type: str
+    underlying_symbol: str
+    entry_date: date
+    exit_date: date
+    expiration_date: date
+    quantity: int
+    dte_at_open: int
+    holding_period_days: int
+    entry_underlying_close: Decimal
+    exit_underlying_close: Decimal
+    entry_mid: Decimal
+    exit_mid: Decimal
+    gross_pnl: Decimal
+    net_pnl: Decimal
+    total_commissions: Decimal
+    entry_reason: str
+    exit_reason: str
+    detail_json: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class EquityCurvePointResponse(BaseModel):
     trade_date: date
     equity: Decimal
@@ -570,12 +608,17 @@ class EquityCurvePointResponse(BaseModel):
 
 
 class BacktestRunHistoryItemResponse(BaseModel):
+    """History item for backtest runs. The ``summary`` field does not exist on the
+    ORM model; this schema requires manual construction in the service layer
+    (see BacktestService._to_history_item). Do not use from_attributes."""
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
     id: UUID
     symbol: str
     strategy_type: str
     status: RunStatus
-    date_from: date
-    date_to: date
+    start_date: date = Field(alias="date_from")
+    end_date: date = Field(alias="date_to")
     target_dte: int
     max_holding_days: int
     created_at: datetime
@@ -588,8 +631,8 @@ class BacktestRunDetailResponse(BaseModel):
     symbol: str
     strategy_type: str
     status: RunStatus
-    date_from: date
-    date_to: date
+    start_date: date = Field(alias="date_from")
+    end_date: date = Field(alias="date_to")
     target_dte: int
     dte_tolerance_days: int
     max_holding_days: int
@@ -607,6 +650,10 @@ class BacktestRunDetailResponse(BaseModel):
     summary: BacktestSummaryResponse
     trades: list[BacktestTradeResponse]
     equity_curve: list[EquityCurvePointResponse]
+    risk_free_rate: float | None = Field(
+        default=None,
+        description="Annualized risk-free rate used for Sharpe and Sortino ratio calculations.",
+    )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -645,3 +692,5 @@ class CompareBacktestsRequest(BaseModel):
 class CompareBacktestsResponse(BaseModel):
     items: list[BacktestRunDetailResponse]
     comparison_limit: int
+    trade_limit_per_run: int = 2_000
+    trades_truncated: bool = False

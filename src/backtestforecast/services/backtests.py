@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time as _time
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Self
@@ -12,10 +13,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.types import BacktestExecutionResult
+from backtestforecast.config import get_settings
 from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.errors import (
     AppError,
+    ConflictError,
     FeatureLockedError,
     NotFoundError,
     QuotaExceededError,
@@ -38,11 +41,14 @@ from backtestforecast.schemas.backtests import (
     FeatureAccessResponse,
     UsageSummaryResponse,
 )
+from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 
 logger = structlog.get_logger("services.backtests")
 
 DECIMAL_QUANT = Decimal("0.0001")
+# Hard limit on equity points per response. For runs with more points,
+# consider adding server-side downsampling or cursor-based pagination.
 EQUITY_CURVE_LIMIT = 10_000
 
 
@@ -142,13 +148,12 @@ class BacktestService:
 
     def enqueue(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
         """Create a queued backtest run. The caller is responsible for dispatching to Celery."""
-        self._enforce_backtest_quota(user)
-
-        # Idempotency: return existing run if key matches
         if request.idempotency_key:
             existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
             if existing is not None:
                 return existing
+
+        self._enforce_backtest_quota(user)
 
         run = self._build_initial_run(user.id, request, status="queued")
         self.run_repository.add(run)
@@ -157,26 +162,16 @@ class BacktestService:
         except IntegrityError:
             self.session.rollback()
             if request.idempotency_key:
-                existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
+                stmt = select(BacktestRun).where(
+                    BacktestRun.user_id == user.id,
+                    BacktestRun.idempotency_key == request.idempotency_key,
+                )
+                existing = self.session.scalar(stmt)
                 if existing is not None:
                     return existing
             raise
         self.session.refresh(run)
         return run
-
-    def set_celery_task_id(self, run_id: UUID, celery_task_id: str, *, user_id: UUID | None = None) -> bool:
-        """Attach the Celery task ID after dispatch. Returns True if the update succeeded."""
-        from sqlalchemy import update
-        stmt = (
-            update(BacktestRun)
-            .where(BacktestRun.id == run_id, BacktestRun.status == "queued")
-            .values(celery_task_id=celery_task_id)
-        )
-        if user_id is not None:
-            stmt = stmt.where(BacktestRun.user_id == user_id)
-        result = self.session.execute(stmt)
-        self.session.commit()
-        return result.rowcount > 0
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:
         """Execute the backtest for a previously enqueued run. Called by the Celery worker."""
@@ -189,10 +184,19 @@ class BacktestService:
         if run.status not in ("queued", "running"):
             return run
 
+        user = self.session.get(User, run.user_id)
+        if user is None:
+            run.status = "failed"
+            run.error_code = "user_not_found"
+            run.error_message = "User account not found."
+            run.completed_at = datetime.now(UTC)
+            self.session.commit()
+            return run
+
         rows = self.session.execute(
             sa_update(BacktestRun)
-            .where(BacktestRun.id == run_id, BacktestRun.status.in_(["queued", "running"]))
-            .values(status="running", started_at=datetime.now(UTC))
+            .where(BacktestRun.id == run_id, BacktestRun.status == "queued")
+            .values(status="running", updated_at=datetime.now(UTC), started_at=datetime.now(UTC))
         )
         self.session.commit()
         if rows.rowcount == 0:
@@ -202,12 +206,33 @@ class BacktestService:
 
         request = CreateBacktestRunRequest.model_validate(run.input_snapshot_json)
 
+        _exec_start = _time.monotonic()
         try:
             execution_result = self.execution_service.execute_request(request)
             self._apply_execution_result(run, execution_result)
             run.status = "succeeded"
             run.completed_at = datetime.now(UTC)
+            self.session.flush()
+            # Guard against concurrent reaper marking this run "failed" while
+            # execution was in progress.  The FOR UPDATE lock was released by
+            # the commit on the queued->running transition, so the reaper can
+            # legitimately set status="failed" if execution takes too long.
+            success_rows = self.session.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id == run.id, BacktestRun.status == "running")
+                .values(
+                    status="succeeded",
+                    completed_at=run.completed_at,
+                    updated_at=datetime.now(UTC),
+                )
+            )
             self.session.commit()
+            if success_rows.rowcount == 0:
+                logger.warning(
+                    "backtest.success_overwrite_prevented",
+                    run_id=str(run.id),
+                    msg="Concurrent status change detected; success commit skipped.",
+                )
         except AppError as exc:
             self.session.rollback()
             self.session.execute(
@@ -217,6 +242,7 @@ class BacktestService:
                     status="failed",
                     error_code=exc.code,
                     error_message="Backtest execution failed. Please try again.",
+                    updated_at=datetime.now(UTC),
                     completed_at=datetime.now(UTC),
                 )
             )
@@ -232,12 +258,14 @@ class BacktestService:
                     status="failed",
                     error_code="internal_error",
                     error_message="An internal error occurred during backtest execution.",
+                    updated_at=datetime.now(UTC),
                     completed_at=datetime.now(UTC),
                 )
             )
             self.session.commit()
             raise
         finally:
+            BACKTEST_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - _exec_start)
             self.session.expire_all()
 
         stored = self.run_repository.get_by_id_unfiltered(run.id)
@@ -246,13 +274,18 @@ class BacktestService:
         return stored
 
     def create_and_run(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
-        """Synchronous create-and-run. Preserved for tests or fallback."""
-        self._enforce_backtest_quota(user)
+        """Synchronous create-and-run for tests only.
 
+        WARNING: Do not call from production code paths. Use ``enqueue``
+        followed by the Celery task instead. This method bypasses the
+        dispatch layer and holds a DB connection for the entire execution.
+        """
         if request.idempotency_key:
             existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
             if existing is not None:
                 return existing
+
+        self._enforce_backtest_quota(user)
 
         run = self._build_initial_run(user.id, request, status="running", started_at=datetime.now(UTC))
         self.run_repository.add(run)
@@ -261,7 +294,11 @@ class BacktestService:
         except IntegrityError:
             self.session.rollback()
             if request.idempotency_key:
-                existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
+                stmt = select(BacktestRun).where(
+                    BacktestRun.user_id == user.id,
+                    BacktestRun.idempotency_key == request.idempotency_key,
+                )
+                existing = self.session.scalar(stmt)
                 if existing is not None:
                     return existing
             raise
@@ -316,7 +353,7 @@ class BacktestService:
         created_since = None
         if feature_policy.history_days is not None:
             created_since = datetime.now(UTC) - timedelta(days=feature_policy.history_days)
-        effective_limit = min(limit, feature_policy.history_item_limit)
+        effective_limit = min(limit, feature_policy.history_item_limit, 200)
         runs = self.run_repository.list_for_user(user.id, limit=effective_limit, offset=offset, created_since=created_since)
         total = self.run_repository.count_for_user(user.id, created_since=created_since)
         return BacktestRunListResponse(
@@ -350,6 +387,17 @@ class BacktestService:
         trades = self.run_repository.get_trades_for_run(run_id, limit=trade_limit, user_id=user_id)
         equity = self.run_repository.get_equity_points_for_run(run_id, limit=EQUITY_CURVE_LIMIT, user_id=user_id)
         return self._to_detail_response(run, trades=trades, equity_points=equity)
+
+    def delete_for_user(self, run_id: UUID, user_id: UUID) -> None:
+        run = self.run_repository.get_lightweight_for_user(run_id, user_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        if run.status in ("queued", "running"):
+            raise ConflictError(
+                "Cannot delete a job that is currently queued or running. Cancel it first."
+            )
+        self.session.delete(run)
+        self.session.commit()
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
         feature_policy = resolve_feature_policy(
@@ -390,10 +438,17 @@ class BacktestService:
             )
 
         ordered = [run_map[rid] for rid in request.run_ids]
-        trade_limit = 10_000
+        # Performance cap: each run's trades are limited to 2000 in comparisons.
+        # Runs with more trades will have their trade list silently truncated.
+        # The frontend should display a notice when len(trades) == trade_limit.
+        trade_limit = 2_000
         all_run_ids = [r.id for r in ordered]
         trades_by_run = self.run_repository.get_trades_for_runs(all_run_ids, limit_per_run=trade_limit, user_id=user.id)
         equity_by_run = self.run_repository.get_equity_points_for_runs(all_run_ids, limit_per_run=EQUITY_CURVE_LIMIT, user_id=user.id)
+        truncated = any(
+            len(trades_by_run.get(run.id, [])) >= trade_limit
+            for run in ordered
+        )
         return CompareBacktestsResponse(
             items=[
                 self._to_detail_response(
@@ -404,6 +459,8 @@ class BacktestService:
                 for run in ordered
             ],
             comparison_limit=limit,
+            trade_limit_per_run=trade_limit,
+            trades_truncated=truncated,
         )
 
     def to_current_user_response(self, user: User) -> CurrentUserResponse:
@@ -440,6 +497,7 @@ class BacktestService:
                     fmt.value for fmt in sorted(feature_policy.export_formats, key=lambda item: item.value)
                 ],
                 scanner_modes=scanner_modes,
+                cancel_at_period_end=user.cancel_at_period_end,
             ),
             usage=UsageSummaryResponse(
                 backtests_used_this_month=used_this_month,
@@ -486,20 +544,20 @@ class BacktestService:
 
         run.warnings_json = execution_result.warnings
         run.trade_count = summary.trade_count
-        run.win_rate = to_decimal(summary.win_rate) or Decimal("0")
-        run.total_roi_pct = to_decimal(summary.total_roi_pct) or Decimal("0")
-        run.average_win_amount = to_decimal(summary.average_win_amount) or Decimal("0")
-        run.average_loss_amount = to_decimal(summary.average_loss_amount) or Decimal("0")
-        run.average_holding_period_days = to_decimal(summary.average_holding_period_days) or Decimal("0")
-        run.average_dte_at_open = to_decimal(summary.average_dte_at_open) or Decimal("0")
-        run.max_drawdown_pct = to_decimal(summary.max_drawdown_pct) or Decimal("0")
+        run.win_rate = to_decimal(summary.win_rate)
+        run.total_roi_pct = to_decimal(summary.total_roi_pct)
+        run.average_win_amount = to_decimal(summary.average_win_amount)
+        run.average_loss_amount = to_decimal(summary.average_loss_amount)
+        run.average_holding_period_days = to_decimal(summary.average_holding_period_days)
+        run.average_dte_at_open = to_decimal(summary.average_dte_at_open)
+        run.max_drawdown_pct = to_decimal(summary.max_drawdown_pct)
         run.total_commissions = to_decimal(summary.total_commissions) or Decimal("0")
         run.total_net_pnl = to_decimal(summary.total_net_pnl) or Decimal("0")
         run.starting_equity = to_decimal(summary.starting_equity) or Decimal("0")
         run.ending_equity = to_decimal(summary.ending_equity) or Decimal("0")
         run.profit_factor = to_decimal(summary.profit_factor, allow_infinite=True) if summary.profit_factor is not None else None
         run.payoff_ratio = to_decimal(summary.payoff_ratio, allow_infinite=True) if summary.payoff_ratio is not None else None
-        run.expectancy = to_decimal(summary.expectancy) or Decimal("0")
+        run.expectancy = to_decimal(summary.expectancy)
         run.sharpe_ratio = to_decimal(summary.sharpe_ratio, allow_infinite=True) if summary.sharpe_ratio is not None else None
         run.sortino_ratio = to_decimal(summary.sortino_ratio, allow_infinite=True) if summary.sortino_ratio is not None else None
         run.cagr_pct = to_decimal(summary.cagr_pct, allow_infinite=True) if summary.cagr_pct is not None else None
@@ -579,8 +637,8 @@ class BacktestService:
             symbol=run.symbol,
             strategy_type=run.strategy_type,
             status=run.status,
-            date_from=run.date_from,
-            date_to=run.date_to,
+            start_date=run.date_from,
+            end_date=run.date_to,
             target_dte=run.target_dte,
             max_holding_days=run.max_holding_days,
             created_at=run.created_at,
@@ -605,8 +663,8 @@ class BacktestService:
             symbol=run.symbol,
             strategy_type=run.strategy_type,
             status=run.status,
-            date_from=run.date_from,
-            date_to=run.date_to,
+            start_date=run.date_from,
+            end_date=run.date_to,
             target_dte=run.target_dte,
             dte_tolerance_days=run.dte_tolerance_days,
             max_holding_days=run.max_holding_days,
@@ -624,4 +682,5 @@ class BacktestService:
             summary=self._summary_response(run),
             trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
             equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
+            risk_free_rate=get_settings().risk_free_rate,
         )

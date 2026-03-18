@@ -74,8 +74,10 @@ async function handleKnownStatus(response: Response): Promise<void> {
   }
 
   if (response.status === 401 && typeof window !== "undefined") {
-    const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = `/sign-in?redirect_url=${returnTo}`;
+    const path = window.location.pathname + window.location.search;
+    const isValidRedirect = path.startsWith("/") && !path.includes("//");
+    const returnTo = isValidRedirect ? encodeURIComponent(path) : "";
+    window.location.href = returnTo ? `/sign-in?redirect_url=${returnTo}` : "/sign-in";
     await new Promise<never>(() => {});
   }
 
@@ -138,10 +140,11 @@ async function parseApiError(response: Response): Promise<never> {
   );
 }
 
-export async function apiRequest<T>(path: string, token: string, init?: RequestInit): Promise<T> {
+export async function apiRequest<T>(path: string, token: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const controller = new AbortController();
   let timedOut = false;
-  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DEFAULT_TIMEOUT_MS);
+  const effectiveTimeout = init?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, effectiveTimeout);
   const combined = init?.signal
     ? combinedSignal(init.signal, controller.signal)
     : null;
@@ -183,10 +186,11 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
   }
 }
 
-export async function apiDownload(path: string, token: string, init?: RequestInit): Promise<Response> {
+export async function apiDownload(path: string, token: string, init?: RequestInit & { timeoutMs?: number }): Promise<Response> {
   const controller = new AbortController();
   let timedOut = false;
-  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DEFAULT_TIMEOUT_MS);
+  const effectiveTimeout = init?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, effectiveTimeout);
   const combined = init?.signal
     ? combinedSignal(init.signal, controller.signal)
     : null;
@@ -203,16 +207,6 @@ export async function apiDownload(path: string, token: string, init?: RequestIni
         await handleKnownStatus(response);
       }
       await parseApiError(response);
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    if (contentType.includes("application/json")) {
-      const errorPayload = await response.json() as ApiErrorPayload;
-      throw new ApiError(
-        errorPayload?.error?.message ?? "Unexpected JSON response for download.",
-        response.status,
-        errorPayload?.error?.code,
-      );
     }
 
     return response;

@@ -26,3 +26,14 @@ By appending the UUID, the cursor uniquely identifies a single record. The next 
 - `(created_at = timestamp AND id > uuid)` (for tie-breaking)
 
 This ensures no records are skipped when timestamps collide.
+
+## Export Size Limits
+
+Exports are subject to the following limits:
+
+| Format | Limit |
+|--------|-------|
+| CSV trades | Max 10,000 |
+| CSV equity points | Max 50,000 |
+| PDF trades | Max 100 |
+| Overall | 10 MB max per export |

@@ -3,9 +3,11 @@ from __future__ import annotations
 import atexit
 import json
 import threading
+from typing import Any
 from uuid import UUID
 
-from backtestforecast.config import get_settings
+from backtestforecast.config import get_settings, register_invalidation_callback
+from backtestforecast.models import JobStatus
 from backtestforecast.observability import get_logger
 
 logger = get_logger("events")
@@ -35,10 +37,10 @@ def _get_redis():
         _redis_client = Redis.from_url(
             settings.redis_cache_url,
             decode_responses=True,
-            socket_timeout=5.0,
-            socket_connect_timeout=2.0,
+            socket_timeout=settings.sse_redis_socket_timeout,
+            socket_connect_timeout=settings.sse_redis_connect_timeout,
             retry_on_timeout=True,
-            max_connections=10,
+            max_connections=settings.sse_redis_max_connections,
         )
         if not _atexit_registered:
             atexit.register(_shutdown_redis)
@@ -60,6 +62,9 @@ def _reset_redis() -> None:
             pass
 
 
+register_invalidation_callback(_reset_redis)
+
+
 def _shutdown_redis() -> None:
     _reset_redis()
 
@@ -79,9 +84,13 @@ def publish_job_status(
 
     from backtestforecast.observability.metrics import REDIS_CONNECTION_ERRORS_TOTAL
 
+    if metadata and len(json.dumps(metadata, default=str)) > 10_000:
+        logger.warning("events.metadata_too_large", job_type=job_type, job_id=str(job_id))
+        metadata = {"_truncated": True}
+
     channel = f"job:{job_type}:{job_id}:status"
     safe_meta = {k: v for k, v in (metadata or {}).items() if k not in _RESERVED_PAYLOAD_KEYS}
-    payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), **safe_meta})
+    payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), **safe_meta}, default=str)
 
     try:
         for attempt in range(2):
@@ -105,6 +114,8 @@ def publish_job_status(
                 _fallback_persist_status(job_type, job_id, status)
     except Exception:  # Intentional last-resort handler: event publishing is best-effort
         # and must never crash the calling task (which has its own error handling).
+        from backtestforecast.observability.metrics import EVENT_PUBLISH_FAILURES_TOTAL
+        EVENT_PUBLISH_FAILURES_TOTAL.inc()
         logger.error(
             "events.publish_unexpected_failure",
             channel=channel,
@@ -121,10 +132,15 @@ _JOB_TYPE_MODEL_MAP: dict[str, str] = {
     "scan": "ScannerJob",
     "sweep": "SweepJob",
     "analysis": "SymbolAnalysis",
+    "pipeline": "NightlyPipelineRun",
 }
 
-_VALID_TARGET_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
-_EXPORT_VALID_TARGET_STATUSES = frozenset({"succeeded", "failed", "cancelled", "expired"})
+_VALID_TARGET_STATUSES = frozenset({
+    JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED,
+})
+_EXPORT_VALID_TARGET_STATUSES = frozenset({
+    JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.EXPIRED,
+})
 
 
 def _fallback_persist_status(
@@ -136,14 +152,16 @@ def _fallback_persist_status(
     read-check and the write that could clobber a terminal status set
     by another worker in the meantime.
     """
-    allowed = _EXPORT_VALID_TARGET_STATUSES if job_type == "export" else _VALID_TARGET_STATUSES
-    if status not in allowed:
+    # Statuses that this fallback is allowed to write. Also used in WHERE to
+    # protect rows that are already in one of these terminal states.
+    target_statuses = _EXPORT_VALID_TARGET_STATUSES if job_type == "export" else _VALID_TARGET_STATUSES
+    if status not in target_statuses:
         return
     try:
         from sqlalchemy import update
 
         from backtestforecast import models
-        from backtestforecast.db.session import SessionLocal
+        from backtestforecast.db.session import create_worker_session
 
         model_name = _JOB_TYPE_MODEL_MAP.get(job_type)
         if model_name is None:
@@ -152,17 +170,28 @@ def _fallback_persist_status(
 
         model_cls = getattr(models, model_name, None)
         if model_cls is None:
+            logger.error("events.fallback_model_not_found", model_name=model_name, job_type=job_type)
             return
 
-        terminal = _EXPORT_VALID_TARGET_STATUSES if job_type == "export" else _VALID_TARGET_STATUSES
-        with SessionLocal() as session:
+        with create_worker_session() as session:
+            from sqlalchemy.sql import func as sa_func
+            terminal_statuses = {str(s) for s in (_VALID_TARGET_STATUSES | _EXPORT_VALID_TARGET_STATUSES)}
+            update_values: dict[str, Any] = {"status": status, "updated_at": sa_func.now()}
+            if status in terminal_statuses:
+                update_values["completed_at"] = sa_func.now()
+                if hasattr(model_cls, "started_at"):
+                    from sqlalchemy import case
+                    update_values["started_at"] = case(
+                        (model_cls.started_at.is_(None), sa_func.now()),
+                        else_=model_cls.started_at,
+                    )
             result = session.execute(
                 update(model_cls)
                 .where(
                     model_cls.id == job_id,
-                    model_cls.status.notin_(terminal),
+                    model_cls.status.notin_(target_statuses),
                 )
-                .values(status=status)
+                .values(**update_values)
             )
             affected = result.rowcount
             try:

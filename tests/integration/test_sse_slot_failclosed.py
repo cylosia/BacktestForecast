@@ -1,8 +1,8 @@
-"""Test 69: SSE slot fail-closed behavior.
+"""Test 69: SSE slot Redis-failure behavior.
 
-Verifies that _acquire_sse_slot returns False when Redis raises an exception,
-ensuring the system fails closed (denies the connection) rather than failing
-open.
+Verifies that _acquire_sse_slot falls back to in-process tracking when Redis
+raises an exception, and that the Lua-based acquire/release works correctly
+when Redis is available.
 """
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_acquire_sse_slot_returns_false_on_redis_error():
-    """_acquire_sse_slot must return False when Redis raises any exception."""
-    from apps.api.app.routers.events import _acquire_sse_slot
+async def test_acquire_sse_slot_falls_back_on_redis_error():
+    """_acquire_sse_slot must fall back to in-process tracking when Redis errors."""
+    from apps.api.app.routers.events import _acquire_sse_slot, _sse_user_connections
 
     user_id = uuid4()
 
@@ -23,13 +23,14 @@ async def test_acquire_sse_slot_returns_false_on_redis_error():
     mock_pool.eval = AsyncMock(side_effect=ConnectionError("Redis unavailable"))
 
     with patch("apps.api.app.routers.events._get_async_redis", return_value=mock_pool):
-        result = await _acquire_sse_slot(user_id)
-    assert result is False, "Should fail closed (return False) when Redis errors"
+        acquired, used_redis = await _acquire_sse_slot(user_id)
+    assert acquired is True, "Should succeed via in-process fallback"
+    assert used_redis is False, "Should indicate Redis was NOT used"
 
 
 @pytest.mark.asyncio
-async def test_acquire_sse_slot_returns_false_on_timeout():
-    """_acquire_sse_slot must return False on timeout."""
+async def test_acquire_sse_slot_falls_back_on_timeout():
+    """_acquire_sse_slot must fall back to in-process tracking on timeout."""
     from apps.api.app.routers.events import _acquire_sse_slot
 
     user_id = uuid4()
@@ -38,13 +39,14 @@ async def test_acquire_sse_slot_returns_false_on_timeout():
     mock_pool.eval = AsyncMock(side_effect=TimeoutError("Redis timeout"))
 
     with patch("apps.api.app.routers.events._get_async_redis", return_value=mock_pool):
-        result = await _acquire_sse_slot(user_id)
-    assert result is False, "Should fail closed on timeout"
+        acquired, used_redis = await _acquire_sse_slot(user_id)
+    assert acquired is True, "Should succeed via in-process fallback"
+    assert used_redis is False, "Should indicate Redis was NOT used"
 
 
 @pytest.mark.asyncio
-async def test_acquire_sse_slot_returns_false_on_os_error():
-    """_acquire_sse_slot must return False on OSError."""
+async def test_acquire_sse_slot_falls_back_on_os_error():
+    """_acquire_sse_slot must fall back to in-process tracking on OSError."""
     from apps.api.app.routers.events import _acquire_sse_slot
 
     user_id = uuid4()
@@ -53,13 +55,14 @@ async def test_acquire_sse_slot_returns_false_on_os_error():
     mock_pool.eval = AsyncMock(side_effect=OSError("Network unreachable"))
 
     with patch("apps.api.app.routers.events._get_async_redis", return_value=mock_pool):
-        result = await _acquire_sse_slot(user_id)
-    assert result is False, "Should fail closed on OSError"
+        acquired, used_redis = await _acquire_sse_slot(user_id)
+    assert acquired is True, "Should succeed via in-process fallback"
+    assert used_redis is False, "Should indicate Redis was NOT used"
 
 
 @pytest.mark.asyncio
 async def test_acquire_sse_slot_returns_true_on_success():
-    """Control: _acquire_sse_slot returns True when Redis returns 1."""
+    """Control: _acquire_sse_slot returns (True, True) when Lua returns 1."""
     from apps.api.app.routers.events import _acquire_sse_slot
 
     user_id = uuid4()
@@ -68,13 +71,14 @@ async def test_acquire_sse_slot_returns_true_on_success():
     mock_pool.eval = AsyncMock(return_value=1)
 
     with patch("apps.api.app.routers.events._get_async_redis", return_value=mock_pool):
-        result = await _acquire_sse_slot(user_id)
-    assert result is True
+        acquired, used_redis = await _acquire_sse_slot(user_id)
+    assert acquired is True
+    assert used_redis is True
 
 
 @pytest.mark.asyncio
 async def test_acquire_sse_slot_returns_false_when_over_limit():
-    """_acquire_sse_slot returns False when Lua returns 0 (over limit)."""
+    """_acquire_sse_slot returns (False, True) when Lua returns 0 (over limit)."""
     from apps.api.app.routers.events import _acquire_sse_slot
 
     user_id = uuid4()
@@ -83,5 +87,6 @@ async def test_acquire_sse_slot_returns_false_when_over_limit():
     mock_pool.eval = AsyncMock(return_value=0)
 
     with patch("apps.api.app.routers.events._get_async_redis", return_value=mock_pool):
-        result = await _acquire_sse_slot(user_id)
-    assert result is False, "Should deny when over connection limit"
+        acquired, used_redis = await _acquire_sse_slot(user_id)
+    assert acquired is False, "Should deny when over connection limit"
+    assert used_redis is True

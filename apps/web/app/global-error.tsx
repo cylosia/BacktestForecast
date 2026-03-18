@@ -13,11 +13,14 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("Global error boundary caught:", error);
+    // TODO: Integrate Sentry or similar error tracking for production visibility.
+    console.error("Global error boundary caught");
   }, [error]);
 
   return (
     <html lang="en" suppressHydrationWarning className={inter.className}>
+      {/* Hardcoded colors intentional: global-error replaces the entire document
+          so globals.css (which defines bg-background/text-foreground) may not load. */}
       <body className="min-h-screen bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100 antialiased">
         <div className="flex min-h-screen flex-col items-center justify-center gap-4 text-center p-6">
           <h1 className="text-3xl font-bold tracking-tight">Something went wrong</h1>

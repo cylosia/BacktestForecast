@@ -28,6 +28,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        "UPDATE stripe_events SET idempotency_status = 'error' "
+        "WHERE idempotency_status = 'processing'"
+    )
     op.drop_constraint("ck_stripe_events_valid_status", "stripe_events", type_="check")
     op.create_check_constraint(
         "ck_stripe_events_valid_status",

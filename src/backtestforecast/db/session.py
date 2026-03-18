@@ -10,6 +10,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from backtestforecast.config import Settings, get_settings, register_invalidation_callback
 
 
+# Monitor query performance via pg_stat_statements or application-level
+# timing. The statement_timeout protects against runaway queries but does
+# not provide visibility into normal query latency distribution.
+
+
 def build_engine(
     settings: Settings | None = None,
     *,
@@ -73,10 +78,6 @@ def create_worker_session() -> Session:
     return _get_worker_session_factory()()
 
 
-# Backward-compatible alias
-SessionLocal = create_session
-
-
 def get_db() -> Generator[Session, None, None]:
     """Yield a SQLAlchemy session for request-scoped use.
 
@@ -90,7 +91,7 @@ def get_db() -> Generator[Session, None, None]:
     mutations are applied.  Routers should not commit — that is the
     responsibility of the service layer.
     """
-    db = SessionLocal()
+    db = create_session()
     try:
         yield db
     except Exception:
@@ -102,8 +103,9 @@ def get_db() -> Generator[Session, None, None]:
 
 def ping_database() -> None:
     with _get_engine().connect() as connection:
-        connection.execute(text("SET LOCAL statement_timeout = '2s'"))
-        connection.execute(text("SELECT 1"))
+        with connection.begin():
+            connection.execute(text("SET LOCAL statement_timeout = '2s'"))
+            connection.execute(text("SELECT 1"))
 
 
 def _invalidate_db_caches() -> None:
@@ -113,13 +115,19 @@ def _invalidate_db_caches() -> None:
         (_get_engine, _get_session_factory),
         (_get_worker_engine, _get_worker_session_factory),
     ]:
+        engine_ref = None
         if engine_fn.cache_info().currsize > 0:
             try:
-                engine_fn().dispose()
+                engine_ref = engine_fn()
             except Exception:
                 pass
         engine_fn.cache_clear()
         factory_fn.cache_clear()
+        if engine_ref is not None:
+            try:
+                engine_ref.dispose()
+            except Exception:
+                pass
 
 
 register_invalidation_callback(_invalidate_db_caches)

@@ -10,7 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
 
+TEMPLATE_SCHEMA_VERSION = 1
 
+
+# NOTE: Consider migrating to Pydantic's model_fields_set for distinguishing
+# "not provided" from "explicitly null" in PATCH operations. The _Unset
+# sentinel works but is non-standard.
 class _Unset(Enum):
     UNSET = "UNSET"
 
@@ -32,7 +37,7 @@ class TemplateConfig(BaseModel):
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
 
     # Optional pre-fill hints — not required, but useful if the user always tests the same symbol/window
-    default_symbol: str | None = Field(default=None, max_length=16)
+    default_symbol: str | None = Field(default=None, max_length=16, pattern=r"^[A-Z][A-Z0-9./^-]{0,15}$")
 
     @model_validator(mode="after")
     def validate_template_rules(self) -> "TemplateConfig":
@@ -44,12 +49,16 @@ class TemplateConfig(BaseModel):
 
 
 class CreateTemplateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
     config: TemplateConfig
 
 
 class UpdateTemplateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None | _Unset = Field(default=UNSET, max_length=500)
     config: TemplateConfig | None = None
@@ -78,12 +87,14 @@ class TemplateResponse(BaseModel):
                     for k in cls.model_fields
                     if k != "config" and hasattr(data, k)
                 }
-                attrs["config_json"] = TemplateConfig(**raw)
+                cleaned = {k: v for k, v in raw.items() if not k.startswith("_")}
+                attrs["config_json"] = TemplateConfig(**cleaned)
                 return attrs
         elif isinstance(data, dict):
             raw = data.get("config_json") or data.get("config")
             if isinstance(raw, dict):
-                data = {**data, "config_json": TemplateConfig(**raw)}
+                cleaned = {k: v for k, v in raw.items() if not k.startswith("_")}
+                data = {**data, "config_json": TemplateConfig(**cleaned)}
         return data
 
 

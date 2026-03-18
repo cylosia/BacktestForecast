@@ -3,7 +3,34 @@ import { NextRequest } from "next/server";
 
 const API_BASE = (process.env.API_INTERNAL_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
+function isAllowedOrigin(req: NextRequest): boolean {
+  const allowed = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+  const origin = req.headers.get("origin");
+  const referer = req.headers.get("referer");
+  let candidate: string | null = null;
+  if (origin) {
+    candidate = origin;
+  } else if (referer) {
+    try {
+      candidate = new URL(referer).origin;
+    } catch {
+      return false; // Malformed Referer: treat as not allowed
+    }
+  }
+  // Non-browser clients (e.g., curl, server-to-server) may omit Origin and
+  // Referer headers. Since the primary security mechanism is the Bearer token
+  // (verified server-side before proxying), this is acceptable. The origin
+  // check is defense-in-depth, not the primary auth gate.
+  if (!candidate) return true;
+  const allowedOrigin = new URL(allowed).origin;
+  return candidate === allowedOrigin;
+}
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  if (!isAllowedOrigin(req)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
   const { getToken } = await auth();
   const token = await getToken();
   if (!token) {
@@ -14,6 +41,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   const ALLOWED_RESOURCE_TYPES = new Set(["backtests", "scans", "exports", "analyses", "sweeps"]);
   if (!path.length || !ALLOWED_RESOURCE_TYPES.has(path[0])) {
     return new Response("Invalid resource type", { status: 400 });
+  }
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (path.length >= 2 && !UUID_RE.test(path[1])) {
+    return new Response("Invalid resource ID", { status: 400 });
   }
   const backendPath = `/v1/events/${path.join("/")}`;
   const backendUrl = `${API_BASE}${backendPath}`;

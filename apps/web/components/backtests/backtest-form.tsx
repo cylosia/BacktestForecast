@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { AlertTriangle, Loader2 } from "lucide-react";
@@ -45,6 +45,8 @@ export function BacktestForm({
   const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
   const submitAbortRef = useRef<AbortController | null>(null);
   const submittingRef = useRef(false);
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
 
   useEffect(() => {
     return () => { submitAbortRef.current?.abort(); };
@@ -63,9 +65,9 @@ export function BacktestForm({
     }
   }, [initialTemplateId, templates]);
 
-  const submitDisabled = useMemo(() => quota.reached || status === "submitting" || status === "success", [quota.reached, status]);
+  const submitDisabled = useMemo(() => quota.reached || status === "submitting", [quota.reached, status]);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  const handleSubmit = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (submittingRef.current) return;
@@ -79,7 +81,7 @@ export function BacktestForm({
       return;
     }
 
-    const validation = validateBacktestForm(values);
+    const validation = validateBacktestForm(valuesRef.current);
     setErrors(validation.errors);
 
     if (!validation.payload) {
@@ -104,7 +106,8 @@ export function BacktestForm({
 
       submitAbortRef.current?.abort();
       submitAbortRef.current = new AbortController();
-      const run = await createBacktestRun(token, validation.payload, submitAbortRef.current.signal);
+      const payloadWithKey = { ...validation.payload, idempotency_key: crypto.randomUUID() };
+      const run = await createBacktestRun(token, payloadWithKey, submitAbortRef.current.signal);
       setStatus("success");
       setServerMessage("Backtest queued. Opening run details...");
       router.replace(`/app/backtests/${run.id}`);
@@ -123,17 +126,19 @@ export function BacktestForm({
     } finally {
       submittingRef.current = false;
     }
-  }
+  }, [quota, getToken, router]);
 
-  function updateValues(patch: Partial<BacktestFormValues>) {
+  const updateValues = useCallback((patch: Partial<BacktestFormValues>) => {
     setValues((current) => ({ ...current, ...patch }));
-    setErrors({});
-    if (status === "error") {
-      setStatus("idle");
-      setServerMessage(null);
-      setErrorCode(undefined);
-    }
-  }
+    setStatus((prev) => {
+      if (prev === "error") {
+        setServerMessage(null);
+        setErrorCode(undefined);
+        return "idle";
+      }
+      return prev;
+    });
+  }, []);
 
   return (
     <form className="space-y-6" noValidate onSubmit={handleSubmit} aria-label="Backtest configuration">

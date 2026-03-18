@@ -1,4 +1,7 @@
 import type { ScannerMode } from "@backtestforecast/api-client";
+import { TICKER_RE } from "@/lib/validation-constants";
+
+export type PlanTier = "free" | "pro" | "premium";
 
 export interface ScannerFormInput {
   mode: ScannerMode;
@@ -15,16 +18,31 @@ export interface ScannerFormInput {
   maxRecs: string;
 }
 
-const TICKER_RE = /^[A-Z][A-Z0-9./^-]{0,15}$/;
+interface ScannerLimits {
+  maxSymbols: number;
+  maxStrategies: number;
+  maxRecommendations: number;
+}
+
+const SCANNER_LIMITS: Record<string, ScannerLimits> = {
+  "pro:basic":      { maxSymbols: 5,  maxStrategies: 4,  maxRecommendations: 10 },
+  "premium:basic":  { maxSymbols: 10, maxStrategies: 6,  maxRecommendations: 15 },
+  "premium:advanced": { maxSymbols: 25, maxStrategies: 14, maxRecommendations: 30 },
+};
+
+export function getScannerLimits(planTier: PlanTier, mode: ScannerMode): ScannerLimits {
+  return SCANNER_LIMITS[`${planTier}:${mode}`] ?? { maxSymbols: 5, maxStrategies: 4, maxRecommendations: 10 };
+}
 
 export function parseSymbols(text: string): string[] {
-  return text
+  const raw = text
     .split(/[,\s]+/)
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
+  return [...new Set(raw)];
 }
 
-export function validateScannerForm(input: ScannerFormInput): string[] {
+export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier = "pro"): string[] {
   const symbols = parseSymbols(input.symbolsText);
   const errors: string[] = [];
 
@@ -39,16 +57,15 @@ export function validateScannerForm(input: ScannerFormInput): string[] {
     errors.push("At least one strategy type is required.");
   }
 
-  const maxSymbols = input.mode === "advanced" ? 25 : 5;
-  const maxStrategies = input.mode === "advanced" ? 14 : 6;
-  if (symbols.length > maxSymbols) {
+  const limits = getScannerLimits(planTier, input.mode);
+  if (symbols.length > limits.maxSymbols) {
     errors.push(
-      `${input.mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxSymbols} symbols.`,
+      `${input.mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${limits.maxSymbols} symbols for your plan.`,
     );
   }
-  if (input.selectedStrategies.size > maxStrategies) {
+  if (input.selectedStrategies.size > limits.maxStrategies) {
     errors.push(
-      `${input.mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${maxStrategies} strategies.`,
+      `${input.mode === "advanced" ? "Advanced" : "Basic"} mode allows at most ${limits.maxStrategies} strategies for your plan.`,
     );
   }
 
@@ -65,6 +82,14 @@ export function validateScannerForm(input: ScannerFormInput): string[] {
   ) {
     errors.push("Start date must be before end date.");
   }
+  if (input.endDate) {
+    const endDate = new Date(input.endDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (endDate > today) {
+      errors.push("End date cannot be in the future.");
+    }
+  }
 
   const numericChecks: Array<{
     label: string;
@@ -73,13 +98,13 @@ export function validateScannerForm(input: ScannerFormInput): string[] {
     max?: number;
     integer?: boolean;
   }> = [
-    { label: "Target DTE", value: Number(input.targetDte), min: 7, max: 365, integer: true },
+    { label: "Target DTE", value: Number(input.targetDte), min: 1, max: 365, integer: true },
     { label: "DTE tolerance", value: Number(input.dteTolerance), min: 0, max: 60, integer: true },
     { label: "Max holding days", value: Number(input.maxHolding), min: 1, max: 120, integer: true },
     { label: "Account size", value: Number(input.accountSize), min: 100, max: 100_000_000 },
     { label: "Risk %", value: Number(input.riskPct), min: 0.1, max: 100 },
-    { label: "Commission", value: Number(input.commission), min: 0, max: 1000 },
-    { label: "Max recommendations", value: Number(input.maxRecs), min: 1, max: 30, integer: true },
+    { label: "Commission", value: Number(input.commission), min: 0, max: 100 },
+    { label: "Max recommendations", value: Number(input.maxRecs), min: 1, max: limits.maxRecommendations, integer: true },
   ];
   for (const check of numericChecks) {
     if (
@@ -95,7 +120,13 @@ export function validateScannerForm(input: ScannerFormInput): string[] {
     }
   }
 
-  if (Number(input.dteTolerance) >= Number(input.targetDte)) {
+  const dteToleranceNum = Number(input.dteTolerance);
+  const targetDteNum = Number(input.targetDte);
+  if (
+    Number.isFinite(dteToleranceNum) &&
+    Number.isFinite(targetDteNum) &&
+    dteToleranceNum >= targetDteNum
+  ) {
     errors.push("DTE tolerance must be less than target DTE.");
   }
 

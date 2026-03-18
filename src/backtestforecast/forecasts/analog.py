@@ -136,6 +136,8 @@ class HistoricalAnalogForecaster:
                 "It is not a prediction, certainty, or financial advice."
             ),
             analog_dates=[candidate.trade_date for candidate in analogs[:5]],
+            analog_dates_shown=min(len(analogs), 5),
+            analog_dates_total=len(analogs),
         )
 
     @staticmethod
@@ -176,17 +178,15 @@ class HistoricalAnalogForecaster:
         current_avg_volume20 = avg_volume20[index]
         current_vol20 = vol20[index]
 
-        if (
-            close <= 0
-            or five_day_base <= 0
-            or twenty_day_base <= 0
-            or current_rsi is None
-            or current_ema8 is None
-            or current_ema21 is None
-            or current_avg_volume20 is None
-            or current_avg_volume20 <= 0
-            or current_vol20 is None
-        ):
+        numeric_inputs = (close, five_day_base, twenty_day_base)
+        if any(not math.isfinite(v) or v <= 0 for v in numeric_inputs):
+            return None
+        optional_inputs = (current_rsi, current_ema8, current_ema21, current_avg_volume20, current_vol20)
+        if any(v is None for v in optional_inputs):
+            return None
+        if not math.isfinite(current_avg_volume20) or current_avg_volume20 <= 0:
+            return None
+        if not all(math.isfinite(v) for v in optional_inputs):  # type: ignore[arg-type]
             return None
 
         return (
@@ -215,6 +215,7 @@ class HistoricalAnalogForecaster:
         #
         # Weights emphasise 20-day momentum (1.2) and volatility regime (1.1)
         # while down-weighting volume ratio (0.7) and single-day return (0.6).
+        # TODO: Consider making these configurable via settings for A/B testing.
         scales = (8.0, 15.0, 20.0, 5.0, 1.5, 25.0, 4.0)
         weights = (1.0, 1.2, 0.8, 1.0, 0.7, 1.1, 0.6)
         return sum(
@@ -289,9 +290,9 @@ class HistoricalAnalogForecaster:
     def _calendar_to_trading_days(calendar_days: int) -> int:
         if calendar_days <= 0:
             return 0
-        weekday_days = int(calendar_days * 5 / 7)
+        weekday_days = round(calendar_days * 5 / 7)
         estimated_holidays = calendar_days * 9.0 / 365.0  # ~9 NYSE holidays per year
-        return max(1, int(weekday_days - estimated_holidays))
+        return max(1, round(weekday_days - estimated_holidays))
 
     _QUANT = Decimal("0.0001")
 

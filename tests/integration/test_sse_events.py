@@ -155,39 +155,35 @@ def test_publish_job_status_handles_redis_failure():
 
 @pytest.mark.asyncio
 async def test_sse_slot_ttl_refreshed_on_every_acquire():
-    """Item 90: Every call to _acquire_sse_slot must call pool.expire() to
-    refresh the Redis key TTL, preventing stale keys from accumulating."""
+    """Item 90: Every call to _acquire_sse_slot must invoke the Lua script that
+    atomically INCRs the counter and sets EXPIRE, preventing stale keys."""
     from apps.api.app.routers.events import _SSE_CONN_TTL, _acquire_sse_slot
 
     user_id = uuid.uuid4()
-    expire_calls: list[tuple[str, int]] = []
-    incr_counter = {"count": 0}
+    eval_calls: list[tuple] = []
 
     mock_pool = MagicMock()
 
-    async def fake_incr(key):
-        incr_counter["count"] += 1
-        return incr_counter["count"]
+    async def fake_eval(script, num_keys, *args):
+        eval_calls.append(args)
+        return 1
 
-    async def fake_expire(key, ttl):
-        expire_calls.append((key, ttl))
-
-    mock_pool.incr = fake_incr
-    mock_pool.expire = fake_expire
+    mock_pool.eval = fake_eval
 
     with patch("apps.api.app.routers.events._get_async_redis", return_value=mock_pool):
         await _acquire_sse_slot(user_id)
         await _acquire_sse_slot(user_id)
         await _acquire_sse_slot(user_id)
 
-    assert len(expire_calls) == 3, (
-        f"expire() should be called on every acquire, got {len(expire_calls)} calls"
+    assert len(eval_calls) == 3, (
+        f"eval() should be called on every acquire, got {len(eval_calls)} calls"
     )
-    for key, ttl in expire_calls:
+    for args in eval_calls:
+        key, ttl, _limit = args
+        assert str(user_id) in key
         assert ttl == _SSE_CONN_TTL, (
             f"TTL should be {_SSE_CONN_TTL}, got {ttl}"
         )
-        assert str(user_id) in key
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +226,7 @@ async def test_sse_reconnection_invalidates_pool():
 
 @pytest.mark.asyncio
 async def test_sse_acquire_slot_limits_connections():
-    """Verify _acquire_sse_slot enforces per-user connection limit via Redis INCR."""
+    """Verify _acquire_sse_slot enforces per-user connection limit via Lua script."""
     from apps.api.app.routers.events import (
         SSE_MAX_CONNECTIONS_PER_USER,
         _acquire_sse_slot,
@@ -238,36 +234,34 @@ async def test_sse_acquire_slot_limits_connections():
     )
 
     user_id = uuid.uuid4()
-    incr_counter = {"count": 0}
+    counter = {"count": 0}
     mock_pool = MagicMock()
 
-    async def fake_incr(key):
-        incr_counter["count"] += 1
-        return incr_counter["count"]
+    async def fake_eval(script, num_keys, *args):
+        if "INCR" in script:
+            counter["count"] += 1
+            if counter["count"] > SSE_MAX_CONNECTIONS_PER_USER:
+                counter["count"] -= 1
+                return 0
+            return 1
+        if "DECR" in script:
+            counter["count"] -= 1
+            if counter["count"] <= 0:
+                counter["count"] = 0
+            return counter["count"]
+        return 0
 
-    async def fake_expire(key, ttl):
-        pass
-
-    async def fake_decr(key):
-        incr_counter["count"] -= 1
-        return incr_counter["count"]
-
-    async def fake_delete(key):
-        pass
-
-    mock_pool.incr = fake_incr
-    mock_pool.expire = fake_expire
-    mock_pool.decr = fake_decr
-    mock_pool.delete = fake_delete
+    mock_pool.eval = fake_eval
 
     with patch("apps.api.app.routers.events._get_async_redis", return_value=mock_pool):
         for _ in range(SSE_MAX_CONNECTIONS_PER_USER):
-            result = await _acquire_sse_slot(user_id)
-            assert result is True, "Should allow up to the max"
+            acquired, used_redis = await _acquire_sse_slot(user_id)
+            assert acquired is True, "Should allow up to the max"
+            assert used_redis is True
 
-        over_limit = await _acquire_sse_slot(user_id)
-        assert over_limit is False, "Should reject when over the per-user limit"
+        over_acquired, _ = await _acquire_sse_slot(user_id)
+        assert over_acquired is False, "Should reject when over the per-user limit"
 
         await _release_sse_slot(user_id)
-        after_release = await _acquire_sse_slot(user_id)
-        assert after_release is True, "Should allow after a slot is released"
+        released_acquired, _ = await _acquire_sse_slot(user_id)
+        assert released_acquired is True, "Should allow after a slot is released"

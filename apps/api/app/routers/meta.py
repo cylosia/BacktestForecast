@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from apps.api.app.dependencies import _extract_client_ip, get_current_user
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
+from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
 from backtestforecast.security import get_rate_limiter
 
@@ -23,7 +24,7 @@ def _try_authenticate(request: Request, db: Session) -> User | None:
     try:
         authorization = request.headers.get("authorization")
         return get_current_user(request=request, authorization=authorization, db=db)
-    except (jwt.exceptions.PyJWTError, ValueError, KeyError, AttributeError, StarletteHTTPException):
+    except (jwt.exceptions.PyJWTError, ValueError, KeyError, AttributeError, StarletteHTTPException, AuthenticationError):
         return None
     except Exception:
         logger.warning("meta.auth_unexpected_error", exc_info=True)

@@ -39,3 +39,11 @@ def test_sweep_result_response_fields():
     schema_fields = set(SweepResultResponse.model_fields.keys())
     missing = EXPECTED_RESULT_FIELDS - schema_fields
     assert not missing, f"SweepResultResponse is missing fields expected by frontend: {missing}"
+
+
+def test_sweep_job_response_uses_field_names_not_aliases():
+    """SweepJobResponse JSON uses field names (prefetch_summary, warnings), not aliases."""
+    schema = SweepJobResponse.model_json_schema()
+    props = set(schema.get("properties", {}).keys())
+    assert "prefetch_summary" in props, "Expected 'prefetch_summary' in JSON schema"
+    assert "warnings" in props, "Expected 'warnings' in JSON schema"

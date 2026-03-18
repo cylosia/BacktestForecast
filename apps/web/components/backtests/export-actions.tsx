@@ -91,7 +91,7 @@ export function ExportActions({
       for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(resolve, POLL_INTERVAL_MS);
-          signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+          signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason ?? new DOMException("Aborted", "AbortError")); }, { once: true });
         }).catch(() => {});
         if (signal.aborted || !mountedRef.current) return;
 
@@ -167,9 +167,9 @@ export function ExportActions({
       if (controller.signal.aborted) return;
 
       if (exportJob.status === "succeeded") {
-        await fetchAndDownload(token, exportJob.id, exportJob.file_name, controller.signal);
+        await fetchAndDownload(token, exportJob.id, exportJob.file_name ?? "export", controller.signal);
       } else {
-        await pollAndDownload(token, exportJob.id, exportJob.file_name, controller.signal);
+        await pollAndDownload(token, exportJob.id, exportJob.file_name ?? "export", controller.signal);
       }
     } catch (error) {
       if (controller.signal.aborted) return;

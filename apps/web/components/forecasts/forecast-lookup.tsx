@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2, TrendingUp } from "lucide-react";
 import { fetchForecast } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { formatDate, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
+import { TICKER_RE } from "@/lib/validation-constants";
 import type { ForecastEnvelopeResponse, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Button } from "@/components/ui/button";
@@ -62,17 +63,18 @@ export function ForecastLookup() {
     };
   }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
+    if (status === "loading") return;
     const normalizedTicker = ticker.trim().toUpperCase();
     if (!normalizedTicker) {
       setStatus("error");
       setErrorMessage("Enter a ticker symbol.");
       return;
     }
-    if (!/^[A-Z0-9./^]{1,16}$/.test(normalizedTicker)) {
+    if (!TICKER_RE.test(normalizedTicker)) {
       setStatus("error");
-      setErrorMessage("Ticker may only contain letters, digits, dots, slashes, or ^ (max 16 characters).");
+      setErrorMessage("Ticker must start with a letter and may contain letters, digits, dots, slashes, ^, or hyphens (max 16 characters).");
       return;
     }
 
@@ -110,7 +112,7 @@ export function ForecastLookup() {
       setErrorMessage(msg);
       setErrorCode(code);
     }
-  }
+  }, [ticker, strategyType, horizonDays, getToken]);
 
   const forecast = result?.forecast;
 
@@ -135,7 +137,7 @@ export function ForecastLookup() {
                   maxLength={16}
                   placeholder="SPY"
                   value={ticker}
-                  onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9./^]/g, ""))}
+                  onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9./^-]/g, ""))}
                 />
               </div>
               <div className="space-y-2">
@@ -304,7 +306,7 @@ function RangeBar({
   const zeroPct = low >= 0 ? 0 : ((-low) / range) * 100;
 
   return (
-    <div role="img" aria-label={`Range: ${low}% to ${high}%, median ${median}%`} className="absolute inset-0">
+    <div role="img" aria-label={`Range: ${low.toFixed(1)}% to ${high.toFixed(1)}%, median ${median.toFixed(1)}%`} className="absolute inset-0">
       {/* Background gradient: red (left) → green (right) */}
       <div
         className="absolute inset-0 rounded-full"

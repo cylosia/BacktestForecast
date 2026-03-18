@@ -148,9 +148,9 @@ def _verify_ownership(model: type, resource_id: UUID, user_id: UUID) -> bool:
     during the HTTP request phase, not inside the async generator. Uses the
     shared session factory to benefit from connection pooling.
     """
-    from backtestforecast.db.session import SessionLocal
+    from backtestforecast.db.session import create_session
 
-    with SessionLocal() as db:
+    with create_session() as db:
         stmt = select(model.id).where(model.id == resource_id, model.user_id == user_id)
         if db.execute(stmt).first() is None:
             raise NotFoundError("Resource not found.")
@@ -264,7 +264,9 @@ async def _release_sse_slot(user_id: UUID) -> None:
     """Release a per-user SSE connection slot atomically via Lua.
 
     Uses a Lua script to make DECR + conditional DEL atomic, preventing a
-    race where a concurrent acquire INCRs between DECR and DEL.
+    race where a concurrent acquire INCRs between DECR and DEL.  Falls back
+    to the in-process counter if Redis is unreachable so the slot is not
+    leaked for the full TTL duration.
     """
     try:
         pool = await _get_async_redis()
@@ -274,6 +276,7 @@ async def _release_sse_slot(user_id: UUID) -> None:
         from backtestforecast.observability.metrics import REDIS_CONNECTION_ERRORS_TOTAL
         REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="sse_slot_release").inc()
         logger.error("sse.release_slot_redis_error", user_id=str(user_id), exc_info=True)
+        await _release_sse_slot_in_process(user_id)
 
 
 async def _event_stream(

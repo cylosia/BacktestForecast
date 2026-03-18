@@ -4,14 +4,38 @@ Revision ID: 20260317_0006
 Revises: 20260317_0005
 Create Date: 2026-03-17
 """
-# NOTE: This migration uses sa.dialects.postgresql.UUID directly instead of the
-# frozen GUID TypeDecorator used in other migrations. This works on PostgreSQL
-# but breaks cross-dialect compatibility. A future migration should not repeat
-# this pattern.
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+
+import uuid
+from sqlalchemy.types import CHAR, TypeDecorator
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+
+
+class GUID(TypeDecorator):
+    """Frozen copy — do not import from app code in migrations."""
+    impl = CHAR(36)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(PG_UUID(as_uuid=True))
+        return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value if dialect.name == "postgresql" else str(value)
+        coerced = uuid.UUID(str(value))
+        return coerced if dialect.name == "postgresql" else str(coerced)
+
+    def process_result_value(self, value, dialect):
+        if value is None or isinstance(value, uuid.UUID):
+            return value
+        return uuid.UUID(str(value))
 
 revision = "20260317_0006"
 down_revision = "20260317_0005"
@@ -22,8 +46,8 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "sweep_jobs",
-        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("user_id", sa.dialects.postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("id", GUID(), primary_key=True),
+        sa.Column("user_id", GUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("symbol", sa.String(32), nullable=False),
         sa.Column("status", sa.String(32), nullable=False, server_default="queued"),
         sa.Column("candidate_count", sa.Integer, nullable=False, server_default="0"),
@@ -56,8 +80,8 @@ def upgrade() -> None:
 
     op.create_table(
         "sweep_results",
-        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("sweep_job_id", sa.dialects.postgresql.UUID(as_uuid=True), sa.ForeignKey("sweep_jobs.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("id", GUID(), primary_key=True),
+        sa.Column("sweep_job_id", GUID(), sa.ForeignKey("sweep_jobs.id", ondelete="CASCADE"), nullable=False),
         sa.Column("rank", sa.Integer, nullable=False),
         sa.Column("score", sa.Numeric(18, 6), nullable=False),
         sa.Column("strategy_type", sa.String(48), nullable=False),

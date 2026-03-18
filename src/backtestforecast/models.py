@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -24,15 +25,30 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from backtestforecast.db.base import Base
-from backtestforecast.db.types import GUID, JSON_VARIANT
+from backtestforecast.db.types import (
+    GUID,
+    JSON_DEFAULT_EMPTY_ARRAY,
+    JSON_DEFAULT_EMPTY_OBJECT,
+    JSON_VARIANT,
+)
+from backtestforecast.schemas.common import JobStatus  # noqa: F401 – re-exported
 
 
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (
+        Index("ix_users_email", "email"),
         CheckConstraint(
             "plan_tier IN ('free', 'pro', 'premium')",
             name="ck_users_valid_plan_tier",
+        ),
+        CheckConstraint(
+            "subscription_status IS NULL OR subscription_status IN ('incomplete', 'incomplete_expired', 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'paused')",
+            name="ck_users_valid_subscription_status",
+        ),
+        CheckConstraint(
+            "subscription_billing_interval IS NULL OR subscription_billing_interval IN ('monthly', 'yearly')",
+            name="ck_users_valid_billing_interval",
         ),
     )
 
@@ -64,6 +80,7 @@ class User(Base):
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="user", passive_deletes=True)
     symbol_analyses: Mapped[list["SymbolAnalysis"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     sweep_jobs: Mapped[list["SweepJob"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    stripe_events: Mapped[list["StripeEvent"]] = relationship(back_populates="user", foreign_keys="StripeEvent.user_id", passive_deletes=True)
 
 
 class BacktestRun(Base):
@@ -112,8 +129,8 @@ class BacktestRun(Base):
     account_size: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     risk_per_trade_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     commission_per_contract: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
-    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
-    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=text("'[]'"))
+    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
     engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2", server_default="options-multileg-v2")
     data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="massive", server_default="massive")
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -175,6 +192,8 @@ class BacktestTrade(Base):
         UniqueConstraint("run_id", "entry_date", "option_ticker", name="uq_backtest_trades_dedup"),
         CheckConstraint("quantity > 0", name="ck_backtest_trades_quantity_positive"),
         CheckConstraint("entry_date <= exit_date", name="ck_backtest_trades_date_order"),
+        CheckConstraint("dte_at_open >= 0", name="ck_backtest_trades_dte_at_open_nonneg"),
+        CheckConstraint("holding_period_days >= 0", name="ck_backtest_trades_holding_period_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -199,7 +218,7 @@ class BacktestTrade(Base):
     total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     entry_reason: Mapped[str] = mapped_column(String(128), nullable=False)
     exit_reason: Mapped[str] = mapped_column(String(128), nullable=False)
-    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
 
     run: Mapped["BacktestRun"] = relationship(back_populates="trades")
 
@@ -237,7 +256,7 @@ class BacktestTemplate(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
-    config_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
@@ -286,6 +305,10 @@ class ScannerJob(Base):
         CheckConstraint("candidate_count >= 0", name="ck_scanner_jobs_candidate_count_nonneg"),
         CheckConstraint("evaluated_candidate_count >= 0", name="ck_scanner_jobs_evaluated_count_nonneg"),
         CheckConstraint("recommendation_count >= 0", name="ck_scanner_jobs_recommendation_count_nonneg"),
+        CheckConstraint(
+            "engine_version IN ('options-multileg-v1', 'options-multileg-v2')",
+            name="ck_scanner_jobs_valid_engine_version",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -301,13 +324,13 @@ class ScannerJob(Base):
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     refresh_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    refresh_daily: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    refresh_daily: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     refresh_priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     evaluated_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     recommendation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
-    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=text("'[]'"))
+    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
     ranking_version: Mapped[str] = mapped_column(String(32), nullable=False, default="scanner-ranking-v1", server_default="scanner-ranking-v1")
     engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2", server_default="options-multileg-v2")
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -347,14 +370,14 @@ class ScannerRecommendation(Base):
     strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
     rule_set_name: Mapped[str] = mapped_column(String(120), nullable=False)
     rule_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
-    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
-    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=text("'[]'"))
-    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
-    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
-    historical_performance_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
-    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
-    ranking_features_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    historical_performance_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    ranking_features_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
@@ -396,7 +419,7 @@ class ExportJob(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
-    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     sha256_hex: Mapped[str | None] = mapped_column(String(64), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -445,7 +468,7 @@ class AuditEvent(Base):
     subject_type: Mapped[str] = mapped_column(String(64), nullable=False)
     subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ip_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="audit_events")
@@ -459,6 +482,13 @@ class NightlyPipelineRun(Base):
         Index("ix_nightly_pipeline_runs_date_status", "trade_date", "status"),
         Index("ix_nightly_pipeline_runs_status_created", "status", "created_at"),
         Index("ix_nightly_pipeline_runs_cursor", "created_at", "id"),
+        Index("ix_nightly_pipeline_runs_celery_task_id", "celery_task_id"),
+        Index("ix_nightly_pipeline_runs_status_celery_created", "status", "celery_task_id", "created_at"),
+        Index(
+            "ix_nightly_pipeline_runs_queued",
+            "created_at",
+            postgresql_where=text("status = 'queued'"),
+        ),
         Index(
             "uq_pipeline_runs_succeeded_trade_date",
             "trade_date",
@@ -473,6 +503,12 @@ class NightlyPipelineRun(Base):
             "stage IN ('universe_screen', 'strategy_match', 'quick_backtest', 'full_backtest', 'forecast_rank')",
             name="ck_nightly_pipeline_runs_valid_stage",
         ),
+        CheckConstraint("symbols_screened >= 0", name="ck_nightly_pipeline_runs_symbols_screened_nonneg"),
+        CheckConstraint("symbols_after_screen >= 0", name="ck_nightly_pipeline_runs_symbols_after_nonneg"),
+        CheckConstraint("pairs_generated >= 0", name="ck_nightly_pipeline_runs_pairs_nonneg"),
+        CheckConstraint("quick_backtests_run >= 0", name="ck_nightly_pipeline_runs_quick_bt_nonneg"),
+        CheckConstraint("full_backtests_run >= 0", name="ck_nightly_pipeline_runs_full_bt_nonneg"),
+        CheckConstraint("recommendations_produced >= 0", name="ck_nightly_pipeline_runs_recs_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -492,7 +528,7 @@ class NightlyPipelineRun(Base):
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    stage_details_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    stage_details_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -523,13 +559,16 @@ class DailyRecommendation(Base):
     score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
-    regime_labels: Mapped[list[str]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
+    regime_labels: Mapped[list[str]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
     close_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     target_dte: Mapped[int] = mapped_column(Integer, nullable=False)
-    config_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
-    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
-    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    config_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
     pipeline_run: Mapped["NightlyPipelineRun"] = relationship(back_populates="recommendations")
 
@@ -551,15 +590,20 @@ class StripeEvent(Base):
     stripe_event_id: Mapped[str] = mapped_column(String(255), nullable=False)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
     livemode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
-    idempotency_status: Mapped[str] = mapped_column(String(16), nullable=False, default="processed", server_default="processed")
+    idempotency_status: Mapped[str] = mapped_column(String(16), nullable=False, default="processing", server_default="processing")
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ip_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload_summary: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    payload_summary: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User | None"] = relationship(back_populates="stripe_events")
 
 
 class SymbolAnalysis(Base):
@@ -592,10 +636,10 @@ class SymbolAnalysis(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     stage: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
     close_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
-    regime_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
-    landscape_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
-    top_results_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
-    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    regime_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    landscape_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    top_results_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     strategies_tested: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     configs_tested: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     top_results_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
@@ -632,17 +676,27 @@ class SweepJob(Base):
         CheckConstraint("candidate_count >= 0", name="ck_sweep_jobs_candidate_count_nonneg"),
         CheckConstraint("evaluated_candidate_count >= 0", name="ck_sweep_jobs_evaluated_count_nonneg"),
         CheckConstraint("result_count >= 0", name="ck_sweep_jobs_result_count_nonneg"),
+        CheckConstraint(
+            "plan_tier_snapshot IN ('free', 'pro', 'premium')",
+            name="ck_sweep_jobs_valid_plan_tier",
+        ),
+        CheckConstraint(
+            "engine_version IN ('options-multileg-v1', 'options-multileg-v2')",
+            name="ck_sweep_jobs_valid_engine_version",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="grid", server_default="grid")
+    plan_tier_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="free", server_default="free")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     evaluated_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     result_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
-    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=text("'[]'"))
+    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
     prefetch_summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
     engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2", server_default="options-multileg-v2")
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -664,12 +718,14 @@ class SweepJob(Base):
     )
 
 
+
 class OutboxMessage(Base):
     """Transactional outbox for reliable Celery task dispatch.
 
-    Not yet consumed by a background poller — this is the foundation for
-    the transactional outbox pattern.  See apps/api/app/dispatch.py for
-    the intended usage.
+    STATUS: Infrastructure scaffolding only. The table exists but no code
+    currently creates or polls OutboxMessage rows. Remove this model and
+    the corresponding migration if the outbox pattern is not implemented
+    by 2026-06-01.
     """
     __tablename__ = "outbox_messages"
     __table_args__ = (
@@ -678,18 +734,19 @@ class OutboxMessage(Base):
             "status IN ('pending', 'sent', 'failed')",
             name="ck_outbox_messages_valid_status",
         ),
+        CheckConstraint("retry_count >= 0", name="ck_outbox_messages_retry_count_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     task_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    task_kwargs_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    task_kwargs_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     queue: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
-    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     correlation_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
 
@@ -709,11 +766,11 @@ class SweepResult(Base):
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
-    parameter_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
-    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
-    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=text("'[]'"))
-    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
-    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
+    parameter_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

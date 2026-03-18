@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { BacktestTradeResponse } from "@backtestforecast/api-client";
 import {
   formatCurrency,
@@ -8,10 +11,17 @@ import {
   toNumber,
 } from "@/lib/backtests/format";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
+const PAGE_SIZE = 100;
+
 export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) {
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const visibleTrades = trades.slice(0, visibleCount);
+  const hasMore = visibleCount < trades.length;
+
   return (
     <Card>
       <CardHeader>
@@ -24,7 +34,7 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
             No trades were produced for this backtest.
           </div>
         ) : (
-          <Table>
+          <Table aria-label="Trade list">
             <TableHeader>
               <TableRow>
                 <TableHead>Option</TableHead>
@@ -36,9 +46,9 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
               </TableRow>
             </TableHeader>
             <TableBody>
-              {trades.map((trade, idx) => {
+              {visibleTrades.map((trade, idx) => {
                 const pnl = toNumber(trade.net_pnl);
-                const isPositive = Number.isFinite(pnl) ? pnl >= 0 : null;
+                const isPositive = Number.isFinite(pnl) ? (pnl > 0 ? true : pnl < 0 ? false : null) : null;
 
                 return (
                   <TableRow key={trade.id ?? idx}>
@@ -93,6 +103,16 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
               })}
             </TableBody>
           </Table>
+          {trades.length > PAGE_SIZE && (
+            <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
+              <p>Showing {Math.min(visibleCount, trades.length)} of {trades.length} trades</p>
+              {hasMore && (
+                <Button variant="outline" size="sm" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+                  Show more
+                </Button>
+              )}
+            </div>
+          )}
         )}
       </CardContent>
     </Card>

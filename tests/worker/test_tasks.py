@@ -35,6 +35,19 @@ warnings.warn(
 # ---------------------------------------------------------------------------
 
 
+def _strip_partial_indexes_for_sqlite(engine) -> None:
+    """Remove PostgreSQL-specific partial indexes so SQLite create_all succeeds."""
+    if engine.dialect.name != "sqlite":
+        return
+    for table in Base.metadata.tables.values():
+        indexes_to_remove = [
+            idx for idx in table.indexes
+            if idx.dialect_options.get("postgresql", {}).get("where") is not None
+        ]
+        for idx in indexes_to_remove:
+            table.indexes.discard(idx)
+
+
 @pytest.fixture()
 def db_engine():
     """SQLite in-memory engine for unit-level isolation.
@@ -49,6 +62,7 @@ def db_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    _strip_partial_indexes_for_sqlite(engine)
     Base.metadata.create_all(engine)
     try:
         yield engine

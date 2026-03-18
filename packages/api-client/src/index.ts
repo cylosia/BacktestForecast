@@ -154,3 +154,124 @@ export type LandscapeCell = components["schemas"]["LandscapeCell"];
 export type AnalysisTopResult = components["schemas"]["AnalysisTopResult"];
 
 export type SymbolAnalysisFullResponse = AnalysisDetailResponse;
+
+// ---------------------------------------------------------------------------
+// Sweep types
+//
+// WARNING: These types are manually maintained and MUST stay in sync with
+// the backend Pydantic schemas in backtestforecast.schemas.sweeps.
+// Run `python scripts/check_contract_drift.py` to verify alignment.
+// TODO: Add sweep endpoints to OpenAPI export and generate these types
+// automatically. Until then, any backend schema change must be mirrored here.
+// NOTE: SweepJobResponse fields `prefetch_summary` and `warnings` match the
+// Pydantic *field* names (not the aliases `prefetch_summary_json` /
+// `warnings_json`), because FastAPI serializes by field name when
+// `populate_by_name=True`.
+// ---------------------------------------------------------------------------
+
+export interface ParameterSnapshotJson {
+  strategy_type?: string;
+  mode?: "grid" | "genetic";
+  delta?: number | null;
+  width_mode?: string | null;
+  width_value?: number | string | null;
+  entry_rule_set_name?: string | null;
+  exit_rule_set_name?: string | null;
+  profit_target_pct?: number | null;
+  stop_loss_pct?: number | null;
+  custom_legs?: {
+    contract_type?: string;
+    asset_type?: string;
+    side?: string;
+    strike_offset?: number;
+    expiration_offset?: number;
+    quantity_ratio?: number | string;
+  }[];
+  num_legs?: number;
+  generations_run?: number;
+  total_evaluations?: number;
+}
+
+export interface SweepResultResponse {
+  id: string;
+  rank: number;
+  score: string;
+  strategy_type: string;
+  delta: number | null;
+  width_mode: string | null;
+  width_value: string | null;
+  entry_rule_set_name: string;
+  exit_rule_set_name: string | null;
+  profit_target_pct: number | null;
+  stop_loss_pct: number | null;
+  parameter_snapshot_json: ParameterSnapshotJson;
+  summary: BacktestSummaryResponse;
+  warnings: Record<string, unknown>[];
+  trades_json: Record<string, unknown>[];
+  equity_curve: EquityCurvePointResponse[];
+}
+
+export interface SweepResultListResponse {
+  items: SweepResultResponse[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface SweepJobResponse {
+  id: string;
+  status: RunStatus;
+  symbol: string;
+  plan_tier_snapshot: string;
+  candidate_count: number;
+  evaluated_candidate_count: number;
+  result_count: number;
+  prefetch_summary: Record<string, unknown> | null;
+  warnings: Record<string, unknown>[];
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface SweepJobListResponse {
+  items: SweepJobResponse[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface GeneticSweepConfig {
+  num_legs: number;
+  population_size?: number;
+  max_generations?: number;
+  tournament_size?: number;
+  crossover_rate?: number;
+  mutation_rate?: number;
+  elitism_count?: number;
+  max_workers?: number;
+  max_stale_generations?: number;
+}
+
+export interface CreateSweepRequest {
+  mode?: "grid" | "genetic";
+  symbol: string;
+  strategy_types: string[];
+  start_date: string;
+  end_date: string;
+  target_dte: number;
+  dte_tolerance_days?: number;
+  max_holding_days: number;
+  account_size: number;
+  risk_per_trade_pct: number;
+  commission_per_contract: number;
+  entry_rule_sets: { name: string; entry_rules: EntryRule[] }[];
+  delta_grid?: { value: number }[];
+  width_grid?: { mode: string; value: number }[];
+  exit_rule_sets?: { name: string; profit_target_pct?: number; stop_loss_pct?: number }[];
+  genetic_config?: GeneticSweepConfig;
+  max_results?: number;
+  slippage_pct?: number;
+  idempotency_key?: string;
+}

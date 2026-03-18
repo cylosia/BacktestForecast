@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date
 from enum import Enum
+
+import threading
 
 import structlog
 import redis
 
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
+from backtestforecast.observability.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
 
 logger = structlog.get_logger("market_data.redis_cache")
 
 _KEY_PREFIX = "bff:optcache"
+_FRESHNESS_WARN_SECONDS = 86_400 * 3  # 3 days
 
 
 class _CacheMiss(Enum):
@@ -92,14 +97,18 @@ class OptionDataRedisCache:
         self._pool = redis.ConnectionPool.from_url(redis_url, decode_responses=True)
         self._ttl = ttl_seconds
         self._client: redis.Redis | None = None
+        self._lock = threading.Lock()
 
     def close(self) -> None:
         self._pool.disconnect()
 
     def _conn(self) -> redis.Redis:
-        if self._client is None:
-            self._client = redis.Redis(connection_pool=self._pool)
-        return self._client
+        if self._client is not None:
+            return self._client
+        with self._lock:
+            if self._client is None:
+                self._client = redis.Redis(connection_pool=self._pool)
+            return self._client
 
     # -- contracts -----------------------------------------------------------
 
@@ -114,9 +123,12 @@ class OptionDataRedisCache:
         try:
             raw = self._conn().get(_contract_key(symbol, as_of_date, contract_type, exp_gte, exp_lte))
             if raw is None:
+                CACHE_MISSES_TOTAL.labels(cache="option_contracts").inc()
                 return None
+            CACHE_HITS_TOTAL.labels(cache="option_contracts").inc()
             return _deserialize_contracts(raw)
         except Exception:
+            CACHE_MISSES_TOTAL.labels(cache="option_contracts").inc()
             logger.debug("redis_cache.get_contracts_failed", symbol=symbol, exc_info=True)
             return None
 
@@ -131,7 +143,10 @@ class OptionDataRedisCache:
     ) -> None:
         try:
             key = _contract_key(symbol, as_of_date, contract_type, exp_gte, exp_lte)
-            self._conn().set(key, _serialize_contracts(contracts), ex=self._ttl)
+            pipe = self._conn().pipeline(transaction=False)
+            pipe.set(key, _serialize_contracts(contracts), ex=self._ttl)
+            pipe.set(f"{key}:ts", str(int(time.time())), ex=self._ttl)
+            pipe.execute()
         except Exception:
             logger.debug("redis_cache.set_contracts_failed", symbol=symbol, exc_info=True)
 
@@ -146,9 +161,12 @@ class OptionDataRedisCache:
         try:
             raw = self._conn().get(_quote_key(option_ticker, trade_date))
             if raw is None:
+                CACHE_MISSES_TOTAL.labels(cache="option_quotes").inc()
                 return CACHE_MISS
+            CACHE_HITS_TOTAL.labels(cache="option_quotes").inc()
             return _deserialize_quote(raw)
         except Exception:
+            CACHE_MISSES_TOTAL.labels(cache="option_quotes").inc()
             logger.debug("redis_cache.get_quote_failed", ticker=option_ticker, exc_info=True)
             return CACHE_MISS
 
@@ -160,6 +178,39 @@ class OptionDataRedisCache:
     ) -> None:
         try:
             key = _quote_key(option_ticker, trade_date)
-            self._conn().set(key, _serialize_quote(quote), ex=self._ttl)
+            pipe = self._conn().pipeline(transaction=False)
+            pipe.set(key, _serialize_quote(quote), ex=self._ttl)
+            pipe.set(f"{key}:ts", str(int(time.time())), ex=self._ttl)
+            pipe.execute()
         except Exception:
             logger.debug("redis_cache.set_quote_failed", ticker=option_ticker, exc_info=True)
+
+    def get_cache_age_seconds(self, key: str) -> int | None:
+        """Return the age of a cached entry in seconds, or None if no timestamp found."""
+        try:
+            ts_raw = self._conn().get(f"{key}:ts")
+            if ts_raw is None:
+                return None
+            return int(time.time()) - int(ts_raw)
+        except Exception:
+            return None
+
+    def check_freshness(self, symbol: str) -> dict[str, object]:
+        """Return freshness info for a symbol's cached data.
+
+        Useful for health checks and monitoring dashboards.
+        """
+        conn = self._conn()
+        pattern = f"{_KEY_PREFIX}:contracts:{symbol}:*"
+        info: dict[str, object] = {"symbol": symbol, "stale_entries": 0, "total_entries": 0}
+        try:
+            for key in conn.scan_iter(pattern, count=100):
+                if key.endswith(":ts"):
+                    continue
+                info["total_entries"] = int(info["total_entries"]) + 1
+                age = self.get_cache_age_seconds(key)
+                if age is not None and age > _FRESHNESS_WARN_SECONDS:
+                    info["stale_entries"] = int(info["stale_entries"]) + 1
+        except Exception:
+            logger.debug("redis_cache.freshness_check_failed", symbol=symbol, exc_info=True)
+        return info

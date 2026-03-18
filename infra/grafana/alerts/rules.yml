@@ -14,7 +14,7 @@ groups:
           severity: warning
         annotations:
           summary: "Reaper re-dispatched >5 stuck jobs in 10 minutes"
-          runbook_url: "https://docs.internal/runbooks/stuck-jobs"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#stuck-jobs"
           description: >-
             The job reaper has re-dispatched {{ $value }} stale jobs in the
             last 10 minutes.  Investigate worker health and queue depth.
@@ -32,7 +32,7 @@ groups:
           severity: critical
         annotations:
           summary: "Celery task failure rate >10%"
-          runbook_url: "https://docs.internal/runbooks/task-failure-rate"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#task-failure-rate"
           description: >-
             More than 10% of Celery tasks are failing.  Check worker logs.
 
@@ -44,7 +44,7 @@ groups:
           severity: warning
         annotations:
           summary: "Audit dedupe constraint hit >20 times in 15 minutes"
-          runbook_url: "https://docs.internal/runbooks/audit-dedupe"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#audit-dedupe"
           description: >-
             Unusually high duplicate audit event insertion attempts.
             May indicate duplicate webhook deliveries or retry storms.
@@ -62,7 +62,7 @@ groups:
           severity: critical
         annotations:
           summary: "HTTP 5xx error rate >5%"
-          runbook_url: "https://docs.internal/runbooks/http-error-rate"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#http-error-rate"
           description: >-
             More than 5% of HTTP requests are returning server errors.
 
@@ -76,7 +76,7 @@ groups:
           severity: warning
         annotations:
           summary: "P95 HTTP latency >5 seconds"
-          runbook_url: "https://docs.internal/runbooks/high-latency"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#high-latency"
           description: >-
             API response time at p95 has exceeded 5 seconds.
 
@@ -88,7 +88,7 @@ groups:
           severity: warning
         annotations:
           summary: "Celery queue depth >100 for {{ $labels.queue }}"
-          runbook_url: "https://docs.internal/runbooks/queue-depth"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#queue-depth"
           description: >-
             Queue {{ $labels.queue }} has {{ $value }} pending messages.
             Workers may be under-provisioned or stuck.
@@ -100,7 +100,7 @@ groups:
           severity: warning
         annotations:
           summary: "Dead letter queue has {{ $value }} items"
-          runbook_url: "https://docs.internal/runbooks/dead-letter-queue"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#dead-letter-queue"
           description: "The DLQ has had items for >15 minutes. Check /admin/dlq for details."
 
       - alert: DLQDepthHigh
@@ -111,7 +111,7 @@ groups:
           severity: critical
         annotations:
           summary: "Dead-letter queue depth >10"
-          runbook_url: "https://docs.internal/runbooks/dead-letter-queue"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#dead-letter-queue"
           description: >-
             {{ $value }} messages in the dead-letter queue.  Tasks are
             exhausting retries.  Review DLQ contents via /admin/dlq.
@@ -124,7 +124,7 @@ groups:
           severity: critical
         annotations:
           summary: "Circuit breaker open for {{ $labels.service }}"
-          runbook_url: "https://docs.internal/runbooks/circuit-breaker"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#circuit-breaker"
           description: >-
             The circuit breaker for {{ $labels.service }} has been open
             for over 2 minutes.  Downstream service may be unavailable.
@@ -142,7 +142,7 @@ groups:
           severity: warning
         annotations:
           summary: "Backtest job failure rate >10%"
-          runbook_url: "https://docs.internal/runbooks/backtest-failures"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#backtest-failures"
           description: >-
             More than 10% of backtest runs are failing over the last 15 minutes.
 
@@ -159,7 +159,7 @@ groups:
           severity: warning
         annotations:
           summary: "Scan job failure rate >10%"
-          runbook_url: "https://docs.internal/runbooks/scan-failures"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#scan-failures"
           description: >-
             More than 10% of scan jobs are failing over the last 15 minutes.
 
@@ -171,7 +171,7 @@ groups:
           severity: warning
         annotations:
           summary: "Active SSE connections >500"
-          runbook_url: "https://docs.internal/runbooks/sse-connections"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#sse-connections"
           description: >-
             {{ $value }} active SSE connections.  This may exhaust
             file descriptors or Redis pub/sub capacity.
@@ -184,7 +184,7 @@ groups:
           severity: warning
         annotations:
           summary: "Database connection pool >80% utilised"
-          runbook_url: "https://docs.internal/runbooks/db-pool"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#db-pool"
           description: >-
             Connection pool is nearing capacity.  Consider increasing
             DB_POOL_SIZE or DB_POOL_MAX_OVERFLOW.
@@ -197,7 +197,7 @@ groups:
           severity: critical
         annotations:
           summary: "Redis connection failures detected"
-          runbook_url: "https://docs.internal/runbooks/redis-connectivity"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#redis-connectivity"
           description: >-
             Multiple Redis connection errors in the last 5 minutes.
             Rate limiting, caching, and task brokering may be degraded.
@@ -209,7 +209,7 @@ groups:
           severity: critical
         annotations:
           summary: "No Celery workers are online — all background jobs are stalled"
-          runbook_url: "https://docs.internal/runbooks/no-workers"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#no-workers"
 
       - alert: NightlyPipelineMissing
         expr: |
@@ -220,7 +220,7 @@ groups:
           severity: critical
         annotations:
           summary: "Nightly pipeline has not started in the last 26 hours"
-          runbook_url: "https://docs.internal/runbooks/nightly-pipeline"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#nightly-pipeline"
 
       - alert: NightlyPipelineFailed
         expr: |
@@ -230,7 +230,7 @@ groups:
           severity: warning
         annotations:
           summary: "Nightly pipeline run failed"
-          runbook_url: "https://docs.internal/runbooks/nightly-pipeline"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#nightly-pipeline"
           description: >-
             A nightly pipeline run has failed.  Users may see stale
             daily picks and market analysis data.
@@ -248,7 +248,7 @@ groups:
           severity: warning
         annotations:
           summary: "HTTP 5xx error rate >2% for 10 minutes"
-          runbook_url: "https://docs.internal/runbooks/http-error-rate"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#http-error-rate"
           description: >-
             More than 2% of HTTP requests are returning server errors
             over the last 10 minutes.
@@ -264,7 +264,7 @@ groups:
           severity: critical
         annotations:
           summary: "/health/ready has been degraded for 5+ minutes"
-          runbook_url: "https://docs.internal/runbooks/health-ready"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#health-ready"
           description: >-
             The API readiness endpoint is returning non-200 responses.
             Database, Redis, or Celery broker may be down.
@@ -277,7 +277,7 @@ groups:
           severity: warning
         annotations:
           summary: "Scanner job stuck in running state for >10 minutes"
-          runbook_url: "https://docs.internal/runbooks/stuck-jobs"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#stuck-jobs"
           description: >-
             {{ $value }} scanner job(s) have been in running state
             for over 10 minutes.  The reaper should have caught these.
@@ -290,7 +290,7 @@ groups:
           severity: critical
         annotations:
           summary: "Stripe webhook failures >3 in 15 minutes"
-          runbook_url: "https://docs.internal/runbooks/stripe-webhooks"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#stripe-webhooks"
           description: >-
             {{ $value }} Stripe webhook processing errors in the last
             15 minutes.  Billing state may be inconsistent.
@@ -303,7 +303,7 @@ groups:
           severity: warning
         annotations:
           summary: "Massive provider error spike (>5 errors in 10 minutes)"
-          runbook_url: "https://docs.internal/runbooks/provider-outage"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#provider-outage"
           description: >-
             {{ $value }} errors from the Massive market data provider.
             Backtests and scans may be failing or returning incomplete data.
@@ -321,7 +321,7 @@ groups:
           severity: warning
         annotations:
           summary: "Export failure rate >5% over 30 minutes"
-          runbook_url: "https://docs.internal/runbooks/export-failures"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#export-failures"
           description: >-
             More than 5% of export jobs are failing.
 
@@ -334,7 +334,42 @@ groups:
           severity: warning
         annotations:
           summary: "Expired exports are not being cleaned up"
-          runbook_url: "https://docs.internal/runbooks/export-cleanup"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#export-cleanup"
           description: >-
             No exports have been transitioned to 'expired' in the last 24 hours
             despite active export jobs. Check the reconcile_s3_orphans task.
+
+      - alert: DailyRecommendationsTableLarge
+        expr: daily_recommendations_count > 50000
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Daily recommendations table exceeds 50k rows"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#daily-recommendations-cleanup"
+          description: >-
+            The daily_recommendations table has {{ $value }} rows.
+            Verify the cleanup_daily_recommendations task is running.
+
+      - alert: OptionCacheOverBudget
+        expr: option_cache_entries > 40000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "In-memory option cache is approaching budget limit"
+          description: >-
+            {{ $value }} option cache entries are held in memory across all
+            gateway instances. Budget is 50,000. Large scans may cause OOM.
+
+      - alert: RateLimitBypassRisk
+        expr: increase(redis_connection_errors_total{operation="rate_limit"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis rate limit errors — potential bypass risk"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#rate-limiter-bypass"
+          description: >-
+            Rate limiter experienced {{ $value }} Redis errors in 5 minutes.
+            With fail-closed enabled, requests may be rejected. Investigate Redis health.

@@ -42,6 +42,7 @@ def test_ranking_breakdown_favors_bullish_alignment_when_forecast_is_positive() 
     execution_result = BacktestExecutionResult(
         summary=BacktestSummary(
             trade_count=4,
+            decided_trades=10,
             win_rate=75.0,
             total_roi_pct=12.0,
             average_win_amount=200.0,

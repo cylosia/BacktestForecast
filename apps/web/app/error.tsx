@@ -10,6 +10,7 @@ export default function RootError({
   reset: () => void;
 }) {
   useEffect(() => {
+    // TODO: Integrate Sentry or similar error tracking for production visibility.
     console.error("Root error boundary caught:", error);
   }, [error]);
 

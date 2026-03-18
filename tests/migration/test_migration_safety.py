@@ -73,6 +73,18 @@ def test_no_duplicate_revision_ids(alembic_scripts: ScriptDirectory) -> None:
     assert not duplicates, f"Duplicate revision IDs found: {duplicates}"
 
 
+def test_filename_contains_revision_id(alembic_scripts: ScriptDirectory) -> None:
+    """Each migration file's name should contain its revision ID to avoid confusion."""
+    import os
+    for script in alembic_scripts.walk_revisions():
+        basename = os.path.basename(script.path)
+        rev_suffix = script.revision.split("_", 1)[-1] if "_" in script.revision else script.revision
+        assert script.revision in basename or rev_suffix in basename, (
+            f"Migration {script.revision} lives in {basename} which does not contain "
+            f"the revision ID. Rename to include '{script.revision}' for clarity."
+        )
+
+
 def test_down_revision_chain_is_contiguous(alembic_scripts: ScriptDirectory) -> None:
     """Every down_revision must reference an existing revision (except the first migration)."""
     all_revisions = {rev.revision for rev in alembic_scripts.walk_revisions()}

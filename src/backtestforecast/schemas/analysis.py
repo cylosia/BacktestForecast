@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -12,12 +12,12 @@ from backtestforecast.schemas.common import sanitize_error_message
 
 
 class AnalysisSummaryResponse(BaseModel):
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     symbol: str
-    status: str
-    stage: str
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    stage: Literal["pending", "regime", "landscape", "deep_dive", "forecast"]
     close_price: Decimal | None = None
     strategies_tested: int
     configs_tested: int
@@ -32,7 +32,7 @@ class AnalysisSummaryResponse(BaseModel):
 
 
 class RegimeDetail(BaseModel):
-    model_config = {"extra": "ignore"}
+    model_config = ConfigDict(extra="ignore")
     regimes: list[str] = Field(default_factory=list)
     rsi_14: float | None = None
     ema_8: float | None = None
@@ -46,6 +46,9 @@ class RegimeDetail(BaseModel):
 
 
 class LandscapeCell(BaseModel):
+    """Metrics use float (not Decimal) because they are read from JSONB storage.
+    PostgreSQL JSONB does not preserve Decimal; values arrive as floats.
+    BacktestSummaryResponse uses Decimal for API responses; this schema reflects DB shape."""
     model_config = {"extra": "ignore"}
     strategy_type: str
     strategy_label: str = ""
@@ -59,14 +62,14 @@ class LandscapeCell(BaseModel):
 
 
 class AnalysisTopResult(BaseModel):
-    model_config = {"extra": "ignore"}
+    model_config = ConfigDict(extra="ignore")
     rank: int = 0
     strategy_type: str = ""
     strategy_label: str = ""
     target_dte: int = 0
     config: dict[str, Any] = Field(default_factory=dict)
     summary: dict[str, Any] = Field(default_factory=dict)
-    trades: list[dict[str, Any]] = Field(default_factory=list)
+    trades: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
     equity_curve: list[dict[str, Any]] = Field(default_factory=list)
     forecast: dict[str, Any] = Field(default_factory=dict)
     score: float = 0.0
@@ -123,7 +126,7 @@ class PipelineStatsResponse(BaseModel):
 
 class DailyPickSummary(BaseModel):
     """Known keys produced by the backtest engine for daily pick summaries."""
-    model_config = {"extra": "ignore"}
+    model_config = ConfigDict(extra="ignore")
     trade_count: int = 0
     win_rate: float = 0.0
     total_roi_pct: float = 0.0
@@ -136,7 +139,7 @@ class DailyPickSummary(BaseModel):
 
 class DailyPickForecast(BaseModel):
     """Known keys produced by the forecaster for daily pick forecasts."""
-    model_config = {"extra": "ignore"}
+    model_config = ConfigDict(extra="ignore")
     expected_return_median_pct: float | None = None
     positive_outcome_rate_pct: float | None = None
     analog_count: int | None = None

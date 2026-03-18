@@ -6,14 +6,17 @@ from uuid import UUID
 
 import structlog
 
-from backtestforecast.config import Settings
-from backtestforecast.errors import ConfigurationError
+from backtestforecast.config import Settings, register_invalidation_callback
+from backtestforecast.errors import ConfigurationError, ExternalServiceError
 
 logger = structlog.get_logger("exports.storage")
 
 
 class ExportStorage(Protocol):
     """Interface for persisting and retrieving export file content."""
+
+    # Future enhancement: Instrument S3 put/get operations with Prometheus
+    # histograms to track upload latency and detect degradation.
 
     def put(self, export_job_id: UUID, content: bytes, file_name: str) -> str:
         """Store *content* and return a storage key (opaque string).
@@ -55,18 +58,27 @@ class DatabaseStorage:
     def delete(self, storage_key: str) -> None:
         pass
 
-    def exists(self, storage_key: str | None) -> bool:
+    def exists(self, storage_key: str, *, session: Any = None) -> bool:  # type: ignore[override]
         if not storage_key:
             return False
-        from backtestforecast.db.session import SessionLocal
+        from sqlalchemy import select
+
         from backtestforecast.models import ExportJob
         try:
             import uuid as _uuid
             key_uuid = _uuid.UUID(storage_key)
-            with SessionLocal() as session:
-                job = session.get(ExportJob, key_uuid)
-                return job is not None and job.content_bytes is not None
-        except (ValueError, Exception):
+            stmt = select(ExportJob.id).where(
+                ExportJob.id == key_uuid,
+                ExportJob.content_bytes.isnot(None),
+            )
+            if session is not None:
+                row = session.execute(stmt).first()
+                return row is not None
+            from backtestforecast.db.session import create_session
+            with create_session() as fallback_session:
+                row = fallback_session.execute(stmt).first()
+                return row is not None
+        except ValueError:
             return False
 
     def get_object(self, key: str) -> Any:
@@ -96,7 +108,7 @@ def _retry(fn, max_attempts=3, base_delay=0.5):
                 time.sleep(base_delay * (2 ** attempt))
             else:
                 raise
-    raise RuntimeError("_retry exhausted all attempts") from last_exc
+    raise ExternalServiceError("S3 upload failed after all retry attempts") from last_exc
 
 
 class S3Storage:
@@ -201,6 +213,39 @@ class S3Storage:
                 return False
             raise
 
+    @property
+    def bucket(self) -> str:
+        return self._bucket
+
+    @property
+    def prefix(self) -> str:
+        return self._prefix
+
+    @property
+    def client(self):
+        """Return the underlying boto3 S3 client."""
+        return self._client
+
+    def iter_keys(self, prefix: str | None = None):
+        """Yield object keys under *prefix* one page at a time.
+
+        Returns an iterator to avoid loading all keys into memory at once.
+        For buckets with many objects, this prevents unbounded memory usage.
+        """
+        effective_prefix = prefix if prefix is not None else self._prefix
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=effective_prefix):
+            for obj in page.get("Contents", []):
+                yield obj["Key"]
+
+    def list_keys(self, prefix: str | None = None) -> list[str]:
+        """Return all object keys under *prefix* as a list.
+
+        .. warning:: Loads all keys into memory. For large buckets, prefer
+           :meth:`iter_keys` which streams results.
+        """
+        return list(self.iter_keys(prefix))
+
 
 def get_export_storage(settings: Settings) -> ExportStorage:
     """Return S3Storage when an S3 bucket is configured, otherwise DatabaseStorage."""
@@ -233,3 +278,6 @@ def _invalidate_storage() -> None:
     global _storage_instance
     with _storage_lock:
         _storage_instance = None
+
+
+register_invalidation_callback(_invalidate_storage)

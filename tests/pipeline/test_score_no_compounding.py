@@ -28,7 +28,6 @@ def test_score_adjustment_does_not_compound() -> None:
         symbol="TEST",
         close_price=100.0,
         regimes=frozenset([Regime.NEUTRAL]),
-        detail={},
     )
     summary = {
         "total_roi_pct": 15.0,
@@ -58,6 +57,7 @@ def test_score_adjustment_does_not_compound() -> None:
                 "positive_outcome_rate_pct": 65.0,
             }
 
+    from concurrent.futures import ThreadPoolExecutor
     from unittest.mock import MagicMock
     from backtestforecast.pipeline.service import NightlyPipelineService
 
@@ -69,19 +69,27 @@ def test_score_adjustment_does_not_compound() -> None:
         forecaster=MockForecaster(),
     )
 
-    initial_score = 10.0
-    candidates_pass1 = [_make_candidate(initial_score)]
-    result1 = service._stage5_forecast_and_rank(candidates_pass1, date(2025, 6, 1))
-    score_after_pass1 = result1[0].score
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
+        initial_score = 10.0
+        candidates_pass1 = [_make_candidate(initial_score)]
+        result1 = service._stage5_forecast_and_rank(
+            candidates_pass1, date(2025, 6, 1), executor=executor
+        )
+        score_after_pass1 = result1[0].score
 
-    candidates_pass2 = [_make_candidate(initial_score)]
-    result2 = service._stage5_forecast_and_rank(candidates_pass2, date(2025, 6, 1))
-    score_after_pass2 = result2[0].score
+        candidates_pass2 = [_make_candidate(initial_score)]
+        result2 = service._stage5_forecast_and_rank(
+            candidates_pass2, date(2025, 6, 1), executor=executor
+        )
+        score_after_pass2 = result2[0].score
 
-    assert score_after_pass1 == score_after_pass2, (
-        f"Score after first pass ({score_after_pass1}) != second pass ({score_after_pass2}). "
-        "The forecast overlay may be compounding score adjustments."
-    )
-    assert score_after_pass1 != initial_score, (
-        "Score should have been adjusted by the forecast overlay"
-    )
+        assert score_after_pass1 == score_after_pass2, (
+            f"Score after first pass ({score_after_pass1}) != second pass ({score_after_pass2}). "
+            "The forecast overlay may be compounding score adjustments."
+        )
+        assert score_after_pass1 != initial_score, (
+            "Score should have been adjusted by the forecast overlay"
+        )
+    finally:
+        executor.shutdown(wait=True)

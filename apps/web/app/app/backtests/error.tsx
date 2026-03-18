@@ -1,12 +1,21 @@
 "use client";
 
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default function BacktestsError({ error, reset }: { error: Error; reset: () => void }) {
+export default function BacktestsError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  // TODO: Integrate Sentry or similar error tracking for production visibility.
+  useEffect(() => { console.error(error); }, [error]);
+
+  const rawMessage = error instanceof Error
+    ? error.message
+    : (typeof error === "object" && error !== null && "message" in error)
+      ? String((error as { message: unknown }).message)
+      : null;
   const displayMessage =
-    error != null && typeof error === "object" && "status" in error && typeof (error as any).message === "string" && (error as any).message.length < 200
-      ? error.message
+    rawMessage && rawMessage.length < 200
+      ? rawMessage
       : "An unexpected error occurred. Please try again or contact support.";
 
   return (
@@ -14,10 +23,10 @@ export default function BacktestsError({ error, reset }: { error: Error; reset: 
       <Card>
         <CardHeader>
           <CardTitle>Something went wrong</CardTitle>
-          <CardDescription>The backtest page encountered an unexpected error.</CardDescription>
+          <CardDescription>The backtests page encountered an unexpected error.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">{displayMessage}</p>
+          <p role="alert" className="text-sm text-muted-foreground">{displayMessage}</p>
           <Button onClick={reset}>Try again</Button>
         </CardContent>
       </Card>

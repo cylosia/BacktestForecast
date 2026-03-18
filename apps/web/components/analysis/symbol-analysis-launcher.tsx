@@ -9,6 +9,7 @@ import {
   fetchAnalysisStatus,
 } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
+import { TICKER_RE } from "@/lib/validation-constants";
 import { usePolling } from "@/hooks/use-polling";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
 import type {
@@ -233,7 +234,7 @@ export function SymbolAnalysisLauncher() {
   const getTokenRef = useRef(getToken);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
   const abortRef = useRef<AbortController | null>(null);
-  const lifecycleAbortRef = useRef<AbortController>(new AbortController());
+  const lifecycleAbortRef = useRef<AbortController | null>(null);
 
   const { status: pollingStatus, start: startPolling, cancel: cancelPolling } = usePolling<SymbolAnalysisSummary>({
     fetcher: async (signal) => {
@@ -244,6 +245,7 @@ export function SymbolAnalysisLauncher() {
     },
     onComplete: async (summary) => {
       if (summary.status !== "succeeded") return;
+      if (!lifecycleAbortRef.current) return;
       const signal = lifecycleAbortRef.current.signal;
       const token = await getTokenRef.current();
       if (signal.aborted) return;
@@ -286,20 +288,19 @@ export function SymbolAnalysisLauncher() {
   }, [pollingStatus]);
 
   useEffect(() => {
-    lifecycleAbortRef.current.abort();
     lifecycleAbortRef.current = new AbortController();
     return () => {
       abortRef.current?.abort();
-      lifecycleAbortRef.current.abort();
+      lifecycleAbortRef.current?.abort();
     };
   }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     const sym = symbol.trim().toUpperCase();
     if (!sym) return;
 
-    if (!/^[A-Z0-9./^]{1,16}$/.test(sym)) {
+    if (!TICKER_RE.test(sym)) {
       setPhase("error");
       setErrorMessage("Invalid symbol format.");
       return;
@@ -331,16 +332,16 @@ export function SymbolAnalysisLauncher() {
         analysisIdRef.current = created.id;
         startPolling();
       }
-    } catch (error) {
+    } catch (err) {
       if (controller.signal.aborted) return;
       const msg =
-        error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Analysis failed.";
-      const code = error instanceof ApiError ? error.code : undefined;
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Analysis failed.";
+      const code = err instanceof ApiError ? err.code : undefined;
       setPhase("error");
       setErrorMessage(msg);
       setErrorCode(code);
     }
-  }
+  }, [symbol, getToken, cancelPolling, startPolling]);
 
   const stageLabels: Record<string, string> = {
     pending: "Queued…",
@@ -370,7 +371,7 @@ export function SymbolAnalysisLauncher() {
                   placeholder="AAPL"
                   maxLength={16}
                   value={symbol}
-                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                  onChange={(e) => setSymbol(e.target.value.toUpperCase().replace(/[^A-Z0-9./^-]/g, ""))}
                   disabled={phase === "polling"}
                 />
               </div>
@@ -394,7 +395,7 @@ export function SymbolAnalysisLauncher() {
                   onClick={() => {
                     abortRef.current?.abort();
                     cancelPolling();
-                    lifecycleAbortRef.current.abort();
+                    lifecycleAbortRef.current?.abort();
                     lifecycleAbortRef.current = new AbortController();
                     setPhase("idle");
                     setStage("");

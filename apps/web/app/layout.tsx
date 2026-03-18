@@ -22,17 +22,14 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const headersList = await headers();
+  // NOTE: The nonce is propagated to ClerkProvider. For full CSP compliance
+  // with Next.js hydration scripts, ensure next.config.ts sets experimental
+  // headers or uses the nonce middleware pattern.
   const nonce = headersList.get("x-nonce") ?? undefined;
 
   return (
     <html lang="en" suppressHydrationWarning className={inter.className}>
       <body className="min-h-screen bg-background text-foreground antialiased">
-        <a
-          href="#main-content"
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:ring-2 focus:ring-ring"
-        >
-          Skip to content
-        </a>
         <ClerkProvider nonce={nonce}>{children}</ClerkProvider>
       </body>
     </html>

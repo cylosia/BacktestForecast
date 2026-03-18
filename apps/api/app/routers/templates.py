@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from typing import Generator
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -23,6 +25,16 @@ from backtestforecast.services.templates import BacktestTemplateService
 router = APIRouter(prefix="/templates", tags=["templates"])
 
 
+@contextmanager
+def _template_service(db: Session) -> Generator[BacktestTemplateService, None, None]:
+    svc = BacktestTemplateService(db)
+    try:
+        yield svc
+    finally:
+        if hasattr(svc, "close"):
+            svc.close()
+
+
 @router.get("", response_model=TemplateListResponse)
 def list_templates(
     user: User = Depends(get_current_user),
@@ -38,8 +50,8 @@ def list_templates(
         limit=settings.template_mutate_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestTemplateService(db)
-    return service.list_templates(user, limit=limit, offset=offset)
+    with _template_service(db) as service:
+        return service.list_templates(user, limit=limit, offset=offset)
 
 
 @router.post("", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
@@ -55,8 +67,8 @@ def create_template(
         limit=settings.template_mutate_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestTemplateService(db)
-    return service.create(user, payload)
+    with _template_service(db) as service:
+        return service.create(user, payload)
 
 
 @router.get("/{template_id}", response_model=TemplateResponse)
@@ -73,8 +85,8 @@ def get_template(
         limit=settings.template_mutate_rate_limit * 5,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestTemplateService(db)
-    return service.get_template(user, template_id)
+    with _template_service(db) as service:
+        return service.get_template(user, template_id)
 
 
 @router.patch("/{template_id}", response_model=TemplateResponse)
@@ -91,8 +103,8 @@ def update_template(
         limit=settings.template_mutate_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestTemplateService(db)
-    return service.update(user, template_id, payload)
+    with _template_service(db) as service:
+        return service.update(user, template_id, payload)
 
 
 @router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -108,5 +120,5 @@ def delete_template(
         limit=settings.template_mutate_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    service = BacktestTemplateService(db)
-    service.delete(user, template_id)
+    with _template_service(db) as service:
+        service.delete(user, template_id)

@@ -216,6 +216,10 @@ def _estimate_iv_for_strike(
     Returns None if no usable quote or IV estimate is available.
     When *iv_cache* is provided, results are memoized by (ticker, date)
     so repeated calls for the same contract skip the BSM bisection.
+
+    If the ``option_gateway`` exposes thread-safe ``get_iv``/``store_iv``
+    methods (MassiveOptionGateway does), those are preferred over direct
+    dict access for bounded LRU eviction and cache tracking.
     """
     from backtestforecast.backtests.rules import implied_volatility_from_price
 
@@ -228,12 +232,22 @@ def _estimate_iv_for_strike(
         return None
 
     cache_key = (contract.ticker, trade_date)
-    if iv_cache is not None and cache_key in iv_cache:
+
+    _get_iv = getattr(option_gateway, "get_iv", None)
+    _store_iv = getattr(option_gateway, "store_iv", None)
+
+    if _get_iv is not None:
+        found, cached_val = _get_iv(cache_key)
+        if found:
+            return cached_val
+    elif iv_cache is not None and cache_key in iv_cache:
         return iv_cache[cache_key]
 
     quote = option_gateway.get_quote(contract.ticker, trade_date)
     if quote is None or quote.mid_price <= 0:
-        if iv_cache is not None:
+        if _store_iv is not None:
+            _store_iv(cache_key, None)
+        elif iv_cache is not None:
             iv_cache[cache_key] = None
         return None
 
@@ -245,7 +259,9 @@ def _estimate_iv_for_strike(
         option_type=contract_type,
         risk_free_rate=risk_free_rate,
     )
-    if iv_cache is not None:
+    if _store_iv is not None:
+        _store_iv(cache_key, iv)
+    elif iv_cache is not None:
         iv_cache[cache_key] = iv
     return iv
 

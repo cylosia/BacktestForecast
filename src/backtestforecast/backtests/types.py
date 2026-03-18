@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal
 from typing import Any, Protocol, Sequence
 
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
@@ -29,9 +30,9 @@ class BacktestConfig:
     target_dte: int
     dte_tolerance_days: int
     max_holding_days: int
-    account_size: float
-    risk_per_trade_pct: float
-    commission_per_contract: float
+    account_size: Decimal
+    risk_per_trade_pct: Decimal
+    commission_per_contract: Decimal
     entry_rules: Sequence[EntryRule]
     risk_free_rate: float = 0.045
     slippage_pct: float = 0.0
@@ -54,8 +55,8 @@ class TradeResult:
     holding_period_days: int
     entry_underlying_close: float
     exit_underlying_close: float
-    entry_mid: float
-    exit_mid: float
+    entry_mid: float  # Per-contract value / 100 (e.g., $2.50 mid → 0.025). NOT the raw option mid-price.
+    exit_mid: float  # Per-contract value / 100 at exit. Same convention as entry_mid.
     gross_pnl: float
     net_pnl: float
     total_commissions: float
@@ -76,6 +77,7 @@ class EquityPointResult:
 @dataclass(frozen=True, slots=True)
 class BacktestSummary:
     trade_count: int
+    decided_trades: int
     win_rate: float
     total_roi_pct: float
     average_win_amount: float
@@ -117,6 +119,7 @@ class OpenOptionLeg:
     quantity_per_unit: int
     entry_mid: float
     last_mid: float
+    contract_multiplier: float = 100.0
 
 
 @dataclass(slots=True)
@@ -130,11 +133,18 @@ class OpenStockLeg:
 
 @dataclass(slots=True)
 class OpenMultiLegPosition:
+    """Open multi-leg position returned by strategy build_position.
+
+    Strategy implementations MUST set ``entry_index`` to the bar index (0-based)
+    at which the position was opened. This is used for trade attribution and
+    equity curve alignment.
+    """
+
     display_ticker: str
     strategy_type: str
     underlying_symbol: str
     entry_date: date
-    entry_index: int
+    entry_index: int  # MUST be set by strategy; bar index when position opened
     quantity: int
     dte_at_open: int
     option_legs: list[OpenOptionLeg]

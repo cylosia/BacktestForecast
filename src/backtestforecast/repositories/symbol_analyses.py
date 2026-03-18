@@ -22,11 +22,17 @@ class SymbolAnalysisRepository:
         stmt = select(SymbolAnalysis).where(
             SymbolAnalysis.user_id == user_id,
             SymbolAnalysis.idempotency_key == idempotency_key,
+            SymbolAnalysis.status.notin_(["failed", "cancelled"]),
         )
         return self.session.scalar(stmt)
 
-    def get_by_id(self, analysis_id: UUID) -> SymbolAnalysis | None:
+    def get_by_id_unfiltered(self, analysis_id: UUID) -> SymbolAnalysis | None:
+        """Fetch an analysis without ownership check.  Only use from worker/internal code."""
         return self.session.get(SymbolAnalysis, analysis_id)
+
+    def get_by_id(self, analysis_id: UUID, *, user_id: UUID) -> SymbolAnalysis | None:
+        stmt = select(SymbolAnalysis).where(SymbolAnalysis.id == analysis_id, SymbolAnalysis.user_id == user_id)
+        return self.session.scalar(stmt)
 
     def get_for_user(self, analysis_id: UUID, user_id: UUID) -> SymbolAnalysis | None:
         stmt = select(SymbolAnalysis).where(

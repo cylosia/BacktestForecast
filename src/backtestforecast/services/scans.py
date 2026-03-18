@@ -9,7 +9,11 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backtestforecast.observability.metrics import SCAN_CANDIDATE_FAILURES_TOTAL
+from backtestforecast.observability.metrics import (
+    SCAN_CANDIDATE_FAILURES_TOTAL,
+    SCAN_EXECUTION_DURATION_SECONDS,
+    _normalize_scan_failure_reason,
+)
 from backtestforecast.billing.entitlements import (
     ScannerAccessPolicy,
     ensure_forecasting_access,
@@ -17,7 +21,7 @@ from backtestforecast.billing.entitlements import (
     validate_strategy_access,
 )
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppError, NotFoundError, ValidationError
+from backtestforecast.errors import AppError, ConflictError, NotFoundError, ValidationError
 from backtestforecast.schemas.json_shapes import _FORECAST_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.utils.dates import market_date_today
 from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
@@ -35,9 +39,9 @@ from backtestforecast.scans.ranking import (
 )
 from backtestforecast.schemas.backtests import (
     BacktestSummaryResponse,
-    BacktestTradeResponse,
     CreateBacktestRunRequest,
     EquityCurvePointResponse,
+    TradeJsonResponse,
     RsiRule,
 )
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
@@ -60,8 +64,55 @@ from backtestforecast.services.serialization import (
 
 logger = structlog.get_logger("services.scans")
 
-# TODO: Make _FALLBACK_ENTRY_RULES configurable via Settings so operators can
-# adjust the default entry rules without a code change / redeployment.
+
+def _safe_validate_list(model_cls, items: list | None, field_name: str) -> list:
+    """Validate a list of JSON dicts against a Pydantic model, skipping malformed entries."""
+    if items is None:
+        return []
+    result = []
+    for item in items:
+        try:
+            result.append(model_cls.model_validate(item))
+        except Exception:
+            structlog.get_logger("services.scans").warning(
+                "scan.malformed_json_entry_skipped",
+                field=field_name,
+                item_keys=list(item.keys()) if isinstance(item, dict) else None,
+            )
+    return result
+
+
+def _safe_validate_json(data: Any, label: str, *, default: Any = None) -> Any:
+    """Return *data* unchanged, or *default* if data is not JSON-serializable."""
+    if data is None:
+        return default
+    try:
+        if isinstance(data, (dict, list)):
+            return data
+        return default
+    except Exception:
+        logger.warning(f"scan.corrupt_{label}_json", exc_info=True)
+        return default
+
+
+def _safe_validate_summary(data: dict) -> BacktestSummaryResponse:
+    """Validate summary JSON, returning a zeroed summary on failure."""
+    try:
+        return BacktestSummaryResponse.model_validate(data)
+    except Exception:
+        structlog.get_logger("services.scans").warning(
+            "scan.malformed_summary_json",
+            keys=list(data.keys()) if isinstance(data, dict) else None,
+        )
+        return BacktestSummaryResponse(
+            trade_count=0, total_commissions=Decimal("0"),
+            total_net_pnl=Decimal("0"), starting_equity=Decimal("0"),
+            ending_equity=Decimal("0"),
+        )
+
+
+# TODO: Make configurable via Settings.fallback_entry_rules_json once
+# the config surface is agreed upon with product.
 _FALLBACK_ENTRY_RULES: list[RsiRule] = [
     RsiRule(type="rsi", operator="lte", threshold=Decimal("40"), period=14),
 ]
@@ -107,8 +158,9 @@ class ScanService:
             user.subscription_current_period_end,
         )
         validate_strategy_access(policy, [strategy.value for strategy in payload.strategy_types])
-        if hasattr(policy, "max_recommendations") and policy.max_recommendations:
-            payload.max_recommendations = min(payload.max_recommendations, policy.max_recommendations)
+        effective_max_recommendations = payload.max_recommendations
+        if policy.max_recommendations:
+            effective_max_recommendations = min(payload.max_recommendations, policy.max_recommendations)
         self._validate_limits(policy, payload)
 
         candidate_count, compatibility_warnings = self._count_compatible_candidates(payload)
@@ -144,7 +196,7 @@ class ScanService:
             candidate_count=candidate_count,
             evaluated_candidate_count=0,
             recommendation_count=0,
-            request_snapshot_json=payload.model_dump(mode="json"),
+            request_snapshot_json={**payload.model_dump(mode="json"), "max_recommendations": effective_max_recommendations},
             warnings_json=compatibility_warnings,
             ranking_version="scanner-ranking-v1",
             engine_version="options-multileg-v2",
@@ -155,7 +207,12 @@ class ScanService:
         except IntegrityError:
             self.session.rollback()
             if payload.idempotency_key:
-                existing = self.repository.get_by_idempotency_key(user.id, payload.idempotency_key)
+                from sqlalchemy import select as sa_select
+                stmt = sa_select(ScannerJob).where(
+                    ScannerJob.user_id == user.id,
+                    ScannerJob.idempotency_key == payload.idempotency_key,
+                )
+                existing = self.session.scalar(stmt)
                 if existing is not None:
                     return existing
             recent = self.repository.find_recent_duplicate(
@@ -176,15 +233,48 @@ class ScanService:
             logger.info("scan.run_job_skipped", job_id=str(job_id), status=job.status)
             return job
 
+        user = self.session.get(User, job.user_id)
+        if user is None:
+            job.status = "failed"
+            job.error_code = "user_not_found"
+            job.error_message = "User account not found."
+            job.completed_at = datetime.now(UTC)
+            self.session.commit()
+            return job
+
+        try:
+            resolve_scanner_policy(
+                user.plan_tier, job.mode,
+                subscription_status=user.subscription_status,
+                subscription_current_period_end=user.subscription_current_period_end,
+            )
+        except AppError:
+            job.status = "failed"
+            job.error_code = "entitlement_revoked"
+            job.error_message = "Subscription no longer active."
+            job.completed_at = datetime.now(UTC)
+            self.session.commit()
+            return job
+
         payload = CreateScannerJobRequest.model_validate(job.request_snapshot_json)
-        job.status = "running"
-        job.started_at = datetime.now(UTC)
-        job.completed_at = None
-        job.error_code = None
-        job.error_message = None
-        job.recommendation_count = 0
-        job.evaluated_candidate_count = 0
+        from sqlalchemy import update as sa_update
+        rows_updated = self.session.execute(
+            sa_update(ScannerJob)
+            .where(ScannerJob.id == job.id, ScannerJob.status == "queued")
+            .values(
+                status="running",
+                started_at=datetime.now(UTC),
+                completed_at=None,
+                error_code=None,
+                error_message=None,
+                recommendation_count=0,
+                evaluated_candidate_count=0,
+            )
+        ).rowcount
         self.session.commit()
+        if rows_updated == 0:
+            logger.warning("scan.run_job_already_running", job_id=str(job.id))
+            return job
         self.session.refresh(job)
 
         try:
@@ -209,6 +299,10 @@ class ScanService:
                 self.session.rollback()
             raise
 
+    # _CANDIDATE_TIMEOUT_SECONDS must be shorter than the DB statement_timeout
+    # configured for worker sessions (currently 300s via create_worker_session).
+    # If this value exceeds the statement_timeout, individual candidate backtests
+    # will fail with StatementTimeout before the scan-level timeout fires.
     _CANDIDATE_TIMEOUT_SECONDS = 120
     _MAX_CANDIDATES_IN_MEMORY = 2000
 
@@ -244,7 +338,7 @@ class ScanService:
 
         import random
         symbols = list(payload.symbols)
-        random.shuffle(symbols)
+        random.Random(job.id.int).shuffle(symbols)
 
         for symbol in symbols:
             if _scan_timed_out or _candidate_cap_hit:
@@ -323,6 +417,7 @@ class ScanService:
                                     self._serialize_trade(trade)
                                     for trade in execution_result.trades[:50]
                                 ],
+                                "trades_truncated": len(execution_result.trades) > 50,
                                 "equity_curve": self._downsample_equity_curve(
                                     execution_result.equity_curve
                                 ),
@@ -346,7 +441,9 @@ class ScanService:
                         )
                     except Exception:  # Intentional broad catch: individual candidate failures
                         # must not abort the entire scan. Logged and appended as a warning.
-                        SCAN_CANDIDATE_FAILURES_TOTAL.labels(reason="internal").inc()
+                        SCAN_CANDIDATE_FAILURES_TOTAL.labels(
+                            reason=_normalize_scan_failure_reason("internal")
+                        ).inc()
                         logger.warning(
                             "scan.candidate_failed",
                             symbol=symbol,
@@ -413,22 +510,34 @@ class ScanService:
                 )
             )
 
-        job.recommendation_count = len(selected)
-        job.status = "succeeded"
-        job.completed_at = datetime.now(UTC)
-        job.warnings_json = warnings
+        from sqlalchemy import update as sa_update
+        SCAN_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - scan_start)
+        success_rows = self.session.execute(
+            sa_update(ScannerJob)
+            .where(ScannerJob.id == job.id, ScannerJob.status == "running")
+            .values(
+                status="succeeded",
+                recommendation_count=len(selected),
+                completed_at=datetime.now(UTC),
+                warnings_json=warnings,
+                updated_at=datetime.now(UTC),
+            )
+        )
         self.session.commit()
+        if success_rows.rowcount == 0:
+            logger.warning("scan.success_overwrite_prevented", job_id=str(job.id))
         self.session.refresh(job)
         return job
 
     def list_jobs(self, user: User, limit: int = 50, offset: int = 0) -> ScannerJobListResponse:
-        jobs = self.repository.list_for_user(user.id, limit=limit, offset=offset)
+        effective_limit = min(limit, 200)
+        jobs = self.repository.list_for_user(user.id, limit=effective_limit, offset=offset)
         total = self.repository.count_for_user(user.id)
         return ScannerJobListResponse(
             items=[self._to_job_response(job) for job in jobs],
             total=total,
             offset=offset,
-            limit=limit,
+            limit=effective_limit,
         )
 
     def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
@@ -437,13 +546,29 @@ class ScanService:
             raise NotFoundError("Scanner job not found.")
         return self._to_job_response(job)
 
+    def delete_for_user(self, job_id: UUID, user_id: UUID) -> None:
+        job = self.repository.get_for_user(job_id, user_id)
+        if job is None:
+            raise NotFoundError("Scanner job not found.")
+        if job.status in ("queued", "running"):
+            raise ConflictError(
+                "Cannot delete a job that is currently queued or running. Cancel it first."
+            )
+        self.session.delete(job)
+        self.session.commit()
+
     def get_recommendations(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
     ) -> ScannerRecommendationListResponse:
         job = self.repository.get_for_user(job_id, user.id, include_recommendations=False)
         if job is None:
             raise NotFoundError("Scanner job not found.")
-        from sqlalchemy import select
+        from sqlalchemy import func, select
+        total = self.session.scalar(
+            select(func.count())
+            .select_from(ScannerRecommendation)
+            .where(ScannerRecommendation.scanner_job_id == job.id)
+        ) or 0
         stmt = (
             select(ScannerRecommendation)
             .where(ScannerRecommendation.scanner_job_id == job.id)
@@ -453,7 +578,10 @@ class ScanService:
         )
         recs = list(self.session.scalars(stmt))
         return ScannerRecommendationListResponse(
-            items=[self._to_recommendation_response(r) for r in recs]
+            items=[self._to_recommendation_response(r) for r in recs],
+            total=total,
+            offset=offset,
+            limit=limit,
         )
 
     def create_scheduled_refresh_jobs(self, limit: int = 25) -> list[ScannerJob]:
@@ -463,12 +591,18 @@ class ScanService:
             key = (source.user_id, source.request_hash, source.mode)
             latest_sources.setdefault(key, source)
 
-        user_cache: dict[UUID, User | None] = {}
+        from sqlalchemy import select
+
+        sources_to_process = list(latest_sources.values())[:limit]
+        user_ids = {source.user_id for source in sources_to_process}
+        users = self.session.scalars(select(User).where(User.id.in_(user_ids))).all()
+        user_cache = {u.id: u for u in users}
+
+        _MAX_REFRESH_PER_USER = 5
         refresh_day = market_date_today().isoformat()
-        for source in list(latest_sources.values())[:limit]:
-            if source.user_id not in user_cache:
-                user_cache[source.user_id] = self.session.get(User, source.user_id)
-            owner = user_cache[source.user_id]
+        user_refresh_counts: dict[UUID, int] = {}
+        for source in sources_to_process:
+            owner = user_cache.get(source.user_id)
             if owner is None:
                 continue
             try:
@@ -493,6 +627,14 @@ class ScanService:
                     "refresh.skipped_unexpected_error",
                     user_id=str(source.user_id),
                     mode=source.mode,
+                )
+                continue
+            user_count = user_refresh_counts.get(source.user_id, 0)
+            if user_count >= _MAX_REFRESH_PER_USER:
+                logger.info(
+                    "refresh.skipped_per_user_limit",
+                    user_id=str(source.user_id),
+                    limit=_MAX_REFRESH_PER_USER,
                 )
                 continue
             refresh_key = f"{source.user_id}:{source.request_hash}:{refresh_day}:{source.mode}"
@@ -522,6 +664,7 @@ class ScanService:
                 nested.commit()
                 self.session.refresh(job)
                 created_jobs.append(job)
+                user_refresh_counts[source.user_id] = user_count + 1
             except IntegrityError:
                 nested.rollback()
                 continue
@@ -578,17 +721,17 @@ class ScanService:
             ),
         )
 
-    def _validate_limits(self, policy: ScannerAccessPolicy, payload: CreateScannerJobRequest) -> None:
+    def _validate_limits(
+        self,
+        policy: ScannerAccessPolicy,
+        payload: CreateScannerJobRequest,
+    ) -> None:
         if len(payload.symbols) > policy.max_symbols:
             raise ValidationError(f"The selected scanner mode allows at most {policy.max_symbols} symbols.")
         if len(payload.strategy_types) > policy.max_strategies:
             raise ValidationError(f"The selected scanner mode allows at most {policy.max_strategies} strategies.")
         if len(payload.rule_sets) > policy.max_rule_sets:
             raise ValidationError(f"The selected scanner mode allows at most {policy.max_rule_sets} rule sets.")
-        if payload.max_recommendations > policy.max_recommendations:
-            raise ValidationError(
-                f"The selected scanner mode allows at most {policy.max_recommendations} recommendations."
-            )
 
     def _count_compatible_candidates(self, payload: CreateScannerJobRequest) -> tuple[int, list[dict[str, Any]]]:
         count = 0
@@ -651,27 +794,36 @@ class ScanService:
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        max_workers = min(len(payload.symbols), 8)
+        settings = get_settings()
+        max_workers = min(len(payload.symbols), getattr(settings, "prefetch_max_workers", 8))
         pool = ThreadPoolExecutor(max_workers=max_workers)
         try:
             futures = {pool.submit(_fetch_one, sym): sym for sym in payload.symbols}
-            for future in as_completed(futures, timeout=300):
-                try:
-                    sym, bundle, warning = future.result()
-                except Exception:
-                    sym = futures[future]
-                    logger.warning("scan.bundle_fetch_failed", symbol=sym, exc_info=True)
-                    warnings.append({
-                        "code": "symbol_data_unavailable",
-                        "message": f"{sym} could not be loaded (unexpected error)",
-                    })
-                    continue
-                if bundle is not None:
-                    bundles[sym] = bundle
-                if warning is not None:
-                    warnings.append(warning)
+            scan_timeout = settings.scan_timeout_seconds
+            try:
+                for future in as_completed(futures, timeout=min(300, scan_timeout)):
+                    try:
+                        sym, bundle, warning = future.result()
+                    except Exception:
+                        sym = futures[future]
+                        logger.warning("scan.bundle_fetch_failed", symbol=sym, exc_info=True)
+                        warnings.append({
+                            "code": "symbol_data_unavailable",
+                            "message": f"{sym} could not be loaded (unexpected error)",
+                        })
+                        continue
+                    if bundle is not None:
+                        bundles[sym] = bundle
+                    if warning is not None:
+                        warnings.append(warning)
+            except TimeoutError:
+                logger.warning("scan.bundle_prefetch_timeout", timeout=scan_timeout)
+                warnings.append({
+                    "code": "prefetch_timeout",
+                    "message": f"Bundle prefetch timed out after {scan_timeout}s; some symbols may be missing.",
+                })
         finally:
-            pool.shutdown(wait=True, cancel_futures=True)
+            pool.shutdown(wait=False, cancel_futures=True)
         return bundles
 
     def _batch_historical_performance(
@@ -690,7 +842,11 @@ class ScanService:
         if not keys:
             return {}
 
-        raw = self.repository.batch_list_historical_recommendations(keys=keys, before=before)
+        _BATCH_CHUNK_SIZE = 500
+        raw: dict = {}
+        for i in range(0, len(keys), _BATCH_CHUNK_SIZE):
+            chunk = keys[i:i + _BATCH_CHUNK_SIZE]
+            raw.update(self.repository.batch_list_historical_recommendations(keys=chunk, before=before))
         result: dict[tuple[str, str, str], Any] = {}
         for key, rows in raw.items():
             observations: list[HistoricalObservation] = []
@@ -756,7 +912,7 @@ class ScanService:
             )
         except (ValueError, LookupError):
             from backtestforecast.observability.metrics import FORECAST_FALLBACK_TOTAL
-            FORECAST_FALLBACK_TOTAL.labels(symbol=symbol).inc()
+            FORECAST_FALLBACK_TOTAL.inc()
             logger.info("forecast.zero_analog_fallback", symbol=symbol, horizon_days=horizon_days)
             fallback_date = bars[-1].trade_date if bars else market_date_today()
             return HistoricalAnalogForecastResponse(
@@ -833,11 +989,12 @@ class ScanService:
             strategy_type=recommendation.strategy_type,
             rule_set_name=recommendation.rule_set_name,
             request_snapshot=recommendation.request_snapshot_json,
-            summary=BacktestSummaryResponse.model_validate(recommendation.summary_json),
+            summary=_safe_validate_summary(recommendation.summary_json),
             warnings=recommendation.warnings_json,
-            historical_performance=recommendation.historical_performance_json,
-            forecast=recommendation.forecast_json,
-            ranking_breakdown=recommendation.ranking_features_json,
-            trades=[BacktestTradeResponse.model_validate(item) for item in recommendation.trades_json],
-            equity_curve=[EquityCurvePointResponse.model_validate(item) for item in recommendation.equity_curve_json],
+            historical_performance=_safe_validate_json(recommendation.historical_performance_json, "historical_performance", default={}),
+            forecast=_safe_validate_json(recommendation.forecast_json, "forecast"),
+            ranking_breakdown=_safe_validate_json(recommendation.ranking_features_json, "ranking_breakdown", default={}),
+            trades=_safe_validate_list(TradeJsonResponse, recommendation.trades_json, "trades"),
+            equity_curve=_safe_validate_list(EquityCurvePointResponse, recommendation.equity_curve_json, "equity_curve"),
+            trades_truncated=len(recommendation.trades_json or []) >= 50,
         )
