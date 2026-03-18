@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -11,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from backtestforecast.config import get_settings
 from backtestforecast.schemas.common import PlanTier, sanitize_error_message
 
-SYMBOL_ALLOWED_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^-]{0,15}$")
 
 
 class StrategyType(str, Enum):
@@ -362,10 +363,10 @@ class SpreadWidthConfig(BaseModel):
         if self.mode == SpreadWidthMode.STRIKE_STEPS:
             if self.value < 1 or self.value > 20:
                 raise ValueError("strike_steps width must be between 1 and 20")
-        if self.mode == SpreadWidthMode.DOLLAR_WIDTH:
+        elif self.mode == SpreadWidthMode.DOLLAR_WIDTH:
             if self.value < Decimal("0.5") or self.value > Decimal("100"):
                 raise ValueError("dollar_width must be between 0.50 and 100")
-        if self.mode == SpreadWidthMode.PCT_WIDTH:
+        elif self.mode == SpreadWidthMode.PCT_WIDTH:
             if self.value < Decimal("0.5") or self.value > Decimal("30"):
                 raise ValueError("pct_width must be between 0.5 and 30")
         return self
@@ -390,11 +391,13 @@ class StrategyOverrides(BaseModel):
 
 
 class CreateBacktestRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     symbol: str = Field(min_length=1, max_length=16)
     strategy_type: StrategyType
     start_date: date
     end_date: date
-    target_dte: int = Field(ge=0, le=365)
+    target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
     account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
@@ -420,10 +423,8 @@ class CreateBacktestRunRequest(BaseModel):
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
         normalized = value.strip().upper()
-        if not normalized or any(char not in SYMBOL_ALLOWED_CHARS for char in normalized):
-            raise ValueError("symbol must contain only letters, digits, '.', or '-'")
-        if not normalized[0].isalpha():
-            raise ValueError("symbol must start with a letter")
+        if not SYMBOL_ALLOWED_CHARS.match(normalized):
+            raise ValueError("symbol must contain only letters, digits, '.', '/', '^', or '-'")
         return normalized
 
     @model_validator(mode="after")
@@ -590,12 +591,14 @@ class BacktestRunDetailResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None
-    warnings: list[dict[str, Any]]
+    warnings: list[dict[str, Any]] = Field(alias="warnings_json")
     error_code: str | None = None
     error_message: str | None = None
     summary: BacktestSummaryResponse
     trades: list[BacktestTradeResponse]
     equity_curve: list[EquityCurvePointResponse]
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 

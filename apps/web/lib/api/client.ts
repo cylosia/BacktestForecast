@@ -158,6 +158,9 @@ export async function fetchScannerRecommendations(
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token);
 }
 
+// TODO: These types should be generated from the OpenAPI schema via
+// packages/api-client. Manually kept in sync until sweep endpoints are
+// added to the schema generation pipeline.
 export interface SweepJobResponse {
   id: string;
   status: string;

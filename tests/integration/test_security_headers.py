@@ -41,6 +41,9 @@ def test_cors_preflight_returns_allowed_methods(client):
 @pytest.mark.parametrize("bad_host", ["evil.com", "attacker.io:8000"])
 def test_host_header_rejection(bad_host):
     """Requests with an untrusted Host header should be rejected by TrustedHostMiddleware."""
+    # Deliberately creates its own TestClient instead of using the shared `client`
+    # fixture because TrustedHostMiddleware checks the Host header derived from
+    # base_url, and the shared fixture uses http://localhost which is trusted.
     from fastapi.testclient import TestClient
     from apps.api.app.main import app
 

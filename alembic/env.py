@@ -20,6 +20,9 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
+    # compare_server_default=True causes autogenerate to detect differences
+    # between model server_default values and the actual DB column defaults.
+    # This catches drifts like missing or changed DEFAULT clauses.
     context.configure(
         url=settings.database_url,
         target_metadata=target_metadata,

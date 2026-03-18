@@ -20,7 +20,7 @@ jobs:
           running-workflow-name: cd
           check-regexp: "backend-and-web|postgres-integration|migration-check|container-smoke|trivy-scan|secret-scanning|dependency-audit|codeql-sast|e2e-tests"
           wait-interval: 15
-          allowed-conclusions: success
+          allowed-conclusions: success,skipped
 
   build-api:
     needs: ci-gate

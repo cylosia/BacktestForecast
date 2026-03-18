@@ -136,5 +136,8 @@ def get_pool_stats() -> dict[str, int]:
     }
     from sqlalchemy.pool import QueuePool
     if isinstance(pool, QueuePool):
-        stats["max_overflow"] = pool._max_overflow  # type: ignore[attr-defined]
+        try:
+            stats["max_overflow"] = pool._max_overflow
+        except AttributeError:
+            stats["max_overflow"] = "unknown"
     return stats

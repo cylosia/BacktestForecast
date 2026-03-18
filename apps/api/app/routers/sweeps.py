@@ -37,7 +37,7 @@ def list_sweeps(
     get_rate_limiter().check(
         bucket="sweeps:read",
         actor_key=str(user.id),
-        limit=settings.scan_read_rate_limit,
+        limit=settings.sweep_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with SweepService(db) as service:
@@ -55,11 +55,11 @@ def create_sweep(
 ) -> SweepJobResponse:
     if not settings.feature_sweeps_enabled:
         from backtestforecast.errors import FeatureLockedError
-        raise FeatureLockedError("Sweeps are temporarily disabled.")
+        raise FeatureLockedError("Sweeps are temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="sweeps:create",
         actor_key=str(user.id),
-        limit=settings.scan_create_rate_limit,
+        limit=settings.sweep_create_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with SweepService(db) as service:
@@ -95,7 +95,7 @@ def get_sweep(
     get_rate_limiter().check(
         bucket="sweeps:read",
         actor_key=str(user.id),
-        limit=settings.scan_read_rate_limit,
+        limit=settings.sweep_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with SweepService(db) as service:
@@ -114,7 +114,7 @@ def get_sweep_results(
     get_rate_limiter().check(
         bucket="sweeps:read",
         actor_key=str(user.id),
-        limit=settings.scan_read_rate_limit,
+        limit=settings.sweep_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with SweepService(db) as service:

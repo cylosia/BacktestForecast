@@ -22,7 +22,7 @@ class TemplateConfig(BaseModel):
     """The reusable portion of a backtest configuration — everything except symbol and dates."""
 
     strategy_type: StrategyType
-    target_dte: int = Field(ge=0, le=365)
+    target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
     account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
@@ -35,6 +35,8 @@ class TemplateConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_template_rules(self) -> "TemplateConfig":
+        if self.dte_tolerance_days >= self.target_dte:
+            raise ValueError("dte_tolerance_days must be less than target_dte")
         if self.entry_rules:
             validate_entry_rule_collection(self.entry_rules)
         return self

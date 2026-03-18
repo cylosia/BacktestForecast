@@ -164,7 +164,11 @@ def _fallback_persist_status(
                 )
                 .values(status=status)
             )
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
             if result.rowcount == 0:
                 logger.info(
                     "events.fallback_skipped_terminal",

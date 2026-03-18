@@ -43,6 +43,8 @@ class RuleSetDefinition(BaseModel):
 
 
 class CreateScannerJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, max_length=120)
     mode: ScannerMode = Field(default=ScannerMode.BASIC)
     symbols: list[str] = Field(min_length=1, max_length=25)
@@ -50,7 +52,7 @@ class CreateScannerJobRequest(BaseModel):
     rule_sets: list[RuleSetDefinition] = Field(min_length=1, max_length=10)
     start_date: date
     end_date: date
-    target_dte: int = Field(ge=0, le=365)
+    target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
     account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
@@ -78,10 +80,8 @@ class CreateScannerJobRequest(BaseModel):
             candidate = symbol.strip().upper()
             if not candidate:
                 continue
-            if any(char not in SYMBOL_ALLOWED_CHARS for char in candidate):
-                raise ValueError("symbols must contain only letters, digits, '.', or '-'")
-            if not candidate[0].isalpha():
-                raise ValueError("symbols must start with a letter")
+            if not SYMBOL_ALLOWED_CHARS.match(candidate):
+                raise ValueError("symbols must contain only letters, digits, '.', '/', '^', or '-'")
             if candidate in seen:
                 continue
             seen.add(candidate)

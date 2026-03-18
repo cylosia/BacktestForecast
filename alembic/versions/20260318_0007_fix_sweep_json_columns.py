@@ -54,11 +54,13 @@ def upgrade() -> None:
 
     op.execute(_TRIGGER_FN)
 
+    op.execute("DROP TRIGGER IF EXISTS trg_sweep_jobs_updated_at ON sweep_jobs")
     op.execute(
         "CREATE TRIGGER trg_sweep_jobs_updated_at "
         "BEFORE UPDATE ON sweep_jobs "
         "FOR EACH ROW EXECUTE FUNCTION set_updated_at()"
     )
+    op.execute("DROP TRIGGER IF EXISTS trg_sweep_results_updated_at ON sweep_results")
     op.execute(
         "CREATE TRIGGER trg_sweep_results_updated_at "
         "BEFORE UPDATE ON sweep_results "
@@ -73,6 +75,7 @@ def downgrade() -> None:
 
     op.execute("DROP TRIGGER IF EXISTS trg_sweep_results_updated_at ON sweep_results")
     op.execute("DROP TRIGGER IF EXISTS trg_sweep_jobs_updated_at ON sweep_jobs")
+    op.execute("DROP FUNCTION IF EXISTS set_updated_at()")
 
     for col in _SWEEP_RESULTS_JSON_COLS:
         op.execute(

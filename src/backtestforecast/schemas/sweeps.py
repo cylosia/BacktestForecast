@@ -41,10 +41,10 @@ class WidthGridItem(BaseModel):
         if self.mode == SpreadWidthMode.STRIKE_STEPS:
             if self.value < 1 or self.value > 20:
                 raise ValueError("strike_steps width must be between 1 and 20")
-        if self.mode == SpreadWidthMode.DOLLAR_WIDTH:
+        elif self.mode == SpreadWidthMode.DOLLAR_WIDTH:
             if self.value < Decimal("0.5") or self.value > Decimal("100"):
                 raise ValueError("dollar_width must be between 0.50 and 100")
-        if self.mode == SpreadWidthMode.PCT_WIDTH:
+        elif self.mode == SpreadWidthMode.PCT_WIDTH:
             if self.value < Decimal("0.5") or self.value > Decimal("30"):
                 raise ValueError("pct_width must be between 0.5 and 30")
         return self
@@ -79,12 +79,14 @@ class GeneticSweepConfig(BaseModel):
 
 
 class CreateSweepRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mode: SweepMode = Field(default=SweepMode.GRID)
     symbol: str = Field(min_length=1, max_length=16)
     strategy_types: list[StrategyType] = Field(min_length=1, max_length=14)
     start_date: date
     end_date: date
-    target_dte: int = Field(ge=0, le=365)
+    target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
     account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
@@ -103,10 +105,8 @@ class CreateSweepRequest(BaseModel):
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
         normalized = value.strip().upper()
-        if not normalized or any(char not in SYMBOL_ALLOWED_CHARS for char in normalized):
-            raise ValueError("symbol must contain only letters, digits, '.', or '-'")
-        if not normalized[0].isalpha():
-            raise ValueError("symbol must start with a letter")
+        if not SYMBOL_ALLOWED_CHARS.match(normalized):
+            raise ValueError("symbol must contain only letters, digits, '.', '/', '^', or '-'")
         return normalized
 
     @model_validator(mode="after")
@@ -142,6 +142,10 @@ class CreateSweepRequest(BaseModel):
 SweepJobStatus = RunStatus
 
 
+# Fields like delta, width_mode, width_value, entry_rule_set_name are
+# extracted from parameter_snapshot_json in the service layer — they do
+# not exist as ORM columns. Changes to the JSON shape must be reflected
+# here and in SweepService._build_result_response.
 class SweepResultResponse(BaseModel):
     id: UUID
     rank: int

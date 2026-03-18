@@ -49,6 +49,11 @@ export function useSSE<T>({
   useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
   useEffect(() => { isTerminalRef.current = isTerminal; }, [isTerminal]);
 
+  const { status: pollStatus, start: startPolling, cancel: cancelPolling } = usePolling<T>({
+    ...pollingFallback,
+    autoStart: false,
+  });
+
   const cancel = useCallback(() => {
     if (esRef.current) {
       esRef.current.close();
@@ -56,11 +61,6 @@ export function useSSE<T>({
     }
     cancelPolling();
   }, [cancelPolling]);
-
-  const { status: pollStatus, start: startPolling, cancel: cancelPolling } = usePolling<T>({
-    ...pollingFallback,
-    autoStart: false,
-  });
 
   useEffect(() => {
     if (!autoStart) return;

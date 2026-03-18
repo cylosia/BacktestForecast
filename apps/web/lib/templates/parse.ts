@@ -36,11 +36,6 @@ export function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
   );
 }
 
-export interface TemplateParseResult {
-  values: Partial<BacktestFormValues>;
-  skippedRuleCount: number;
-}
-
 export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> | null {
   const config = template.config_json;
   if (!isValidTemplateConfig(config)) return null;

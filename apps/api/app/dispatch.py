@@ -12,7 +12,6 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from kombu.exceptions import KombuError, OperationalError as KombuOperationalError
 from prometheus_client import Counter
 from sqlalchemy.orm import Session
 
@@ -62,6 +61,11 @@ def dispatch_celery_task(
     if traceparent:
         headers["traceparent"] = traceparent
 
+    # Commit-first pattern: persist celery_task_id before sending the task so
+    # the worker never processes a job whose ID isn't in the DB. The tradeoff
+    # is a brief window where the job is committed but the task hasn't been
+    # sent yet (stuck-job). The reaper/stale-job recovery process handles this
+    # by marking jobs that stay "queued" with a celery_task_id as failed.
     task_id = str(uuid4())
     job.celery_task_id = task_id
     try:
@@ -84,7 +88,7 @@ def dispatch_celery_task(
             headers=headers if headers else None,
             task_id=task_id,
         )
-    except (KombuError, KombuOperationalError, Exception):
+    except Exception:
         logger.exception(f"{log_event}.enqueue_failed", celery_task_id=task_id, **task_kwargs)
         job.status = "failed"
         job.error_code = "enqueue_failed"

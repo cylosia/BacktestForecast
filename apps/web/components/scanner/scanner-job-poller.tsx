@@ -81,7 +81,7 @@ export function ScannerJobPoller({
           <div className="h-2 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
             <div
               className="h-full rounded-full bg-primary transition-all duration-500"
-              style={{ width: `${pct}%` }}
+              style={{ width: `${Math.min(pct, 100)}%` }}
             />
           </div>
         </CardContent>

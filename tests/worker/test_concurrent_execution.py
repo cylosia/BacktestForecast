@@ -2,17 +2,20 @@
 
 Verifies that _validate_task_ownership correctly serialises competing
 Celery deliveries so only one worker processes a given job.
+
+Requires Redis for Celery app initialisation — marked as integration.
 """
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+
+pytestmark = pytest.mark.integration
 
 from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, User

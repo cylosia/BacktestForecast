@@ -16,11 +16,12 @@ class CreateExportRequest(BaseModel):
 
     model_config = {
         "populate_by_name": True,
+        "extra": "forbid",
     }
 
 
 class ExportJobResponse(BaseModel):
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
     id: UUID
     run_id: UUID = Field(alias="backtest_run_id")

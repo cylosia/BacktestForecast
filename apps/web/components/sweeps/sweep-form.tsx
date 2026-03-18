@@ -42,7 +42,6 @@ interface FormState {
   commission: string;
   slippage: string;
   deltas: string;
-  strategies: string[];
   numLegs: number;
   populationSize: string;
   maxGenerations: string;
@@ -73,7 +72,6 @@ export function SweepForm() {
     commission: "0.65",
     slippage: "0",
     deltas: "16, 20, 25, 30, 35, 40, 45",
-    strategies: [],
     numLegs: 2,
     populationSize: "100",
     maxGenerations: "30",

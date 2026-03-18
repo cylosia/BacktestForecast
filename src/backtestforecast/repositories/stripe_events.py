@@ -22,8 +22,10 @@ class StripeEventRepository:
         self.session = session
 
     def _recover_stale_claim(self, stripe_event_id: str) -> bool:
-        """Reset a stale claim (older than 5 minutes) to allow reprocessing.
+        """Reset a stale *in-flight* claim (older than 5 minutes) to allow reprocessing.
 
+        Only targets events with ``idempotency_status='processing'`` — never
+        ``'processed'`` (success) or ``'error'`` (permanent failure).
         Returns True if a stale claim was recovered.
         """
         cutoff = datetime.now(timezone.utc) - STALE_CLAIM_TTL
@@ -31,7 +33,7 @@ class StripeEventRepository:
             update(StripeEvent)
             .where(
                 StripeEvent.stripe_event_id == stripe_event_id,
-                StripeEvent.idempotency_status == "processed",
+                StripeEvent.idempotency_status == "processing",
                 StripeEvent.created_at < cutoff,
             )
             .values(idempotency_status="error", error_detail="stale claim recovered")
@@ -40,11 +42,6 @@ class StripeEventRepository:
             logger.warning(
                 "stripe_event.stale_claim_recovered",
                 stripe_event_id=stripe_event_id,
-            )
-            self.session.execute(
-                update(StripeEvent)
-                .where(StripeEvent.stripe_event_id == stripe_event_id)
-                .values(idempotency_status="error")
             )
             self.session.flush()
             return True

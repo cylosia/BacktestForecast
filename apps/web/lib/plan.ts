@@ -1,3 +1,5 @@
+// Canonical PlanTier is in @backtestforecast/api-client. This local definition
+// exists for modules that cannot import from the package.
 export type PlanTier = "free" | "pro" | "premium";
 
 export function planLabel(planTier: PlanTier | string): string {

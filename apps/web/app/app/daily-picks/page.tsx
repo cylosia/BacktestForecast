@@ -60,7 +60,7 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
         </div>
 
         <div className="mt-3">
-          <ScoreBar score={pick.score} max={maxScore} />
+          <ScoreBar score={Math.max(0, pick.score)} max={maxScore} />
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">

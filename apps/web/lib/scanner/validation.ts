@@ -15,7 +15,7 @@ export interface ScannerFormInput {
   maxRecs: string;
 }
 
-const TICKER_RE = /^[A-Z0-9.\/^-]{1,16}$/;
+const TICKER_RE = /^[A-Z][A-Z0-9./^-]{0,15}$/;
 
 export function parseSymbols(text: string): string[] {
   return text

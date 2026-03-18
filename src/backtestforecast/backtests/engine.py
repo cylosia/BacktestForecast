@@ -489,6 +489,9 @@ class OptionsBacktestEngine:
         stop_loss_pct: float | None = None,
         current_bar_index: int | None = None,
     ) -> tuple[bool, str]:
+        # NOTE: The wheel strategy has its own exit logic (assignment-based
+        # rolling) that does not go through this method. See
+        # backtests/strategies/wheel.py for that path.
         if position.option_legs:
             exit_date = position.scheduled_exit_date or max(leg.expiration_date for leg in position.option_legs)
         else:

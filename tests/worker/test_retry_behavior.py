@@ -2,10 +2,15 @@
 
 Verifies that worker tasks are configured with appropriate retry
 settings for transient errors.
+
+Requires Redis for Celery app initialisation — marked as integration.
 """
 from __future__ import annotations
 
 import inspect
+import pytest
+
+pytestmark = pytest.mark.integration
 
 
 def test_run_backtest_has_retry_config():

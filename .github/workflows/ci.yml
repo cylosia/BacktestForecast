@@ -514,6 +514,11 @@ jobs:
             docker exec ci-postgres pg_isready -U smoke -d smoke_test && break
             sleep 1
           done
+          docker run -d --name ci-redis redis:7-alpine
+          for i in $(seq 1 10); do
+            docker exec ci-redis redis-cli ping | grep -q PONG && break
+            sleep 1
+          done
           docker run -d --name ci-worker --network host \
             -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke_test \
             -e REDIS_URL=redis://localhost:6379/0 \
@@ -528,4 +533,5 @@ jobs:
           fi
           echo "Worker container is running"
           docker stop ci-worker
+          docker stop ci-redis
           docker stop ci-postgres

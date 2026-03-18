@@ -914,6 +914,22 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
         if sj is None:
             CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
             return {"status": "failed", "job_id": job_id, "error_code": "not_found"}
+        user = session.get(User, sj.user_id)
+        if user is None:
+            sj.status = "failed"
+            sj.error_code = "user_not_found"
+            sj.error_message = "User account not found."
+            session.commit()
+            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "user_not_found"})
+            return {"status": "failed", "job_id": job_id, "error_code": "user_not_found"}
+        policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        if policy.monthly_backtest_quota is not None and policy.monthly_backtest_quota <= 0:
+            sj.status = "failed"
+            sj.error_code = "entitlement_revoked"
+            sj.error_message = "Your plan no longer supports this operation."
+            session.commit()
+            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         publish_job_status("sweep", UUID(job_id), "running")
         service = SweepService(session)
         try:
@@ -959,6 +975,7 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                 sweep_obj = session.get(SweepJobModel, UUID(job_id))
                 if sweep_obj is not None and sweep_obj.status in ("running", "failed"):
                     sweep_obj.status = "queued"
+                    sweep_obj.celery_task_id = None
                     sweep_obj.started_at = None
                     sweep_obj.error_code = None
                     sweep_obj.error_message = None

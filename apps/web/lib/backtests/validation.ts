@@ -79,8 +79,8 @@ export function validateBacktestForm(values: BacktestFormValues): {
     errors.symbol = "Symbol is required.";
   } else if (normalizedSymbol.length > 16) {
     errors.symbol = "Symbol must be 16 characters or fewer.";
-  } else if (!/^[A-Z0-9./^]{1,16}$/.test(normalizedSymbol)) {
-    errors.symbol = "Symbol may only contain letters, digits, dots, slashes, or ^.";
+  } else if (!/^[A-Z][A-Z0-9./^-]{0,15}$/.test(normalizedSymbol)) {
+    errors.symbol = "Symbol must start with a letter and may contain letters, digits, dots, slashes, ^ or -.";
   }
 
   const datePattern = /^\d{4}-\d{2}-\d{2}$/;

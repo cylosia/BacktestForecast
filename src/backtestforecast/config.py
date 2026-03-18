@@ -61,7 +61,10 @@ class Settings(BaseSettings):
     earnings_api_key: str | None = None
 
     option_cache_enabled: bool = True
-    option_cache_ttl_seconds: int = 604_800  # 7 days
+    # 7 days. There is currently no staleness visibility: cached data is
+    # served until TTL expires with no mechanism to detect or report when
+    # the upstream source has fresher data available.
+    option_cache_ttl_seconds: int = 604_800
     prefetch_max_workers: int = Field(default=10, ge=1, le=32)
 
     # Nightly pipeline — override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
@@ -190,6 +193,8 @@ class Settings(BaseSettings):
     backtest_read_rate_limit: int = 60
     scan_create_rate_limit: int = 6
     scan_read_rate_limit: int = 60
+    sweep_create_rate_limit: int = 3
+    sweep_read_rate_limit: int = 60
     export_create_rate_limit: int = 20
     export_read_rate_limit: int = 60
     billing_create_rate_limit: int = 10
@@ -259,6 +264,7 @@ class Settings(BaseSettings):
         "analysis_rate_limit_window_seconds",
         "backtest_create_rate_limit", "backtest_read_rate_limit",
         "scan_create_rate_limit", "scan_read_rate_limit",
+        "sweep_create_rate_limit", "sweep_read_rate_limit",
         "export_create_rate_limit", "export_read_rate_limit",
         "billing_create_rate_limit",
         "template_mutate_rate_limit",
@@ -267,6 +273,7 @@ class Settings(BaseSettings):
         "rate_limit_memory_max_keys",
         "sse_rate_limit", "sse_redis_max_connections",
         "scan_timeout_seconds",
+        "forecast_max_analogs",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:

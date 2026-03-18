@@ -48,6 +48,9 @@ services:
   api:
     image: ${API_IMAGE:?API_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
+    # Security hardening: read-only root filesystem prevents runtime modification
+    # of application binaries.  no-new-privileges blocks SUID/SGID escalation.
+    # cap_drop ALL removes all Linux capabilities the container doesn't need.
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -84,6 +87,7 @@ services:
   worker:
     image: ${WORKER_IMAGE:?WORKER_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
+    # Security hardening — see api service comment above for rationale.
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -116,6 +120,13 @@ services:
   beat:
     image: ${WORKER_IMAGE:?WORKER_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     depends_on:
       redis:
         condition: service_healthy

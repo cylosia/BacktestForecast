@@ -133,6 +133,12 @@ def _compute_sharpe_sortino(
 
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
+    # Downside deviation per Sortino & van der Meer (1991): divides sum of
+    # squared negative excess returns by the total number of observations (N),
+    # not by the count of negative observations only. This matches the
+    # original paper but differs from some industry implementations that
+    # use N_negative. Displayed Sortino ratios may appear higher than
+    # platforms using the alternative convention.
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
     if downside_sq_sum > 0:
         down_dev = math.sqrt(downside_sq_sum / len(excess))

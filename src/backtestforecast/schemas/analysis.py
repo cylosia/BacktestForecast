@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backtestforecast.schemas.common import sanitize_error_message
 
-SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^]{0,15}$")
+SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^-]{0,15}$")
 
 
 class AnalysisSummaryResponse(BaseModel):
@@ -75,13 +75,17 @@ class AnalysisTopResult(BaseModel):
 
 
 class AnalysisDetailResponse(AnalysisSummaryResponse):
-    regime: RegimeDetail | None = None
-    landscape: list[LandscapeCell] | None = None
-    top_results: list[AnalysisTopResult] | None = None
-    forecast: dict[str, Any] | None = None
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+    regime: RegimeDetail | None = Field(default=None, alias="regime_json")
+    landscape: list[LandscapeCell] | None = Field(default=None, alias="landscape_json")
+    top_results: list[AnalysisTopResult] | None = Field(default=None, alias="top_results_json")
+    forecast: dict[str, Any] | None = Field(default=None, alias="forecast_json")
 
 
 class CreateAnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     symbol: str = Field(min_length=1, max_length=16)
     idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
 
@@ -116,7 +120,7 @@ class PipelineStatsResponse(BaseModel):
     full_backtests_run: int
     recommendations_produced: int
     duration_seconds: float | None = None
-    completed_at: str | None = None
+    completed_at: datetime | None = None
 
 
 class DailyPickSummary(BaseModel):
@@ -154,7 +158,7 @@ class DailyPickItemResponse(BaseModel):
 
 
 class DailyPicksResponse(BaseModel):
-    trade_date: str | None = None
+    trade_date: date | None = None
     pipeline_run_id: str | None = None
     status: str
     items: list[DailyPickItemResponse] = Field(default_factory=list)
@@ -163,7 +167,7 @@ class DailyPicksResponse(BaseModel):
 
 class PipelineHistoryItemResponse(BaseModel):
     id: UUID
-    trade_date: str
+    trade_date: date
     status: str
     symbols_screened: int
     recommendations_produced: int

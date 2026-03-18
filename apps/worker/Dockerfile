@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /build
 
 COPY pyproject.toml README.md /build/
+COPY apps/__init__.py /build/apps/
 COPY apps/worker /build/apps/worker
 COPY src /build/src
 COPY alembic /build/alembic

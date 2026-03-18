@@ -222,6 +222,7 @@ class ScanService:
         historical_cache = self._batch_historical_performance(payload, job.created_at)
         scan_start = _time.monotonic()
         _scan_timed_out = False
+        _candidate_cap_hit = False
         _scan_timeout = get_settings().scan_timeout_seconds
 
         if _scan_timeout <= self._CANDIDATE_TIMEOUT_SECONDS:
@@ -234,11 +235,15 @@ class ScanService:
             )
             _scan_timeout = safe_minimum
 
-        for symbol in payload.symbols:
-            if _scan_timed_out:
+        import random
+        symbols = list(payload.symbols)
+        random.shuffle(symbols)
+
+        for symbol in symbols:
+            if _scan_timed_out or _candidate_cap_hit:
                 break
             for strategy in payload.strategy_types:
-                if _scan_timed_out:
+                if _scan_timed_out or _candidate_cap_hit:
                     break
                 for rule_set in payload.rule_sets:
                     if not is_strategy_rule_set_compatible(strategy.value, rule_set.entry_rules):
@@ -296,7 +301,7 @@ class ScanService:
                         if len(candidates) >= self._MAX_CANDIDATES_IN_MEMORY:
                             logger.warning("scan.candidate_cap_reached", max=self._MAX_CANDIDATES_IN_MEMORY)
                             warnings.append({"type": "candidate_cap", "message": f"Candidate cap of {self._MAX_CANDIDATES_IN_MEMORY} reached; remaining candidates were skipped."})
-                            _scan_timed_out = True
+                            _candidate_cap_hit = True
                             break
                         candidates.append(
                             {
@@ -759,27 +764,32 @@ class ScanService:
 
     @staticmethod
     def _serialize_summary(summary) -> dict[str, Any]:
+        def _safe(val: float | Decimal) -> float:
+            result = to_decimal(val)
+            return float(result) if result is not None else 0.0
+
         def _opt(val: float | None) -> float | None:
             if val is None:
                 return None
-            return float(to_decimal(val))
+            result = to_decimal(val)
+            return float(result) if result is not None else None
 
         return {
             "trade_count": summary.trade_count,
-            "win_rate": float(to_decimal(summary.win_rate)),
-            "total_roi_pct": float(to_decimal(summary.total_roi_pct)),
-            "average_win_amount": float(to_decimal(summary.average_win_amount)),
-            "average_loss_amount": float(to_decimal(summary.average_loss_amount)),
-            "average_holding_period_days": float(to_decimal(summary.average_holding_period_days)),
-            "average_dte_at_open": float(to_decimal(summary.average_dte_at_open)),
-            "max_drawdown_pct": float(to_decimal(summary.max_drawdown_pct)),
-            "total_commissions": float(to_decimal(summary.total_commissions)),
-            "total_net_pnl": float(to_decimal(summary.total_net_pnl)),
-            "starting_equity": float(to_decimal(summary.starting_equity)),
-            "ending_equity": float(to_decimal(summary.ending_equity)),
+            "win_rate": _safe(summary.win_rate),
+            "total_roi_pct": _safe(summary.total_roi_pct),
+            "average_win_amount": _safe(summary.average_win_amount),
+            "average_loss_amount": _safe(summary.average_loss_amount),
+            "average_holding_period_days": _safe(summary.average_holding_period_days),
+            "average_dte_at_open": _safe(summary.average_dte_at_open),
+            "max_drawdown_pct": _safe(summary.max_drawdown_pct),
+            "total_commissions": _safe(summary.total_commissions),
+            "total_net_pnl": _safe(summary.total_net_pnl),
+            "starting_equity": _safe(summary.starting_equity),
+            "ending_equity": _safe(summary.ending_equity),
             "profit_factor": _opt(summary.profit_factor),
             "payoff_ratio": _opt(summary.payoff_ratio),
-            "expectancy": float(to_decimal(summary.expectancy)),
+            "expectancy": _safe(summary.expectancy),
             "sharpe_ratio": _opt(summary.sharpe_ratio),
             "sortino_ratio": _opt(summary.sortino_ratio),
             "cagr_pct": _opt(summary.cagr_pct),

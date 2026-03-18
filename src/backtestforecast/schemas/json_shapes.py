@@ -93,6 +93,9 @@ def validate_json_shape(
         logger.warning("json_shape_invalid_type", label=label, got_type=type(data).__name__)
         return False
 
+    # Partial/in-progress trade records during live position tracking
+    # only contain a "phase" key. These are not fully formed trade
+    # detail shapes and are intentionally exempt from shape validation.
     if "phase" in data and "legs" not in data:
         return True
 

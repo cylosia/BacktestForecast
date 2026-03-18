@@ -19,7 +19,8 @@ API_VERSION = "0.1.0"
 def _try_authenticate(request: Request, db: Session) -> User | None:
     """Attempt to authenticate without raising on failure."""
     try:
-        return get_current_user(request=request, db=db)
+        authorization = request.headers.get("authorization")
+        return get_current_user(request=request, authorization=authorization, db=db)
     except Exception:
         return None
 
