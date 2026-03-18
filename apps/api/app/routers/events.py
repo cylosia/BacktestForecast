@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from apps.api.app.dependencies import get_current_user
 from backtestforecast.config import get_settings
 from backtestforecast.errors import NotFoundError
-from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SymbolAnalysis, User
+from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis, User
 from backtestforecast.observability.metrics import ACTIVE_SSE_CONNECTIONS
 from backtestforecast.security import get_rate_limiter
 
@@ -339,6 +339,23 @@ async def scan_events(
     await asyncio.to_thread(_check_sse_rate, user.id)
     await asyncio.to_thread(_verify_ownership, ScannerJob, job_id, user.id)
     channel = f"job:scan:{job_id}:status"
+    logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
+    return EventSourceResponse(
+        _event_stream(channel, request, user.id),
+        ping=SSE_HEARTBEAT_SECONDS,
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/sweeps/{job_id}", responses=_SSE_RESPONSES)
+async def sweep_events(
+    job_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> EventSourceResponse:
+    await asyncio.to_thread(_check_sse_rate, user.id)
+    await asyncio.to_thread(_verify_ownership, SweepJob, job_id, user.id)
+    channel = f"job:sweep:{job_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
         _event_stream(channel, request, user.id),

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
-import { Activity, BarChart3, Bookmark, CreditCard, History, Microscope, PlusCircle, ScanSearch, TrendingUp, Zap } from "lucide-react";
+import { Activity, BarChart3, Bookmark, CreditCard, GitBranch, History, Microscope, PlusCircle, ScanSearch, TrendingUp, Zap } from "lucide-react";
 import { AppNavLink } from "@/components/app-nav-link";
 import { MobileNav, type NavItem } from "@/components/mobile-nav";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/app/daily-picks", icon: <Zap className="h-4 w-4" />, label: "Daily Picks" },
   { href: "/app/analysis", icon: <Microscope className="h-4 w-4" />, label: "Deep Analysis" },
   { href: "/app/scanner", icon: <ScanSearch className="h-4 w-4" />, label: "Scanner" },
+  { href: "/app/sweeps", icon: <GitBranch className="h-4 w-4" />, label: "Sweeps" },
   { href: "/app/forecasts", icon: <TrendingUp className="h-4 w-4" />, label: "Forecasts" },
   { href: "/app/settings/billing", icon: <CreditCard className="h-4 w-4" />, label: "Billing" },
 ];

@@ -80,6 +80,23 @@ export async function getScannerRecommendations(jobId: string): Promise<ScannerR
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, { cache: "no-store" });
 }
 
+export async function getSweepJobs(limit = 50, offset = 0) {
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const safeOffset = Math.max(0, offset);
+  const token = await getServerToken();
+  return apiRequest<any>(`/v1/sweeps?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
+}
+
+export async function getSweepJob(jobId: string) {
+  const token = await getServerToken();
+  return apiRequest<any>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, { cache: "no-store" });
+}
+
+export async function getSweepResults(jobId: string) {
+  const token = await getServerToken();
+  return apiRequest<any>(`/v1/sweeps/${encodeURIComponent(jobId)}/results`, token, { cache: "no-store" });
+}
+
 export async function getStrategyCatalog(): Promise<StrategyCatalogResponse> {
   const token = await getServerToken();
   return apiRequest<StrategyCatalogResponse>("/v1/strategy-catalog", token, { cache: "no-store" });

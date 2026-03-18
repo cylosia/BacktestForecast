@@ -158,6 +158,26 @@ export async function fetchScannerRecommendations(
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token);
 }
 
+export async function createSweepJob(
+  token: string,
+  payload: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<any> {
+  return apiRequest<any>("/v1/sweeps", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
+
+export async function fetchSweepJob(
+  token: string,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<any> {
+  return apiRequest<any>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, signal ? { signal } : undefined);
+}
+
 export async function fetchForecast(
   token: string,
   ticker: string,
