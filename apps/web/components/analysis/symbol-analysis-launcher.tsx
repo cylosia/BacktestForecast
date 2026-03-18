@@ -286,6 +286,7 @@ export function SymbolAnalysisLauncher() {
   }, [pollingStatus]);
 
   useEffect(() => {
+    lifecycleAbortRef.current.abort();
     lifecycleAbortRef.current = new AbortController();
     return () => {
       abortRef.current?.abort();

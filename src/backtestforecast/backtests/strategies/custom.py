@@ -226,20 +226,24 @@ class CustomNLegStrategy(StrategyDefinition):
         for si, short in enumerate(short_legs):
             if short_remaining[si] <= 0:
                 continue
+            best_li = None
+            best_width = float("inf")
             for li, long in enumerate(long_legs):
                 if long_remaining[li] <= 0:
                     continue
-                if (
-                    long.contract_type == short.contract_type
-                    and long.expiration_date == short.expiration_date
-                ):
-                    width = abs(short.strike_price - long.strike_price)
-                    paired_qty = min(short_remaining[si], long_remaining[li])
-                    margin += credit_spread_margin(width) * paired_qty
-                    short_remaining[si] -= paired_qty
-                    long_remaining[li] -= paired_qty
-                    if short_remaining[si] <= 0:
-                        break
+                if long.contract_type != short.contract_type:
+                    continue
+                if long.expiration_date != short.expiration_date:
+                    continue
+                width = abs(short.strike_price - long.strike_price)
+                if width < best_width:
+                    best_width = width
+                    best_li = li
+            if best_li is not None:
+                paired_qty = min(short_remaining[si], long_remaining[best_li])
+                margin += credit_spread_margin(best_width) * paired_qty
+                short_remaining[si] -= paired_qty
+                long_remaining[best_li] -= paired_qty
 
         for si, short in enumerate(short_legs):
             if short_remaining[si] <= 0:

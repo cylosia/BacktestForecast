@@ -14,6 +14,11 @@ import type {
   StrategyCatalogResponse,
   TemplateListResponse,
 } from "@backtestforecast/api-client";
+import type {
+  SweepJobListResponse,
+  SweepJobResponse,
+  SweepResultListResponse,
+} from "@/lib/api/client";
 
 async function getServerToken(): Promise<string> {
   const { isAuthenticated, getToken, redirectToSignIn } = await auth();
@@ -79,12 +84,6 @@ export async function getScannerRecommendations(jobId: string): Promise<ScannerR
   const token = await getServerToken();
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, { cache: "no-store" });
 }
-
-import type {
-  SweepJobListResponse,
-  SweepJobResponse,
-  SweepResultListResponse,
-} from "@/lib/api/client";
 
 export async function getSweepJobs(limit = 50, offset = 0): Promise<SweepJobListResponse> {
   const safeLimit = Math.max(1, Math.min(limit, 50));

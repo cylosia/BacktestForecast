@@ -1,8 +1,10 @@
 from typing import Any
 
+import jwt.exceptions
 import structlog
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api.app.dependencies import _extract_client_ip, get_current_user
 from backtestforecast.config import get_settings
@@ -21,7 +23,10 @@ def _try_authenticate(request: Request, db: Session) -> User | None:
     try:
         authorization = request.headers.get("authorization")
         return get_current_user(request=request, authorization=authorization, db=db)
+    except (jwt.exceptions.PyJWTError, ValueError, KeyError, AttributeError, StarletteHTTPException):
+        return None
     except Exception:
+        logger.warning("meta.auth_unexpected_error", exc_info=True)
         return None
 
 

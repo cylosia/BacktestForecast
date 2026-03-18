@@ -170,6 +170,9 @@ def _start_worker_metrics_server() -> None:
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass
 
+    if not metrics_token:
+        _shutdown_logger.warning("worker.metrics_server_no_auth", msg="Metrics server started without authentication token")
+
     server = HTTPServer(("0.0.0.0", port), _MetricsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

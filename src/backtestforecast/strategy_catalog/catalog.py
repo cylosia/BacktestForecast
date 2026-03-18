@@ -109,7 +109,7 @@ _register(
         label="Covered Call",
         short_description="Own 100 shares and sell a call to collect premium.",
         category=StrategyCategory.INCOME,
-        bias=StrategyBias.NEUTRAL,
+        bias=StrategyBias.BULLISH,
         leg_count=2,
         min_tier=StrategyTier.FREE,
         max_loss_description="Stock decline minus premium received",

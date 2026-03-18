@@ -98,7 +98,7 @@ def seed_backtests(session, user: User) -> list[BacktestRun]:
             },
             warnings_json=[],
             engine_version="options-multileg-v2",
-            data_source="seeded",
+            data_source="massive",
             trade_count=2,
             win_rate=Decimal("50"),
             total_roi_pct=Decimal(str(6 + index)),

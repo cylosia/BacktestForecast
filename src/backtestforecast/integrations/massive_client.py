@@ -446,8 +446,12 @@ class MassiveClient:
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )
 
+            try:
+                data = response.json()
+            except (ValueError, Exception) as exc:
+                self._circuit.record_failure()
+                raise ExternalServiceError(f"Invalid JSON response from Massive API: {exc}") from exc
             self._circuit.record_success()
-            data = response.json()
             if not isinstance(data, dict):
                 raise ExternalServiceError("Massive returned an unexpected response payload.")
             return data
@@ -786,8 +790,12 @@ class AsyncMassiveClient:
                     f"Massive returned {response.status_code}. The request could not be completed."
                 )
 
+            try:
+                data = response.json()
+            except (ValueError, Exception) as exc:
+                await self._circuit.record_failure_async()
+                raise ExternalServiceError(f"Invalid JSON response from Massive API: {exc}") from exc
             await self._circuit.record_success_async()
-            data = response.json()
             if not isinstance(data, dict):
                 raise ExternalServiceError("Massive returned an unexpected response payload.")
             return data

@@ -13,7 +13,9 @@ from backtestforecast.backtests.strategies.common import (
     choose_primary_expiration,
     choose_put_otm_strike,
     contracts_for_expiration,
+    get_overrides,
     require_contract_for_strike,
+    resolve_strike,
     valid_entry_mids,
 )
 from backtestforecast.backtests.summary import build_summary
@@ -459,7 +461,14 @@ class WheelStrategyBacktestEngine:
             puts = option_gateway.list_contracts(bar.trade_date, "put", config.target_dte, config.dte_tolerance_days)
             expiration = choose_primary_expiration(puts, bar.trade_date, config.target_dte)
             put_contracts = contracts_for_expiration(puts, expiration)
-            strike = choose_put_otm_strike([contract.strike_price for contract in put_contracts], bar.close_price)
+            dte = (expiration - bar.trade_date).days
+            overrides = get_overrides(config.strategy_overrides)
+            strike = resolve_strike(
+                [contract.strike_price for contract in put_contracts], bar.close_price, "put",
+                overrides.short_put_strike, dte,
+                contracts=put_contracts, option_gateway=option_gateway,
+                trade_date=bar.trade_date,
+            )
             contract = require_contract_for_strike(put_contracts, strike)
         except DataUnavailableError:
             self._add_warning_once(
@@ -540,7 +549,14 @@ class WheelStrategyBacktestEngine:
             calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
             expiration = choose_primary_expiration(calls, bar.trade_date, config.target_dte)
             call_contracts = contracts_for_expiration(calls, expiration)
-            strike = choose_call_otm_strike([contract.strike_price for contract in call_contracts], bar.close_price)
+            dte = (expiration - bar.trade_date).days
+            overrides = get_overrides(config.strategy_overrides)
+            strike = resolve_strike(
+                [contract.strike_price for contract in call_contracts], bar.close_price, "call",
+                overrides.short_call_strike, dte,
+                contracts=call_contracts, option_gateway=option_gateway,
+                trade_date=bar.trade_date,
+            )
             contract = require_contract_for_strike(call_contracts, strike)
         except DataUnavailableError:
             self._add_warning_once(

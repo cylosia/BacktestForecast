@@ -23,11 +23,13 @@ const NAV_ITEMS: NavItem[] = [
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   let planTier: string | null = null;
 
+  let planError = false;
   try {
     const user = await getCurrentUser();
     planTier = user.plan_tier;
   } catch (error) {
     console.error("Failed to fetch user plan tier:", error);
+    planError = true;
   }
 
   return (
@@ -45,7 +47,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               </Link>
               <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                 <span>Research workspace</span>
-                <Badge variant={planTier ? planBadgeVariant(planTier) : "outline"}>{planTier ? planLabel(planTier) : "…"}</Badge>
+                <Badge
+                  variant={planTier ? planBadgeVariant(planTier) : "outline"}
+                  title={planError ? "Could not load plan info — some features may appear locked" : undefined}
+                >
+                  {planError ? "Error" : planTier ? planLabel(planTier) : "…"}
+                </Badge>
               </div>
             </div>
           </div>

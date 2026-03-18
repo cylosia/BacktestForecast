@@ -2,7 +2,7 @@
 
 Holiday data comes from two sources, merged at runtime:
 
-1. A static fallback set covering 2025-2027 (always available).
+1. A static fallback set covering 2025-2030 (always available).
 2. A dynamic set fetched from the Massive ``/v1/marketstatus/upcoming``
    endpoint and cached in Redis (key ``bff:market_holidays``).  A Celery
    beat task refreshes this cache weekly; processes read from Redis and
@@ -63,6 +63,38 @@ _US_MARKET_HOLIDAYS: frozenset[date] = frozenset({
     date(2027, 9, 6),    # Labor Day
     date(2027, 11, 25),  # Thanksgiving
     date(2027, 12, 24),  # Christmas (observed)
+    # 2028
+    date(2028, 1, 17),   # MLK Day
+    date(2028, 2, 21),   # Presidents' Day
+    date(2028, 4, 14),   # Good Friday
+    date(2028, 5, 29),   # Memorial Day
+    date(2028, 6, 19),   # Juneteenth
+    date(2028, 7, 4),    # Independence Day
+    date(2028, 9, 4),    # Labor Day
+    date(2028, 11, 23),  # Thanksgiving
+    date(2028, 12, 25),  # Christmas
+    # 2029
+    date(2029, 1, 1),    # New Year's Day
+    date(2029, 1, 15),   # MLK Day
+    date(2029, 2, 19),   # Presidents' Day
+    date(2029, 3, 30),   # Good Friday
+    date(2029, 5, 28),   # Memorial Day
+    date(2029, 6, 19),   # Juneteenth
+    date(2029, 7, 4),    # Independence Day
+    date(2029, 9, 3),    # Labor Day
+    date(2029, 11, 22),  # Thanksgiving
+    date(2029, 12, 25),  # Christmas
+    # 2030
+    date(2030, 1, 1),    # New Year's Day
+    date(2030, 1, 21),   # MLK Day
+    date(2030, 2, 18),   # Presidents' Day
+    date(2030, 4, 19),   # Good Friday
+    date(2030, 5, 27),   # Memorial Day
+    date(2030, 6, 19),   # Juneteenth
+    date(2030, 7, 4),    # Independence Day
+    date(2030, 9, 2),    # Labor Day
+    date(2030, 11, 28),  # Thanksgiving
+    date(2030, 12, 25),  # Christmas
 })
 
 _dynamic_holidays: frozenset[date] = frozenset()

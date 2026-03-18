@@ -12,15 +12,9 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from prometheus_client import Counter
 from sqlalchemy.orm import Session
 
 from apps.worker.app.celery_app import celery_app
-
-DISPATCH_REVOKE_FAILED = Counter(
-    "dispatch_revoke_failed_total",
-    "Times celery task revocation failed after a commit error during dispatch",
-)
 
 
 def dispatch_celery_task(

@@ -210,12 +210,14 @@ class BillingService:
         except ExternalServiceError as ese:
             self.session.rollback()
             self._mark_stripe_event_error(event_id, str(ese))
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
             if not isinstance(ese.__cause__, NotFoundError) and "not found" not in str(ese).lower():
                 self._trip_stripe_circuit()
             raise
         except NotFoundError as nfe:
             self.session.rollback()
             self._mark_stripe_event_error(event_id, str(nfe))
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
             raise
         except Exception:
             self.session.rollback()

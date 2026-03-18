@@ -7,6 +7,7 @@ evaluation on the most recent bar window.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -83,6 +84,8 @@ def classify_regime(
         20,
         ddof=1,
     )
+    _ANNUALIZATION_FACTOR = math.sqrt(252)
+    vol_20_values = [v * _ANNUALIZATION_FACTOR if v is not None else None for v in vol_20_values]
     avg_volume_20 = sma(volumes, 20)
 
     # Extract latest values
@@ -163,6 +166,11 @@ def classify_regime(
 
 
 def _daily_returns(closes: list[float]) -> list[float]:
+    """Compute daily returns as raw decimals (0.02 = 2% gain).
+
+    Note: forecasts/analog.py uses percentage format (2.0 = 2% gain).
+    These conventions are independent and should not be mixed.
+    """
     returns = [0.0]
     for i in range(1, len(closes)):
         if closes[i - 1] > 0:

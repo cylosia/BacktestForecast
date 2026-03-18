@@ -435,7 +435,7 @@ class NightlyPipelineService:
                 if drawdown >= 100.0:
                     score = 0.0
 
-                if score < 0:
+                if score <= 0:
                     return None
 
                 return QuickBacktestResult(

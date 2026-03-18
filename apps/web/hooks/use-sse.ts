@@ -71,11 +71,9 @@ export function useSSE<T>({
     const url = `/api/events/${resourceType}/${resourceId}`;
     const es = new EventSource(url);
     esRef.current = es;
-    let opened = false;
 
     es.onopen = () => {
       if (!mountedRef.current) return;
-      opened = true;
       setStatus("streaming");
     };
 

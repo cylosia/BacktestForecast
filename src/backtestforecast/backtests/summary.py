@@ -32,8 +32,8 @@ def build_summary(
         sum_dte += trade.dte_at_open
 
     trade_count = len(trades)
-    # Break-even trades (net_pnl == 0) are excluded from the win/loss
-    # denominator so that win_rate reflects only decisive outcomes.
+    # Break-even trades (net_pnl == 0) are excluded from both wins and losses.
+    # This can inflate the win rate slightly when many near-zero P&L trades exist.
     decided = len(win_pnls) + len(loss_pnls)
     win_rate = (len(win_pnls) / decided * 100.0) if decided else 0.0
     max_drawdown_pct = max((point.drawdown_pct for point in equity_curve), default=0.0)
@@ -141,7 +141,7 @@ def _compute_sharpe_sortino(
     # platforms using the alternative convention.
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
     if downside_sq_sum > 0:
-        down_dev = math.sqrt(downside_sq_sum / len(excess))
+        down_dev = math.sqrt(downside_sq_sum / max(len(excess) - 1, 1))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None
@@ -158,10 +158,8 @@ def _compute_cagr(
         return None
     if starting_equity <= 0:
         return None
-    if ending_equity == 0:
+    if ending_equity <= 0:
         return -100.0
-    if ending_equity < 0:
-        return None
     calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
     # Require at least 60 calendar days to avoid misleadingly large annualised
     # returns from very short observation windows.  For example, a 10% return

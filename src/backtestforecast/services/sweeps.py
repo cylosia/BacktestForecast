@@ -20,6 +20,7 @@ from backtestforecast.schemas.backtests import (
     CreateBacktestRunRequest,
     EquityCurvePointResponse,
     SpreadWidthConfig,
+    SpreadWidthMode,
     StrikeSelection,
     StrikeSelectionMode,
     StrategyOverrides,
@@ -33,12 +34,25 @@ from backtestforecast.schemas.sweeps import (
 )
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.backtests import to_decimal
+from backtestforecast.services.serialization import (
+    downsample_equity_curve,
+    serialize_equity_point,
+    serialize_summary,
+    serialize_trade,
+)
 
 logger = structlog.get_logger("services.sweeps")
 
 _CANDIDATE_TIMEOUT_SECONDS = 120
 _SWEEP_TIMEOUT_SECONDS = 3600
 _MAX_EQUITY_POINTS = 500
+
+_SWEEP_SCORE_WIN_RATE_WEIGHT = 0.25
+_SWEEP_SCORE_ROI_WEIGHT = 0.30
+_SWEEP_SCORE_SHARPE_WEIGHT = 0.25
+_SWEEP_SCORE_DRAWDOWN_WEIGHT = 0.20
+_SWEEP_SCORE_SHARPE_MULTIPLIER = 10.0
+_SWEEP_SCORE_MIN_TRADES = 3
 
 
 class SweepService:
@@ -148,12 +162,20 @@ class SweepService:
     def get_results(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
     ) -> SweepResultListResponse:
-        job = self.repository.get_for_user(job_id, user.id, include_results=True)
+        job = self.repository.get_for_user(job_id, user.id, include_results=False)
         if job is None:
             raise NotFoundError("Sweep job not found.")
-        page = job.results[offset : offset + limit]
+        from sqlalchemy import select
+        stmt = (
+            select(SweepResult)
+            .where(SweepResult.sweep_job_id == job.id)
+            .order_by(SweepResult.rank)
+            .offset(offset)
+            .limit(limit)
+        )
+        results = list(self.session.scalars(stmt))
         return SweepResultListResponse(
-            items=[self._to_result_response(r) for r in page]
+            items=[self._to_result_response(r) for r in results]
         )
 
     # -- execution -----------------------------------------------------------
@@ -501,7 +523,7 @@ class SweepService:
     @staticmethod
     def _build_overrides(
         delta_val: int | None,
-        width_val: tuple[str, Decimal] | None,
+        width_val: tuple[SpreadWidthMode, Decimal] | None,
     ) -> StrategyOverrides | None:
         if delta_val is None and width_val is None:
             return None
@@ -576,108 +598,24 @@ class SweepService:
         sharpe = float(summary.get("sharpe_ratio") or 0)
         trade_count = int(summary.get("trade_count", 0))
 
-        if trade_count < 3:
+        if trade_count < _SWEEP_SCORE_MIN_TRADES:
             return 0.0
 
         score = (
-            win_rate * 0.25
-            + roi * 0.30
-            + sharpe * 10.0 * 0.25
-            - drawdown * 0.20
+            win_rate * _SWEEP_SCORE_WIN_RATE_WEIGHT
+            + roi * _SWEEP_SCORE_ROI_WEIGHT
+            + sharpe * _SWEEP_SCORE_SHARPE_MULTIPLIER * _SWEEP_SCORE_SHARPE_WEIGHT
+            - drawdown * _SWEEP_SCORE_DRAWDOWN_WEIGHT
         )
         return score
 
-    @staticmethod
-    def _serialize_summary(summary) -> dict[str, Any]:
-        def _safe(val: float | Decimal) -> float:
-            result = to_decimal(val)
-            return float(result) if result is not None else 0.0
-
-        def _opt(val: float | None) -> float | None:
-            if val is None:
-                return None
-            result = to_decimal(val, allow_infinite=True)
-            return float(result) if result is not None else None
-
-        return {
-            "trade_count": summary.trade_count,
-            "win_rate": _safe(summary.win_rate),
-            "total_roi_pct": _safe(summary.total_roi_pct),
-            "average_win_amount": _safe(summary.average_win_amount),
-            "average_loss_amount": _safe(summary.average_loss_amount),
-            "average_holding_period_days": _safe(summary.average_holding_period_days),
-            "average_dte_at_open": _safe(summary.average_dte_at_open),
-            "max_drawdown_pct": _safe(summary.max_drawdown_pct),
-            "total_commissions": _safe(summary.total_commissions),
-            "total_net_pnl": _safe(summary.total_net_pnl),
-            "starting_equity": _safe(summary.starting_equity),
-            "ending_equity": _safe(summary.ending_equity),
-            "profit_factor": _opt(summary.profit_factor),
-            "payoff_ratio": _opt(summary.payoff_ratio),
-            "expectancy": _safe(summary.expectancy),
-            "sharpe_ratio": _opt(summary.sharpe_ratio),
-            "sortino_ratio": _opt(summary.sortino_ratio),
-            "cagr_pct": _opt(summary.cagr_pct),
-            "calmar_ratio": _opt(summary.calmar_ratio),
-            "max_consecutive_wins": summary.max_consecutive_wins,
-            "max_consecutive_losses": summary.max_consecutive_losses,
-            "recovery_factor": _opt(summary.recovery_factor),
-        }
-
-    @staticmethod
-    def _serialize_trade(trade) -> dict[str, Any]:
-        def _safe(val: float) -> float:
-            result = to_decimal(val)
-            return float(result) if result is not None else 0.0
-
-        return {
-            "option_ticker": trade.option_ticker,
-            "strategy_type": trade.strategy_type,
-            "underlying_symbol": trade.underlying_symbol,
-            "entry_date": trade.entry_date.isoformat(),
-            "exit_date": trade.exit_date.isoformat(),
-            "expiration_date": trade.expiration_date.isoformat(),
-            "quantity": trade.quantity,
-            "dte_at_open": trade.dte_at_open,
-            "holding_period_days": trade.holding_period_days,
-            "entry_underlying_close": _safe(trade.entry_underlying_close),
-            "exit_underlying_close": _safe(trade.exit_underlying_close),
-            "entry_mid": _safe(trade.entry_mid),
-            "exit_mid": _safe(trade.exit_mid),
-            "gross_pnl": _safe(trade.gross_pnl),
-            "net_pnl": _safe(trade.net_pnl),
-            "total_commissions": _safe(trade.total_commissions),
-            "entry_reason": trade.entry_reason,
-            "exit_reason": trade.exit_reason,
-            "detail_json": trade.detail_json,
-        }
-
-    @staticmethod
-    def _serialize_equity_point(point) -> dict[str, Any]:
-        def _safe(val: float) -> float:
-            result = to_decimal(val)
-            return float(result) if result is not None else 0.0
-
-        return {
-            "trade_date": point.trade_date.isoformat(),
-            "equity": _safe(point.equity),
-            "cash": _safe(point.cash),
-            "position_value": _safe(point.position_value),
-            "drawdown_pct": _safe(point.drawdown_pct),
-        }
+    _serialize_summary = staticmethod(serialize_summary)
+    _serialize_trade = staticmethod(serialize_trade)
+    _serialize_equity_point = staticmethod(serialize_equity_point)
 
     @classmethod
     def _downsample_equity_curve(cls, equity_curve: list) -> list[dict[str, Any]]:
-        n = len(equity_curve)
-        if n <= _MAX_EQUITY_POINTS:
-            return [cls._serialize_equity_point(p) for p in equity_curve]
-        step = max(1, -(-n // _MAX_EQUITY_POINTS))
-        max_dd_idx = max(range(n), key=lambda i: equity_curve[i].drawdown_pct)
-        sampled: list[dict[str, Any]] = []
-        for i, point in enumerate(equity_curve):
-            if i % step == 0 or i == n - 1 or i == max_dd_idx:
-                sampled.append(cls._serialize_equity_point(point))
-        return sampled
+        return downsample_equity_curve(equity_curve, max_points=_MAX_EQUITY_POINTS)
 
     @staticmethod
     def _to_job_response(job: SweepJob) -> SweepJobResponse:

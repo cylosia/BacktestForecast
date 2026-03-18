@@ -486,20 +486,20 @@ class BacktestService:
 
         run.warnings_json = execution_result.warnings
         run.trade_count = summary.trade_count
-        run.win_rate = to_decimal(summary.win_rate)
-        run.total_roi_pct = to_decimal(summary.total_roi_pct)
-        run.average_win_amount = to_decimal(summary.average_win_amount)
-        run.average_loss_amount = to_decimal(summary.average_loss_amount)
-        run.average_holding_period_days = to_decimal(summary.average_holding_period_days)
-        run.average_dte_at_open = to_decimal(summary.average_dte_at_open)
-        run.max_drawdown_pct = to_decimal(summary.max_drawdown_pct)
-        run.total_commissions = to_decimal(summary.total_commissions)
-        run.total_net_pnl = to_decimal(summary.total_net_pnl)
-        run.starting_equity = to_decimal(summary.starting_equity)
-        run.ending_equity = to_decimal(summary.ending_equity)
+        run.win_rate = to_decimal(summary.win_rate) or Decimal("0")
+        run.total_roi_pct = to_decimal(summary.total_roi_pct) or Decimal("0")
+        run.average_win_amount = to_decimal(summary.average_win_amount) or Decimal("0")
+        run.average_loss_amount = to_decimal(summary.average_loss_amount) or Decimal("0")
+        run.average_holding_period_days = to_decimal(summary.average_holding_period_days) or Decimal("0")
+        run.average_dte_at_open = to_decimal(summary.average_dte_at_open) or Decimal("0")
+        run.max_drawdown_pct = to_decimal(summary.max_drawdown_pct) or Decimal("0")
+        run.total_commissions = to_decimal(summary.total_commissions) or Decimal("0")
+        run.total_net_pnl = to_decimal(summary.total_net_pnl) or Decimal("0")
+        run.starting_equity = to_decimal(summary.starting_equity) or Decimal("0")
+        run.ending_equity = to_decimal(summary.ending_equity) or Decimal("0")
         run.profit_factor = to_decimal(summary.profit_factor, allow_infinite=True) if summary.profit_factor is not None else None
         run.payoff_ratio = to_decimal(summary.payoff_ratio, allow_infinite=True) if summary.payoff_ratio is not None else None
-        run.expectancy = to_decimal(summary.expectancy)
+        run.expectancy = to_decimal(summary.expectancy) or Decimal("0")
         run.sharpe_ratio = to_decimal(summary.sharpe_ratio, allow_infinite=True) if summary.sharpe_ratio is not None else None
         run.sortino_ratio = to_decimal(summary.sortino_ratio, allow_infinite=True) if summary.sortino_ratio is not None else None
         run.cagr_pct = to_decimal(summary.cagr_pct, allow_infinite=True) if summary.cagr_pct is not None else None

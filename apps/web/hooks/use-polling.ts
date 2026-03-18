@@ -94,9 +94,13 @@ export function usePolling<T>({
 
       if (isCompleteRef.current(result)) {
         setStatus("done");
-        Promise.resolve(onCompleteRef.current(result)).catch(() => {
+        try {
+          Promise.resolve(onCompleteRef.current(result)).catch(() => {
+            if (mountedRef.current) setStatus("error");
+          });
+        } catch {
           if (mountedRef.current) setStatus("error");
-        });
+        }
         return;
       }
 

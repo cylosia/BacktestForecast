@@ -71,16 +71,25 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
     }
     if (rule.type === "rsi") {
       patch.rsiEnabled = true;
-      patch.rsiOperator = rule.operator as BacktestFormValues["rsiOperator"];
+      const validOperators = ["lt", "lte", "gt", "gte"] as const;
+      if (validOperators.includes(rule.operator as typeof validOperators[number])) {
+        patch.rsiOperator = rule.operator as BacktestFormValues["rsiOperator"];
+      }
       patch.rsiThreshold = String(rule.threshold);
       patch.rsiPeriod = String(rule.period);
     }
     if (rule.type === "sma_crossover" || rule.type === "ema_crossover") {
       patch.movingAverageEnabled = true;
-      patch.movingAverageType = rule.type as BacktestFormValues["movingAverageType"];
+      const validTypes = ["sma_crossover", "ema_crossover"] as const;
+      if (validTypes.includes(rule.type as typeof validTypes[number])) {
+        patch.movingAverageType = rule.type as BacktestFormValues["movingAverageType"];
+      }
       patch.fastPeriod = String(rule.fast_period);
       patch.slowPeriod = String(rule.slow_period);
-      patch.crossoverDirection = rule.direction as BacktestFormValues["crossoverDirection"];
+      const validDirections = ["bullish", "bearish"] as const;
+      if (validDirections.includes(rule.direction as typeof validDirections[number])) {
+        patch.crossoverDirection = rule.direction as BacktestFormValues["crossoverDirection"];
+      }
     }
   }
 

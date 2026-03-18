@@ -10,8 +10,13 @@ from backtestforecast.config import get_settings
 from backtestforecast.db.base import Base
 
 config = context.config
-settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+
+
+def _get_db_url() -> str:
+    return get_settings().database_url
+
+
+config.set_main_option("sqlalchemy.url", _get_db_url())
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -24,7 +29,7 @@ def run_migrations_offline() -> None:
     # between model server_default values and the actual DB column defaults.
     # This catches drifts like missing or changed DEFAULT clauses.
     context.configure(
-        url=settings.database_url,
+        url=_get_db_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,

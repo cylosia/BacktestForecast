@@ -29,7 +29,7 @@ class ScannerMode(str, Enum):
 
 PAID_STATUSES = {"active", "trialing"}
 PAST_DUE_GRACE_DAYS = 7
-ACTIVE_RENEWAL_GRACE = timedelta(hours=1)
+ACTIVE_RENEWAL_GRACE = timedelta(hours=6)
 INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete", "incomplete_expired", "paused"}
 
 

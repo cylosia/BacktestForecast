@@ -76,7 +76,7 @@ function bestIndex(runs: BacktestRunDetailResponse[], key: keyof BacktestSummary
   let best = -1;
   let bestVal = 0;
   for (let i = 0; i < runs.length; i++) {
-    const raw = runs[i].summary[key];
+    const raw = runs[i].summary?.[key];
     if (raw == null) continue;
     const n = typeof raw === "number" ? raw : Number(raw);
     const val = Number.isFinite(n) ? n : 0;
@@ -233,7 +233,7 @@ export default async function ComparePage({
                           key={run.id}
                           className={index === best ? "font-semibold text-primary" : ""}
                         >
-                          {metric.format(run.summary[metric.key])}
+                          {metric.format(run.summary?.[metric.key])}
                         </TableCell>
                       ))}
                     </TableRow>
@@ -264,7 +264,7 @@ export default async function ComparePage({
                   </div>
                   <p className="mt-2 text-2xl font-semibold tracking-tight">{run.trades.length} trades</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {formatPercent(run.summary.win_rate)} win rate · Max DD {formatPercent(run.summary.max_drawdown_pct)}
+                    {formatPercent(run.summary?.win_rate)} win rate · Max DD {formatPercent(run.summary?.max_drawdown_pct)}
                   </p>
                 </div>
               ))}

@@ -4,6 +4,10 @@ Revision ID: 20260317_0006
 Revises: 20260317_0005
 Create Date: 2026-03-17
 """
+# NOTE: This migration uses sa.dialects.postgresql.UUID directly instead of the
+# frozen GUID TypeDecorator used in other migrations. This works on PostgreSQL
+# but breaks cross-dialect compatibility. A future migration should not repeat
+# this pattern.
 from __future__ import annotations
 
 import sqlalchemy as sa

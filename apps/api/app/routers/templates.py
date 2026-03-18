@@ -18,6 +18,8 @@ from backtestforecast.schemas.templates import (
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.templates import BacktestTemplateService
 
+# Templates are always available regardless of feature flags — they store
+# user configuration presets and don't consume compute or data resources.
 router = APIRouter(prefix="/templates", tags=["templates"])
 
 
@@ -29,6 +31,7 @@ def list_templates(
     offset: int = Query(default=0, ge=0, le=10000),
     settings: Settings = Depends(get_settings),
 ) -> TemplateListResponse:
+    # Derived limit: reads are cheaper than mutations so we allow 5x the mutate limit.
     get_rate_limiter().check(
         bucket="templates:read",
         actor_key=str(user.id),
@@ -63,6 +66,7 @@ def get_template(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TemplateResponse:
+    # Derived limit: reads are cheaper than mutations so we allow 5x the mutate limit.
     get_rate_limiter().check(
         bucket="templates:read",
         actor_key=str(user.id),

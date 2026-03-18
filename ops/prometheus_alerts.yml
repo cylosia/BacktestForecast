@@ -1,3 +1,6 @@
+# Canonical production alert rules for BacktestForecast.
+# Grafana-specific formatted copies of overlapping alerts live in
+# infra/grafana/alerts/rules.yml — keep both files in sync when editing.
 groups:
   - name: backtestforecast
     rules:

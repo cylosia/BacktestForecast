@@ -93,6 +93,7 @@ def compare_backtests(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> CompareBacktestsResponse:
+    # Derived limit: comparison is cheaper than creation so we allow 2x the create limit.
     get_rate_limiter().check(
         bucket="backtests:compare",
         actor_key=str(user.id),

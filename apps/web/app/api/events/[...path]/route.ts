@@ -11,6 +11,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   }
 
   const { path } = await params;
+  const ALLOWED_RESOURCE_TYPES = new Set(["backtests", "scans", "exports", "analyses", "sweeps"]);
+  if (!path.length || !ALLOWED_RESOURCE_TYPES.has(path[0])) {
+    return new Response("Invalid resource type", { status: 400 });
+  }
   const backendPath = `/v1/events/${path.join("/")}`;
   const backendUrl = `${API_BASE}${backendPath}`;
 

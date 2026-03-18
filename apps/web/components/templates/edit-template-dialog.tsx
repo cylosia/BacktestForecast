@@ -75,10 +75,10 @@ export function EditTemplateDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="edit-template-title" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
+      <div className="fixed inset-0 bg-black/50" onClick={onClose} onMouseDown={(e) => e.stopPropagation()} />
       <div className="relative z-10 w-full max-w-md rounded-xl border border-border bg-background p-6 shadow-lg">
-        <h2 className="text-lg font-semibold">Edit template</h2>
+        <h2 id="edit-template-title" className="text-lg font-semibold">Edit template</h2>
 
         <div className="mt-4 space-y-4">
           <div>

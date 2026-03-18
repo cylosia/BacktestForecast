@@ -179,7 +179,7 @@ class EntryRuleEvaluator:
             window_min = min(lookback_values)
             window_max = max(lookback_values)
             if math.isclose(window_min, window_max):
-                metric = 0.0
+                metric = 50.0
             else:
                 metric = ((current_value - window_min) / (window_max - window_min)) * 100.0
         else:

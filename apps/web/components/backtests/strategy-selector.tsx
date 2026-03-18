@@ -159,30 +159,32 @@ export function StrategySelector({
 
       {/* Selected strategy detail (only shown when using the full backend catalog) */}
       {!usingFallback &&
-        groups.flatMap((g) => g.strategies).map((strategy) => {
-          if (strategy.strategy_type !== value) return null;
+        (() => {
+          const selected = groups
+            .flatMap((g) => g.strategies)
+            .find((s) => s.strategy_type === value);
+          if (!selected) return null;
           return (
-            <div
-              key={strategy.strategy_type}
-              className="rounded-lg border border-border/60 bg-muted/30 p-3 text-sm"
-            >
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-sm">
               <div className="flex items-center gap-2">
-                <span className={cn("font-medium", biasColor(strategy.bias))}>
-                  {biasLabel(strategy.bias)}
+                <span className={cn("font-medium", biasColor(selected.bias))}>
+                  {biasLabel(selected.bias)}
                 </span>
                 <span className="text-muted-foreground">·</span>
                 <span className="text-muted-foreground">
-                  {strategy.leg_count} leg{strategy.leg_count !== 1 ? "s" : ""}
+                  {selected.leg_count} leg{selected.leg_count !== 1 ? "s" : ""}
                 </span>
-                {tierBadge(strategy.min_tier)}
+                {tierBadge(selected.min_tier)}
               </div>
-              <p className="mt-1 text-muted-foreground">{strategy.short_description}</p>
+              <p className="mt-1 text-muted-foreground">
+                {selected.short_description}
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Max loss: {strategy.max_loss_description}
+                Max loss: {selected.max_loss_description}
               </p>
             </div>
           );
-        })}
+        })()}
 
       {error ? <p id="strategyType-error" className="text-sm text-destructive">{error}</p> : null}
     </div>

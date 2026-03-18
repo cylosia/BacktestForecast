@@ -17,6 +17,7 @@ EXPECTED_TASKS = [
     "pipeline.nightly_scan",
     "maintenance.reap_stale_jobs",
     "maintenance.ping",
+    "sweeps.run",
 ]
 
 

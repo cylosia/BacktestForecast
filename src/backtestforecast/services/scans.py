@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.observability.metrics import SCAN_CANDIDATE_FAILURES_TOTAL
 from backtestforecast.billing.entitlements import (
+    ScannerAccessPolicy,
     ensure_forecasting_access,
     resolve_scanner_policy,
     validate_strategy_access,
@@ -50,6 +51,12 @@ from backtestforecast.schemas.scans import (
 )
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.backtests import to_decimal
+from backtestforecast.services.serialization import (
+    downsample_equity_curve,
+    serialize_equity_point,
+    serialize_summary,
+    serialize_trade,
+)
 
 logger = structlog.get_logger("services.scans")
 
@@ -433,12 +440,20 @@ class ScanService:
     def get_recommendations(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
     ) -> ScannerRecommendationListResponse:
-        job = self.repository.get_for_user(job_id, user.id, include_recommendations=True)
+        job = self.repository.get_for_user(job_id, user.id, include_recommendations=False)
         if job is None:
             raise NotFoundError("Scanner job not found.")
-        page = job.recommendations[offset : offset + limit]
+        from sqlalchemy import select
+        stmt = (
+            select(ScannerRecommendation)
+            .where(ScannerRecommendation.scanner_job_id == job.id)
+            .order_by(ScannerRecommendation.rank)
+            .offset(offset)
+            .limit(limit)
+        )
+        recs = list(self.session.scalars(stmt))
         return ScannerRecommendationListResponse(
-            items=[self._to_recommendation_response(r) for r in page]
+            items=[self._to_recommendation_response(r) for r in recs]
         )
 
     def create_scheduled_refresh_jobs(self, limit: int = 25) -> list[ScannerJob]:
@@ -529,11 +544,12 @@ class ScanService:
             StrategyType(effective_strategy)
         except ValueError:
             raise ValidationError(f"Unknown strategy_type: {effective_strategy}")
+        today = market_date_today()
         request = CreateBacktestRunRequest(
             symbol=symbol,
             strategy_type=effective_strategy,
-            start_date=market_date_today() - timedelta(days=365),
-            end_date=market_date_today() - timedelta(days=1),
+            start_date=today - timedelta(days=365),
+            end_date=today - timedelta(days=1),
             target_dte=max(horizon_days, 1),
             dte_tolerance_days=min(5, max(horizon_days, 1) - 1),
             max_holding_days=horizon_days,
@@ -562,7 +578,7 @@ class ScanService:
             ),
         )
 
-    def _validate_limits(self, policy, payload: CreateScannerJobRequest) -> None:
+    def _validate_limits(self, policy: ScannerAccessPolicy, payload: CreateScannerJobRequest) -> None:
         if len(payload.symbols) > policy.max_symbols:
             raise ValidationError(f"The selected scanner mode allows at most {policy.max_symbols} symbols.")
         if len(payload.strategy_types) > policy.max_strategies:
@@ -655,7 +671,7 @@ class ScanService:
                 if warning is not None:
                     warnings.append(warning)
         finally:
-            pool.shutdown(wait=False, cancel_futures=True)
+            pool.shutdown(wait=True, cancel_futures=True)
         return bundles
 
     def _batch_historical_performance(
@@ -762,99 +778,15 @@ class ScanService:
                 analog_dates=[],
             )
 
-    @staticmethod
-    def _serialize_summary(summary) -> dict[str, Any]:
-        def _safe(val: float | Decimal) -> float:
-            result = to_decimal(val)
-            return float(result) if result is not None else 0.0
-
-        def _opt(val: float | None) -> float | None:
-            if val is None:
-                return None
-            result = to_decimal(val, allow_infinite=True)
-            return float(result) if result is not None else None
-
-        return {
-            "trade_count": summary.trade_count,
-            "win_rate": _safe(summary.win_rate),
-            "total_roi_pct": _safe(summary.total_roi_pct),
-            "average_win_amount": _safe(summary.average_win_amount),
-            "average_loss_amount": _safe(summary.average_loss_amount),
-            "average_holding_period_days": _safe(summary.average_holding_period_days),
-            "average_dte_at_open": _safe(summary.average_dte_at_open),
-            "max_drawdown_pct": _safe(summary.max_drawdown_pct),
-            "total_commissions": _safe(summary.total_commissions),
-            "total_net_pnl": _safe(summary.total_net_pnl),
-            "starting_equity": _safe(summary.starting_equity),
-            "ending_equity": _safe(summary.ending_equity),
-            "profit_factor": _opt(summary.profit_factor),
-            "payoff_ratio": _opt(summary.payoff_ratio),
-            "expectancy": _safe(summary.expectancy),
-            "sharpe_ratio": _opt(summary.sharpe_ratio),
-            "sortino_ratio": _opt(summary.sortino_ratio),
-            "cagr_pct": _opt(summary.cagr_pct),
-            "calmar_ratio": _opt(summary.calmar_ratio),
-            "max_consecutive_wins": summary.max_consecutive_wins,
-            "max_consecutive_losses": summary.max_consecutive_losses,
-            "recovery_factor": _opt(summary.recovery_factor),
-        }
-
-    @staticmethod
-    def _serialize_trade(trade) -> dict[str, Any]:
-        def _safe(val: float) -> float:
-            result = to_decimal(val)
-            return float(result) if result is not None else 0.0
-
-        return {
-            "option_ticker": trade.option_ticker,
-            "strategy_type": trade.strategy_type,
-            "underlying_symbol": trade.underlying_symbol,
-            "entry_date": trade.entry_date.isoformat(),
-            "exit_date": trade.exit_date.isoformat(),
-            "expiration_date": trade.expiration_date.isoformat(),
-            "quantity": trade.quantity,
-            "dte_at_open": trade.dte_at_open,
-            "holding_period_days": trade.holding_period_days,
-            "entry_underlying_close": _safe(trade.entry_underlying_close),
-            "exit_underlying_close": _safe(trade.exit_underlying_close),
-            "entry_mid": _safe(trade.entry_mid),
-            "exit_mid": _safe(trade.exit_mid),
-            "gross_pnl": _safe(trade.gross_pnl),
-            "net_pnl": _safe(trade.net_pnl),
-            "total_commissions": _safe(trade.total_commissions),
-            "entry_reason": trade.entry_reason,
-            "exit_reason": trade.exit_reason,
-            "detail_json": trade.detail_json,
-        }
-
-    @staticmethod
-    def _serialize_equity_point(point) -> dict[str, Any]:
-        def _safe(val: float) -> float:
-            result = to_decimal(val)
-            return float(result) if result is not None else 0.0
-
-        return {
-            "trade_date": point.trade_date.isoformat(),
-            "equity": _safe(point.equity),
-            "cash": _safe(point.cash),
-            "position_value": _safe(point.position_value),
-            "drawdown_pct": _safe(point.drawdown_pct),
-        }
+    _serialize_summary = staticmethod(serialize_summary)
+    _serialize_trade = staticmethod(serialize_trade)
+    _serialize_equity_point = staticmethod(serialize_equity_point)
 
     _MAX_SCAN_EQUITY_POINTS = 500
 
     @classmethod
     def _downsample_equity_curve(cls, equity_curve: list) -> list[dict[str, Any]]:
-        n = len(equity_curve)
-        if n <= cls._MAX_SCAN_EQUITY_POINTS:
-            return [cls._serialize_equity_point(p) for p in equity_curve]
-        step = max(1, -(-n // cls._MAX_SCAN_EQUITY_POINTS))
-        max_dd_idx = max(range(n), key=lambda i: equity_curve[i].drawdown_pct)
-        sampled: list[dict[str, Any]] = []
-        for i, point in enumerate(equity_curve):
-            if i % step == 0 or i == n - 1 or i == max_dd_idx:
-                sampled.append(cls._serialize_equity_point(point))
-        return sampled
+        return downsample_equity_curve(equity_curve, max_points=cls._MAX_SCAN_EQUITY_POINTS)
 
     @staticmethod
     def _ranking_response_model(payload: dict[str, Any]):

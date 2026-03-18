@@ -542,7 +542,7 @@ class StripeEvent(Base):
         Index("ix_stripe_events_created_at", "created_at"),
         Index("ix_stripe_events_user_id", "user_id"),
         CheckConstraint(
-            "idempotency_status IN ('processed', 'ignored', 'error')",
+            "idempotency_status IN ('processing', 'processed', 'ignored', 'error')",
             name="ck_stripe_events_valid_status",
         ),
     )
@@ -689,7 +689,7 @@ class OutboxMessage(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
-    retry_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     correlation_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
 

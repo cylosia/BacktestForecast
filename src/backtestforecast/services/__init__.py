@@ -4,6 +4,7 @@ __all__ = [
     "BacktestService",
     "BillingService",
     "ExportService",
-    "ScannerService",
-    "TemplateService",
+    "ScanService",
+    "BacktestTemplateService",
+    "SweepService",
 ]

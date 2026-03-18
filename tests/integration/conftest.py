@@ -4,6 +4,9 @@ import os
 from collections.abc import Generator
 
 import pytest
+from alembic.command import downgrade as alembic_downgrade
+from alembic.command import upgrade as alembic_upgrade
+from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -11,7 +14,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from apps.api.app.dependencies import get_db, token_verifier
 from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
-from backtestforecast.db.base import Base
 from backtestforecast.security.rate_limits import get_rate_limiter
 
 
@@ -29,12 +31,14 @@ def _make_engine():
 @pytest.fixture()
 def session_factory() -> Generator[sessionmaker[Session], None, None]:
     engine = _make_engine()
-    Base.metadata.create_all(engine)
+    alembic_cfg = AlembicConfig("alembic.ini")
+    alembic_cfg.set_main_option("sqlalchemy.url", str(engine.url))
+    alembic_upgrade(alembic_cfg, "head")
     testing_session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     try:
         yield testing_session_factory
     finally:
-        Base.metadata.drop_all(engine)
+        alembic_downgrade(alembic_cfg, "base")
         engine.dispose()
 
 
@@ -100,6 +104,8 @@ class _FakeCeleryApp:
 
         handler = self._handlers.get(name)
         if handler is None:
+            import warnings
+            warnings.warn(f"FakeCeleryApp: unregistered task '{name}' — returning noop", stacklevel=2)
             return types.SimpleNamespace(id="noop-task-id")
         handler(name, kwargs)  # type: ignore[operator]
         return types.SimpleNamespace(id="fake-task-id")

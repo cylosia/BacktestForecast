@@ -260,6 +260,15 @@ class PipelineBacktestExecutor:
         if not curve:
             return []
         max_dd_idx = max(range(len(curve)), key=lambda i: curve[i].drawdown_pct)
+
+        recovery_idx = None
+        if max_dd_idx < len(curve) - 1:
+            max_dd_val = curve[max_dd_idx].drawdown_pct
+            for ri in range(max_dd_idx + 1, len(curve)):
+                if curve[ri].drawdown_pct < max_dd_val * 0.5:
+                    recovery_idx = ri
+                    break
+
         return [
             {
                 "trade_date": p.trade_date.isoformat(),
@@ -267,7 +276,7 @@ class PipelineBacktestExecutor:
                 "drawdown_pct": p.drawdown_pct,
             }
             for i, p in enumerate(curve)
-            if i % 5 == 0 or i == max_dd_idx or i == len(curve) - 1
+            if i % 5 == 0 or i == max_dd_idx or i == recovery_idx or i == len(curve) - 1
         ]
 
 

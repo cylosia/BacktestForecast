@@ -8,6 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /build
 
+# NOTE: Ideally we'd COPY only dependency metadata first, install deps, then
+# COPY source code for better layer caching.  However, setuptools needs the
+# full source tree to discover packages, so we must copy everything before
+# pip install.  Changing to a build backend that supports PEP 660 editable
+# installs with --no-build-isolation would allow splitting these steps.
 COPY pyproject.toml README.md /build/
 COPY apps/__init__.py /build/apps/
 COPY apps/api /build/apps/api

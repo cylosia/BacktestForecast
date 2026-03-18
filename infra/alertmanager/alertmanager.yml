@@ -1,10 +1,8 @@
-# Alertmanager configuration template.
+# Alertmanager configuration.
 #
-# Customize the receiver(s) below before deploying.  Common options:
-#   - email_configs: SMTP alerts
-#   - slack_configs: Slack webhook
-#   - pagerduty_configs: PagerDuty integration
-#   - webhook_configs: generic webhook (Opsgenie, custom, etc.)
+# Both receivers use a generic webhook endpoint that MUST be configured via
+# the ALERT_WEBHOOK_URL environment variable before deploying.
+# Common targets: Opsgenie, PagerDuty webhook relay, Slack incoming webhook, or a custom service.
 #
 # Docs: https://prometheus.io/docs/alerting/latest/configuration/
 
@@ -26,26 +24,14 @@ route:
 
 receivers:
   - name: default
-    # Uncomment and configure one or more integrations:
-    #
-    # webhook_configs:
-    #   - url: "https://your-webhook-endpoint.example.com/alerts"
-    #     send_resolved: true
-    #
-    # slack_configs:
-    #   - api_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
-    #     channel: "#alerts"
-    #     send_resolved: true
-    #     title: '{{ .GroupLabels.alertname }}'
-    #     text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    webhook_configs:
+      - url: "${ALERT_WEBHOOK_URL:-http://localhost:9095/alert}"
+        send_resolved: true
 
   - name: critical
-    # Same structure as default — route critical alerts to a higher-urgency
-    # channel (e.g. PagerDuty, on-call Slack channel, or SMS):
-    #
-    # pagerduty_configs:
-    #   - service_key: "YOUR_PAGERDUTY_SERVICE_KEY"
-    #     severity: critical
+    webhook_configs:
+      - url: "${ALERT_WEBHOOK_CRITICAL_URL:-${ALERT_WEBHOOK_URL:-http://localhost:9095/alert}}"
+        send_resolved: true
 
 inhibit_rules:
   - source_match:

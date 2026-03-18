@@ -2,7 +2,7 @@ import type { BacktestSummaryResponse } from "@backtestforecast/api-client";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/backtests/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-type NumericValue = BacktestSummaryResponse[keyof BacktestSummaryResponse];
+type NumericValue = string | number | null | undefined;
 
 function safeRatio(value: NumericValue): string {
   if (value == null) return "—";

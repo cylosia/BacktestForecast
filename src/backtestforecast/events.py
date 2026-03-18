@@ -164,12 +164,13 @@ def _fallback_persist_status(
                 )
                 .values(status=status)
             )
+            affected = result.rowcount
             try:
                 session.commit()
             except Exception:
                 session.rollback()
                 raise
-            if result.rowcount == 0:
+            if affected == 0:
                 logger.info(
                     "events.fallback_skipped_terminal",
                     job_type=job_type,

@@ -113,12 +113,14 @@ def repair(individual: Individual) -> Individual:
         idx = random.randrange(len(option_legs))
         option_legs[idx]["side"] = "long" if option_legs[idx]["side"] == "short" else "short"
 
-    if _has_cancelling_legs(option_legs):
+    while _has_cancelling_legs(option_legs):
         for leg in option_legs:
             if leg["side"] == "long":
                 leg["strike_offset"] = leg.get("strike_offset", 0) + random.choice([-1, 1])
                 leg["strike_offset"] = max(-20, min(20, leg["strike_offset"]))
                 break
+        else:
+            break
 
     return individual
 

@@ -11,14 +11,14 @@ from backtestforecast.market_data.types import DailyBar, OptionContractRecord
 
 logger = structlog.get_logger("market_data.prefetch")
 
+_API_CONCURRENCY = threading.Semaphore(10)
+
 
 @dataclass(slots=True)
 class PrefetchSummary:
     dates_processed: int = 0
     contracts_fetched: int = 0
     quotes_fetched: int = 0
-    quote_cache_hits: int = 0
-    contract_cache_hits: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -26,8 +26,6 @@ class PrefetchSummary:
             "dates_processed": self.dates_processed,
             "contracts_fetched": self.contracts_fetched,
             "quotes_fetched": self.quotes_fetched,
-            "quote_cache_hits": self.quote_cache_hits,
-            "contract_cache_hits": self.contract_cache_hits,
             "errors": self.errors[:20],
         }
 
@@ -94,15 +92,17 @@ class OptionDataPrefetcher:
             result = _DateResult()
             for contract_type in ("put", "call"):
                 try:
-                    contracts = option_gateway.list_contracts(
-                        entry_date=trade_date,
-                        contract_type=contract_type,
-                        target_dte=target_dte,
-                        dte_tolerance_days=dte_tolerance_days,
-                    )
+                    with _API_CONCURRENCY:
+                        contracts = option_gateway.list_contracts(
+                            entry_date=trade_date,
+                            contract_type=contract_type,
+                            target_dte=target_dte,
+                            dte_tolerance_days=dte_tolerance_days,
+                        )
                     result.contracts_fetched += len(contracts)
                     for contract in contracts:
-                        option_gateway.get_quote(contract.ticker, trade_date)
+                        with _API_CONCURRENCY:
+                            option_gateway.get_quote(contract.ticker, trade_date)
                         result.quotes_fetched += 1
                 except Exception as exc:
                     msg = f"{symbol} {trade_date} {contract_type}: {exc}"

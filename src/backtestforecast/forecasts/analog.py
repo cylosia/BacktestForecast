@@ -101,7 +101,16 @@ class HistoricalAnalogForecaster:
                 candidate.trade_date,
             ),
         )
-        analogs = ranked[: min(max_analogs, len(ranked))]
+        min_spacing = max(calendar_horizon // 2, 5)
+        analogs: list[ForecastCandidate] = []
+        for candidate in ranked:
+            if any(abs((candidate.trade_date - s.trade_date).days) < min_spacing for s in analogs):
+                continue
+            analogs.append(candidate)
+            if len(analogs) >= max_analogs:
+                break
+        if not analogs:
+            analogs = ranked[: min(max_analogs, len(ranked))]
         returns = sorted(candidate.forward_return_pct for candidate in analogs)
         positive_rate = (sum(1 for value in returns if value > 0) / len(returns)) * 100.0
         low = self._percentile(returns, 0.25)
@@ -131,6 +140,11 @@ class HistoricalAnalogForecaster:
 
     @staticmethod
     def _daily_returns(closes: list[float]) -> list[float]:
+        """Compute daily returns as percentages (2.0 = 2% gain).
+
+        Note: pipeline/regime.py uses raw decimal format (0.02 = 2% gain).
+        These conventions are independent and should not be mixed.
+        """
         returns: list[float] = [0.0]
         for index in range(1, len(closes)):
             prior = closes[index - 1]
@@ -276,7 +290,7 @@ class HistoricalAnalogForecaster:
         if calendar_days <= 0:
             return 0
         weekday_days = int(calendar_days * 5 / 7)
-        estimated_holidays = int(calendar_days / 30) * 0.75
+        estimated_holidays = calendar_days * 9.0 / 365.0  # ~9 NYSE holidays per year
         return max(1, int(weekday_days - estimated_holidays))
 
     _QUANT = Decimal("0.0001")

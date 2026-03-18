@@ -94,6 +94,12 @@ def _check_trigger_tables_completeness() -> list[str]:
                                 if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                                     trigger_tables.add(elt.value)
 
+    import re
+    for migration in sorted(baseline.glob("*.py")):
+        source = migration.read_text(encoding="utf-8")
+        for match in re.finditer(r"CREATE\s+TRIGGER\b.*?\bON\s+(\w+)", source, re.IGNORECASE | re.DOTALL):
+            trigger_tables.add(match.group(1))
+
     if not trigger_tables:
         return []
 

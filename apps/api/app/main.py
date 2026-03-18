@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -310,6 +311,14 @@ def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSO
     if request_id:
         response.headers[REQUEST_ID_HEADER] = request_id
     return response
+
+
+@app.exception_handler(asyncio.CancelledError)
+async def cancelled_exception_handler(request: Request, exc: asyncio.CancelledError) -> JSONResponse:
+    return JSONResponse(
+        status_code=499,
+        content=_error_payload(request, code="client_disconnected", message="Client closed connection"),
+    )
 
 
 @app.exception_handler(Exception)

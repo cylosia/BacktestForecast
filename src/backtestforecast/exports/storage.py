@@ -55,23 +55,18 @@ class DatabaseStorage:
     def delete(self, storage_key: str) -> None:
         pass
 
-    def exists(self, storage_key: str) -> bool:
-        """Check if content exists for the given storage key.
-
-        DatabaseStorage cannot verify without a DB session.  Returns False for
-        empty/None keys.  Callers MUST also verify
-        ``ExportJob.content_bytes is not None`` before streaming — this method
-        only confirms the key looks valid, not that content is present.
-        """
+    def exists(self, storage_key: str | None) -> bool:
         if not storage_key:
             return False
         from backtestforecast.db.session import SessionLocal
         from backtestforecast.models import ExportJob
         try:
+            import uuid as _uuid
+            key_uuid = _uuid.UUID(storage_key)
             with SessionLocal() as session:
-                job = session.get(ExportJob, storage_key)
+                job = session.get(ExportJob, key_uuid)
                 return job is not None and job.content_bytes is not None
-        except Exception:
+        except (ValueError, Exception):
             return False
 
     def get_object(self, key: str) -> Any:

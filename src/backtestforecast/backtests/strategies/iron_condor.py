@@ -126,6 +126,13 @@ class IronCondorStrategy(StrategyDefinition):
             max_loss_per_unit = max(wider_spread - credit, 0.0)
             max_profit_per_unit = credit
         else:
+            from backtestforecast.observability import get_logger
+            get_logger("strategies.iron_condor").warning(
+                "iron_condor.debit_entry_rejected",
+                symbol=bar.ticker,
+                trade_date=str(bar.trade_date),
+                entry_value=entry_value_per_unit,
+            )
             return None
         margin = iron_condor_margin(
             long_call.strike_price - short_call.strike_price,

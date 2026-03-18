@@ -8,10 +8,21 @@ import structlog
 import jwt
 from jwt import InvalidTokenError, PyJWKClient
 
-from backtestforecast.config import Settings, get_settings
+from backtestforecast.config import Settings, get_settings, register_invalidation_callback
 from backtestforecast.errors import AuthenticationError, ConfigurationError
 
 _logger = structlog.get_logger("auth.verification")
+
+_jwks_client: PyJWKClient | None = None
+
+
+def _invalidate_jwks() -> None:
+    """Reset the JWKS client so it reconnects with updated settings."""
+    global _jwks_client
+    _jwks_client = None
+
+
+register_invalidation_callback(_invalidate_jwks)
 
 
 @dataclass(slots=True)
@@ -131,7 +142,7 @@ class ClerkTokenVerifier:
                     raise ConfigurationError("Set CLERK_JWT_KEY or CLERK_JWKS_URL (or CLERK_ISSUER) to enable auth.")
 
             self._jwks_client = PyJWKClient(
-                jwks_url, timeout=10, cache_jwk_set=True, lifespan=300,
+                jwks_url, timeout=5, cache_jwk_set=True, lifespan=300,
             )
             return self._jwks_client
 

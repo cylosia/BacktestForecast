@@ -27,13 +27,17 @@ from backtestforecast.market_data.types import DailyBar
 
 
 def _deep_itm_call_strike(strikes: list[float], underlying_close: float) -> float:
-    """Select a deep ITM call strike — 2 increments below spot, or the lowest available."""
+    """Select a deep ITM call strike — 2 increments below spot, or the lowest available.
+
+    Raises DataUnavailableError when no in-the-money strikes exist, because
+    a PMCC with an OTM long leg is structurally invalid (unlimited risk).
+    """
     below = sorted([s for s in strikes if s < underlying_close])
     if len(below) >= 2:
         return below[-2]
     if below:
         return below[-1]
-    return min(strikes)
+    raise DataUnavailableError("No deep ITM call strike available for PMCC — all strikes are at or above the underlying price.")
 
 
 @dataclass(frozen=True, slots=True)

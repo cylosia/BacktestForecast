@@ -73,9 +73,11 @@ class GeneticOptimizer:
         best_individual: Individual = population[0]
         stale_count = 0
 
+        generations_run = 0
+
         for gen in range(cfg.max_generations):
             scored = self._evaluate_population(population, fitness_fn, fitness_cache, cfg.max_workers)
-            total_evals += sum(1 for ind, _ in scored if individual_to_key(ind) not in fitness_cache or True)
+            total_evals += sum(1 for ind, _ in scored if individual_to_key(ind) not in fitness_cache)
 
             for ind, fit_val in scored:
                 fitness_cache[individual_to_key(ind)] = fit_val
@@ -98,6 +100,8 @@ class GeneticOptimizer:
                 population=len(scored),
                 cache_size=len(fitness_cache),
             )
+
+            generations_run = gen + 1
 
             if stale_count >= cfg.max_stale_generations:
                 logger.info("ga.early_stop", generation=gen, reason="stale_generations", stale_count=stale_count)
@@ -148,7 +152,7 @@ class GeneticOptimizer:
         return GAResult(
             best_individual=best_individual,
             best_fitness=best_fitness,
-            generations_run=gen + 1 if 'gen' in dir() else 0,
+            generations_run=generations_run,
             total_evaluations=total_evals,
             top_individuals=top_individuals,
         )

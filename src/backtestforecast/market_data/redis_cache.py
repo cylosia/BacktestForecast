@@ -91,12 +91,15 @@ class OptionDataRedisCache:
     def __init__(self, redis_url: str, ttl_seconds: int = 604_800) -> None:
         self._pool = redis.ConnectionPool.from_url(redis_url, decode_responses=True)
         self._ttl = ttl_seconds
+        self._client: redis.Redis | None = None
 
     def close(self) -> None:
         self._pool.disconnect()
 
     def _conn(self) -> redis.Redis:
-        return redis.Redis(connection_pool=self._pool)
+        if self._client is None:
+            self._client = redis.Redis(connection_pool=self._pool)
+        return self._client
 
     # -- contracts -----------------------------------------------------------
 

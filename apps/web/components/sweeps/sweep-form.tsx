@@ -106,9 +106,9 @@ export function SweepForm() {
     if (submittingRef.current) return;
 
     const symbol = form.symbol.trim().toUpperCase();
-    if (!symbol || !/^[A-Z][A-Z0-9./^]{0,15}$/.test(symbol)) {
+    if (!symbol || !/^[A-Z][A-Z0-9./^-]{0,15}$/.test(symbol)) {
       setStatus("error");
-      setErrorMessage("Enter a valid ticker symbol (1-16 characters, letters/digits/./^).");
+      setErrorMessage("Enter a valid ticker symbol (1-16 characters, letters/digits/./-/^).");
       return;
     }
     if (!form.startDate || !form.endDate || form.startDate >= form.endDate) {

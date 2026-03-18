@@ -173,6 +173,9 @@ class CoveredStrangleStrategy(StrategyDefinition):
 
         credit = (cq.mid_price + pq.mid_price) * 100.0
         capital = covered_strangle_margin(bar.close_price, put_strike, pq.mid_price)
+        # Worst case: stock drops to $0 AND short put is exercised, forcing
+        # purchase of 100 additional shares at the put strike. This represents
+        # a 2x position exposure scenario and is intentionally conservative.
         max_loss = max((bar.close_price * 100.0) + (put_strike * 100.0) - credit, 0.0)
         max_profit = max((call_strike - bar.close_price) * 100.0, 0.0) + credit
         entry_package_market_value = bar.close_price * 100.0 - credit

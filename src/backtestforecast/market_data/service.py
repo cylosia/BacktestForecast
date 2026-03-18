@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -262,7 +263,7 @@ class MarketDataService:
         self._bars_cache: OrderedDict[tuple[str, date, date], list[DailyBar]] = OrderedDict()
         self._bars_cache_lock = threading.Lock()
         self._bars_inflight: dict[tuple[str, date, date], threading.Event] = {}
-        self._bars_errors: dict[tuple[str, date, date], Exception] = {}
+        self._bars_errors: dict[tuple[str, date, date], tuple[Exception, float]] = {}
         self._redis_cache: OptionDataRedisCache | None = self._build_redis_cache()
 
     @staticmethod
@@ -307,9 +308,9 @@ class MarketDataService:
                 if cached is not None:
                     self._bars_cache.move_to_end(cache_key)
                     return cached
-                error = self._bars_errors.get(cache_key)
-            if error is not None:
-                raise error
+                error_entry = self._bars_errors.get(cache_key)
+            if error_entry is not None:
+                raise error_entry[0]
             from backtestforecast.errors import DataUnavailableError
             raise DataUnavailableError(
                 f"Market data fetch for {symbol} timed out or completed without caching results."
@@ -326,11 +327,11 @@ class MarketDataService:
                 return self._bars_cache[cache_key]
         except Exception as exc:
             with self._bars_cache_lock:
-                self._bars_errors[cache_key] = exc
-                if len(self._bars_errors) > 500:
-                    keys_to_remove = list(self._bars_errors.keys())[:250]
-                    for k in keys_to_remove:
-                        self._bars_errors.pop(k, None)
+                self._bars_errors[cache_key] = (exc, time.monotonic())
+                now = time.monotonic()
+                stale_keys = [k for k, (_, t) in self._bars_errors.items() if now - t > 300]
+                for k in stale_keys:
+                    self._bars_errors.pop(k, None)
             raise
         finally:
             inflight_event.set()
@@ -411,6 +412,10 @@ class MarketDataService:
             if (
                 bar.close_price <= 0
                 or bar.open_price <= 0
+                # Zero-volume bars are dropped as they often indicate data corrections
+                # or partial trading days. This can create gaps in the bar series that
+                # affect indicator calculations (e.g., SMA window becomes shorter).
+                # See indicators/calculations.py MACD fix for gap-aware handling.
                 or bar.volume <= 0
                 or bar.high_price < bar.low_price
                 or bar.high_price < max(bar.open_price, bar.close_price)

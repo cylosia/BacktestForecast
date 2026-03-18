@@ -15,6 +15,9 @@ RUN echo "node-linker=hoisted" > .npmrc && \
 COPY apps/web /app/apps/web
 COPY packages/api-client /app/packages/api-client
 
+# IMPORTANT: NEXT_PUBLIC_* values are baked into the static JavaScript bundle
+# at build time. A separate Docker image must be built for each environment
+# (staging, production) with the correct values.
 ARG NEXT_PUBLIC_APP_URL
 ARG NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY

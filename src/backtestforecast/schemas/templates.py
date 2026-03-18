@@ -70,7 +70,7 @@ class TemplateResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def coerce_config(cls, data: Any) -> Any:
-        if hasattr(data, "__dict__"):
+        if hasattr(data, "__tablename__"):
             raw = getattr(data, "config_json", None)
             if isinstance(raw, dict):
                 attrs = {

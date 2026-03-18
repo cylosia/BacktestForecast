@@ -29,6 +29,12 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # NOTE: Redis connections are currently unencrypted. For deployments where
+    # Redis is on a separate host, enable TLS by using rediss:// URLs in
+    # REDIS_URL and REDIS_CACHE_URL, and configuring Redis with --tls-port,
+    # --tls-cert-file, --tls-key-file, and --tls-ca-cert-file.
+    # NOTE: --requirepass exposes the password in process listings. For hardened
+    # deployments, mount a redis.conf file with 'requirepass' set instead.
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis_data:/data

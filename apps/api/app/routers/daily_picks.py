@@ -18,6 +18,8 @@ from backtestforecast.schemas.analysis import (
 )
 from backtestforecast.security import get_rate_limiter
 
+# TODO(audit): Extract to a DailyPicksService / NightlyPipelineRunRepository
+# for consistency with other features.
 router = APIRouter(prefix="/daily-picks", tags=["daily-picks"])
 
 

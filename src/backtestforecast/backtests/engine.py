@@ -406,10 +406,14 @@ class OptionsBacktestEngine:
             holding_period_days=(exit_date - position.entry_date).days,
             entry_underlying_close=self._entry_underlying_close(position),
             exit_underlying_close=exit_underlying_close,
-            # entry_mid and exit_mid are the per-contract net cost (not a single-leg
-            # price). They are derived by dividing the total per-unit package value
-            # by 100 (the contract multiplier) so that downstream consumers see a
-            # per-share equivalent suitable for display and reporting.
+            # IMPORTANT: entry_mid and exit_mid are stored as per-share equivalents,
+            # NOT raw option mid-prices. They are computed as:
+            #   entry_value_per_unit / 100.0
+            # where entry_value_per_unit is the total position value for one unit
+            # (e.g., one spread). To reconstruct the actual trade cost:
+            #   actual_cost = entry_mid * 100 * quantity
+            # This convention ensures consistent P&L math but differs from
+            # the market quotes a user would see on their broker platform.
             entry_mid=entry_value_per_unit / 100.0,
             exit_mid=exit_value_per_unit / 100.0,
             gross_pnl=gross_pnl,

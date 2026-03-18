@@ -158,9 +158,10 @@ export async function fetchScannerRecommendations(
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token);
 }
 
-// TODO: These types should be generated from the OpenAPI schema via
-// packages/api-client. Manually kept in sync until sweep endpoints are
-// added to the schema generation pipeline.
+// FIXME(audit): These types MUST be generated from the OpenAPI schema via
+// packages/api-client. They are manually defined and will silently drift
+// from the backend. Run `python scripts/export_openapi.py` and regenerate
+// schema.d.ts after ensuring sweep routers are included.
 export interface SweepJobResponse {
   id: string;
   status: string;
@@ -206,9 +207,27 @@ export interface SweepResultListResponse {
   items: SweepResultResponse[];
 }
 
+export interface CreateSweepJobPayload {
+  symbol: string;
+  start_date: string;
+  end_date: string;
+  strategy_types: string[];
+  account_size: number;
+  risk_per_trade_pct: number;
+  commission_per_contract: number;
+  target_dte?: number;
+  dte_tolerance_days?: number;
+  max_holding_days?: number;
+  max_generations?: number;
+  population_size?: number;
+  num_legs?: number;
+  delta_range?: [number, number];
+  spread_width_range?: [number, number];
+}
+
 export async function createSweepJob(
   token: string,
-  payload: Record<string, unknown>,
+  payload: CreateSweepJobPayload,
   signal?: AbortSignal,
 ): Promise<SweepJobResponse> {
   return apiRequest<SweepJobResponse>("/v1/sweeps", token, {

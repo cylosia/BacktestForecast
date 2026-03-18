@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import math
 
+_MIN_MARGIN_PER_CONTRACT = 50.0
+
 
 def _require_non_negative(**kwargs: float) -> None:
     for name, value in kwargs.items():
@@ -42,7 +44,7 @@ def naked_call_margin(
     method_a = 0.20 * underlying_price - otm_amount + premium_per_share
     method_b = 0.10 * underlying_price + premium_per_share
     per_share = max(method_a, method_b)
-    return max(per_share, 0.0) * 100.0
+    return max(max(per_share, 0.0) * 100.0, _MIN_MARGIN_PER_CONTRACT)
 
 
 def naked_put_margin(
@@ -63,7 +65,7 @@ def naked_put_margin(
     method_a = 0.20 * underlying_price - otm_amount + premium_per_share
     method_b = 0.10 * strike + premium_per_share
     per_share = max(method_a, method_b)
-    return max(per_share, 0.0) * 100.0
+    return max(max(per_share, 0.0) * 100.0, _MIN_MARGIN_PER_CONTRACT)
 
 
 def naked_option_margin(
