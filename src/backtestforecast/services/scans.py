@@ -771,7 +771,7 @@ class ScanService:
         def _opt(val: float | None) -> float | None:
             if val is None:
                 return None
-            result = to_decimal(val)
+            result = to_decimal(val, allow_infinite=True)
             return float(result) if result is not None else None
 
         return {
@@ -801,6 +801,10 @@ class ScanService:
 
     @staticmethod
     def _serialize_trade(trade) -> dict[str, Any]:
+        def _safe(val: float) -> float:
+            result = to_decimal(val)
+            return float(result) if result is not None else 0.0
+
         return {
             "option_ticker": trade.option_ticker,
             "strategy_type": trade.strategy_type,
@@ -811,13 +815,13 @@ class ScanService:
             "quantity": trade.quantity,
             "dte_at_open": trade.dte_at_open,
             "holding_period_days": trade.holding_period_days,
-            "entry_underlying_close": float(to_decimal(trade.entry_underlying_close)),
-            "exit_underlying_close": float(to_decimal(trade.exit_underlying_close)),
-            "entry_mid": float(to_decimal(trade.entry_mid)),
-            "exit_mid": float(to_decimal(trade.exit_mid)),
-            "gross_pnl": float(to_decimal(trade.gross_pnl)),
-            "net_pnl": float(to_decimal(trade.net_pnl)),
-            "total_commissions": float(to_decimal(trade.total_commissions)),
+            "entry_underlying_close": _safe(trade.entry_underlying_close),
+            "exit_underlying_close": _safe(trade.exit_underlying_close),
+            "entry_mid": _safe(trade.entry_mid),
+            "exit_mid": _safe(trade.exit_mid),
+            "gross_pnl": _safe(trade.gross_pnl),
+            "net_pnl": _safe(trade.net_pnl),
+            "total_commissions": _safe(trade.total_commissions),
             "entry_reason": trade.entry_reason,
             "exit_reason": trade.exit_reason,
             "detail_json": trade.detail_json,
@@ -825,12 +829,16 @@ class ScanService:
 
     @staticmethod
     def _serialize_equity_point(point) -> dict[str, Any]:
+        def _safe(val: float) -> float:
+            result = to_decimal(val)
+            return float(result) if result is not None else 0.0
+
         return {
             "trade_date": point.trade_date.isoformat(),
-            "equity": float(to_decimal(point.equity)),
-            "cash": float(to_decimal(point.cash)),
-            "position_value": float(to_decimal(point.position_value)),
-            "drawdown_pct": float(to_decimal(point.drawdown_pct)),
+            "equity": _safe(point.equity),
+            "cash": _safe(point.cash),
+            "position_value": _safe(point.position_value),
+            "drawdown_pct": _safe(point.drawdown_pct),
         }
 
     _MAX_SCAN_EQUITY_POINTS = 500

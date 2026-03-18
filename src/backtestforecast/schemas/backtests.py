@@ -173,6 +173,12 @@ class AvoidEarningsRule(BaseModel):
     days_before: int = Field(default=0, ge=0, le=30)
     days_after: int = Field(default=0, ge=0, le=30)
 
+    @model_validator(mode="after")
+    def validate_non_zero_window(self) -> "AvoidEarningsRule":
+        if self.days_before == 0 and self.days_after == 0:
+            raise ValueError("At least one of days_before or days_after must be > 0")
+        return self
+
 
 EntryRule = Annotated[
     RsiRule
@@ -263,6 +269,7 @@ CUSTOM_LEG_COUNT = {
 
 class CustomLegDefinition(BaseModel):
     """User-defined leg for custom N-leg strategies."""
+    model_config = ConfigDict(extra="forbid")
 
     asset_type: Literal["option", "stock"] = "option"
     contract_type: Literal["call", "put"] | None = Field(default=None)
@@ -313,6 +320,7 @@ class StrikeSelectionMode(str, Enum):
 
 class StrikeSelection(BaseModel):
     """Configuration for where a strategy leg's strike is placed relative to the underlying."""
+    model_config = ConfigDict(extra="forbid")
 
     mode: StrikeSelectionMode = StrikeSelectionMode.NEAREST_OTM
     value: Decimal | None = Field(
@@ -354,6 +362,7 @@ class SpreadWidthMode(str, Enum):
 
 class SpreadWidthConfig(BaseModel):
     """Configuration for how wide a spread's wings are."""
+    model_config = ConfigDict(extra="forbid")
 
     mode: SpreadWidthMode = SpreadWidthMode.STRIKE_STEPS
     value: Decimal = Field(default=Decimal("1"), gt=0)
@@ -378,6 +387,7 @@ class StrategyOverrides(BaseModel):
     Named fields correspond to standard leg roles. Strategies ignore fields
     that don't apply to them (e.g., a long call ignores ``short_call_strike``).
     """
+    model_config = ConfigDict(extra="forbid")
 
     short_call_strike: StrikeSelection | None = Field(default=None, description="Override short call placement")
     short_put_strike: StrikeSelection | None = Field(default=None, description="Override short put placement")

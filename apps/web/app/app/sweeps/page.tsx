@@ -119,7 +119,7 @@ export default async function SweepsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {jobs.items.map((job: any) => (
+                  {jobs.items.map((job) => (
                     <TableRow key={job.id}>
                       <TableCell>
                         <Link className="font-medium hover:text-primary" href={`/app/sweeps/${job.id}`}>

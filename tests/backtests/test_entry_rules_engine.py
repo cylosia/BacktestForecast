@@ -275,14 +275,16 @@ class TestCombinedSlippageAndCommission:
             FakeGateway(contracts=contracts, quotes=quotes),
         )
 
-        if result_both.trades and result_none.trades:
-            trade_both = result_both.trades[0]
-            trade_none = result_none.trades[0]
+        assert result_both.trades, "Expected at least one trade with slippage+commission"
+        assert result_none.trades, "Expected at least one trade without slippage+commission"
 
-            assert trade_both.total_commissions > 0, "Commission should be nonzero"
-            assert trade_both.net_pnl < trade_none.net_pnl, (
-                "Net PnL with slippage+commission should be less than without"
-            )
-            assert trade_both.gross_pnl <= trade_none.gross_pnl, (
-                "Gross PnL with slippage should be <= gross without slippage"
-            )
+        trade_both = result_both.trades[0]
+        trade_none = result_none.trades[0]
+
+        assert trade_both.total_commissions > 0, "Commission should be nonzero"
+        assert trade_both.net_pnl < trade_none.net_pnl, (
+            "Net PnL with slippage+commission should be less than without"
+        )
+        assert trade_both.gross_pnl <= trade_none.gross_pnl, (
+            "Gross PnL with slippage should be <= gross without slippage"
+        )

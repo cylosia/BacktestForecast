@@ -57,6 +57,10 @@ def _create_user(session: Session) -> User:
 def test_concurrent_validate_task_ownership(db_session):
     """Two calls to _validate_task_ownership with the same job but different
     task IDs: only the first should succeed."""
+    # NOTE: This test uses SQLite which does not support FOR UPDATE row-level
+    # locking. It validates the basic UPDATE WHERE celery_task_id IS NULL
+    # ownership claim pattern, not the locking behavior. Integration tests
+    # against PostgreSQL are needed for full concurrency coverage.
     import apps.worker.app.tasks as tasks_module
 
     user = _create_user(db_session)

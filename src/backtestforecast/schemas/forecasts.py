@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import re
 from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator
 
-from backtestforecast.schemas.backtests import StrategyType
+from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS, StrategyType
 from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
-
-SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^-]{0,15}$")
 
 
 class ForecastRequestParams(BaseModel):

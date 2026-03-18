@@ -26,6 +26,8 @@ ScannerJobStatus = RunStatus
 
 
 class RuleSetDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=120)
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
 

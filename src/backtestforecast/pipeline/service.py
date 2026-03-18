@@ -614,35 +614,49 @@ class NightlyPipelineService:
 
             max_workers = min(get_settings().pipeline_max_workers, len(candidates)) if candidates else 1
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = [pool.submit(_fetch_forecast, c) for c in candidates]
-                for future in as_completed(futures, timeout=300):
-                    try:
-                        candidate, forecast = future.result(timeout=300)
-                    except Exception:
-                        logger.warning("pipeline.forecast_task_failed", exc_info=True)
-                        continue
-                    if forecast:
-                        candidate.forecast_json = forecast
+                futures = {pool.submit(_fetch_forecast, c): c for c in candidates}
+                collected: set[int] = set()
 
-                        median_return = forecast.get("expected_return_median_pct", 0)
-                        positive_rate = forecast.get("positive_outcome_rate_pct", 50)
+                def _apply_forecast(candidate: FullBacktestResult, forecast: dict[str, Any]) -> None:
+                    candidate.forecast_json = forecast
+                    median_return = forecast.get("expected_return_median_pct", 0)
+                    positive_rate = forecast.get("positive_outcome_rate_pct", 50)
+                    backtest_roi = candidate.summary.get("total_roi_pct", 0)
+                    forecast_supports = float(median_return) > 0
+                    if candidate.strategy_type in BEARISH_STRATEGIES:
+                        forecast_supports = float(median_return) < 0
+                    adjusted_score = candidate.score
+                    if backtest_roi > 0 and float(median_return) != 0 and forecast_supports:
+                        adjusted_score *= 1.2
+                    effective_rate = float(positive_rate)
+                    if candidate.strategy_type in BEARISH_STRATEGIES:
+                        effective_rate = 100.0 - effective_rate
+                    if effective_rate > 60:
+                        adjusted_score *= 1.0 + (effective_rate - 60) / 200.0
+                    candidate.score = adjusted_score
 
-                        backtest_roi = candidate.summary.get("total_roi_pct", 0)
-                        forecast_supports = float(median_return) > 0
-                        if candidate.strategy_type in BEARISH_STRATEGIES:
-                            forecast_supports = float(median_return) < 0
-
-                        adjusted_score = candidate.score
-                        if backtest_roi > 0 and float(median_return) != 0 and forecast_supports:
-                            adjusted_score *= 1.2
-
-                        effective_rate = float(positive_rate)
-                        if candidate.strategy_type in BEARISH_STRATEGIES:
-                            effective_rate = 100.0 - effective_rate
-                        if effective_rate > 60:
-                            adjusted_score *= 1.0 + (effective_rate - 60) / 200.0
-
-                        candidate.score = adjusted_score
+                try:
+                    for future in as_completed(futures, timeout=300):
+                        collected.add(id(future))
+                        try:
+                            candidate, forecast = future.result(timeout=300)
+                        except Exception:
+                            logger.warning("pipeline.forecast_task_failed", exc_info=True)
+                            continue
+                        if forecast:
+                            _apply_forecast(candidate, forecast)
+                except TimeoutError:
+                    logger.warning("pipeline.stage5_timeout", completed=len(collected), total=len(futures))
+                    for f in futures:
+                        if id(f) in collected:
+                            continue
+                        if f.done() and not f.cancelled():
+                            try:
+                                candidate, forecast = f.result(timeout=0)
+                                if forecast:
+                                    _apply_forecast(candidate, forecast)
+                            except Exception:
+                                pass
 
         # Final sort
         candidates.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))

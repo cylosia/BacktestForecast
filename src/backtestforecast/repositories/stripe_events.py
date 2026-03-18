@@ -72,7 +72,7 @@ class StripeEventRepository:
             stripe_event_id=stripe_event_id,
             event_type=event_type,
             livemode=livemode,
-            idempotency_status="processed",
+            idempotency_status="processing",
             user_id=user_id,
             request_id=request_id,
             ip_hash=ip_hash,
@@ -87,6 +87,14 @@ class StripeEventRepository:
             nested.rollback()
             STRIPE_WEBHOOK_DEDUPE_TOTAL.inc()
             return None
+
+    def mark_processed(self, stripe_event_id: str) -> None:
+        """Mark a claimed event as successfully processed."""
+        self.session.execute(
+            update(StripeEvent)
+            .where(StripeEvent.stripe_event_id == stripe_event_id)
+            .values(idempotency_status="processed")
+        )
 
     def mark_error(self, stripe_event_id: str, error_detail: str) -> None:
         """Update a previously claimed event to record a processing error."""

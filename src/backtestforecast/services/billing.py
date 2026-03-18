@@ -224,6 +224,7 @@ class BillingService:
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
             raise
 
+        self.stripe_events.mark_processed(event_id)
         self.session.commit()
         STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ok").inc()
         return {"status": "ok", "event_type": event_type}

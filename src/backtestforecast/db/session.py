@@ -139,5 +139,5 @@ def get_pool_stats() -> dict[str, int]:
         try:
             stats["max_overflow"] = pool._max_overflow
         except AttributeError:
-            stats["max_overflow"] = "unknown"
+            stats["max_overflow"] = -1
     return stats

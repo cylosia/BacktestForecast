@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -8,9 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
 from backtestforecast.schemas.common import sanitize_error_message
-
-SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^-]{0,15}$")
 
 
 class AnalysisSummaryResponse(BaseModel):

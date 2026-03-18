@@ -122,6 +122,7 @@ class WheelStrategyBacktestEngine:
                     max_holding_days=config.max_holding_days,
                     backtest_end_date=config.end_date,
                     last_bar_date=sorted_bars[-1].trade_date,
+                    current_bar_index=index,
                 )
                 if should_exit:
                     exit_mid = current_mid
@@ -324,6 +325,11 @@ class WheelStrategyBacktestEngine:
             if active_option is not None:
                 option_value = -active_option.last_mid * 100.0 * active_option.quantity
             shares_value = 0.0 if held_shares is None else bar.close_price * 100.0 * held_shares.quantity
+
+            if not math.isfinite(option_value):
+                option_value = 0.0
+            if not math.isfinite(shares_value):
+                shares_value = 0.0
 
             equity = cash + shares_value + option_value
             peak_equity = max(peak_equity, equity)
@@ -583,11 +589,19 @@ class WheelStrategyBacktestEngine:
         max_holding_days: int,
         backtest_end_date: date,
         last_bar_date: date,
+        current_bar_index: int | None = None,
     ) -> tuple[bool, str]:
         if bar.trade_date >= position.expiration_date:
             return True, "expiration"
-        if (bar.trade_date - position.entry_date).days >= max_holding_days:
-            return True, "max_holding_days"
+        # Count trading days (bars) instead of calendar days to avoid
+        # premature exits over weekends and holidays.
+        if current_bar_index is not None:
+            trading_days_held = current_bar_index - position.entry_index
+            if trading_days_held >= max_holding_days:
+                return True, "max_holding_days"
+        else:
+            if (bar.trade_date - position.entry_date).days >= max_holding_days:
+                return True, "max_holding_days"
         if bar.trade_date >= backtest_end_date and bar.trade_date == last_bar_date:
             return True, "backtest_end"
         return False, ""

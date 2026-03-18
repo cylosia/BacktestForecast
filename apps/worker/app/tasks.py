@@ -972,18 +972,6 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
             session.rollback()
             session.expire_all()
             try:
-                sweep_obj = session.get(SweepJobModel, UUID(job_id))
-                if sweep_obj is not None and sweep_obj.status in ("running", "failed"):
-                    sweep_obj.status = "queued"
-                    sweep_obj.celery_task_id = None
-                    sweep_obj.started_at = None
-                    sweep_obj.error_code = None
-                    sweep_obj.error_message = None
-                    try:
-                        session.commit()
-                    except Exception:
-                        logger.exception("sweep.retry_reset.commit_failed")
-                        session.rollback()
                 delay = 120 * (self.request.retries + 1)
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
@@ -1295,7 +1283,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
     from sqlalchemy import or_, select, update
 
-    from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SymbolAnalysis
+    from backtestforecast.models import BacktestRun, ExportJob, NightlyPipelineRun, ScannerJob, SweepJob, SymbolAnalysis
     from backtestforecast.observability.metrics import JOBS_STUCK_RUNNING, QUEUE_DEPTH
 
     try:
@@ -1329,6 +1317,9 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
         _reap_queued_jobs(session, SymbolAnalysis, "SymbolAnalysis", "analysis.deep_symbol", "analysis_id", analysis_cutoff, counts, "symbol_analyses")
         _fail_stale_running_jobs(session, SymbolAnalysis, "SymbolAnalysis", "analysis", analysis_cutoff, counts, "stale_running_analyses")
+
+        _reap_queued_jobs(session, SweepJob, "SweepJob", "sweeps.run", "job_id", cutoff, counts, "sweep_jobs")
+        _fail_stale_running_jobs(session, SweepJob, "SweepJob", "sweep", cutoff, counts, "stale_running_sweeps")
 
         stale_running_pipeline_stmt = (
             select(NightlyPipelineRun.id)

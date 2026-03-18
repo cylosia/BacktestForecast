@@ -45,6 +45,10 @@ class ClerkTokenVerifier:
             if is_prod:
                 raise ConfigurationError("CLERK_ISSUER must not be empty in production/staging; set a valid issuer or remove the variable.")
             _logger.warning("auth.empty_clerk_issuer", hint="CLERK_ISSUER is set to an empty string; issuer verification is disabled")
+        # WARNING: When clerk_audience/clerk_issuer are not set (None), audience
+        # and issuer verification are disabled. In production, the lifespan
+        # handler in main.py enforces that these are set. In development, tokens
+        # from other Clerk applications using the same key pair will be accepted.
         if audience:
             decode_options["verify_aud"] = True
         else:

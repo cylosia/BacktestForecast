@@ -20,6 +20,7 @@ UNSET = _Unset.UNSET
 
 class TemplateConfig(BaseModel):
     """The reusable portion of a backtest configuration — everything except symbol and dates."""
+    model_config = ConfigDict(extra="forbid")
 
     strategy_type: StrategyType
     target_dte: int = Field(ge=1, le=365)

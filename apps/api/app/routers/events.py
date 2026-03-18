@@ -290,6 +290,7 @@ async def _event_stream(
     """
     from redis.exceptions import RedisError
 
+    global _sse_process_connections
     over_process_limit = False
     async with _sse_process_async_lock:
         if _sse_process_connections >= SSE_MAX_CONNECTIONS_PROCESS:

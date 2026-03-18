@@ -134,6 +134,62 @@ export function SweepForm() {
       setErrorMessage("Commission must be zero or a positive number.");
       return;
     }
+    const targetDte = Number(form.targetDte);
+    if (!Number.isFinite(targetDte) || targetDte < 1 || targetDte > 365) {
+      setStatus("error");
+      setErrorMessage("Target DTE must be an integer between 1 and 365.");
+      return;
+    }
+    const dteTolerance = Number(form.dteTolerance);
+    if (!Number.isFinite(dteTolerance) || dteTolerance < 0 || dteTolerance > 60) {
+      setStatus("error");
+      setErrorMessage("DTE tolerance must be between 0 and 60.");
+      return;
+    }
+    const maxHoldingDays = Number(form.maxHoldingDays);
+    if (!Number.isFinite(maxHoldingDays) || maxHoldingDays < 1 || maxHoldingDays > 120) {
+      setStatus("error");
+      setErrorMessage("Max holding days must be between 1 and 120.");
+      return;
+    }
+    const slippage = Number(form.slippage);
+    if (!Number.isFinite(slippage) || slippage < 0 || slippage > 5) {
+      setStatus("error");
+      setErrorMessage("Slippage must be between 0 and 5%.");
+      return;
+    }
+    const maxResults = Number(form.maxResults);
+    if (!Number.isFinite(maxResults) || maxResults < 1 || maxResults > 100) {
+      setStatus("error");
+      setErrorMessage("Max results must be between 1 and 100.");
+      return;
+    }
+    if (form.mode === "genetic") {
+      const populationSize = Number(form.populationSize);
+      if (!Number.isFinite(populationSize) || populationSize < 20 || populationSize > 500) {
+        setStatus("error");
+        setErrorMessage("Population size must be between 20 and 500.");
+        return;
+      }
+      const maxGenerations = Number(form.maxGenerations);
+      if (!Number.isFinite(maxGenerations) || maxGenerations < 5 || maxGenerations > 200) {
+        setStatus("error");
+        setErrorMessage("Max generations must be between 5 and 200.");
+        return;
+      }
+      const mutationRate = Number(form.mutationRate);
+      if (!Number.isFinite(mutationRate) || mutationRate < 0.05 || mutationRate > 1) {
+        setStatus("error");
+        setErrorMessage("Mutation rate must be between 0.05 and 1.");
+        return;
+      }
+      const crossoverRate = Number(form.crossoverRate);
+      if (!Number.isFinite(crossoverRate) || crossoverRate < 0.1 || crossoverRate > 1) {
+        setStatus("error");
+        setErrorMessage("Crossover rate must be between 0.1 and 1.");
+        return;
+      }
+    }
     if (form.mode === "grid" && selectedStrategies.size === 0) {
       setStatus("error");
       setErrorMessage("Select at least one strategy for the grid sweep.");
@@ -169,11 +225,16 @@ export function SweepForm() {
 
       if (form.mode === "grid") {
         payload.strategy_types = Array.from(selectedStrategies);
-        const deltas = form.deltas
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .map((s) => ({ value: Number(s) }));
+        const deltaParts = form.deltas.split(",").map((s) => s.trim()).filter(Boolean);
+        for (const part of deltaParts) {
+          if (!Number.isFinite(Number(part))) {
+            setStatus("error");
+            setErrorMessage(`Invalid delta grid entry: "${part}". All entries must be valid numbers.`);
+            submittingRef.current = false;
+            return;
+          }
+        }
+        const deltas = deltaParts.map((s) => ({ value: Number(s) }));
         if (deltas.length > 0) payload.delta_grid = deltas;
       } else {
         const legType = `custom_${form.numLegs}_leg`;

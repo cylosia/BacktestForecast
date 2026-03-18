@@ -75,7 +75,6 @@ def downgrade() -> None:
 
     op.execute("DROP TRIGGER IF EXISTS trg_sweep_results_updated_at ON sweep_results")
     op.execute("DROP TRIGGER IF EXISTS trg_sweep_jobs_updated_at ON sweep_jobs")
-    op.execute("DROP FUNCTION IF EXISTS set_updated_at()")
 
     for col in _SWEEP_RESULTS_JSON_COLS:
         op.execute(
