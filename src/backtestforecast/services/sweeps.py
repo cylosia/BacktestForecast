@@ -409,66 +409,74 @@ class SweepService:
 
         job.evaluated_candidate_count = ga_result.total_evaluations
 
-        best_legs = [
-            CustomLegDefinition(
-                asset_type=leg.get("asset_type", "option"),
-                contract_type=leg.get("contract_type"),
-                side=leg["side"],
-                strike_offset=leg.get("strike_offset", 0),
-                expiration_offset=leg.get("expiration_offset", 0),
-                quantity_ratio=leg.get("quantity_ratio", Decimal("1")),
+        max_results = min(payload.max_results, len(ga_result.top_individuals))
+        for rank_idx, (ind, fit_val) in enumerate(ga_result.top_individuals[:max_results], 1):
+            legs = [
+                CustomLegDefinition(
+                    asset_type=leg.get("asset_type", "option"),
+                    contract_type=leg.get("contract_type"),
+                    side=leg["side"],
+                    strike_offset=leg.get("strike_offset", 0),
+                    expiration_offset=leg.get("expiration_offset", 0),
+                    quantity_ratio=leg.get("quantity_ratio", Decimal("1")),
+                )
+                for leg in ind
+            ]
+            request = CreateBacktestRunRequest(
+                symbol=payload.symbol,
+                strategy_type=strategy_type,
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+                target_dte=payload.target_dte,
+                dte_tolerance_days=payload.dte_tolerance_days,
+                max_holding_days=payload.max_holding_days,
+                account_size=payload.account_size,
+                risk_per_trade_pct=payload.risk_per_trade_pct,
+                commission_per_contract=payload.commission_per_contract,
+                entry_rules=entry_rules,
+                slippage_pct=payload.slippage_pct,
+                profit_target_pct=exit_set.profit_target_pct if exit_set else None,
+                stop_loss_pct=exit_set.stop_loss_pct if exit_set else None,
+                custom_legs=legs,
             )
-            for leg in ga_result.best_individual
-        ]
-        best_request = CreateBacktestRunRequest(
-            symbol=payload.symbol,
-            strategy_type=strategy_type,
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-            target_dte=payload.target_dte,
-            dte_tolerance_days=payload.dte_tolerance_days,
-            max_holding_days=payload.max_holding_days,
-            account_size=payload.account_size,
-            risk_per_trade_pct=payload.risk_per_trade_pct,
-            commission_per_contract=payload.commission_per_contract,
-            entry_rules=entry_rules,
-            slippage_pct=payload.slippage_pct,
-            profit_target_pct=exit_set.profit_target_pct if exit_set else None,
-            stop_loss_pct=exit_set.stop_loss_pct if exit_set else None,
-            custom_legs=best_legs,
-        )
-        best_result = exec_service.execute_request(best_request, bundle=bundle)
-        summary = self._serialize_summary(best_result.summary)
-        trades = [self._serialize_trade(t) for t in best_result.trades[:50]]
-        equity_curve = self._downsample_equity_curve(best_result.equity_curve)
+            try:
+                result = exec_service.execute_request(request, bundle=bundle)
+            except Exception:
+                logger.debug("ga.result_backtest_failed", rank=rank_idx, exc_info=True)
+                continue
 
-        parameters: dict[str, Any] = {
-            "strategy_type": strategy_type.value,
-            "mode": "genetic",
-            "num_legs": num_legs,
-            "generations_run": ga_result.generations_run,
-            "total_evaluations": ga_result.total_evaluations,
-            "custom_legs": [leg.model_dump(mode="json") for leg in best_legs],
-            "entry_rule_set_name": payload.entry_rule_sets[0].name if payload.entry_rule_sets else None,
-        }
-        if exit_set is not None:
-            parameters["exit_rule_set_name"] = exit_set.name
-            parameters["profit_target_pct"] = exit_set.profit_target_pct
-            parameters["stop_loss_pct"] = exit_set.stop_loss_pct
+            summary = self._serialize_summary(result.summary)
+            trades = [self._serialize_trade(t) for t in result.trades[:50]]
+            equity_curve = self._downsample_equity_curve(result.equity_curve)
 
-        job.results.append(
-            SweepResult(
-                rank=1,
-                score=Decimal(str(round(ga_result.best_fitness, 6))),
-                strategy_type=strategy_type.value,
-                parameter_snapshot_json=parameters,
-                summary_json=summary,
-                warnings_json=best_result.warnings or [],
-                trades_json=trades,
-                equity_curve_json=equity_curve,
+            parameters: dict[str, Any] = {
+                "strategy_type": strategy_type.value,
+                "mode": "genetic",
+                "num_legs": num_legs,
+                "generations_run": ga_result.generations_run,
+                "total_evaluations": ga_result.total_evaluations,
+                "custom_legs": [leg.model_dump(mode="json") for leg in legs],
+                "entry_rule_set_name": payload.entry_rule_sets[0].name if payload.entry_rule_sets else None,
+            }
+            if exit_set is not None:
+                parameters["exit_rule_set_name"] = exit_set.name
+                parameters["profit_target_pct"] = exit_set.profit_target_pct
+                parameters["stop_loss_pct"] = exit_set.stop_loss_pct
+
+            job.results.append(
+                SweepResult(
+                    rank=rank_idx,
+                    score=Decimal(str(round(fit_val, 6))),
+                    strategy_type=strategy_type.value,
+                    parameter_snapshot_json=parameters,
+                    summary_json=summary,
+                    warnings_json=result.warnings or [],
+                    trades_json=trades,
+                    equity_curve_json=equity_curve,
+                )
             )
-        )
-        job.result_count = 1
+
+        job.result_count = len(job.results)
         job.status = "succeeded"
         job.completed_at = datetime.now(UTC)
         job.warnings_json = warnings

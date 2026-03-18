@@ -43,6 +43,7 @@ class GeneticConfig:
     elitism_count: int = 5
     max_workers: int = 10
     max_stale_generations: int = 8
+    top_n: int = 20
 
 
 @dataclass(slots=True)
@@ -51,7 +52,7 @@ class GAResult:
     best_fitness: float
     generations_run: int
     total_evaluations: int
-    population_history: list[dict[str, Any]] = field(default_factory=list)
+    top_individuals: list[tuple[Individual, float]] = field(default_factory=list)
 
 
 FitnessFunc = Callable[[Individual], float]
@@ -127,11 +128,29 @@ class GeneticOptimizer:
 
             population = next_pop
 
+        top_n = cfg.top_n
+        all_scored = sorted(fitness_cache.items(), key=lambda x: x[1], reverse=True)
+        top_individuals: list[tuple[Individual, float]] = []
+        for key, fit_val in all_scored[:top_n]:
+            ind = [
+                {
+                    "asset_type": "option",
+                    "contract_type": gene[0],
+                    "side": gene[1],
+                    "strike_offset": gene[2],
+                    "expiration_offset": gene[3],
+                    "quantity_ratio": Decimal(gene[4]),
+                }
+                for gene in key
+            ]
+            top_individuals.append((ind, fit_val))
+
         return GAResult(
             best_individual=best_individual,
             best_fitness=best_fitness,
             generations_run=gen + 1 if 'gen' in dir() else 0,
             total_evaluations=total_evals,
+            top_individuals=top_individuals,
         )
 
     @staticmethod
