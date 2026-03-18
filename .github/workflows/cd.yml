@@ -178,6 +178,19 @@ jobs:
           echo "::error::Smoke check failed — rolling back to known-good tag: ${ROLLBACK_TAG}"
           set -euo pipefail
 
+          # IMPORTANT: If the failed deployment included a database migration,
+          # you must manually run `alembic downgrade` BEFORE re-tagging images.
+          # Automatic downgrade is not performed here because:
+          # 1. Not all migrations are reversible (data-destructive DDL)
+          # 2. The downgrade target depends on which migration the rollback tag expects
+          # 3. Running downgrade against production requires careful validation
+          #
+          # Manual steps:
+          #   1. Identify the migration head expected by ROLLBACK_TAG:
+          #      docker run --rm <REPO>/api:<ROLLBACK_TAG> alembic heads
+          #   2. Downgrade: alembic downgrade <target_revision>
+          #   3. Then proceed with the image rollback below.
+
           for svc in api worker web; do
             echo "Rolling back ${svc} to ${ROLLBACK_TAG}..."
             docker pull "${REPO}/${svc}:${ROLLBACK_TAG}"

@@ -78,6 +78,7 @@ celery_app.conf.task_routes = {
     "backtests.run": {"queue": "research"},
     "scans.run_job": {"queue": "research"},
     "scans.refresh_prioritized": {"queue": "maintenance"},
+    "sweeps.run": {"queue": "research"},
     "exports.generate": {"queue": "exports"},
     "pipeline.nightly_scan": {"queue": "pipeline"},
     "analysis.deep_symbol": {"queue": "research"},
@@ -169,7 +170,7 @@ def _start_worker_metrics_server() -> None:
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass
 
-    server = HTTPServer(("127.0.0.1", port), _MetricsHandler)
+    server = HTTPServer(("0.0.0.0", port), _MetricsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     _shutdown_logger.info(
@@ -214,8 +215,10 @@ def _start_heartbeat_loop() -> None:
             sleep_secs = min(30 * (2 ** consecutive_errors), 60)
             _heartbeat_stop.wait(sleep_secs)
 
+    global _heartbeat_thread
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
+    _heartbeat_thread = t
 
 
 @worker_ready.connect

@@ -158,12 +158,57 @@ export async function fetchScannerRecommendations(
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token);
 }
 
+export interface SweepJobResponse {
+  id: string;
+  status: string;
+  symbol: string;
+  candidate_count: number;
+  evaluated_candidate_count: number;
+  result_count: number;
+  prefetch_summary: Record<string, unknown> | null;
+  warnings: Record<string, unknown>[];
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface SweepJobListResponse {
+  items: SweepJobResponse[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface SweepResultResponse {
+  id: string;
+  rank: number;
+  score: string;
+  strategy_type: string;
+  delta: number | null;
+  width_mode: string | null;
+  width_value: string | null;
+  entry_rule_set_name: string;
+  exit_rule_set_name: string | null;
+  profit_target_pct: number | null;
+  stop_loss_pct: number | null;
+  summary: Record<string, unknown>;
+  warnings: Record<string, unknown>[];
+  trades_json: Record<string, unknown>[];
+  equity_curve: { date: string; equity: number }[];
+}
+
+export interface SweepResultListResponse {
+  items: SweepResultResponse[];
+}
+
 export async function createSweepJob(
   token: string,
   payload: Record<string, unknown>,
   signal?: AbortSignal,
-): Promise<any> {
-  return apiRequest<any>("/v1/sweeps", token, {
+): Promise<SweepJobResponse> {
+  return apiRequest<SweepJobResponse>("/v1/sweeps", token, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
@@ -174,8 +219,8 @@ export async function fetchSweepJob(
   token: string,
   jobId: string,
   signal?: AbortSignal,
-): Promise<any> {
-  return apiRequest<any>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, signal ? { signal } : undefined);
+): Promise<SweepJobResponse> {
+  return apiRequest<SweepJobResponse>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, signal ? { signal } : undefined);
 }
 
 export async function fetchForecast(

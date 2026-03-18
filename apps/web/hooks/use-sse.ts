@@ -36,10 +36,11 @@ export function useSSE<T>({
   autoStart = true,
   pollingFallback,
 }: UseSSEOptions<T>): UseSSEReturn {
-  const [status, setStatus] = useState<SSEStatus>(autoStart ? "connecting" : "connecting");
+  const [status, setStatus] = useState<SSEStatus>(autoStart ? "connecting" : "done");
   const [useFallback, setUseFallback] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const mountedRef = useRef(true);
+  const completedRef = useRef(false);
   const onProgressRef = useRef(onProgress);
   const onCompleteRef = useRef(onComplete);
   const isTerminalRef = useRef(isTerminal);
@@ -53,7 +54,8 @@ export function useSSE<T>({
       esRef.current.close();
       esRef.current = null;
     }
-  }, []);
+    cancelPolling();
+  }, [cancelPolling]);
 
   const { status: pollStatus, start: startPolling, cancel: cancelPolling } = usePolling<T>({
     ...pollingFallback,
@@ -62,6 +64,8 @@ export function useSSE<T>({
 
   useEffect(() => {
     if (!autoStart) return;
+    setUseFallback(false);
+    completedRef.current = false;
     mountedRef.current = true;
 
     const url = `/api/events/${resourceType}/${resourceId}`;
@@ -85,7 +89,10 @@ export function useSSE<T>({
           setStatus("done");
           es.close();
           esRef.current = null;
-          onCompleteRef.current();
+          if (!completedRef.current) {
+            completedRef.current = true;
+            onCompleteRef.current();
+          }
         }
       } catch {
         // ignore parse errors
@@ -97,7 +104,10 @@ export function useSSE<T>({
       es.close();
       esRef.current = null;
       setStatus("done");
-      onCompleteRef.current();
+      if (!completedRef.current) {
+        completedRef.current = true;
+        onCompleteRef.current();
+      }
     });
 
     es.onerror = () => {

@@ -290,7 +290,9 @@ class TestGAConvergence:
         optimizer = GeneticOptimizer(config)
         result = optimizer.run(fitness_fn)
 
-        assert result.best_fitness > 0
+        assert result.best_fitness >= 150, (
+            f"GA should reach at least 50% of theoretical max (~300), got {result.best_fitness}"
+        )
         assert result.generations_run >= 1
         assert result.total_evaluations > 0
 
@@ -318,6 +320,34 @@ class TestGeneticSweepConfigSchema:
         with pytest.raises(Exception, match="elitism_count"):
             GeneticSweepConfig(num_legs=2, population_size=20, elitism_count=20)
 
+    def test_ga_terminates_early_on_flat_fitness(self):
+        """When fitness never improves, the GA should stop after max_stale_generations."""
+        from backtestforecast.sweeps.genetic import GeneticConfig, GeneticOptimizer
+
+        def flat_fitness(individual):
+            return 42.0
+
+        config = GeneticConfig(
+            num_legs=2,
+            population_size=20,
+            max_generations=50,
+            tournament_size=3,
+            crossover_rate=0.7,
+            mutation_rate=0.3,
+            elitism_count=2,
+            max_workers=1,
+            max_stale_generations=3,
+        )
+        optimizer = GeneticOptimizer(config)
+        result = optimizer.run(flat_fitness)
+
+        assert result.generations_run <= 5, (
+            f"Expected early termination within ~5 generations (3 stale + buffer), "
+            f"but ran {result.generations_run}"
+        )
+
+
+class TestGeneticSweepConfigSchema:
     def test_genetic_config_required_for_genetic_mode(self):
         from backtestforecast.schemas.sweeps import CreateSweepRequest
 

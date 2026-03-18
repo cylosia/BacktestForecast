@@ -53,6 +53,9 @@ def create_sweep(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobResponse:
+    if not settings.feature_sweeps_enabled:
+        from backtestforecast.errors import FeatureLockedError
+        raise FeatureLockedError("Sweeps are temporarily disabled.")
     get_rate_limiter().check(
         bucket="sweeps:create",
         actor_key=str(user.id),
@@ -104,6 +107,8 @@ def get_sweep_results(
     job_id: UUID,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     settings: Settings = Depends(get_settings),
 ) -> SweepResultListResponse:
     get_rate_limiter().check(
@@ -113,4 +118,4 @@ def get_sweep_results(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with SweepService(db) as service:
-        return service.get_results(user, job_id)
+        return service.get_results(user, job_id, limit=limit, offset=offset)

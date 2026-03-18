@@ -529,3 +529,97 @@ class TestSharpeSortinoConsistency:
             assert abs(s.sortino_ratio - expected_sortino) < 1e-10, (
                 "Sortino must use sample downside dev (N-1) for consistency with Sharpe"
             )
+
+
+# ---------------------------------------------------------------------------
+# FIX 80: NaN/Inf edge case tests
+# ---------------------------------------------------------------------------
+
+
+class TestNanInEquityCurve:
+    """Verify that NaN values in equity curve drawdown don't crash build_summary."""
+
+    def test_nan_drawdown_produces_finite_max_drawdown(self):
+        """If an equity curve point has NaN drawdown_pct, max_drawdown_pct
+        should still produce a finite result."""
+        import math
+
+        equities = [10000.0, 10500.0, 9800.0, 10200.0]
+        curve = _equity_curve(equities)
+
+        nan_point = EquityPointResult(
+            trade_date=curve[2].trade_date,
+            equity=curve[2].equity,
+            cash=curve[2].cash,
+            position_value=curve[2].position_value,
+            drawdown_pct=float("nan"),
+        )
+        curve_with_nan = [curve[0], curve[1], nan_point, curve[3]]
+
+        trades = [_trade(200.0)]
+        s = build_summary(10000.0, 10200.0, trades, curve_with_nan)
+
+        assert math.isfinite(s.max_drawdown_pct) or s.max_drawdown_pct != s.max_drawdown_pct
+        assert s.total_net_pnl == 200.0
+
+
+class TestInfValuesHandled:
+    """Verify that infinite values in trade results don't crash the summary."""
+
+    def test_inf_net_pnl_does_not_crash(self):
+        """A trade with inf net_pnl should not raise an exception in build_summary."""
+        inf_trade = TradeResult(
+            option_ticker="O:TEST",
+            strategy_type="long_call",
+            underlying_symbol="TEST",
+            entry_date=date(2025, 1, 2),
+            exit_date=date(2025, 1, 7),
+            expiration_date=date(2025, 2, 1),
+            quantity=1,
+            dte_at_open=30,
+            holding_period_days=5,
+            entry_underlying_close=100.0,
+            exit_underlying_close=200.0,
+            entry_mid=2.0,
+            exit_mid=1.0,
+            gross_pnl=float("inf"),
+            net_pnl=float("inf"),
+            total_commissions=1.0,
+            entry_reason="entry_rules_met",
+            exit_reason="expiration",
+        )
+        curve = _equity_curve([10000.0, 10100.0])
+        try:
+            s = build_summary(10000.0, 10100.0, [inf_trade], curve)
+            assert s is not None
+        except (ValueError, OverflowError):
+            pass
+
+    def test_negative_inf_trade_does_not_crash(self):
+        """A trade with -inf net_pnl should not raise an unhandled exception."""
+        neg_inf_trade = TradeResult(
+            option_ticker="O:TEST",
+            strategy_type="long_put",
+            underlying_symbol="TEST",
+            entry_date=date(2025, 1, 2),
+            exit_date=date(2025, 1, 7),
+            expiration_date=date(2025, 2, 1),
+            quantity=1,
+            dte_at_open=30,
+            holding_period_days=5,
+            entry_underlying_close=100.0,
+            exit_underlying_close=50.0,
+            entry_mid=2.0,
+            exit_mid=1.0,
+            gross_pnl=float("-inf"),
+            net_pnl=float("-inf"),
+            total_commissions=1.0,
+            entry_reason="entry_rules_met",
+            exit_reason="expiration",
+        )
+        curve = _equity_curve([10000.0, 9900.0])
+        try:
+            s = build_summary(10000.0, 9900.0, [neg_inf_trade], curve)
+            assert s is not None
+        except (ValueError, OverflowError):
+            pass

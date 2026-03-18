@@ -104,6 +104,8 @@ def get_scan_recommendations(
     job_id: UUID,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     settings: Settings = Depends(get_settings),
 ) -> ScannerRecommendationListResponse:
     get_rate_limiter().check(
@@ -113,4 +115,4 @@ def get_scan_recommendations(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ScanService(db) as service:
-        return service.get_recommendations(user, job_id)
+        return service.get_recommendations(user, job_id, limit=limit, offset=offset)

@@ -145,12 +145,15 @@ class SweepService:
             raise NotFoundError("Sweep job not found.")
         return self._to_job_response(job)
 
-    def get_results(self, user: User, job_id: UUID) -> SweepResultListResponse:
+    def get_results(
+        self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
+    ) -> SweepResultListResponse:
         job = self.repository.get_for_user(job_id, user.id, include_results=True)
         if job is None:
             raise NotFoundError("Sweep job not found.")
+        page = job.results[offset : offset + limit]
         return SweepResultListResponse(
-            items=[self._to_result_response(r) for r in job.results]
+            items=[self._to_result_response(r) for r in page]
         )
 
     # -- execution -----------------------------------------------------------

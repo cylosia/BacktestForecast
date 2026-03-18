@@ -74,6 +74,9 @@ def client(
 
     monkeypatch.setattr(token_verifier, "verify_bearer_token", fake_verify)
     app.dependency_overrides[get_db] = override_get_db
+    # NOTE: Resetting the rate limiter here means integration tests never
+    # exercise rate-limit enforcement. See test_rate_limit_enforcement.py
+    # for dedicated coverage of the 429 path.
     get_rate_limiter().reset()
     try:
         with TestClient(app, base_url="http://localhost") as test_client:

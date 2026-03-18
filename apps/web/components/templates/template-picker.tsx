@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { FileText } from "lucide-react";
 import type { TemplateResponse } from "@backtestforecast/api-client";
 import { strategyLabel } from "@/lib/backtests/format";
@@ -19,6 +20,8 @@ export function TemplatePicker({
   templates: TemplateResponse[];
   onApply: (patch: Partial<BacktestFormValues>) => void;
 }) {
+  const [errorTemplateId, setErrorTemplateId] = useState<string | null>(null);
+
   if (templates.length === 0) {
     return null;
   }
@@ -38,7 +41,12 @@ export function TemplatePicker({
               className="inline-flex items-center gap-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
                 const patch = templateToFormValues(template);
-                if (patch) onApply(patch);
+                if (patch) {
+                  setErrorTemplateId(null);
+                  onApply(patch);
+                } else {
+                  setErrorTemplateId(template.id);
+                }
               }}
             >
               <FileText className="h-3.5 w-3.5 text-muted-foreground" />
@@ -49,6 +57,11 @@ export function TemplatePicker({
             </button>
           ))}
         </div>
+        {errorTemplateId ? (
+          <p className="mt-2 text-sm text-destructive">
+            This template has an invalid or incompatible configuration and cannot be applied.
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );

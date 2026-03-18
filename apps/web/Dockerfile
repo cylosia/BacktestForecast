@@ -1,3 +1,5 @@
+# TODO: Pin base images to SHA digests for reproducible builds in production.
+# Example: FROM node:20-alpine@sha256:<digest> AS builder
 FROM node:20-alpine AS builder
 
 WORKDIR /app

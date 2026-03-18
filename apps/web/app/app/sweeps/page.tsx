@@ -1,23 +1,35 @@
 import Link from "next/link";
 import { PlusCircle } from "lucide-react";
-import { getSweepJobs } from "@/lib/api/server";
+import { getCurrentUser, getSweepJobs } from "@/lib/api/server";
+import type { SweepJobListResponse } from "@/lib/api/client";
 import { formatDateTime, statusLabel } from "@/lib/backtests/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
 
 export const dynamic = "force-dynamic";
 
 export default async function SweepsPage() {
-  let jobs: any = null;
-  let jobsError: string | null = null;
+  let user;
   try {
-    jobs = await getSweepJobs(20);
-  } catch (err) {
-    jobs = null;
-    jobsError = err instanceof Error ? err.message : "Failed to load sweep history.";
+    user = await getCurrentUser();
+  } catch {
+    return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
+  }
+  const hasAccess = user.plan_tier !== "free";
+
+  let jobs: SweepJobListResponse | null = null;
+  let jobsError: string | null = null;
+  if (hasAccess) {
+    try {
+      jobs = await getSweepJobs(20);
+    } catch (err) {
+      jobs = null;
+      jobsError = err instanceof Error ? err.message : "Failed to load sweep history.";
+    }
   }
 
   return (
@@ -31,13 +43,19 @@ export default async function SweepsPage() {
             entry/exit rules to find optimal configurations for a symbol.
           </p>
         </div>
-        <Button asChild>
-          <Link href="/app/sweeps/new">
-            <PlusCircle className="h-4 w-4" />
-            New sweep
-          </Link>
-        </Button>
+        {hasAccess ? (
+          <Button asChild>
+            <Link href="/app/sweeps/new">
+              <PlusCircle className="h-4 w-4" />
+              New sweep
+            </Link>
+          </Button>
+        ) : null}
       </div>
+
+      {!hasAccess ? (
+        <UpgradePrompt message="Parameter sweeps require a Pro or Premium plan. Upgrade to run grid and genetic optimization sweeps across strategy parameters." />
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
@@ -62,13 +80,13 @@ export default async function SweepsPage() {
         </Card>
       </div>
 
-      {jobsError ? (
+      {hasAccess && jobsError ? (
         <Card>
           <CardContent className="p-6 text-center text-destructive">{jobsError}</CardContent>
         </Card>
       ) : null}
 
-      {jobs ? (
+      {hasAccess && jobs ? (
         <Card>
           <CardHeader>
             <CardTitle>Sweep history</CardTitle>

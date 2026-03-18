@@ -203,6 +203,7 @@ class ScanService:
             raise
 
     _CANDIDATE_TIMEOUT_SECONDS = 120
+    _MAX_CANDIDATES_IN_MEMORY = 2000
 
     def _execute_scan(
         self,
@@ -292,6 +293,11 @@ class ScanService:
                             strategy_type=strategy.value,
                             account_size=float(payload.account_size),
                         )
+                        if len(candidates) >= self._MAX_CANDIDATES_IN_MEMORY:
+                            logger.warning("scan.candidate_cap_reached", max=self._MAX_CANDIDATES_IN_MEMORY)
+                            warnings.append({"type": "candidate_cap", "message": f"Candidate cap of {self._MAX_CANDIDATES_IN_MEMORY} reached; remaining candidates were skipped."})
+                            _scan_timed_out = True
+                            break
                         candidates.append(
                             {
                                 "symbol": symbol,
@@ -419,12 +425,15 @@ class ScanService:
             raise NotFoundError("Scanner job not found.")
         return self._to_job_response(job)
 
-    def get_recommendations(self, user: User, job_id: UUID) -> ScannerRecommendationListResponse:
+    def get_recommendations(
+        self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
+    ) -> ScannerRecommendationListResponse:
         job = self.repository.get_for_user(job_id, user.id, include_recommendations=True)
         if job is None:
             raise NotFoundError("Scanner job not found.")
+        page = job.recommendations[offset : offset + limit]
         return ScannerRecommendationListResponse(
-            items=[self._to_recommendation_response(recommendation) for recommendation in job.recommendations]
+            items=[self._to_recommendation_response(r) for r in page]
         )
 
     def create_scheduled_refresh_jobs(self, limit: int = 25) -> list[ScannerJob]:
@@ -625,7 +634,7 @@ class ScanService:
         pool = ThreadPoolExecutor(max_workers=max_workers)
         try:
             futures = {pool.submit(_fetch_one, sym): sym for sym in payload.symbols}
-            for future in as_completed(futures):
+            for future in as_completed(futures, timeout=300):
                 try:
                     sym, bundle, warning = future.result()
                 except Exception:

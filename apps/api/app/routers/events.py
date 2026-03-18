@@ -40,11 +40,8 @@ _SSE_CONN_TTL = 600
 _sse_process_connections = 0
 _sse_process_async_lock = asyncio.Lock()
 
-
-async def _sse_process_inc() -> None:
-    global _sse_process_connections
-    async with _sse_process_async_lock:
-        _sse_process_connections += 1
+_sse_user_connections: dict[str, int] = {}
+_sse_user_connections_lock = asyncio.Lock()
 
 
 async def _sse_process_dec() -> None:
@@ -222,18 +219,45 @@ return count
 """
 
 
-async def _acquire_sse_slot(user_id: UUID) -> bool:
-    """Try to acquire a per-user SSE connection slot atomically via Lua."""
+async def _acquire_sse_slot_in_process(user_id: UUID) -> bool:
+    """Fallback: acquire a per-user slot using an in-process dict when Redis is unavailable."""
+    uid = str(user_id)
+    async with _sse_user_connections_lock:
+        current = _sse_user_connections.get(uid, 0)
+        if current >= SSE_MAX_CONNECTIONS_PER_USER:
+            return False
+        _sse_user_connections[uid] = current + 1
+        return True
+
+
+async def _release_sse_slot_in_process(user_id: UUID) -> None:
+    """Fallback: release a per-user slot from the in-process dict."""
+    uid = str(user_id)
+    async with _sse_user_connections_lock:
+        current = _sse_user_connections.get(uid, 0)
+        if current <= 1:
+            _sse_user_connections.pop(uid, None)
+        else:
+            _sse_user_connections[uid] = current - 1
+
+
+async def _acquire_sse_slot(user_id: UUID) -> tuple[bool, bool]:
+    """Try to acquire a per-user SSE connection slot atomically via Lua.
+
+    Returns (acquired, used_redis). When Redis fails, falls back to an
+    in-process dict so per-user limits are still enforced within this worker.
+    """
     try:
         pool = await _get_async_redis()
         key = f"{_SSE_CONN_KEY_PREFIX}{user_id}"
         result = await pool.eval(
             _SSE_SLOT_ACQUIRE_LUA, 1, key, _SSE_CONN_TTL, SSE_MAX_CONNECTIONS_PER_USER,
         )
-        return int(result) == 1
+        return int(result) == 1, True
     except Exception:
         logger.warning("sse.acquire_slot_redis_error", user_id=str(user_id), exc_info=True)
-        return True  # Fail-open: allow SSE connections during Redis outages
+        acquired = await _acquire_sse_slot_in_process(user_id)
+        return acquired, False
 
 
 async def _release_sse_slot(user_id: UUID) -> None:
@@ -280,8 +304,9 @@ async def _event_stream(
 
     process_slot_acquired = True
     user_slot_acquired = False
+    used_redis_for_slot = False
     try:
-        acquired = await _acquire_sse_slot(user_id)
+        acquired, used_redis_for_slot = await _acquire_sse_slot(user_id)
         if not acquired:
             yield {"event": "error", "data": "Too many active event streams. Close other tabs and retry."}
             yield {"event": "done", "data": "stream_ended"}
@@ -310,7 +335,10 @@ async def _event_stream(
         if process_slot_acquired:
             await _sse_process_dec()
         if user_slot_acquired:
-            await _release_sse_slot(user_id)
+            if used_redis_for_slot:
+                await _release_sse_slot(user_id)
+            else:
+                await _release_sse_slot_in_process(user_id)
 
 
 @router.get("/backtests/{run_id}", responses=_SSE_RESPONSES)

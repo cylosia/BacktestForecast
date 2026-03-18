@@ -1,3 +1,5 @@
+# TODO: Pin base images to SHA digests for reproducible builds in production.
+# Example: FROM python:3.12-slim@sha256:<digest> AS builder
 FROM python:3.12-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -14,8 +16,8 @@ COPY src /build/src
 COPY alembic /build/alembic
 COPY alembic.ini /build/alembic.ini
 
-# For reproducible builds, use: pip install --constraint constraints.txt ".[s3]"
-RUN pip install --upgrade pip && pip install ".[s3]"
+COPY constraints.txt /build/constraints.txt
+RUN pip install --upgrade pip && pip install --constraint constraints.txt ".[s3,sentry]"
 
 FROM python:3.12-slim AS runner
 

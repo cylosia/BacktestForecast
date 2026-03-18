@@ -291,12 +291,21 @@ def request_validation_handler(request: Request, exc: RequestValidationError) ->
 
 @app.exception_handler(StarletteHTTPException)
 def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-    detail = exc.detail if isinstance(exc.detail, str) else "The request could not be completed."
-    logger.warning("api.http_exception", status_code=exc.status_code, detail=detail)
-    response = JSONResponse(
-        status_code=exc.status_code,
-        content=_error_payload(request, code="http_error", message=detail),
-    )
+    if isinstance(exc.detail, dict):
+        code = exc.detail.get("code", "http_error")
+        message = exc.detail.get("message", "The request could not be completed.")
+        logger.warning("api.http_exception", status_code=exc.status_code, code=code, message=message)
+        response = JSONResponse(
+            status_code=exc.status_code,
+            content=_error_payload(request, code=code, message=message),
+        )
+    else:
+        detail = exc.detail if isinstance(exc.detail, str) else "The request could not be completed."
+        logger.warning("api.http_exception", status_code=exc.status_code, detail=detail)
+        response = JSONResponse(
+            status_code=exc.status_code,
+            content=_error_payload(request, code="http_error", message=detail),
+        )
     request_id = getattr(request.state, "request_id", None)
     if request_id:
         response.headers[REQUEST_ID_HEADER] = request_id

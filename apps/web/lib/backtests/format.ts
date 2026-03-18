@@ -147,10 +147,6 @@ export function strategyLabel(strategy: string | StrategyType): string {
       return "Naked Call";
     case "naked_put":
       return "Naked Put";
-    case "sma_crossover":
-      return "SMA crossover";
-    case "ema_crossover":
-      return "EMA crossover";
     default:
       return strategy.replace(/_/g, " ");
   }

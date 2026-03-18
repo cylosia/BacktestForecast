@@ -183,13 +183,13 @@ class EntryRuleEvaluator:
             else:
                 metric = ((current_value - window_min) / (window_max - window_min)) * 100.0
         else:
-            below_count = sum(1 for value in lookback_values if value < current_value)
+            below_count = sum(1 for value in lookback_values if value <= current_value)
             metric = (below_count / len(lookback_values)) * 100.0
 
         return compare(metric, float(rule.threshold), rule.operator)
 
     def _evaluate_volume_rule(self, rule: VolumeSpikeRule, index: int) -> bool:
-        if index < rule.lookback_period:
+        if rule.lookback_period < 1 or index < rule.lookback_period:
             return False
         baseline = sum(self.volumes[index - rule.lookback_period : index]) / rule.lookback_period
         if baseline <= 0:

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,10 +14,41 @@ from backtestforecast.observability.metrics import STRIPE_WEBHOOK_DEDUPE_TOTAL
 
 logger = structlog.get_logger("stripe_events")
 
+STALE_CLAIM_TTL = timedelta(minutes=5)
+
 
 class StripeEventRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def _recover_stale_claim(self, stripe_event_id: str) -> bool:
+        """Reset a stale claim (older than 5 minutes) to allow reprocessing.
+
+        Returns True if a stale claim was recovered.
+        """
+        cutoff = datetime.now(timezone.utc) - STALE_CLAIM_TTL
+        result = self.session.execute(
+            update(StripeEvent)
+            .where(
+                StripeEvent.stripe_event_id == stripe_event_id,
+                StripeEvent.idempotency_status == "processed",
+                StripeEvent.created_at < cutoff,
+            )
+            .values(idempotency_status="error", error_detail="stale claim recovered")
+        )
+        if result.rowcount > 0:
+            logger.warning(
+                "stripe_event.stale_claim_recovered",
+                stripe_event_id=stripe_event_id,
+            )
+            self.session.execute(
+                update(StripeEvent)
+                .where(StripeEvent.stripe_event_id == stripe_event_id)
+                .values(idempotency_status="error")
+            )
+            self.session.flush()
+            return True
+        return False
 
     def claim(
         self,
@@ -33,7 +65,12 @@ class StripeEventRepository:
 
         Returns the persisted ``StripeEvent`` on success, or ``None`` if
         this event was already claimed (duplicate delivery).
+
+        Stale claims older than 5 minutes are automatically recovered to
+        allow reprocessing of events that may have been lost.
         """
+        self._recover_stale_claim(stripe_event_id)
+
         event = StripeEvent(
             stripe_event_id=stripe_event_id,
             event_type=event_type,
@@ -56,8 +93,6 @@ class StripeEventRepository:
 
     def mark_error(self, stripe_event_id: str, error_detail: str) -> None:
         """Update a previously claimed event to record a processing error."""
-        from sqlalchemy import update
-
         self.session.execute(
             update(StripeEvent)
             .where(StripeEvent.stripe_event_id == stripe_event_id)

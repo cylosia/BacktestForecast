@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
@@ -94,10 +94,60 @@ export function SweepForm() {
     });
   };
 
-  async function handleSubmit(e: React.FormEvent) {
+  const abortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+
+    const symbol = form.symbol.trim().toUpperCase();
+    if (!symbol || !/^[A-Z][A-Z0-9./^]{0,15}$/.test(symbol)) {
+      setStatus("error");
+      setErrorMessage("Enter a valid ticker symbol (1-16 characters, letters/digits/./^).");
+      return;
+    }
+    if (!form.startDate || !form.endDate || form.startDate >= form.endDate) {
+      setStatus("error");
+      setErrorMessage("Start date must be before end date.");
+      return;
+    }
+    const accountSize = Number(form.accountSize);
+    const riskPct = Number(form.riskPct);
+    const commission = Number(form.commission);
+    if (!Number.isFinite(accountSize) || accountSize <= 0) {
+      setStatus("error");
+      setErrorMessage("Account size must be a positive number.");
+      return;
+    }
+    if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > 100) {
+      setStatus("error");
+      setErrorMessage("Risk per trade must be between 0 and 100%.");
+      return;
+    }
+    if (!Number.isFinite(commission) || commission < 0) {
+      setStatus("error");
+      setErrorMessage("Commission must be zero or a positive number.");
+      return;
+    }
+    if (form.mode === "grid" && selectedStrategies.size === 0) {
+      setStatus("error");
+      setErrorMessage("Select at least one strategy for the grid sweep.");
+      return;
+    }
+
+    submittingRef.current = true;
     setStatus("submitting");
     setErrorMessage("");
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const token = await getToken();
@@ -105,15 +155,15 @@ export function SweepForm() {
 
       const payload: Record<string, unknown> = {
         mode: form.mode,
-        symbol: form.symbol.trim().toUpperCase(),
+        symbol,
         start_date: form.startDate,
         end_date: form.endDate,
         target_dte: Number(form.targetDte),
         dte_tolerance_days: Number(form.dteTolerance),
         max_holding_days: Number(form.maxHoldingDays),
-        account_size: form.accountSize,
-        risk_per_trade_pct: form.riskPct,
-        commission_per_contract: form.commission,
+        account_size: accountSize,
+        risk_per_trade_pct: riskPct,
+        commission_per_contract: commission,
         slippage_pct: Number(form.slippage),
         max_results: Number(form.maxResults),
         entry_rule_sets: [{ name: "no_filter", entry_rules: [] }],
@@ -140,17 +190,20 @@ export function SweepForm() {
         };
       }
 
-      const job = await createSweepJob(token, payload);
+      const job = await createSweepJob(token, payload, controller.signal);
       router.replace(`/app/sweeps/${job.id}`);
     } catch (err) {
+      if (controller.signal.aborted) return;
       setStatus("error");
       if (err instanceof ApiError) {
         setErrorMessage(err.message);
       } else {
         setErrorMessage(err instanceof Error ? err.message : "An unexpected error occurred.");
       }
+    } finally {
+      submittingRef.current = false;
     }
-  }
+  }, [form, selectedStrategies, getToken, router]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">

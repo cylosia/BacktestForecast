@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.schemas.backtests import StrategyType
 from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
+
+SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^]{0,15}$")
 
 
 class ForecastRequestParams(BaseModel):
@@ -16,7 +19,12 @@ class ForecastRequestParams(BaseModel):
     @field_validator("symbol", mode="before")
     @classmethod
     def normalize_symbol(cls, v: str) -> str:
-        return v.strip().upper()
+        v = v.strip().upper()
+        if not SYMBOL_ALLOWED_CHARS.match(v):
+            raise ValueError(
+                "Symbol must be 1-16 characters starting with a letter (A-Z, 0-9, ., /, ^)."
+            )
+        return v
 
 
 class ForecastEnvelopeResponse(BaseModel):

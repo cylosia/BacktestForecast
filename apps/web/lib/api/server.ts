@@ -80,21 +80,27 @@ export async function getScannerRecommendations(jobId: string): Promise<ScannerR
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, { cache: "no-store" });
 }
 
-export async function getSweepJobs(limit = 50, offset = 0) {
+import type {
+  SweepJobListResponse,
+  SweepJobResponse,
+  SweepResultListResponse,
+} from "@/lib/api/client";
+
+export async function getSweepJobs(limit = 50, offset = 0): Promise<SweepJobListResponse> {
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const safeOffset = Math.max(0, offset);
   const token = await getServerToken();
-  return apiRequest<any>(`/v1/sweeps?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
+  return apiRequest<SweepJobListResponse>(`/v1/sweeps?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
 }
 
-export async function getSweepJob(jobId: string) {
+export async function getSweepJob(jobId: string): Promise<SweepJobResponse> {
   const token = await getServerToken();
-  return apiRequest<any>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, { cache: "no-store" });
+  return apiRequest<SweepJobResponse>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, { cache: "no-store" });
 }
 
-export async function getSweepResults(jobId: string) {
+export async function getSweepResults(jobId: string): Promise<SweepResultListResponse> {
   const token = await getServerToken();
-  return apiRequest<any>(`/v1/sweeps/${encodeURIComponent(jobId)}/results`, token, { cache: "no-store" });
+  return apiRequest<SweepResultListResponse>(`/v1/sweeps/${encodeURIComponent(jobId)}/results`, token, { cache: "no-store" });
 }
 
 export async function getStrategyCatalog(): Promise<StrategyCatalogResponse> {

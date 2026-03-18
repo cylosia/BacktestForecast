@@ -1,6 +1,27 @@
 import type { TemplateConfig, TemplateResponse } from "@backtestforecast/api-client";
 import type { BacktestFormValues } from "@/lib/backtests/validation";
 
+const KNOWN_STRATEGY_TYPES = new Set([
+  "long_call", "long_put", "covered_call", "cash_secured_put",
+  "bull_call_debit_spread", "bear_put_debit_spread",
+  "bull_put_credit_spread", "bear_call_credit_spread",
+  "iron_condor", "long_straddle", "long_strangle",
+  "calendar_spread", "butterfly", "wheel_strategy",
+  "poor_mans_covered_call", "ratio_call_backspread", "ratio_put_backspread",
+  "collar", "diagonal_spread", "double_diagonal",
+  "short_straddle", "short_strangle", "covered_strangle",
+  "synthetic_put", "reverse_conversion", "jade_lizard", "iron_butterfly",
+  "custom_2_leg", "custom_3_leg", "custom_4_leg",
+  "custom_5_leg", "custom_6_leg", "custom_8_leg",
+  "naked_call", "naked_put",
+]);
+
+const KNOWN_RULE_TYPES = new Set([
+  "rsi", "sma_crossover", "ema_crossover", "macd",
+  "bollinger_bands", "iv_rank", "iv_percentile",
+  "volume_spike", "support_resistance", "avoid_earnings",
+]);
+
 export function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
   if (!obj || typeof obj !== "object") return false;
   const record = obj as Record<string, unknown>;
@@ -15,10 +36,20 @@ export function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
   );
 }
 
+export interface TemplateParseResult {
+  values: Partial<BacktestFormValues>;
+  skippedRuleCount: number;
+}
+
 export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> | null {
   const config = template.config_json;
   if (!isValidTemplateConfig(config)) return null;
   const typed = config;
+
+  if (!KNOWN_STRATEGY_TYPES.has(typed.strategy_type)) {
+    return null;
+  }
+
   const patch: Partial<BacktestFormValues> = {
     strategyType: typed.strategy_type as BacktestFormValues["strategyType"],
     targetDte: String(typed.target_dte),
@@ -35,7 +66,14 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
     patch.symbol = typed.default_symbol;
   }
 
-  for (const rule of typed.entry_rules ?? []) {
+  const allRules = typed.entry_rules ?? [];
+  let skippedRuleCount = 0;
+
+  for (const rule of allRules) {
+    if (!KNOWN_RULE_TYPES.has(rule.type)) {
+      skippedRuleCount++;
+      continue;
+    }
     if (rule.type === "rsi") {
       patch.rsiEnabled = true;
       patch.rsiOperator = rule.operator as BacktestFormValues["rsiOperator"];
@@ -49,6 +87,12 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
       patch.slowPeriod = String(rule.slow_period);
       patch.crossoverDirection = rule.direction as BacktestFormValues["crossoverDirection"];
     }
+  }
+
+  if (skippedRuleCount > 0) {
+    console.warn(
+      `Template "${template.name ?? template.id}" has ${skippedRuleCount} unrecognized entry rule type(s) that were skipped.`
+    );
   }
 
   return patch;

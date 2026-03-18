@@ -163,7 +163,7 @@ export default async function DailyPicksPage() {
   }
 
   const items = data.items ?? [];
-  const maxScore = items.length > 0 ? Math.max(...items.map((i) => i.score)) : 1;
+  const maxScore = items.length > 0 ? Math.max(1, ...items.map((i) => i.score)) : 1;
 
   return (
     <div className="space-y-6">

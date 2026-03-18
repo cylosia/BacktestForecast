@@ -96,14 +96,14 @@ export function RecommendationList({
               <div className="rounded-lg border border-border/60 p-3 space-y-1">
                 <p className="text-xs font-medium text-muted-foreground">Forecast</p>
                 <p className="text-sm">
-                  {rec.forecast.expected_return_low_pct != null ? formatPercent(rec.forecast.expected_return_low_pct) : "—"} to{" "}
-                  {rec.forecast.expected_return_high_pct != null ? formatPercent(rec.forecast.expected_return_high_pct) : "—"} expected range
+                  {rec.forecast?.expected_return_low_pct != null ? formatPercent(rec.forecast.expected_return_low_pct) : "—"} to{" "}
+                  {rec.forecast?.expected_return_high_pct != null ? formatPercent(rec.forecast.expected_return_high_pct) : "—"} expected range
                 </p>
                 <p className="text-sm">
-                  Median: {rec.forecast.expected_return_median_pct != null ? formatPercent(rec.forecast.expected_return_median_pct) : "—"} ·{" "}
-                  Positive outcome: {rec.forecast.positive_outcome_rate_pct != null ? formatPercent(rec.forecast.positive_outcome_rate_pct) : "—"}
+                  Median: {rec.forecast?.expected_return_median_pct != null ? formatPercent(rec.forecast.expected_return_median_pct) : "—"} ·{" "}
+                  Positive outcome: {rec.forecast?.positive_outcome_rate_pct != null ? formatPercent(rec.forecast.positive_outcome_rate_pct) : "—"}
                 </p>
-                <p className="text-xs text-muted-foreground">{rec.forecast.disclaimer}</p>
+                <p className="text-xs text-muted-foreground">{rec.forecast?.disclaimer}</p>
               </div>
 
               <div className="rounded-lg border border-border/60 p-3 space-y-1">

@@ -78,9 +78,7 @@ export function CheckoutButton({
     } finally {
       if (!redirecting) {
         resetTimerRef.current = setTimeout(() => {
-          if (document.visibilityState !== "hidden") {
-            setStatus((prev) => (prev === "loading" ? "idle" : prev));
-          }
+          setStatus((prev) => (prev === "loading" ? "idle" : prev));
         }, 2000);
       }
     }

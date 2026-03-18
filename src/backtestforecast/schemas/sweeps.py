@@ -171,7 +171,7 @@ class SweepJobResponse(BaseModel):
     candidate_count: int
     evaluated_candidate_count: int
     result_count: int
-    prefetch_summary: dict[str, Any] | None = None
+    prefetch_summary: dict[str, Any] | None = Field(default=None, alias="prefetch_summary_json")
     warnings: list[dict[str, Any]] = Field(default_factory=list, alias="warnings_json")
     error_code: str | None = None
     error_message: str | None = None

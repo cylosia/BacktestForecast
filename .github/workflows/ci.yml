@@ -46,7 +46,7 @@ jobs:
         run: python -m mypy src apps --ignore-missing-imports
 
       - name: Run Python tests
-        run: pytest -q -m "not integration" --ignore=tests/integration
+        run: pytest -q -m "not integration" --ignore=tests/integration --cov=src --cov-report=term --cov-fail-under=60
 
       - name: Check service close() methods
         run: python scripts/check_service_close.py
@@ -274,12 +274,10 @@ jobs:
         run: python scripts/check_migration_defaults.py
 
   e2e-tests:
-    # ⚠️ WARNING: E2E tests are DISABLED by default. Without setting
-    # ENABLE_E2E_TESTS=true as a repository variable, deployments proceed
-    # WITHOUT browser-level testing coverage.
+    # E2E tests run by default. To disable, set DISABLE_E2E_TESTS=true
+    # as a repository variable in GitHub > Settings > Variables > Actions.
     # Requires CLERK_TESTING_TOKEN repository secret for Clerk-authenticated E2E flows.
-    # Set this in GitHub > Settings > Secrets > Actions to enable this job.
-    if: ${{ vars.ENABLE_E2E_TESTS == 'true' }}
+    if: ${{ vars.DISABLE_E2E_TESTS != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -508,4 +506,26 @@ jobs:
             exit 1
           }
           docker stop ci-api
+
+      - name: Verify worker container starts
+        run: |
+          docker start ci-postgres
+          for i in $(seq 1 30); do
+            docker exec ci-postgres pg_isready -U smoke -d smoke_test && break
+            sleep 1
+          done
+          docker run -d --name ci-worker --network host \
+            -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke_test \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            -e APP_ENV=test \
+            backtestforecast-worker:ci \
+            celery -A apps.worker.app.celery_app.celery_app worker --loglevel=info
+          sleep 10
+          if ! docker ps --filter "name=ci-worker" --filter "status=running" -q | grep -q .; then
+            echo "Worker container failed to start"
+            docker logs ci-worker
+            exit 1
+          fi
+          echo "Worker container is running"
+          docker stop ci-worker
           docker stop ci-postgres

@@ -956,6 +956,17 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
             session.rollback()
             session.expire_all()
             try:
+                sweep_obj = session.get(SweepJobModel, UUID(job_id))
+                if sweep_obj is not None and sweep_obj.status in ("running", "failed"):
+                    sweep_obj.status = "queued"
+                    sweep_obj.started_at = None
+                    sweep_obj.error_code = None
+                    sweep_obj.error_message = None
+                    try:
+                        session.commit()
+                    except Exception:
+                        logger.exception("sweep.retry_reset.commit_failed")
+                        session.rollback()
                 delay = 120 * (self.request.retries + 1)
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
@@ -1436,6 +1447,7 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
     from backtestforecast.models import AuditEvent
 
     BATCH_SIZE = 5000
+    max_batches = 500
     cutoff = datetime.now(timezone.utc) - timedelta(days=90)
     high_volume_types = (
         "export.downloaded",
@@ -1444,9 +1456,16 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
         "analysis.viewed",
     )
     deleted = 0
+    batches_run = 0
+    limit_reached = False
     with SessionLocal() as session:
         for event_type in high_volume_types:
+            if limit_reached:
+                break
             while True:
+                if batches_run >= max_batches:
+                    limit_reached = True
+                    break
                 batch_ids = list(session.scalars(
                     select(AuditEvent.id)
                     .where(
@@ -1461,6 +1480,7 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
                     delete(AuditEvent).where(AuditEvent.id.in_(batch_ids))
                 )
                 deleted += result.rowcount
+                batches_run += 1
                 session.commit()
-    logger.info("audit.cleanup_complete", deleted=deleted, cutoff=cutoff.isoformat())
-    return {"deleted": deleted}
+    logger.info("audit.cleanup_complete", deleted=deleted, cutoff=cutoff.isoformat(), batches_run=batches_run, limit_reached=limit_reached)
+    return {"deleted": deleted, "batches_run": batches_run, "limit_reached": limit_reached}

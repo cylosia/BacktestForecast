@@ -212,7 +212,7 @@ class Settings(BaseSettings):
     max_concurrent_analyses_default: int = Field(default=3, ge=1, le=20)
     max_concurrent_analyses_premium: int = Field(default=5, ge=1, le=20)
 
-    forecast_max_analogs: int = 20
+    forecast_max_analogs: int = Field(default=20, ge=1)
 
     risk_free_rate: float = 0.045
 
@@ -233,6 +233,7 @@ class Settings(BaseSettings):
     feature_analysis_enabled: bool = True
     feature_daily_picks_enabled: bool = True
     feature_billing_enabled: bool = True
+    feature_sweeps_enabled: bool = True
 
     @field_validator("app_env")
     @classmethod
@@ -293,12 +294,18 @@ class Settings(BaseSettings):
     @field_validator("massive_max_retries")
     @classmethod
     def validate_retry_count(cls, value: int) -> int:
-        return max(0, int(value))
+        v = int(value)
+        if v < 0:
+            raise ValueError(f"massive_max_retries must be >= 0, got {v}")
+        return v
 
     @field_validator("massive_retry_backoff_seconds")
     @classmethod
     def validate_retry_backoff(cls, value: float) -> float:
-        return max(float(value), 0.0)
+        v = float(value)
+        if v < 0.0:
+            raise ValueError(f"massive_retry_backoff_seconds must be >= 0.0, got {v}")
+        return v
 
     @field_validator("risk_free_rate")
     @classmethod
@@ -398,9 +405,16 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def apply_env_overrides(self) -> "Settings":
         if self.pipeline_default_symbols_csv:
+            import re
             parsed = [s.strip() for s in self.pipeline_default_symbols_csv.split(",") if s.strip()]
-            if parsed:
-                self.pipeline_default_symbols = parsed
+            validated: list[str] = []
+            for s in parsed:
+                if re.match(r'^[A-Z][A-Z0-9./^]{0,15}$', s):
+                    validated.append(s)
+                else:
+                    logger.warning("config.invalid_symbol_skipped", symbol=s)
+            if validated:
+                self.pipeline_default_symbols = validated
         if len(self.pipeline_default_symbols) > self.MAX_SYMBOLS:
             logger.warning(
                 "config.pipeline_symbols_capped",
@@ -464,12 +478,9 @@ class Settings(BaseSettings):
             if not self.clerk_authorized_parties:
                 raise ValueError("Production-like environments require at least one CLERK_AUTHORIZED_PARTIES entry.")
             if "backtestforecast:backtestforecast" in self.database_url:
-                logger.warning(
-                    "config.default_database_password_detected",
-                    hint=(
-                        "DATABASE_URL contains the default password 'backtestforecast:backtestforecast'. "
-                        "Rotate to a strong, unique password before accepting real traffic."
-                    ),
+                raise ValueError(
+                    "DATABASE_URL contains the default password 'backtestforecast:backtestforecast'. "
+                    "Production-like environments require a strong, unique database password."
                 )
             if not self.rate_limit_fail_closed:
                 logger.warning(

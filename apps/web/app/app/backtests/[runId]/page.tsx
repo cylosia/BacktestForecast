@@ -82,7 +82,7 @@ export default async function BacktestDetailPage({
 
         {isComplete ? (
           <>
-            <ResultSummaryCards summary={run.summary} />
+            {run.summary ? <ResultSummaryCards summary={run.summary} /> : null}
 
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
           <Card>
@@ -130,6 +130,7 @@ export default async function BacktestDetailPage({
             </CardContent>
           </Card>
 
+          {run.summary ? (
           <Card>
             <CardHeader>
               <CardTitle>Outcome snapshot</CardTitle>
@@ -179,6 +180,7 @@ export default async function BacktestDetailPage({
               </div>
             </CardContent>
           </Card>
+          ) : null}
         </div>
 
         {(run.warnings ?? []).length > 0 ? (

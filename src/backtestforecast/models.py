@@ -39,7 +39,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     clerk_user_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
-    plan_tier: Mapped[str] = mapped_column(String(16), nullable=False, default="free")
+    plan_tier: Mapped[str] = mapped_column(String(16), nullable=False, default="free", server_default="free")
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     stripe_price_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -160,6 +160,12 @@ class BacktestRun(Base):
         order_by="BacktestEquityPoint.trade_date",
     )
     exports: Mapped[list["ExportJob"]] = relationship(back_populates="backtest_run", passive_deletes=True)
+
+
+# NOTE: strategy_type columns use String(48) without a DB-level CHECK constraint.
+# With 30+ strategy types (and growing for custom N-leg), maintaining a CHECK
+# constraint would be fragile and migration-heavy.  Validation is enforced at
+# the Pydantic schema layer (StrategyType enum) and the service layer instead.
 
 
 class BacktestTrade(Base):
@@ -303,7 +309,7 @@ class ScannerJob(Base):
     request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
     warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list)
     ranking_version: Mapped[str] = mapped_column(String(32), nullable=False, default="scanner-ranking-v1", server_default="scanner-ranking-v1")
-    engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2")
+    engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2", server_default="options-multileg-v2")
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -460,7 +466,7 @@ class NightlyPipelineRun(Base):
             postgresql_where=text("status = 'succeeded'"),
         ),
         CheckConstraint(
-            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="ck_nightly_pipeline_runs_valid_pipeline_status",
         ),
         CheckConstraint(
@@ -482,6 +488,7 @@ class NightlyPipelineRun(Base):
     duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     stage_details_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -610,6 +617,7 @@ class SweepJob(Base):
         Index("ix_sweep_jobs_user_id", "user_id"),
         Index("ix_sweep_jobs_user_created_at", "user_id", "created_at"),
         Index("ix_sweep_jobs_user_status", "user_id", "status"),
+        Index("ix_sweep_jobs_user_symbol", "user_id", "symbol"),
         Index("ix_sweep_jobs_celery_task_id", "celery_task_id"),
         Index("ix_sweep_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_sweep_jobs_user_idempotency_key"),
@@ -651,6 +659,30 @@ class SweepJob(Base):
         cascade="all, delete-orphan",
         order_by="SweepResult.rank",
     )
+
+
+class OutboxMessage(Base):
+    """Transactional outbox for reliable Celery task dispatch.
+
+    Not yet consumed by a background poller — this is the foundation for
+    the transactional outbox pattern.  See apps/api/app/dispatch.py for
+    the intended usage.
+    """
+    __tablename__ = "outbox_messages"
+    __table_args__ = (
+        Index("ix_outbox_messages_status_created", "status", "created_at"),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'failed')",
+            name="ck_outbox_messages_valid_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    task_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    task_kwargs_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    queue: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class SweepResult(Base):

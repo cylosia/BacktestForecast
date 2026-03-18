@@ -1,18 +1,31 @@
 from typing import Any
 
-from fastapi import APIRouter, Request
+import structlog
+from fastapi import APIRouter, Depends, Request
+from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import _extract_client_ip
+from apps.api.app.dependencies import _extract_client_ip, get_current_user
 from backtestforecast.config import get_settings
+from backtestforecast.db.session import get_db
+from backtestforecast.models import User
 from backtestforecast.security import get_rate_limiter
 
 router = APIRouter(tags=["meta"])
+logger = structlog.get_logger("api.meta")
 
 API_VERSION = "0.1.0"
 
 
+def _try_authenticate(request: Request, db: Session) -> User | None:
+    """Attempt to authenticate without raising on failure."""
+    try:
+        return get_current_user(request=request, db=db)
+    except Exception:
+        return None
+
+
 @router.get("/meta")
-def get_meta(request: Request) -> dict[str, Any]:
+def get_meta(request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
     settings = get_settings()
     client_ip = _extract_client_ip(request)
     get_rate_limiter().check(
@@ -25,9 +38,8 @@ def get_meta(request: Request) -> dict[str, Any]:
         "service": "backtestforecast-api",
         "version": API_VERSION,
     }
-    auth_header = request.headers.get("authorization")
-    session_cookie = request.cookies.get("__session")
-    if auth_header or session_cookie:
+    user = _try_authenticate(request, db)
+    if user is not None:
         result["billing_enabled"] = settings.stripe_billing_enabled
         result["features"] = {
             "backtests": settings.feature_backtests_enabled,

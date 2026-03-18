@@ -1,6 +1,7 @@
 """Unit tests for Celery worker tasks."""
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -22,6 +23,13 @@ from backtestforecast.models import (
     User,
 )
 
+warnings.warn(
+    "Worker tests use SQLite which silently ignores Postgres-specific features like "
+    "skip_locked and FOR UPDATE. Run with DATABASE_URL pointing to Postgres for "
+    "full coverage.",
+    stacklevel=1,
+)
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -29,6 +37,13 @@ from backtestforecast.models import (
 
 @pytest.fixture()
 def db_engine():
+    """SQLite in-memory engine for unit-level isolation.
+
+    NOTE: SQLite silently ignores Postgres-specific features (skip_locked,
+    FOR UPDATE, partial indexes, check constraints with function calls).
+    For full coverage run these tests against Postgres in CI using the
+    ``postgres-integration`` job configuration.
+    """
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},

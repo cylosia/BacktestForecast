@@ -316,7 +316,11 @@ class NightlyPipelineService:
         trade_date: date,
     ) -> list[RegimeSnapshot]:
         """Fetch bars and classify regime for each symbol.
-        Skip symbols with insufficient data."""
+        Skip symbols with insufficient data.
+
+        Thread-safety: ``self.market_data`` wraps an ``httpx.Client`` which is
+        thread-safe for concurrent reads.  No per-thread client is needed.
+        """
         lookback_start = trade_date - timedelta(days=400)
         earnings_start = trade_date - timedelta(days=10)
         earnings_end = trade_date + timedelta(days=10)

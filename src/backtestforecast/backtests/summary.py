@@ -133,12 +133,9 @@ def _compute_sharpe_sortino(
 
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
-    # Uses the full-sample denominator (N-1 across all observations) for
-    # consistency with the Sharpe ratio. This can inflate Sortino when
-    # negative return days are sparse.
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
     if downside_sq_sum > 0:
-        down_dev = math.sqrt(downside_sq_sum / (len(excess) - 1))
+        down_dev = math.sqrt(downside_sq_sum / len(excess))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None

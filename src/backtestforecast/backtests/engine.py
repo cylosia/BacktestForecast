@@ -98,6 +98,7 @@ class OptionsBacktestEngine:
                     capital_at_risk=capital_at_risk,
                     profit_target_pct=config.profit_target_pct,
                     stop_loss_pct=config.stop_loss_pct,
+                    current_bar_index=index,
                 )
                 if should_exit:
                     trade, cash_delta = self._close_position(
@@ -486,6 +487,7 @@ class OptionsBacktestEngine:
         capital_at_risk: float = 0.0,
         profit_target_pct: float | None = None,
         stop_loss_pct: float | None = None,
+        current_bar_index: int | None = None,
     ) -> tuple[bool, str]:
         if position.option_legs:
             exit_date = position.scheduled_exit_date or max(leg.expiration_date for leg in position.option_legs)
@@ -503,8 +505,16 @@ class OptionsBacktestEngine:
             if profit_target_pct is not None and unrealized_pnl_pct >= profit_target_pct:
                 return True, "profit_target"
 
-        if (bar.trade_date - position.entry_date).days >= max_holding_days:
-            return True, "max_holding_days"
+        # Count trading days (bars) instead of calendar days to avoid
+        # premature exits over weekends and holidays.
+        if current_bar_index is not None:
+            trading_days_held = current_bar_index - position.entry_index
+            if trading_days_held >= max_holding_days:
+                return True, "max_holding_days"
+        else:
+            if (bar.trade_date - position.entry_date).days >= max_holding_days:
+                return True, "max_holding_days"
+
         if bar.trade_date >= backtest_end_date and bar.trade_date == last_bar_date:
             return True, "backtest_end"
         return False, ""

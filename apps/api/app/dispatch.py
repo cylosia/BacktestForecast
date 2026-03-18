@@ -1,7 +1,15 @@
-"""Shared Celery dispatch-and-handle-failure logic for create endpoints."""
+"""Shared Celery dispatch-and-handle-failure logic for create endpoints.
+
+TODO: Implement transactional outbox pattern. The current approach commits
+the DB record first, then sends the Celery task. A proper outbox would:
+1. Write an OutboxMessage row in the same transaction as the job record
+2. A separate poller would read pending OutboxMessages and send tasks
+3. This eliminates the window where commit succeeds but task send fails
+"""
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import structlog
 from kombu.exceptions import KombuError, OperationalError as KombuOperationalError
@@ -30,10 +38,10 @@ def dispatch_celery_task(
 ) -> None:
     """Dispatch a Celery task for a newly created job.
 
-    Skips dispatch if the job is not ``"queued"`` or already has a
-    ``celery_task_id`` (idempotent return).  On send failure the job is
-    marked ``"failed"`` with ``error_code="enqueue_failed"`` and the
-    failure is persisted (with a rollback safety net).
+    Commits the ``celery_task_id`` to the database **before** sending the
+    task to the broker, so the worker never processes a job whose state
+    has not been persisted.  If the subsequent task send fails, the job
+    is marked ``"failed"`` with ``error_code="enqueue_failed"``.
 
     ``job`` must be an ORM model with ``status``, ``celery_task_id``,
     ``error_code``, and ``error_message`` attributes.
@@ -54,13 +62,30 @@ def dispatch_celery_task(
     if traceparent:
         headers["traceparent"] = traceparent
 
+    task_id = str(uuid4())
+    job.celery_task_id = task_id
     try:
-        result = celery_app.send_task(
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(f"{log_event}.pre_commit_failed", **task_kwargs)
+        job.status = "failed"
+        job.error_code = "enqueue_failed"
+        job.error_message = "Unable to persist task state before dispatch."
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        return
+
+    try:
+        celery_app.send_task(
             task_name, kwargs=task_kwargs, queue=queue,
             headers=headers if headers else None,
+            task_id=task_id,
         )
-    except (KombuError, KombuOperationalError, Exception) as exc:
-        logger.exception(f"{log_event}.enqueue_failed", **task_kwargs)
+    except (KombuError, KombuOperationalError, Exception):
+        logger.exception(f"{log_event}.enqueue_failed", celery_task_id=task_id, **task_kwargs)
         job.status = "failed"
         job.error_code = "enqueue_failed"
         job.error_message = "Unable to dispatch job. Please try again."
@@ -71,26 +96,4 @@ def dispatch_celery_task(
             db.rollback()
         return
 
-    job.celery_task_id = result.id
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception(f"{log_event}.enqueued_but_commit_failed", celery_task_id=result.id, **task_kwargs)
-        # Best-effort revocation: if revoke fails, the task may execute but
-        # the job is already marked failed. The task's ownership check will
-        # detect the mismatch and skip processing.
-        try:
-            celery_app.control.revoke(result.id)
-        except Exception:
-            DISPATCH_REVOKE_FAILED.inc()
-            logger.warning(f"{log_event}.revoke_failed", celery_task_id=result.id)
-        job.status = "failed"
-        job.error_code = "enqueue_failed"
-        job.error_message = "Task dispatched but state could not be persisted."
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-        return
-    logger.info(f"{log_event}.enqueued", celery_task_id=result.id, **task_kwargs)
+    logger.info(f"{log_event}.enqueued", celery_task_id=task_id, **task_kwargs)

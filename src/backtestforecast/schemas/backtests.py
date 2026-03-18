@@ -497,6 +497,8 @@ class CurrentUserResponse(BaseModel):
 
 
 class BacktestSummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     trade_count: int
     win_rate: Decimal
     total_roi_pct: Decimal

@@ -16,6 +16,8 @@ _SENSITIVE_PATTERNS = [
     re.compile(r"[A-Za-z]:\\(?:[^\s\\]+\\){2,}[^\s]*|/(?:home|usr|var|tmp|etc)/[^\s]+"),
     re.compile(r"https?://(?:localhost|127\.0\.0\.1|10\.\d|172\.(?:1[6-9]|2\d|3[01])|192\.168)[^\s]*"),
     re.compile(r"redis(?:s)?://[^\s]+", re.IGNORECASE),
+    re.compile(r"\b(password|secret|token|api_key|bearer|authorization)\b.*[:=]\s*\S+", re.IGNORECASE),
+    re.compile(r"\b(sk_live_|sk_test_|pk_live_|pk_test_|whsec_)\w+", re.IGNORECASE),
 ]
 
 
@@ -40,15 +42,7 @@ class JobStatus(str, Enum):
     EXPIRED = "expired"
 
 
-class ExportJobStatus(str, Enum):
-    """Export-specific statuses. Includes ``expired`` for download links
-    that have passed their TTL, distinct from general job failure."""
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    EXPIRED = "expired"
+ExportJobStatus = JobStatus
 
 
 class PlanTier(str, Enum):

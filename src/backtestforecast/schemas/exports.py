@@ -23,7 +23,7 @@ class ExportJobResponse(BaseModel):
     model_config = {"from_attributes": True}
 
     id: UUID
-    run_id: UUID
+    run_id: UUID = Field(alias="backtest_run_id")
     export_format: str
     status: ExportJobStatus
     file_name: str

@@ -49,22 +49,23 @@ EQUITY_CURVE_LIMIT = 10_000
 def to_decimal(value: float | Decimal, *, allow_infinite: bool = False) -> Decimal | None:
     """Convert a float or Decimal to a quantized Decimal.
 
-    NaN always raises ``ValueError``.  Infinite values return ``None``
-    when *allow_infinite* is True (appropriate for metrics like
-    profit_factor where infinity is a valid result meaning "no losses"),
-    or raise ``ValueError`` when False (the default, for fields that
-    must be finite).
+    NaN returns ``None`` so that scan/sweep serialization does not crash
+    on unexpected NaN values from the backtest engine.  Infinite values
+    return ``None`` when *allow_infinite* is True (appropriate for
+    metrics like profit_factor where infinity is a valid result meaning
+    "no losses"), or raise ``ValueError`` when False (the default, for
+    fields that must be finite).
     """
     if isinstance(value, Decimal):
         if value.is_nan():
-            raise ValueError(f"Non-finite Decimal value: {value}")
+            return None
         if value.is_infinite():
             if allow_infinite:
                 return None
             raise ValueError(f"Non-finite Decimal value: {value}")
         return value.quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
     if math.isnan(value):
-        raise ValueError(f"Non-finite float value: {value}")
+        return None
     if math.isinf(value):
         if allow_infinite:
             return None

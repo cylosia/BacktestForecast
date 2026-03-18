@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -8,6 +9,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.schemas.common import sanitize_error_message
+
+SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^]{0,15}$")
 
 
 class AnalysisSummaryResponse(BaseModel):
@@ -85,7 +88,12 @@ class CreateAnalysisRequest(BaseModel):
     @field_validator("symbol", mode="before")
     @classmethod
     def normalize_symbol(cls, v: str) -> str:
-        return v.strip().upper()
+        v = v.strip().upper()
+        if not SYMBOL_ALLOWED_CHARS.match(v):
+            raise ValueError(
+                "Symbol must be 1-16 characters starting with a letter (A-Z, 0-9, ., /, ^)."
+            )
+        return v
 
 
 class AnalysisListResponse(BaseModel):
