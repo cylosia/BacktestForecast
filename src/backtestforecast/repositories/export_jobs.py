@@ -61,6 +61,26 @@ class ExportJobRepository:
         stmt = select(func.count(ExportJob.id)).where(ExportJob.user_id == user_id)
         return int(self.session.scalar(stmt) or 0)
 
+    def list_for_user_with_count(
+        self, user_id: UUID, limit: int = 50, offset: int = 0,
+    ) -> tuple[list[ExportJob], int]:
+        """Return (items, total) in a single query using a window function."""
+        count_col = func.count().over().label("_total")
+        stmt = (
+            select(ExportJob, count_col)
+            .where(ExportJob.user_id == user_id)
+            .options(defer(ExportJob.content_bytes))
+            .order_by(desc(ExportJob.created_at))
+            .offset(offset)
+            .limit(min(limit, _MAX_PAGE_SIZE))
+        )
+        rows = list(self.session.execute(stmt))
+        if not rows:
+            return [], 0
+        items = [row[0] for row in rows]
+        total = rows[0][1]
+        return items, total
+
     def list_expired_for_cleanup(self, before: datetime, limit: int) -> list[ExportJob]:
         from sqlalchemy import asc
         stmt = (

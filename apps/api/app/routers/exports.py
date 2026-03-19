@@ -35,6 +35,8 @@ def list_exports(
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     settings: Settings = Depends(get_settings),
 ) -> ExportJobListResponse:
+    # Entitlement not checked on read: users retain access to past exports
+    # even after downgrade, consistent with backtests router policy.
     get_rate_limiter().check(
         bucket="exports:read",
         actor_key=str(user.id),
@@ -42,8 +44,7 @@ def list_exports(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ExportService(db) as service:
-        jobs = service.exports.list_for_user(user.id, limit=limit, offset=offset)
-        total = service.exports.count_for_user(user.id)
+        jobs, total = service.exports.list_for_user_with_count(user.id, limit=limit, offset=offset)
         return ExportJobListResponse(
             items=[service.to_response(j) for j in jobs],
             total=total,

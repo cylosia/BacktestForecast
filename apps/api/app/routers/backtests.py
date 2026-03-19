@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -85,7 +85,6 @@ def create_backtest(
 
         db.refresh(run)
         if run.status == "failed":
-            from fastapi import HTTPException
             raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(run.error_message) or "Unable to dispatch job."})
         return service.get_run(user, run.id)
 

@@ -84,6 +84,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
         "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'",
+        "X-Robots-Tag": "noindex",
       },
     });
   } catch (err) {

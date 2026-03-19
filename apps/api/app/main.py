@@ -468,7 +468,9 @@ def dlq_status(request: Request) -> Response:
     token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
     expected_token = settings.admin_token or settings.metrics_token
     if not expected_token or not token or not _hmac.compare_digest(token, expected_token):
+        logger.warning("admin.dlq_auth_failed", ip=ip_address)
         return JSONResponse(status_code=403, content={"error": {"code": "forbidden", "message": "Forbidden"}})
+    logger.info("admin.dlq_accessed", ip=ip_address)
     try:
         import json
 

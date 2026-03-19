@@ -486,6 +486,14 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_aws_credentials_pair(self) -> "Settings":
+        has_key = bool(self.aws_access_key_id)
+        has_secret = bool(self.aws_secret_access_key)
+        if has_key != has_secret:
+            raise ValueError("aws_access_key_id and aws_secret_access_key must both be set or both be empty.")
+        return self
+
+    @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if "default" in self.ip_hash_salt.lower() or "change" in self.ip_hash_salt.lower():
             if self.app_env in {"staging"}:
@@ -554,6 +562,8 @@ class Settings(BaseSettings):
                         f"are not set: {', '.join(_missing)}"
                     )
 
+            if self.s3_endpoint_url and not self.s3_endpoint_url.startswith("https://"):
+                raise ValueError("s3_endpoint_url must use HTTPS in production.")
             if self.feature_exports_enabled and self.s3_bucket:
                 _s3_fields = [
                     ("s3_region", self.s3_region),

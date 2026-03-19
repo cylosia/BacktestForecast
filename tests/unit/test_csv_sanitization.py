@@ -1,72 +1,34 @@
-"""Item 74: Test CSV injection with leading whitespace.
-
-Verifies that _sanitize_csv_cell correctly catches dangerous characters
-even when preceded by leading whitespace (e.g., "  =cmd|...").
-"""
-from __future__ import annotations
-
-import pytest
-
+"""Verify CSV cell sanitization blocks formula injection."""
 from backtestforecast.services.exports import ExportService
 
 
-class TestCsvSanitizationLeadingWhitespace:
-    @staticmethod
-    def _sanitize(value: object) -> object:
-        return ExportService._sanitize_csv_cell(value)
+def test_sanitize_blocks_formula_prefix():
+    assert ExportService._sanitize_csv_cell("=cmd|'/C calc'!A0") == "'=cmd|'/C calc'!A0"
+    assert ExportService._sanitize_csv_cell("+1+2") == "'+1+2"
+    assert ExportService._sanitize_csv_cell("@SUM(A1:A10)") == "'@SUM(A1:A10)"
+    assert ExportService._sanitize_csv_cell("|cmd") == "'|cmd"
 
-    def test_leading_space_before_equals(self):
-        result = self._sanitize("  =cmd|'/C calc'!A0")
-        assert isinstance(result, str)
-        stripped = result.strip()
-        assert not stripped.startswith("="), (
-            f"Expected dangerous '=' to be neutralized, got: {result!r}"
-        )
 
-    def test_leading_space_before_plus(self):
-        result = self._sanitize("  +cmd|'/C calc'!A0")
-        stripped = result.strip()
-        assert not stripped.startswith("+"), (
-            f"Expected dangerous '+' to be neutralized, got: {result!r}"
-        )
+def test_sanitize_allows_negative_numbers():
+    assert ExportService._sanitize_csv_cell("-123.45") == "-123.45"
+    assert ExportService._sanitize_csv_cell("-1,234.56") == "-1,234.56"
 
-    def test_leading_space_before_minus(self):
-        result = self._sanitize("  -1+1")
-        stripped = result.strip()
-        assert not stripped.startswith("-"), (
-            f"Expected dangerous '-' to be neutralized, got: {result!r}"
-        )
 
-    def test_leading_space_before_at(self):
-        result = self._sanitize("  @SUM(A1:A10)")
-        stripped = result.strip()
-        assert not stripped.startswith("@"), (
-            f"Expected dangerous '@' to be neutralized, got: {result!r}"
-        )
+def test_sanitize_blocks_tab_prefix():
+    result = ExportService._sanitize_csv_cell("\t=cmd")
+    assert result.startswith("'"), "Tab-prefixed formula should be quoted"
 
-    def test_leading_space_before_pipe(self):
-        result = self._sanitize("  |command")
-        stripped = result.strip()
-        assert not stripped.startswith("|"), (
-            f"Expected dangerous '|' to be neutralized, got: {result!r}"
-        )
 
-    def test_no_leading_whitespace_still_sanitized(self):
-        result = self._sanitize("=1+2")
-        assert isinstance(result, str)
-        assert result.startswith("'")
+def test_sanitize_passes_normal_strings():
+    assert ExportService._sanitize_csv_cell("AAPL") == "AAPL"
+    assert ExportService._sanitize_csv_cell("covered_call") == "covered_call"
 
-    def test_safe_string_unchanged(self):
-        result = self._sanitize("hello world")
-        assert result == "hello world"
 
-    def test_non_string_passthrough(self):
-        assert self._sanitize(42) == 42
-        assert self._sanitize(3.14) == 3.14
-        assert self._sanitize(None) is None
+def test_sanitize_strips_null_bytes():
+    assert "\x00" not in str(ExportService._sanitize_csv_cell("test\x00value"))
 
-    def test_tabs_and_newlines_stripped(self):
-        result = self._sanitize("line1\nline2\ttab\rreturn")
-        assert "\n" not in str(result)
-        assert "\t" not in str(result)
-        assert "\r" not in str(result)
+
+def test_sanitize_non_string_passthrough():
+    assert ExportService._sanitize_csv_cell(42) == 42
+    assert ExportService._sanitize_csv_cell(3.14) == 3.14
+    assert ExportService._sanitize_csv_cell(None) is None

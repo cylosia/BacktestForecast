@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.models import JobStatus, RunJobStatus
 
-_SEND_MAX_ATTEMPTS = 3
-_SEND_RETRY_DELAY = 0.5
+_SEND_MAX_ATTEMPTS = 2
+_SEND_RETRY_DELAY = 0.25
 
 
 class DispatchResult(enum.Enum):

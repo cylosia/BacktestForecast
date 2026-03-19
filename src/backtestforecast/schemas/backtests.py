@@ -445,7 +445,10 @@ class CreateBacktestRunRequest(BaseModel):
         if self.start_date >= self.end_date:
             raise ValueError("start_date must be earlier than end_date")
         if self.dte_tolerance_days >= self.target_dte:
-            raise ValueError("dte_tolerance_days must be less than target_dte")
+            raise ValueError(
+                f"dte_tolerance_days ({self.dte_tolerance_days}) must be less than "
+                f"target_dte ({self.target_dte}). Reduce tolerance or increase target DTE."
+            )
         if (self.end_date - self.start_date).days > get_settings().max_backtest_window_days:
             raise ValueError(
                 f"backtest window exceeds the configured maximum of {get_settings().max_backtest_window_days} days"

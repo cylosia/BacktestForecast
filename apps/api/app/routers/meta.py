@@ -40,7 +40,7 @@ def _try_authenticate(request: Request, db: Session) -> User | None:
         return None
 
 
-@router.get("/meta")
+@router.get("/meta", response_model=dict[str, Any])
 def get_meta(request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
     settings = get_settings()
     client_ip = _extract_client_ip(request)

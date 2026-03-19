@@ -47,6 +47,40 @@ from backtestforecast.services.sweeps import SweepService
 logger = structlog.get_logger("worker.tasks")
 
 
+def _mark_job_failed(
+    session: "Session",
+    model_cls: type,
+    obj_id: UUID,
+    *,
+    error_code: str,
+    error_message: str,
+    allowed_from: tuple[str, ...] = ("queued", "running"),
+) -> None:
+    """Mark a job as failed if it is in one of the allowed source statuses."""
+    from datetime import UTC, datetime
+    from sqlalchemy import update
+
+    obj = session.get(model_cls, obj_id)
+    if obj is not None and getattr(obj, "status", None) in allowed_from:
+        values: dict[str, object] = {
+            "status": "failed",
+            "error_message": error_message,
+            "completed_at": datetime.now(UTC),
+        }
+        if hasattr(model_cls, "error_code"):
+            values["error_code"] = error_code
+        session.execute(
+            update(model_cls)
+            .where(model_cls.id == obj_id, model_cls.status.in_(allowed_from))
+            .values(**values)
+        )
+        try:
+            session.commit()
+        except Exception:
+            logger.exception("mark_job_failed.commit_failed", model=model_cls.__name__, obj_id=str(obj_id))
+            session.rollback()
+
+
 class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
     """Base class for Celery tasks that persists failure metadata to a Redis
     dead-letter list (``bff:dead_letter_queue``) when all retries are exhausted.
@@ -55,6 +89,18 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
     Failed tasks are JSON-serialised and left-pushed so operators can inspect
     or replay them via ``LRANGE bff:dead_letter_queue 0 -1``.
     """
+
+    def before_start(self, task_id, args, kwargs):
+        super().before_start(task_id, args, kwargs)
+        headers = getattr(self.request, 'headers', None) or {}
+        if isinstance(headers, dict):
+            ctx: dict[str, str] = {}
+            if headers.get('traceparent'):
+                ctx['traceparent'] = headers['traceparent']
+            if headers.get('request_id'):
+                ctx['request_id'] = headers['request_id']
+            if ctx:
+                structlog.contextvars.bind_contextvars(**ctx)
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         super().on_failure(exc, task_id, args, kwargs, einfo)
@@ -1229,14 +1275,16 @@ def reap_stale_jobs(self, stale_minutes: int = 30) -> dict[str, int]:
 
     _MAX_HEARTBEAT_SCAN = 500
     try:
-        _count_redis = Redis.from_url(settings.redis_url, socket_timeout=5)
-        heartbeat_count = 0
-        for _ in _count_redis.scan_iter("worker:heartbeat:*", count=100):
-            heartbeat_count += 1
-            if heartbeat_count >= _MAX_HEARTBEAT_SCAN:
-                break
-        CELERY_WORKERS_ONLINE.set(heartbeat_count)
-        _count_redis.close()
+        _count_redis = Redis.from_url(settings.redis_url, socket_timeout=5, decode_responses=True)
+        try:
+            heartbeat_count = 0
+            for _ in _count_redis.scan_iter("worker:heartbeat:*", count=100):
+                heartbeat_count += 1
+                if heartbeat_count >= _MAX_HEARTBEAT_SCAN:
+                    break
+            CELERY_WORKERS_ONLINE.set(heartbeat_count)
+        finally:
+            _count_redis.close()
     except Exception:
         pass
 

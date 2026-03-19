@@ -5,7 +5,7 @@ from typing import Annotated, Any, Generator
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
@@ -83,7 +83,6 @@ def create_analysis(
 
         db.refresh(analysis)
         if analysis.status == "failed":
-            from fastapi import HTTPException
             raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(analysis.error_message) or "Unable to dispatch job."})
         return _to_summary(analysis)
 

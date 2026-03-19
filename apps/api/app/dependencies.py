@@ -162,6 +162,10 @@ def get_current_user(
                 normalized_origin = _normalize_origin(origin)
                 allowed_origins = [_normalize_origin(o) for o in get_settings().web_cors_origins]
                 if normalized_origin not in allowed_origins:
+                    structlog.get_logger("security").warning(
+                        "auth.cookie_origin_rejected",
+                        origin=normalized_origin,
+                    )
                     raise AuthenticationError(
                         "Cookie-based request origin not in allowed list."
                     )

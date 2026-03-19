@@ -341,3 +341,55 @@ The in-memory option gateway cache (`OptionDataRedisCache` or in-memory fallback
 1. **Short-term**: Restart API pods to clear in-memory caches. Redis cache will repopulate from fresh fetches.
 2. **Config**: Reduce `option_cache_ttl_seconds` if staleness is frequent (e.g. to 86400 for 24h).
 3. **Code**: If invalidation is broken, deploy fix for cache invalidation on market data updates.
+
+## Redis Password Rotation
+
+### Procedure
+
+1. Generate a new password and update it in the secrets store
+2. Update `.env.prod` with the new `REDIS_PASSWORD` value
+3. Update the Redis server configuration (`requirepass` in redis.conf)
+4. Reload Redis: `redis-cli CONFIG SET requirepass <new_password>`
+5. Deploy the API and worker services with the new environment
+6. Verify connectivity: check `/health/ready` and worker heartbeats
+7. Monitor `redis_connection_errors_total` for connection failures during rollover
+
+### Rollback
+
+If services cannot connect after rotation:
+1. Revert `REDIS_PASSWORD` in `.env.prod` to the old value
+2. Restart services
+3. Redis CONFIG SET can be reverted without restart
+
+### Notes
+
+- The `validate_redis_consistency` model validator in `config.py` automatically injects `REDIS_PASSWORD` into both `redis_url` and `redis_cache_url`
+- Celery broker connections may take up to 60 seconds to reconnect after password change
+- Rate limiter will briefly fall back to in-memory mode during reconnection
+
+## Migration Rollback
+
+### When to rollback
+
+Only rollback migrations as a last resort. Prefer forward-fixing with a new migration.
+
+### Procedure
+
+1. Identify the target revision: `alembic history`
+2. Downgrade: `alembic downgrade <target_revision>`
+3. Verify: `alembic current`
+4. Some migrations have destructive downgrades (column drops). Check the downgrade function before running.
+
+### Destructive downgrades
+
+These migrations drop columns on downgrade — data loss is irreversible:
+- `0017`: drops `plan_tier_snapshot` from scanner_jobs
+- `0022`: drops `mode` from sweep_jobs
+- `0028`: re-widens constraints (non-destructive)
+
+### Rolling deployments
+
+During rolling deployments, old and new API instances coexist briefly. Ensure:
+1. New migrations are backward-compatible (additive columns, nullable defaults)
+2. Old instances can still read/write the schema after migration
+3. Worker instances are restarted after API instances to pick up new task signatures

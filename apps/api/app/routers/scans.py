@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
@@ -43,6 +43,8 @@ def list_scans(
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     settings: Settings = Depends(get_settings),
 ) -> ScannerJobListResponse:
+    # Entitlement not checked on read: users retain access to past results
+    # even after downgrade, consistent with backtests router policy.
     get_rate_limiter().check(
         bucket="scans:read",
         actor_key=str(user.id),
@@ -85,7 +87,6 @@ def create_scan(
         )
         db.refresh(job)
         if job.status == "failed":
-            from fastapi import HTTPException
             raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(job.error_message) or "Unable to dispatch job."})
         return service.get_job(user, job.id)
 

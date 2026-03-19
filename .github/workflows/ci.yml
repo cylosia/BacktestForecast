@@ -73,6 +73,9 @@ jobs:
       - name: Lint Python (ruff)
         run: python -m ruff check .
 
+      - name: Format check Python (ruff)
+        run: python -m ruff format --check .
+
       - name: Typecheck Python (mypy)
         run: python -m mypy src apps --ignore-missing-imports
 
@@ -388,9 +391,18 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       CI: true
       DATABASE_URL: postgresql+psycopg://e2e:e2e@localhost:5432/e2e_test
+      REDIS_URL: redis://localhost:6379/0
       CLERK_TESTING_TOKEN: ${{ secrets.CLERK_TESTING_TOKEN }}
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000

@@ -348,6 +348,31 @@ groups:
             {{ $value }} option cache entries are held in memory across all
             gateway instances. Budget is 50,000. Large scans may cause OOM.
 
+      - alert: ReaperDurationHigh
+        expr: |
+          histogram_quantile(0.95, rate(reaper_duration_seconds_bucket[1h])) > 120
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Job reaper taking >120s at p95"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#reaper-duration"
+          description: >-
+            The stale job reaper is taking longer than expected.
+            May indicate a large number of stuck jobs or slow DB queries.
+
+      - alert: SweepJobStuckRunning
+        expr: |
+          max(jobs_stuck_running{model="SweepJob"}) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sweep job stuck in running state for >15 minutes"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#stuck-jobs"
+          description: >-
+            {{ $value }} sweep job(s) stuck in running state.
+
       - alert: RateLimitBypassRisk
         expr: increase(redis_connection_errors_total{operation="rate_limit"}[5m]) > 10
         for: 5m

@@ -338,9 +338,18 @@ def main() -> None:
     import os
 
     app_env = os.environ.get("APP_ENV", "").lower()
-    if app_env in ("production", "prod"):
-        print("ERROR: seed_dev_data.py must not be run against a production database.")
+    if app_env in ("production", "prod", "staging"):
+        print("ERROR: seed_dev_data.py must not be run against a production or staging database.")
         print("       APP_ENV is set to %r. Aborting." % app_env)
+        raise SystemExit(1)
+    db_url = os.environ.get("DATABASE_URL", "")
+    if db_url and "sslmode=require" in db_url:
+        print("ERROR: seed_dev_data.py detected a production-style DATABASE_URL (sslmode=require).")
+        print("       Refusing to seed. Aborting.")
+        raise SystemExit(1)
+    db_url_lower = db_url.lower()
+    if any(host in db_url_lower for host in ("rds.amazonaws.com", "cloud.google.com", "azure.com", ".prod.")):
+        print("ERROR: DATABASE_URL appears to point to a production database.")
         raise SystemExit(1)
 
     args = parse_args()

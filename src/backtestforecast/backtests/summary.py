@@ -120,10 +120,27 @@ def _compute_sharpe_sortino(
 ) -> tuple[float | None, float | None]:
     """Compute annualised Sharpe and Sortino ratios.
 
-    Both ratios use sample standard deviation (N-1 denominator) for
-    consistency so they are directly comparable.  The downside deviation
-    sums squared negative excess returns across all N observations but
-    divides by N-1, following the sample-statistic convention.
+    **Methodology notes (Sortino ratio)**
+
+    The downside deviation is computed as::
+
+        DD = sqrt( sum(min(r_i - rf, 0)^2 for all i) / (N - 1) )
+
+    This differs from some textbook definitions in two ways:
+
+    1. **N-1 denominator** (sample statistic) instead of N (population).
+       We use N-1 for consistency with the Sharpe ratio so the two are
+       directly comparable on the same data set.  The difference is
+       negligible for backtests with many observations.
+
+    2. **Only negative excess returns contribute** to the numerator sum,
+       but the denominator uses the full observation count N-1.  This is
+       the "partial downside deviation" variant (Sortino & Price 1994).
+       Some implementations divide only by the count of negative returns,
+       which inflates the ratio when few observations are negative.
+
+    Values may differ from other platforms that use population statistics
+    or alternative downside deviation formulas.
     """
     if trade_count < _MIN_TRADES_FOR_RATIOS or len(equity_curve) < 2:
         return None, None

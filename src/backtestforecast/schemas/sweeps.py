@@ -123,7 +123,10 @@ class CreateSweepRequest(BaseModel):
                 f"sweep window exceeds the configured maximum of {get_settings().max_backtest_window_days} days"
             )
         if self.dte_tolerance_days >= self.target_dte:
-            raise ValueError("dte_tolerance_days must be less than target_dte")
+            raise ValueError(
+                f"dte_tolerance_days ({self.dte_tolerance_days}) must be less than "
+                f"target_dte ({self.target_dte}). Reduce tolerance or increase target DTE."
+            )
         if len({s.value for s in self.strategy_types}) != len(self.strategy_types):
             raise ValueError("strategy_types must not contain duplicates")
         rule_names = [rs.name.lower() for rs in self.entry_rule_sets]
