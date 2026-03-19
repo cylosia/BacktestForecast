@@ -9,18 +9,32 @@ import structlog
 
 logger = structlog.get_logger("billing.events")
 
-_BILLING_REDACT_KEYS = {"payment_method", "billing_address", "card", "bank_account"}
+_BILLING_REDACT_KEYS = {
+    "payment_method", "billing_address", "card", "bank_account",
+    "email", "name", "phone", "tax_id", "ip_address",
+    "last4", "exp_month", "exp_year",
+    "address_line1", "address_line2", "address_city", "address_state",
+    "address_zip", "address_country",
+}
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+_ALLOWED_EVENT_PREFIXES = frozenset({
+    "checkout", "subscription", "portal", "cancellation", "reconciliation",
+    "customer", "invoice",
+})
+
 
 def _safe_state(state: dict | None) -> dict | None:
-    if not state:
+    if state is None:
         return None
+    if not state:
+        return {}
     result: dict = {}
     for k, v in state.items():
         if k.lower() in _BILLING_REDACT_KEYS:
+            result[k] = "<redacted>"
             continue
         if isinstance(v, dict):
             result[k] = _safe_state(v)
@@ -48,6 +62,13 @@ def log_billing_event(
     ordering issues and replay state changes if needed. When session
     is provided, the event is also persisted to the audit database.
     """
+    if not any(event_type.startswith(prefix) for prefix in _ALLOWED_EVENT_PREFIXES):
+        logger.warning(
+            "billing.unknown_event_type",
+            event_type=event_type,
+            user_id=str(user_id),
+        )
+
     logger.info(
         "billing.state_change",
         user_id=str(user_id),
@@ -60,18 +81,26 @@ def log_billing_event(
         timestamp=datetime.now(UTC).isoformat(),
     )
     if session is not None:
-        from backtestforecast.services.audit import AuditService
+        try:
+            from backtestforecast.services.audit import AuditService
 
-        audit = AuditService(session)
-        audit.record_always(
-            event_type=f"billing.{event_type}",
-            subject_type="stripe_subscription",
-            subject_id=subscription_id,
-            user_id=user_id,
-            request_id=request_id,
-            metadata={
-                "old_state": _safe_state(old_state),
-                "new_state": _safe_state(new_state),
-                "source": source,
-            },
-        )
+            audit = AuditService(session)
+            audit.record_always(
+                event_type=f"billing.{event_type}",
+                subject_type="stripe_subscription",
+                subject_id=subscription_id,
+                user_id=user_id,
+                request_id=request_id,
+                metadata={
+                    "old_state": _safe_state(old_state),
+                    "new_state": _safe_state(new_state),
+                    "source": source,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "billing.audit_write_failed",
+                event_type=event_type,
+                user_id=str(user_id),
+                exc_info=True,
+            )

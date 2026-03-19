@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from backtestforecast.schemas.common import PlanTier
+
 
 class StrategyCatalogItemResponse(BaseModel):
     strategy_type: str
@@ -10,7 +12,7 @@ class StrategyCatalogItemResponse(BaseModel):
     category: str
     bias: str
     leg_count: int
-    min_tier: str
+    min_tier: PlanTier
     max_loss_description: str
     notes: str = ""
     tags: list[str] = Field(default_factory=list)
@@ -25,4 +27,4 @@ class StrategyCatalogGroupResponse(BaseModel):
 class StrategyCatalogResponse(BaseModel):
     groups: list[StrategyCatalogGroupResponse]
     total_strategies: int
-    user_tier: str | None = None
+    user_tier: PlanTier | None = None

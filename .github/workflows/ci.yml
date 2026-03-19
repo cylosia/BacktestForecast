@@ -79,6 +79,12 @@ jobs:
       - name: Format check Python (ruff)
         run: python -m ruff format --check .
 
+      - name: Dead code check (vulture)
+        run: |
+          pip install vulture
+          vulture src/ apps/ --min-confidence 90 --exclude "*/migrations/*,*/alembic/*" || true
+        continue-on-error: true
+
       - name: Typecheck Python (mypy)
         run: python -m mypy src apps --ignore-missing-imports
 
@@ -107,6 +113,9 @@ jobs:
               exit(1)
           print(f'OK: {len(revs)} unique revisions')
         "
+
+      - name: Check migration heads
+        run: bash scripts/check_migration_heads.sh
 
       - name: Check service close() methods
         run: python scripts/check_service_close.py
@@ -193,7 +202,7 @@ jobs:
       DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
@@ -678,6 +687,16 @@ jobs:
           docker stop ci-worker
           docker stop ci-redis
           docker stop ci-postgres
+
+      - name: Verify beat scheduler loads
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke_test \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            -e APP_ENV=test \
+            backtestforecast-worker:ci \
+            python -c "from apps.worker.app.celery_app import celery_app; print('Beat config:', list(celery_app.conf.beat_schedule.keys())); print('Beat scheduler OK')" \
+            || echo "::warning::Beat scheduler failed to load"
 
   # ---------------------------------------------------------------------------
   # DAST (Dynamic Application Security Testing)

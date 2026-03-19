@@ -4,6 +4,10 @@ import asyncio
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from redis import Redis
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -58,10 +62,6 @@ if settings.sentry_dsn:
     except Exception:
         logger.warning("sentry.init_failed", exc_info=True)
 
-def _is_dev() -> bool:
-    return get_settings().app_env in ("development", "test")
-
-
 @asynccontextmanager
 async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     if settings.app_env in ("production", "staging"):
@@ -80,11 +80,23 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
                 "ADMIN_TOKEN must be set to a non-empty value in production/staging. "
                 "The /admin/dlq endpoint will fall back to metrics_token without it."
             )
-    elif not settings.clerk_audience:
-        logger.warning(
-            "startup.clerk_audience_missing",
-            hint="CLERK_AUDIENCE is not set; JWT audience verification is disabled in development.",
-        )
+    else:
+        if not settings.clerk_audience:
+            logger.warning(
+                "startup.clerk_audience_missing",
+                hint="CLERK_AUDIENCE is not set; JWT audience verification is disabled in development. "
+                     "Tokens from any Clerk app sharing the same key pair will be accepted.",
+            )
+        if not settings.clerk_issuer:
+            logger.warning(
+                "startup.clerk_issuer_missing",
+                hint="CLERK_ISSUER is not set; JWT issuer verification is disabled in development.",
+            )
+        if not settings.clerk_authorized_parties:
+            logger.warning(
+                "startup.clerk_authorized_parties_missing",
+                hint="CLERK_AUTHORIZED_PARTIES is empty; the azp claim will not be checked.",
+            )
 
     register_invalidation_callback(reset_trusted_networks)
     register_invalidation_callback(reset_token_verifier)
@@ -129,9 +141,11 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("lifespan.shutdown_complete")
 
 
+from backtestforecast import __version__ as _app_version
+
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
+    version=_app_version,
     description="BacktestForecast API — options backtesting, scanning, forecasting, and portfolio analysis.",
     openapi_url="/openapi.json" if settings.app_env in ("development", "test") else None,
     docs_url="/docs" if settings.app_env in ("development", "test") else None,
@@ -169,6 +183,21 @@ def _custom_openapi():
                     "code": {"type": "string"},
                     "message": {"type": "string"},
                     "request_id": {"type": "string", "nullable": True},
+                    "detail": {
+                        "type": "object",
+                        "description": "Present on 403 quota/feature errors. Contains current_tier and/or required_tier.",
+                        "properties": {
+                            "current_tier": {"type": "string", "enum": ["free", "pro", "premium"]},
+                            "required_tier": {"type": "string", "enum": ["free", "pro", "premium"]},
+                        },
+                        "nullable": True,
+                    },
+                    "details": {
+                        "type": "array",
+                        "description": "Present on 422 validation errors. Each item describes one field-level error.",
+                        "items": {"type": "object"},
+                        "nullable": True,
+                    },
                 },
                 "required": ["code", "message"],
             },
@@ -291,13 +320,25 @@ class _RequestTimeoutMiddleware:
             return
         import asyncio
 
-        try:
-            await asyncio.wait_for(self.app(scope, receive, send), timeout=self.timeout_seconds)
-        except asyncio.TimeoutError:
-            from starlette.responses import JSONResponse as _JR
+        response_started = False
 
-            resp = _JR(status_code=504, content={"error": {"code": "request_timeout", "message": "Request timed out."}})
-            await resp(scope, receive, send)
+        async def guarded_send(message: dict) -> None:
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await asyncio.wait_for(self.app(scope, receive, guarded_send), timeout=self.timeout_seconds)
+        except asyncio.TimeoutError:
+            if not response_started:
+                from starlette.responses import JSONResponse as _JR
+
+                headers = {}
+                if settings.app_env not in ("production", "staging"):
+                    headers["X-Debug-Timeout"] = str(self.timeout_seconds)
+                resp = _JR(status_code=504, content={"error": {"code": "request_timeout", "message": "Request timed out."}}, headers=headers)
+                await resp(scope, receive, send)
 
 
 app.add_middleware(_RequestTimeoutMiddleware, timeout_seconds=settings.request_timeout_seconds)
@@ -443,7 +484,7 @@ def prometheus_metrics(request: Request) -> Response:
     return metrics_response()
 
 
-_dlq_redis: "Redis | None" = None
+_dlq_redis: Redis | None = None
 _dlq_redis_lock = __import__("threading").Lock()
 
 
@@ -495,13 +536,23 @@ def dlq_status(request: Request) -> Response:
             "email", "password", "secret", "token", "api_key",
             "stripe_customer_id", "stripe_subscription_id", "clerk_user_id",
             "ip_address", "ip_hash",
+            "name", "first_name", "last_name", "full_name",
+            "phone", "phone_number", "address", "date_of_birth",
+            "ssn", "user_agent",
         })
 
         def _redact_dict(d: dict) -> dict:
-            return {
-                k: "[REDACTED]" if k in _REDACT_KEYS else v
-                for k, v in d.items()
-            }
+            result = {}
+            for k, v in d.items():
+                if k in _REDACT_KEYS:
+                    result[k] = "[REDACTED]"
+                elif isinstance(v, dict):
+                    result[k] = _redact_dict(v)
+                elif isinstance(v, list):
+                    result[k] = [_redact_dict(i) if isinstance(i, dict) else i for i in v]
+                else:
+                    result[k] = v
+            return result
 
         _DLQ_ITEM_MAX_BYTES = 65_536
 
@@ -532,6 +583,6 @@ def root() -> dict[str, str]:
         "status": "ok",
         "health": "/health/ready",
     }
-    if _is_dev():
+    if get_settings().app_env in ("development", "test"):
         payload["docs"] = "/docs"
     return payload

@@ -1,29 +1,10 @@
 """Shared Celery dispatch-and-handle-failure logic for create endpoints.
 
-TODO: Implement transactional outbox pattern. The current approach commits
-the DB record first, then sends the Celery task. A proper outbox would:
-1. Write an OutboxMessage row in the same transaction as the job record
-2. A separate poller would read pending OutboxMessages and send tasks
-3. This eliminates the window where commit succeeds but task send fails
-
-Recommended implementation approach:
-- The OutboxMessage model already exists (see backtestforecast.models).
-  The `poll_outbox` Celery beat task already re-sends stuck messages.
-- To complete the pattern:
-  a. In `dispatch_celery_task`, instead of commit → send_task, do:
-     1) Create an OutboxMessage(task_name, task_kwargs, queue, status="pending")
-        in the same transaction as the job record.
-     2) Commit once (both job + outbox row are atomically persisted).
-     3) Attempt `send_task` optimistically. On success, mark the outbox
-        row as "sent". On failure, leave it as "pending" — the poller
-        will pick it up within 60 seconds.
-  b. This eliminates the current failure window: if the process crashes
-     between commit and send_task, the outbox row survives and the
-     poller retries delivery.
-  c. Add a unique constraint on (correlation_id, task_name) to prevent
-     duplicate sends if both the optimistic path and poller fire.
-  d. The `poll_outbox` task already handles step (2) above; it just
-     needs the outbox rows to be written transactionally.
+Uses a transactional outbox pattern: an OutboxMessage row is written in the
+same DB transaction as the job record.  After commit, the task is sent to
+Celery optimistically.  If the send succeeds the outbox row is marked
+"sent"; if it fails the row stays "pending" and the ``poll_outbox`` Celery
+beat task will pick it up within 60 seconds.
 """
 from __future__ import annotations
 
@@ -37,6 +18,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from backtestforecast.models import JobStatus, RunJobStatus
+from backtestforecast.observability.metrics import DISPATCH_RESULTS_TOTAL
 
 _SEND_MAX_ATTEMPTS = 2
 _SEND_RETRY_DELAY = 0.25
@@ -73,13 +55,21 @@ def dispatch_celery_task(
 ) -> DispatchResult:
     """Dispatch a Celery task for a newly created job.
 
-    Commits the ``celery_task_id`` to the database **before** sending the
-    task to the broker, so the worker never processes a job whose state
-    has not been persisted.  If the subsequent task send fails, the job
-    is marked ``"failed"`` with ``error_code="enqueue_failed"``.
+    Writes both the ``celery_task_id`` and an ``OutboxMessage`` row in the
+    same transaction, then commits.  After commit, attempts inline delivery
+    to Celery with up to 2 retries.
+
+    - On success: outbox row marked ``"sent"``, returns ``SENT``.
+    - On failure with outbox committed: job stays ``"queued"``, outbox
+      stays ``"pending"`` for the ``poll_outbox`` beat task to recover.
+    - On failure without outbox: job marked ``"failed"`` immediately.
 
     Returns a :class:`DispatchResult` indicating the outcome.
     """
+    for k, v in task_kwargs.items():
+        if not isinstance(v, str):
+            logger.warning("dispatch.non_string_kwarg", key=k, type=type(v).__name__)
+
     if job.status != RunJobStatus.QUEUED or job.celery_task_id is not None:
         logger.info(
             "dispatch.dispatch_skipped",
@@ -89,6 +79,7 @@ def dispatch_celery_task(
             has_celery_task_id=job.celery_task_id is not None,
             **task_kwargs,
         )
+        DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.SKIPPED.value, task_name=task_name).inc()
         return DispatchResult.SKIPPED
 
     headers: dict[str, str] = {}
@@ -97,13 +88,27 @@ def dispatch_celery_task(
     if traceparent:
         headers["traceparent"] = traceparent
 
-    # Commit-first pattern: persist celery_task_id before sending the task so
-    # the worker never processes a job whose ID isn't in the DB. The tradeoff
-    # is a brief window where the job is committed but the task hasn't been
-    # sent yet (stuck-job). The reaper/stale-job recovery process handles this
-    # by marking jobs that stay "queued" with a celery_task_id as failed.
     task_id = str(uuid4())
     job.celery_task_id = task_id
+
+    # Write an OutboxMessage in the same transaction as the job update so
+    # that if the process crashes after commit but before send_task, the
+    # poll_outbox beat task will pick up the pending message.
+    outbox_msg = None
+    try:
+        from backtestforecast.models import OutboxMessage
+        job_id = getattr(job, "id", None)
+        outbox_msg = OutboxMessage(
+            task_name=task_name,
+            task_kwargs_json=task_kwargs,
+            queue=queue,
+            status="pending",
+            correlation_id=job_id,
+        )
+        db.add(outbox_msg)
+    except Exception:
+        logger.debug("dispatch.outbox_write_skipped", exc_info=True)
+
     try:
         db.commit()
     except Exception:
@@ -116,6 +121,7 @@ def dispatch_celery_task(
             db.commit()
         except Exception:
             db.rollback()
+        DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.PRE_COMMIT_FAILED.value, task_name=task_name).inc()
         return DispatchResult.PRE_COMMIT_FAILED
 
     from apps.worker.app.celery_app import celery_app
@@ -128,7 +134,14 @@ def dispatch_celery_task(
                 headers=headers if headers else None,
                 task_id=task_id,
             )
+            if outbox_msg is not None:
+                try:
+                    outbox_msg.status = "sent"
+                    db.commit()
+                except Exception:
+                    db.rollback()
             logger.info("dispatch.enqueued", log_event=log_event, celery_task_id=task_id, attempt=attempt, **task_kwargs)
+            DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.SENT.value, task_name=task_name).inc()
             return DispatchResult.SENT
         except Exception as exc:
             last_exc = exc
@@ -141,24 +154,43 @@ def dispatch_celery_task(
                 **task_kwargs,
             )
             if attempt < _SEND_MAX_ATTEMPTS:
-                # Safe to use time.sleep here: this sync function runs in
-                # FastAPI's default threadpool, so blocking does not stall
-                # the async event loop.
                 time.sleep(_SEND_RETRY_DELAY * attempt)
 
-    logger.exception(
-        "dispatch.enqueue_failed",
-        log_event=log_event,
-        celery_task_id=task_id,
-        **task_kwargs,
-        exc_info=last_exc,
-    )
-    job.status = RunJobStatus.FAILED
-    job.error_code = "enqueue_failed"
-    job.error_message = "Unable to dispatch task to broker after retries."
-    job.completed_at = datetime.now(UTC)
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-    return DispatchResult.ENQUEUE_FAILED
+    # All inline send attempts failed.
+    if outbox_msg is not None:
+        # The outbox message was committed in the same transaction as the
+        # job record.  Leave the job in "queued" status so the poll_outbox
+        # beat task (runs every 30s) can pick up the pending outbox message
+        # and dispatch the Celery task.  The worker's _validate_task_ownership
+        # handles the task-id mismatch via re-delivery claim logic.
+        logger.warning(
+            "dispatch.outbox_pending",
+            log_event=log_event,
+            task_name=task_name,
+            celery_task_id=task_id,
+            correlation_id=str(getattr(job, "id", None)),
+            msg="Inline send failed; outbox will retry within 60s.",
+            exc_info=last_exc,
+        )
+        DISPATCH_RESULTS_TOTAL.labels(result="outbox_pending", task_name=task_name).inc()
+        return DispatchResult.ENQUEUE_FAILED
+    else:
+        # No outbox safety net — mark the job failed so the user gets
+        # immediate feedback rather than a job stuck in "queued" forever.
+        logger.exception(
+            "dispatch.enqueue_failed_no_outbox",
+            log_event=log_event,
+            task_name=task_name,
+            celery_task_id=task_id,
+            exc_info=last_exc,
+        )
+        job.status = RunJobStatus.FAILED
+        job.error_code = "enqueue_failed"
+        job.error_message = "Unable to dispatch task to broker after retries."
+        job.completed_at = datetime.now(UTC)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.ENQUEUE_FAILED.value, task_name=task_name).inc()
+        return DispatchResult.ENQUEUE_FAILED

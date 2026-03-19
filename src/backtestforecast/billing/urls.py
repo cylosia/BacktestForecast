@@ -11,6 +11,9 @@ def resolve_return_url(app_public_url: str, return_path: str | None) -> str:
     if not return_path:
         return default_url
 
+    if len(return_path) > 2048:
+        return default_url
+
     if any(c in return_path for c in "\r\n"):
         raise ValidationError("return_path must not contain CR/LF characters.")
 
@@ -18,8 +21,9 @@ def resolve_return_url(app_public_url: str, return_path: str | None) -> str:
         raise ValidationError("return_path must not use protocol-relative URLs.")
 
     lower = return_path.lower().strip()
-    if lower.startswith("javascript:") or lower.startswith("data:") or lower.startswith("vbscript:"):
-        raise ValidationError("return_path must not use javascript:, data:, or vbscript: schemes.")
+    _dangerous_schemes = ("javascript:", "data:", "vbscript:", "blob:", "file:")
+    if any(lower.startswith(scheme) for scheme in _dangerous_schemes):
+        raise ValidationError("return_path must not use javascript:, data:, vbscript:, blob:, or file: schemes.")
 
     if return_path.startswith("http://") or return_path.startswith("https://"):
         requested = urlparse(return_path)

@@ -35,10 +35,12 @@ class ExportStorage(Protocol):
         """Remove stored content. May raise on persistent failure."""
         ...
 
-    def exists(self, storage_key: str, **kwargs: Any) -> bool:
+    def exists(self, storage_key: str, *, session: Any = None, **kwargs: Any) -> bool:
         """Check if content exists at the given key.
 
-        Implementations may accept additional kwargs (e.g. session for DatabaseStorage).
+        ``DatabaseStorage`` requires a ``session`` kwarg (a SQLAlchemy
+        Session) because it does not hold its own DB connection.
+        ``S3Storage`` ignores this parameter.
         """
         ...
 
@@ -182,7 +184,16 @@ class S3Storage:
             raise ValueError(f"Storage key does not match expected prefix: {self._prefix}")
 
     def get_object(self, storage_key: str):
-        """Return the raw S3 GetObject response (for streaming)."""
+        """Return the raw S3 GetObject response (for streaming).
+
+        Callers MUST close the ``Body`` stream when finished, e.g.::
+
+            resp = storage.get_object(key)
+            try:
+                yield from resp["Body"].iter_chunks()
+            finally:
+                resp["Body"].close()
+        """
         self._validate_prefix(storage_key)
         return _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
 
@@ -208,7 +219,7 @@ class S3Storage:
             logger.warning("s3.delete_failed", bucket=self._bucket, key=storage_key, exc_info=True)
             raise
 
-    def exists(self, storage_key: str) -> bool:
+    def exists(self, storage_key: str, *, session: Any = None, **kwargs: Any) -> bool:
         self._validate_prefix(storage_key)
         def _head():
             self._client.head_object(Bucket=self._bucket, Key=storage_key)
@@ -219,7 +230,16 @@ class S3Storage:
             from botocore.exceptions import ClientError
             if isinstance(e, ClientError) and e.response["Error"]["Code"] == "404":
                 return False
-            raise
+            logger.warning(
+                "s3.exists_failed",
+                bucket=self._bucket,
+                key=storage_key,
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            raise ExternalServiceError(
+                f"Failed to check S3 object existence: {type(e).__name__}"
+            ) from e
 
     @property
     def bucket(self) -> str:
@@ -241,6 +261,7 @@ class S3Storage:
         For buckets with many objects, this prevents unbounded memory usage.
         """
         effective_prefix = prefix if prefix is not None else self._prefix
+        self._validate_prefix(effective_prefix)
         paginator = self._client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=self._bucket, Prefix=effective_prefix):
             for obj in page.get("Contents", []):

@@ -15,6 +15,21 @@ logger = structlog.get_logger("audit_events")
 _MAX_PAGE_SIZE = 200
 
 
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    """Check if an IntegrityError is a unique constraint violation.
+
+    Uses the DBAPI-level ``pgcode`` for PostgreSQL (``23505``) and falls back
+    to message-based detection for SQLite/other backends used in tests.
+    """
+    orig = getattr(exc, "orig", None)
+    if orig is not None:
+        pgcode = getattr(orig, "pgcode", None)
+        if pgcode is not None:
+            return pgcode == "23505"
+    orig_str = str(orig).lower() if orig else str(exc).lower()
+    return "unique" in orig_str or "duplicate" in orig_str
+
+
 class AuditEventRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -32,7 +47,7 @@ class AuditEventRepository:
             return event, True
         except IntegrityError as exc:
             nested.rollback()
-            if hasattr(exc, 'orig') and 'unique' not in str(exc.orig).lower() and 'duplicate' not in str(exc.orig).lower():
+            if not _is_unique_violation(exc):
                 raise
             AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
             return event, False
@@ -51,7 +66,7 @@ class AuditEventRepository:
             base = str(event.subject_id)[:max_base]
             deduped_subject_id = f"{base}{suffix}"
         else:
-            deduped_subject_id = None
+            deduped_subject_id = str(uuid4())
         insert_event = AuditEvent(
             event_type=event.event_type,
             subject_type=event.subject_type,
@@ -67,7 +82,7 @@ class AuditEventRepository:
             return insert_event, True
         except IntegrityError as exc:
             nested.rollback()
-            if hasattr(exc, 'orig') and 'unique' not in str(exc.orig).lower() and 'duplicate' not in str(exc.orig).lower():
+            if not _is_unique_violation(exc):
                 raise
             AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
             logger.warning(
@@ -78,7 +93,7 @@ class AuditEventRepository:
             )
             return insert_event, False
 
-    def list_recent(self, *, user_id: UUID | None = None, limit: int = 50) -> list[AuditEvent]:
+    def list_recent(self, *, user_id: UUID | None = None, limit: int = 50, offset: int = 0) -> list[AuditEvent]:
         """Return the most recent audit events, newest first.
 
         When *user_id* is provided the results are scoped to that user.
@@ -87,38 +102,41 @@ class AuditEventRepository:
         stmt = select(AuditEvent)
         if user_id is not None:
             stmt = stmt.where(AuditEvent.user_id == user_id)
-        stmt = stmt.order_by(AuditEvent.created_at.desc()).limit(limit)
+        stmt = stmt.order_by(AuditEvent.created_at.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt))
 
-    def list_for_user(self, user_id: UUID, *, limit: int = 50) -> list[AuditEvent]:
+    def list_for_user(self, user_id: UUID, *, limit: int = 50, offset: int = 0) -> list[AuditEvent]:
         """Return audit events for a specific user."""
         limit = min(limit, _MAX_PAGE_SIZE)
         stmt = (
             select(AuditEvent)
             .where(AuditEvent.user_id == user_id)
             .order_by(AuditEvent.created_at.desc())
+            .offset(offset)
             .limit(limit)
         )
         return list(self.session.scalars(stmt))
 
-    def list_by_type(self, event_type: str, *, limit: int = 50) -> list[AuditEvent]:
+    def list_by_type(self, event_type: str, *, limit: int = 50, offset: int = 0) -> list[AuditEvent]:
         """Return audit events of a specific type."""
         limit = min(limit, _MAX_PAGE_SIZE)
         stmt = (
             select(AuditEvent)
             .where(AuditEvent.event_type == event_type)
             .order_by(AuditEvent.created_at.desc())
+            .offset(offset)
             .limit(limit)
         )
         return list(self.session.scalars(stmt))
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:
-        stmt = select(AuditEvent.id).where(
+        from sqlalchemy import exists as sa_exists
+        conditions = [
             AuditEvent.event_type == event_type,
             AuditEvent.subject_type == subject_type,
-        )
+        ]
         if subject_id is not None:
-            stmt = stmt.where(AuditEvent.subject_id == subject_id)
+            conditions.append(AuditEvent.subject_id == subject_id)
         else:
-            stmt = stmt.where(AuditEvent.subject_id.is_(None))
-        return self.session.execute(stmt).first() is not None
+            conditions.append(AuditEvent.subject_id.is_(None))
+        return bool(self.session.scalar(select(sa_exists().where(*conditions))))

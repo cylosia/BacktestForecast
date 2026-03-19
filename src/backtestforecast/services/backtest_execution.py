@@ -11,6 +11,13 @@ from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 
 
 class BacktestExecutionService:
+    """Orchestrates market data fetching and backtest engine execution.
+
+    Thread safety: instances hold mutable state (_owns_client,
+    market_data_service, engine). Do NOT share across threads without
+    external synchronization. Create one instance per thread/task.
+    """
+
     def __init__(
         self,
         market_data_service: MarketDataService | None = None,

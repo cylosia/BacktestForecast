@@ -89,22 +89,30 @@ def _sweep_scoring_config() -> dict[str, float]:
         "sharpe_weight": settings.sweep_score_sharpe_weight,
         "drawdown_weight": settings.sweep_score_drawdown_weight,
         "sharpe_multiplier": settings.sweep_score_sharpe_multiplier,
-        "min_trades": 3,
+        "min_trades": settings.sweep_score_min_trades,
     }
 
 
 def _update_heartbeat(session: Session, job_id: UUID) -> None:
-    """Best-effort heartbeat update so the reaper knows the job is alive."""
+    """Best-effort heartbeat update so the reaper knows the job is alive.
+
+    Uses a savepoint to avoid committing dirty ORM state from the parent
+    transaction (e.g. in-progress candidate counts).
+    """
     from sqlalchemy import update as _hb_update
     try:
+        nested = session.begin_nested()
         session.execute(
             _hb_update(SweepJob)
             .where(SweepJob.id == job_id)
             .values(last_heartbeat_at=datetime.now(UTC))
         )
-        session.commit()
+        nested.commit()
     except Exception:
-        session.rollback()
+        try:
+            nested.rollback()
+        except Exception:
+            pass
 
 
 class SweepService:
@@ -136,12 +144,9 @@ class SweepService:
 
     # -- public API ----------------------------------------------------------
 
-    _MONTHLY_SWEEP_QUOTA = {
-        "free": 0,
-        "pro": 10,
-        "premium": 50,
-    }
-    _MAX_CONCURRENT_SWEEPS = 2
+    @property
+    def _max_concurrent_sweeps(self) -> int:
+        return get_settings().max_concurrent_sweeps
 
     def create_job(self, user: User, payload: CreateSweepRequest) -> SweepJob:
         from backtestforecast.billing.entitlements import ensure_sweep_access
@@ -187,6 +192,13 @@ class SweepService:
             idempotency_key=payload.idempotency_key,
         )
         self.repository.add(job)
+        self.audit.record(
+            event_type="sweep.created",
+            subject_type="sweep_job",
+            subject_id=job.id,
+            user_id=user.id,
+            metadata={"symbol": job.symbol},
+        )
         try:
             self.session.commit()
         except IntegrityError:
@@ -202,14 +214,6 @@ class SweepService:
                     return existing
             raise
         self.session.refresh(job)
-        self.audit.record(
-            event_type="sweep.created",
-            subject_type="sweep_job",
-            subject_id=job.id,
-            user_id=user.id,
-            metadata={"symbol": job.symbol},
-        )
-        self.session.commit()
         return job
 
     def run_job(self, job_id: UUID) -> SweepJob:
@@ -330,8 +334,19 @@ class SweepService:
             raise ConflictError(
                 "Cannot delete a job that is currently queued or running. Cancel it first."
             )
+        self.audit.record(
+            event_type="sweep.deleted",
+            subject_type="sweep_job",
+            subject_id=job.id,
+            user_id=user_id,
+            metadata={"symbol": job.symbol, "mode": job.mode},
+        )
         self.session.delete(job)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
 
     def get_results(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
@@ -349,7 +364,7 @@ class SweepService:
         )
 
     def _enforce_sweep_quota(self, user: User) -> None:
-        from backtestforecast.billing.entitlements import normalize_plan_tier
+        from backtestforecast.billing.entitlements import resolve_feature_policy
         from backtestforecast.errors import QuotaExceededError
         from sqlalchemy import select, func
 
@@ -359,15 +374,17 @@ class SweepService:
         if locked_user is None:
             raise NotFoundError("User not found.")
 
-        tier = normalize_plan_tier(
+        policy = resolve_feature_policy(
             locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,
         )
-        quota = self._MONTHLY_SWEEP_QUOTA.get(tier.value, 0)
-        if quota <= 0:
+        quota = policy.monthly_sweep_quota
+        if quota is not None and quota <= 0:
             raise QuotaExceededError(
                 "Your plan does not include sweep access.",
-                current_tier=tier.value,
+                current_tier=policy.tier.value,
             )
+        if quota is None:
+            return
 
         now = datetime.now(UTC)
         month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
@@ -385,7 +402,7 @@ class SweepService:
         if used >= quota:
             raise QuotaExceededError(
                 f"Monthly sweep quota ({quota}) reached. Used: {used}.",
-                current_tier=tier.value,
+                current_tier=policy.tier.value,
             )
 
         concurrent = self.session.scalar(
@@ -394,11 +411,11 @@ class SweepService:
                 SweepJob.status.in_(["queued", "running"]),
             )
         ) or 0
-        if concurrent >= self._MAX_CONCURRENT_SWEEPS:
+        if concurrent >= self._max_concurrent_sweeps:
             raise QuotaExceededError(
-                f"Maximum concurrent sweeps ({self._MAX_CONCURRENT_SWEEPS}) reached. "
+                f"Maximum concurrent sweeps ({self._max_concurrent_sweeps}) reached. "
                 "Wait for existing sweeps to complete.",
-                current_tier=tier.value,
+                current_tier=policy.tier.value,
             )
 
     # -- execution -----------------------------------------------------------
@@ -556,35 +573,37 @@ class SweepService:
         sorted_candidates = sorted(candidates, key=self._score_candidate, reverse=True)
         selected = sorted_candidates[:payload.max_results]
 
-        for idx, candidate in enumerate(selected, 1):
-            params = dict(candidate["parameters"])
-            params["trades_truncated"] = candidate.get("trades_truncated", False)
-            job.results.append(
-                SweepResult(
-                    rank=idx,
-                    score=Decimal(str(round(candidate["score"], 6))),
-                    strategy_type=candidate["strategy_type"],
-                    parameter_snapshot_json=params,
-                    summary_json=candidate["summary"],
-                    warnings_json=candidate.get("warnings", []),
-                    trades_json=candidate["trades"],
-                    equity_curve_json=candidate["equity_curve"],
+        from sqlalchemy import update as sa_update
+        with self.session.no_autoflush:
+            for idx, candidate in enumerate(selected, 1):
+                params = dict(candidate["parameters"])
+                params["trades_truncated"] = candidate.get("trades_truncated", False)
+                job.results.append(
+                    SweepResult(
+                        rank=idx,
+                        score=Decimal(str(round(candidate["score"], 6))),
+                        strategy_type=candidate["strategy_type"],
+                        parameter_snapshot_json=params,
+                        summary_json=candidate["summary"],
+                        warnings_json=candidate.get("warnings", []),
+                        trades_json=candidate["trades"],
+                        equity_curve_json=candidate["equity_curve"],
+                    )
+                )
+
+            success_rows = self.session.execute(
+                sa_update(SweepJob)
+                .where(SweepJob.id == job.id, SweepJob.status == "running")
+                .values(
+                    status="succeeded",
+                    result_count=len(selected),
+                    completed_at=datetime.now(UTC),
+                    warnings_json=warnings,
+                    updated_at=datetime.now(UTC),
                 )
             )
-
-        from sqlalchemy import update as sa_update
-        success_rows = self.session.execute(
-            sa_update(SweepJob)
-            .where(SweepJob.id == job.id, SweepJob.status == "running")
-            .values(
-                status="succeeded",
-                result_count=len(selected),
-                completed_at=datetime.now(UTC),
-                warnings_json=warnings,
-                updated_at=datetime.now(UTC),
-            )
-        )
         if success_rows.rowcount == 0:
+            self.session.rollback()
             logger.warning("sweep.success_overwrite_prevented", job_id=str(job.id))
 
     # -- genetic mode --------------------------------------------------------
@@ -811,18 +830,20 @@ class SweepService:
             job.warnings_json = warnings
         else:
             from sqlalchemy import update as sa_update
-            success_rows = self.session.execute(
-                sa_update(SweepJob)
-                .where(SweepJob.id == job.id, SweepJob.status == "running")
-                .values(
-                    status="succeeded",
-                    result_count=len(job.results),
-                    completed_at=datetime.now(UTC),
-                    warnings_json=warnings,
-                    updated_at=datetime.now(UTC),
+            with self.session.no_autoflush:
+                success_rows = self.session.execute(
+                    sa_update(SweepJob)
+                    .where(SweepJob.id == job.id, SweepJob.status == "running")
+                    .values(
+                        status="succeeded",
+                        result_count=len(job.results),
+                        completed_at=datetime.now(UTC),
+                        warnings_json=warnings,
+                        updated_at=datetime.now(UTC),
+                    )
                 )
-            )
             if success_rows.rowcount == 0:
+                self.session.rollback()
                 logger.warning("sweep.success_overwrite_prevented", job_id=str(job.id))
 
     # -- helpers -------------------------------------------------------------
@@ -920,14 +941,25 @@ class SweepService:
         sharpe = Decimal(str(summary.get("sharpe_ratio") or 0))
         trade_count = int(summary.get("trade_count", 0))
 
-        if trade_count < cfg["min_trades"]:
+        import math
+        if any(math.isnan(float(v)) for v in [win_rate, roi, drawdown, sharpe]):
             return 0.0
 
+        min_trades = int(cfg["min_trades"])
+        if trade_count < min_trades:
+            return 0.0
+
+        win_rate_w = Decimal(str(round(cfg["win_rate_weight"], 10)))
+        roi_w = Decimal(str(round(cfg["roi_weight"], 10)))
+        sharpe_w = Decimal(str(round(cfg["sharpe_weight"], 10)))
+        sharpe_m = Decimal(str(round(cfg["sharpe_multiplier"], 10)))
+        drawdown_w = Decimal(str(round(cfg["drawdown_weight"], 10)))
+
         score = (
-            win_rate * Decimal(str(cfg["win_rate_weight"]))
-            + roi * Decimal(str(cfg["roi_weight"]))
-            + sharpe * Decimal(str(cfg["sharpe_multiplier"])) * Decimal(str(cfg["sharpe_weight"]))
-            - drawdown * Decimal(str(cfg["drawdown_weight"]))
+            win_rate * win_rate_w
+            + roi * roi_w
+            + sharpe * sharpe_m * sharpe_w
+            - drawdown * drawdown_w
         )
         return float(score)
 
@@ -945,7 +977,7 @@ class SweepService:
             id=job.id,
             status=job.status,
             symbol=job.symbol,
-            mode=job.mode or "grid",
+            mode=job.mode,
             plan_tier_snapshot=job.plan_tier_snapshot,
             candidate_count=job.candidate_count,
             evaluated_candidate_count=job.evaluated_candidate_count,

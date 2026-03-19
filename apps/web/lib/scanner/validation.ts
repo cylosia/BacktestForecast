@@ -84,18 +84,20 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
     errors.push("Start date must be before end date.");
   }
   if (input.endDate) {
-    const endDate = new Date(input.endDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (endDate > today) {
+    const [ey, em, ed] = input.endDate.split("-").map(Number);
+    const endDateUtc = Date.UTC(ey, em - 1, ed);
+    const now = new Date();
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    if (endDateUtc > todayUtc) {
       errors.push("End date cannot be in the future.");
     }
   }
   if (input.startDate) {
-    const startDate = new Date(input.startDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (startDate > today) {
+    const [sy, sm, sd] = input.startDate.split("-").map(Number);
+    const startDateUtc = Date.UTC(sy, sm - 1, sd);
+    const now = new Date();
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    if (startDateUtc > todayUtc) {
       errors.push("Start date cannot be in the future.");
     }
   }

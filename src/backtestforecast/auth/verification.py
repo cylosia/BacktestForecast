@@ -145,6 +145,8 @@ class ClerkTokenVerifier:
                     jwks_client = self._get_jwks_client()
                     continue
                 raise AuthenticationError("Unable to resolve Clerk signing key.") from exc
+        else:
+            raise AuthenticationError("Unable to resolve Clerk signing key after retries.")
         return signing_key.key
 
     def _get_jwks_client(self) -> PyJWKClient:

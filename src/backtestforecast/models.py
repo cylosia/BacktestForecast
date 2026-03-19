@@ -24,6 +24,12 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.sql import func
 
+# All relationships use lazy="raise" to prevent implicit lazy loading, which
+# causes N+1 query performance issues. Access related objects via explicit
+# eager loading (selectinload, joinedload) or separate queries. If you see
+# a "lazy load operation" error, add the appropriate loading strategy to
+# your query rather than changing the relationship to lazy="select".
+
 from backtestforecast.db.base import Base
 from backtestforecast.db.types import (
     GUID,
@@ -69,10 +75,9 @@ class User(Base):
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     plan_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    # NOTE: onupdate=func.now() is ORM-only. Direct SQL UPDATE statements
-    # (e.g. bulk updates, raw SQL, or reaper queries) will NOT refresh this
-    # timestamp. If DB-level accuracy is required, add a PostgreSQL trigger
-    # via an Alembic migration.
+    # NOTE: onupdate=func.now() is ORM-only and redundant with the DB-level
+    # trigger (trg_users_updated_at, migration 20260318_0014). Kept for
+    # compatibility with SQLite test sessions where the trigger doesn't exist.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
@@ -166,6 +171,7 @@ class BacktestRun(Base):
     max_consecutive_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     max_consecutive_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     recovery_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    risk_free_rate: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
@@ -235,6 +241,7 @@ class BacktestTrade(Base):
 class BacktestEquityPoint(Base):
     __tablename__ = "backtest_equity_points"
     __table_args__ = (
+        Index("ix_backtest_equity_points_run_id", "run_id"),
         UniqueConstraint("run_id", "trade_date", name="uq_backtest_equity_points_run_date"),
     )
 
@@ -361,6 +368,18 @@ class ScannerJob(Base):
 
     user: Mapped["User"] = relationship(back_populates="scanner_jobs", lazy="raise")
     parent_job: Mapped["ScannerJob | None"] = relationship(remote_side=[id], back_populates=None, lazy="raise")
+
+    @validates('evaluated_candidate_count')
+    def _validate_evaluated_count(self, key, value):
+        if value is not None and hasattr(self, 'candidate_count') and self.candidate_count is not None:
+            if value > self.candidate_count * 2:
+                import structlog
+                structlog.get_logger("models").warning(
+                    "evaluated_candidate_count_exceeds_candidate_count",
+                    evaluated=value,
+                    candidate=self.candidate_count,
+                )
+        return value
     recommendations: Mapped[list["ScannerRecommendation"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
@@ -649,7 +668,7 @@ class StripeEvent(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    user: Mapped["User | None"] = relationship(back_populates="stripe_events")
+    user: Mapped["User | None"] = relationship(back_populates="stripe_events", lazy="raise")
 
 
 class SymbolAnalysis(Base):
@@ -775,10 +794,15 @@ class SweepJob(Base):
 class OutboxMessage(Base):
     """Transactional outbox for reliable Celery task dispatch.
 
-    STATUS: Infrastructure scaffolding only. dispatch.py handles task
-    dispatch with inline retries but does not create OutboxMessage rows.
-    A full outbox poller would provide additional reliability for extended
-    broker outages. Remove this model if not implemented by 2026-06-01.
+    ``dispatch_celery_task()`` writes an OutboxMessage in the same DB
+    transaction as the job record.  After commit, it attempts to send the
+    Celery task inline.  On success the message is marked ``"sent"``; on
+    failure it stays ``"pending"`` and the ``poll_outbox`` beat task
+    (every 30 s) picks it up and retries delivery.
+
+    After ``retry_count`` reaches 10, the message is marked ``"failed"``
+    and the correlated job is also failed with ``error_code="outbox_exhausted"``.
+    The ``cleanup_outbox`` daily task removes messages older than 7 days.
     """
     __tablename__ = "outbox_messages"
     __table_args__ = (
@@ -796,6 +820,7 @@ class OutboxMessage(Base):
     task_kwargs_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     queue: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

@@ -108,21 +108,9 @@ def _safe_validate_summary(data: dict) -> BacktestSummaryResponse:
         )
 
 
-# TODO: Make configurable via Settings.fallback_entry_rules_json once
-# the config surface is agreed upon with product.
-#
-# Approach notes:
-#   1. Add `fallback_entry_rules_json: str | None = None` to Settings
-#      (pydantic-settings), defaulting to None (use current hardcoded list).
-#   2. On startup, parse the JSON string into a list[RsiRule] via
-#      pydantic's TypeAdapter and cache the result.
-#   3. Accept a broader EntryRule union (not just RsiRule) so admins can
-#      configure MACD or moving-average fallbacks via environment variable.
-#   4. Validate at startup (fail-fast) to avoid runtime surprises in scans.
-#   5. Document the env var in .env.example and the ops runbook.
-_FALLBACK_ENTRY_RULES: list[RsiRule] = [
-    RsiRule(type="rsi", operator="lte", threshold=Decimal("40"), period=14),
-]
+def _get_fallback_entry_rules() -> list[RsiRule]:
+    threshold = get_settings().fallback_entry_rule_rsi_threshold
+    return [RsiRule(type="rsi", operator="lte", threshold=Decimal(str(threshold)), period=14)]
 
 
 class ScanService:
@@ -217,6 +205,13 @@ class ScanService:
             engine_version="options-multileg-v2",
         )
         self.repository.add(job)
+        self.audit.record(
+            event_type="scan.created",
+            subject_type="scanner_job",
+            subject_id=job.id,
+            user_id=user.id,
+            metadata={"mode": job.mode, "candidate_count": job.candidate_count},
+        )
         try:
             self.session.commit()
         except IntegrityError:
@@ -238,14 +233,6 @@ class ScanService:
                 return recent
             raise
         self.session.refresh(job)
-        self.audit.record(
-            event_type="scan.created",
-            subject_type="scanner_job",
-            subject_id=job.id,
-            user_id=user.id,
-            metadata={"mode": job.mode, "candidate_count": job.candidate_count},
-        )
-        self.session.commit()
         return job
 
     def run_job(self, job_id: UUID) -> ScannerJob:
@@ -299,6 +286,7 @@ class ScanService:
                 error_message=None,
                 recommendation_count=0,
                 evaluated_candidate_count=0,
+                updated_at=datetime.now(UTC),
             )
         ).rowcount
         self.session.commit()
@@ -316,6 +304,7 @@ class ScanService:
             logger.exception("scan.run_job_failed", job_id=str(job_id))
             try:
                 self.session.rollback()
+                self.session.expire_all()
                 job = self.repository.get(job_id, for_update=True)
                 if job is not None and job.status not in ("succeeded", "cancelled"):
                     job.status = "failed"
@@ -334,6 +323,11 @@ class ScanService:
     # If this value exceeds the statement_timeout, individual candidate backtests
     # will fail with StatementTimeout before the scan-level timeout fires.
     _CANDIDATE_TIMEOUT_SECONDS = 120
+    # WARNING: All candidates are accumulated in memory before being flushed
+    # to the DB. With 2000 candidates each containing trades and equity curves,
+    # peak memory usage can reach hundreds of MB. For production, consider
+    # flushing candidates to the DB in batches (e.g., every 100 candidates)
+    # to keep memory bounded.
     _MAX_CANDIDATES_IN_MEMORY = 2000
 
     def _execute_scan(
@@ -458,7 +452,7 @@ class ScanService:
                             }
                         )
                     except AppError as exc:
-                        SCAN_CANDIDATE_FAILURES_TOTAL.labels(reason=exc.code if hasattr(exc, 'code') else "internal").inc()
+                        SCAN_CANDIDATE_FAILURES_TOTAL.labels(reason=_normalize_scan_failure_reason(exc.code if hasattr(exc, 'code') else "internal")).inc()
                         warnings.append(
                             {
                                 "code": "candidate_failed",
@@ -555,10 +549,11 @@ class ScanService:
                     updated_at=datetime.now(UTC),
                 )
             )
-        self.session.commit()
         if success_rows.rowcount == 0:
             self.session.rollback()
             logger.warning("scan.success_overwrite_prevented", job_id=str(job.id))
+        else:
+            self.session.commit()
         self.session.refresh(job)
         if job.status == "succeeded":
             self.audit.record(
@@ -596,8 +591,19 @@ class ScanService:
             raise ConflictError(
                 "Cannot delete a job that is currently queued or running. Cancel it first."
             )
+        self.audit.record(
+            event_type="scan.deleted",
+            subject_type="scanner_job",
+            subject_id=job.id,
+            user_id=user_id,
+            metadata={"symbol": job.symbol, "mode": job.mode},
+        )
         self.session.delete(job)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
 
     def get_recommendations(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
@@ -833,7 +839,7 @@ class ScanService:
             account_size=payload.account_size,
             risk_per_trade_pct=payload.risk_per_trade_pct,
             commission_per_contract=payload.commission_per_contract,
-            entry_rules=all_rules or _FALLBACK_ENTRY_RULES,
+            entry_rules=all_rules or _get_fallback_entry_rules(),
         )
         bundles: dict[str, HistoricalDataBundle] = {}
         mds = self.execution_service.market_data_service
@@ -855,7 +861,7 @@ class ScanService:
         # Cap concurrency to avoid overwhelming upstream APIs with parallel requests.
         # If the upstream returns 429s, individual _fetch_one calls will fail and
         # the warning is surfaced to the user.
-        max_workers = min(len(payload.symbols), getattr(settings, "prefetch_max_workers", 4))
+        max_workers = min(len(payload.symbols), settings.prefetch_max_workers)
         pool = ThreadPoolExecutor(max_workers=max_workers)
         try:
             futures = {pool.submit(_fetch_one, sym): sym for sym in payload.symbols}
@@ -998,11 +1004,9 @@ class ScanService:
     _serialize_trade = staticmethod(serialize_trade)
     _serialize_equity_point = staticmethod(serialize_equity_point)
 
-    _MAX_SCAN_EQUITY_POINTS = 500
-
     @classmethod
     def _downsample_equity_curve(cls, equity_curve: list) -> list[dict[str, Any]]:
-        return downsample_equity_curve(equity_curve, max_points=cls._MAX_SCAN_EQUITY_POINTS)
+        return downsample_equity_curve(equity_curve, max_points=get_settings().max_scan_equity_points)
 
     @staticmethod
     def _ranking_response_model(payload: dict[str, Any]):
@@ -1036,6 +1040,7 @@ class ScanService:
             warnings=job.warnings_json,
             error_code=job.error_code,
             error_message=job.error_message,
+            idempotency_key=job.idempotency_key,
             created_at=job.created_at,
             started_at=job.started_at,
             completed_at=job.completed_at,

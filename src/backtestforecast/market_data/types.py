@@ -12,7 +12,7 @@ class DailyBar:
     high_price: float
     low_price: float
     close_price: float
-    volume: int
+    volume: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,7 +21,7 @@ class OptionContractRecord:
     contract_type: str
     expiration_date: date
     strike_price: float  # Precision note: float cannot represent all decimals exactly. Use Decimal(str(strike_price)) at financial computation boundaries.
-    shares_per_contract: int
+    shares_per_contract: float
 
 
 @dataclass(frozen=True, slots=True)

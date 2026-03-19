@@ -90,13 +90,13 @@ def backfill() -> int:
                             quantity=t.quantity,
                             dte_at_open=t.dte_at_open,
                             holding_period_days=t.holding_period_days,
-                            entry_underlying_close=float(t.entry_underlying_close),
-                            exit_underlying_close=float(t.exit_underlying_close),
-                            entry_mid=float(t.entry_mid),
-                            exit_mid=float(t.exit_mid),
-                            gross_pnl=float(t.gross_pnl),
-                            net_pnl=float(t.net_pnl),
-                            total_commissions=float(t.total_commissions),
+                            entry_underlying_close=t.entry_underlying_close,
+                            exit_underlying_close=t.exit_underlying_close,
+                            entry_mid=t.entry_mid,
+                            exit_mid=t.exit_mid,
+                            gross_pnl=t.gross_pnl,
+                            net_pnl=t.net_pnl,
+                            total_commissions=t.total_commissions,
                             entry_reason=t.entry_reason,
                             exit_reason=t.exit_reason,
                             detail_json=t.detail_json or {},
@@ -106,10 +106,10 @@ def backfill() -> int:
                     equity_curve = [
                         EquityPointResult(
                             trade_date=p.trade_date,
-                            equity=float(p.equity),
-                            cash=float(p.cash),
-                            position_value=float(p.position_value),
-                            drawdown_pct=float(p.drawdown_pct),
+                            equity=p.equity,
+                            cash=p.cash,
+                            position_value=p.position_value,
+                            drawdown_pct=p.drawdown_pct,
                         )
                         for p in run.equity_points
                     ]

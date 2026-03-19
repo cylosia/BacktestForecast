@@ -3,6 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+__all__ = [
+    "AppError",
+    "AuthenticationError",
+    "AuthorizationError",
+    "QuotaExceededError",
+    "FeatureLockedError",
+    "ConfigurationError",
+    "ValidationError",
+    "DataUnavailableError",
+    "ExternalServiceError",
+    "NotFoundError",
+    "RateLimitError",
+    "ConflictError",
+    "ServiceUnavailableError",
+]
+
 
 @dataclass(slots=True)
 class AppError(Exception):

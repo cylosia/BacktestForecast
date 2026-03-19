@@ -11,14 +11,14 @@ Orchestrates the five-stage funnel:
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -128,8 +128,6 @@ class NightlyPipelineService:
             logger.info("pipeline.already_exists", run_id=str(existing.id), status=existing.status)
             return existing
 
-        from sqlalchemy import or_
-
         stale_cutoff = datetime.now(UTC) - timedelta(hours=1)
         stale = list(self.session.scalars(
             select(NightlyPipelineRun).where(
@@ -175,12 +173,12 @@ class NightlyPipelineService:
 
         max_workers = max(1, get_settings().pipeline_max_workers)
         try:
+          with ThreadPoolExecutor(max_workers=max_workers) as pool:
             # Stage 1: Universe screening
             run.stage = "universe_screen"
             run.symbols_screened = len(symbols)
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                regime_snapshots = self._stage1_screen(symbols, trade_date, executor=executor)
+            regime_snapshots = self._stage1_screen(symbols, trade_date, executor=pool)
             run.symbols_after_screen = len(regime_snapshots)
             logger.info(
                 "pipeline.stage1_complete",
@@ -204,8 +202,7 @@ class NightlyPipelineService:
             # Stage 3: Quick backtests
             run.stage = "quick_backtest"
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                quick_results = self._stage3_quick_backtest(pairs, trade_date, executor=executor)
+            quick_results = self._stage3_quick_backtest(pairs, trade_date, executor=pool)
             run.quick_backtests_run = len(quick_results)
 
             if not quick_results and pairs:
@@ -229,8 +226,7 @@ class NightlyPipelineService:
             # Stage 4: Full backtests
             run.stage = "full_backtest"
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                full_results = self._stage4_full_backtest(top_candidates, trade_date, executor=executor)
+            full_results = self._stage4_full_backtest(top_candidates, trade_date, executor=pool)
             run.full_backtests_run = len(full_results)
             self.session.flush()
             logger.info(
@@ -242,8 +238,7 @@ class NightlyPipelineService:
             # Stage 5: Forecast + ranking
             run.stage = "forecast_rank"
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                final_ranked = self._stage5_forecast_and_rank(full_results, trade_date, executor=executor)
+            final_ranked = self._stage5_forecast_and_rank(full_results, trade_date, executor=pool)
             final_ranked = final_ranked[:max_recommendations]
 
             # Persist recommendations
@@ -321,7 +316,7 @@ class NightlyPipelineService:
         symbols: list[str],
         trade_date: date,
         *,
-        executor: ThreadPoolExecutor,
+        executor: Executor,
     ) -> list[RegimeSnapshot]:
         """Fetch bars and classify regime for each symbol.
         Skip symbols with insufficient data.
@@ -410,7 +405,7 @@ class NightlyPipelineService:
         pairs: list[SymbolStrategyPair],
         trade_date: date,
         *,
-        executor: ThreadPoolExecutor,
+        executor: Executor,
     ) -> list[QuickBacktestResult]:
         """Run short-lookback backtests with a small parameter grid."""
         lookback_start = trade_date - timedelta(days=self._QUICK_BACKTEST_DAYS)
@@ -515,7 +510,7 @@ class NightlyPipelineService:
         candidates: list[QuickBacktestResult],
         trade_date: date,
         *,
-        executor: ThreadPoolExecutor,
+        executor: Executor,
     ) -> list[FullBacktestResult]:
         """Run full-lookback backtests on the top candidates."""
         lookback_start = trade_date - timedelta(days=365)
@@ -592,7 +587,7 @@ class NightlyPipelineService:
                         if result is not None:
                             results.append(result)
                     except Exception:
-                        pass
+                        logger.warning("pipeline.stage4_future_error", exc_info=True)
 
         return results
 
@@ -605,7 +600,7 @@ class NightlyPipelineService:
         candidates: list[FullBacktestResult],
         trade_date: date,
         *,
-        executor: ThreadPoolExecutor,
+        executor: Executor,
     ) -> list[FullBacktestResult]:
         """Overlay forecast data and produce the final ranked list."""
         if self.forecaster is not None:

@@ -94,14 +94,20 @@ class OptionDataRedisCache:
     """
 
     def __init__(self, redis_url: str, ttl_seconds: int = 604_800) -> None:
-        self._pool = redis.ConnectionPool.from_url(redis_url, decode_responses=True)
+        self._pool = redis.ConnectionPool.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_timeout=5,
+            socket_connect_timeout=5,
+        )
         self._ttl = ttl_seconds
         self._client: redis.Redis | None = None
         self._lock = threading.Lock()
 
     def close(self) -> None:
+        with self._lock:
+            self._client = None
         self._pool.disconnect()
-        self._client = None
 
     def _conn(self) -> redis.Redis:
         if self._client is not None:
@@ -153,6 +159,7 @@ class OptionDataRedisCache:
             pipe.set(key, _serialize_contracts(contracts), ex=self._ttl)
             pipe.set(f"{key}:ts", str(int(time.time())), ex=self._ttl)
             pipe.execute()
+            self.track_symbol_write(symbol)
         except Exception:
             logger.debug("redis_cache.set_contracts_failed", symbol=symbol, exc_info=True)
 
@@ -193,6 +200,8 @@ class OptionDataRedisCache:
             pipe.set(key, _serialize_quote(quote), ex=self._ttl)
             pipe.set(f"{key}:ts", str(int(time.time())), ex=self._ttl)
             pipe.execute()
+            symbol = option_ticker.split(":")[0] if ":" in option_ticker else option_ticker[:6]
+            self.track_symbol_write(symbol)
         except Exception:
             logger.debug("redis_cache.set_quote_failed", ticker=option_ticker, exc_info=True)
 
@@ -206,28 +215,61 @@ class OptionDataRedisCache:
         except Exception:
             return None
 
+    def _symbol_meta_key(self, symbol: str) -> str:
+        return f"{_KEY_PREFIX}:meta:{symbol}"
+
+    def track_symbol_write(self, symbol: str) -> None:
+        """Record that a cache entry was written for *symbol*.
+
+        Maintains a lightweight per-symbol hash with ``oldest_ts`` and
+        ``entry_count`` so freshness checks avoid expensive SCAN operations.
+        """
+        now_s = str(int(time.time()))
+        try:
+            r = self._conn()
+            key = self._symbol_meta_key(symbol)
+            pipe = r.pipeline(transaction=False)
+            pipe.hsetnx(key, "oldest_ts", now_s)
+            pipe.hincrby(key, "entry_count", 1)
+            pipe.hset(key, "latest_ts", now_s)
+            pipe.expire(key, self._ttl + 3600)
+            pipe.execute()
+        except Exception:
+            logger.debug("redis_cache.track_symbol_write_failed", symbol=symbol, exc_info=True)
+
+    def get_oldest_cache_age_seconds(self, symbol: str) -> float | None:
+        """Return age in seconds of the oldest cached entry for *symbol*.
+
+        Uses the per-symbol metadata hash instead of SCAN. O(1).
+        """
+        try:
+            r = self._conn()
+            ts_raw = r.hget(self._symbol_meta_key(symbol), "oldest_ts")
+            if ts_raw is None:
+                return None
+            return time.time() - float(ts_raw)
+        except Exception:
+            return None
+
     def check_freshness(self, symbol: str) -> dict[str, object]:
         """Return freshness info for a symbol's cached data.
 
-        Useful for health checks and monitoring dashboards.
+        Uses the per-symbol metadata hash instead of SCAN. O(1).
         """
-        conn = self._conn()
-        pattern = f"{_KEY_PREFIX}:contracts:{symbol}:*"
         info: dict[str, object] = {"symbol": symbol, "stale_entries": 0, "total_entries": 0}
-        _MAX_SCAN_KEYS = 5000
         try:
-            scanned = 0
-            for key in conn.scan_iter(pattern, count=100):
-                if key.endswith(":ts"):
-                    continue
-                scanned += 1
-                if scanned > _MAX_SCAN_KEYS:
-                    info["truncated"] = True
-                    break
-                info["total_entries"] = int(info["total_entries"]) + 1
-                age = self.get_cache_age_seconds(key)
-                if age is not None and age > _FRESHNESS_WARN_SECONDS:
-                    info["stale_entries"] = int(info["stale_entries"]) + 1
+            r = self._conn()
+            meta = r.hgetall(self._symbol_meta_key(symbol))
+            if not meta:
+                return info
+            entry_count = int(meta.get("entry_count", 0))
+            info["total_entries"] = entry_count
+            oldest_ts = meta.get("oldest_ts")
+            if oldest_ts is not None:
+                age = time.time() - float(oldest_ts)
+                if age > _FRESHNESS_WARN_SECONDS:
+                    info["stale_entries"] = entry_count
+                info["oldest_age_seconds"] = round(age, 1)
         except Exception:
             logger.debug("redis_cache.freshness_check_failed", symbol=symbol, exc_info=True)
         return info

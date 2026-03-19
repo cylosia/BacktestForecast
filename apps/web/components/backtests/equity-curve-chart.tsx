@@ -34,17 +34,30 @@ export function EquityCurveChart({ points }: { points: EquityCurvePointResponse[
   }
   const range = maxEquity - minEquity || 1;
 
-  const chartPoints = points.map((_point, index) => {
+  const chartPoints: { x: number; y: number }[] = [];
+  for (let index = 0; index < points.length; index++) {
+    const v = equityValues[index];
+    if (v === null) continue;
     const x =
       PADDING_X +
       (index / Math.max(points.length - 1, 1)) * (WIDTH - PADDING_X * 2);
     const y =
       HEIGHT -
       PADDING_Y -
-      ((equityValues[index] - minEquity) / range) * (HEIGHT - PADDING_Y * 2);
+      ((v - minEquity) / range) * (HEIGHT - PADDING_Y * 2);
+    chartPoints.push({ x, y });
+  }
 
-    return { x, y };
-  });
+  if (chartPoints.length < 2) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Equity curve</CardTitle>
+          <CardDescription>Not enough valid data points to render an equity curve.</CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
 
   const path = chartPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
   const areaPath = `${path} L ${chartPoints[chartPoints.length - 1]?.x ?? WIDTH - PADDING_X} ${HEIGHT - PADDING_Y} L ${chartPoints[0]?.x ?? PADDING_X} ${HEIGHT - PADDING_Y} Z`;

@@ -142,12 +142,6 @@ def choose_common_atm_strike(
     return choose_atm_strike(common_strikes, underlying_close)
 
 
-def intrinsic_value(contract_type: str, strike_price: float, underlying_close: float) -> float:
-    if contract_type == "call":
-        return max(0.0, underlying_close - strike_price)
-    return max(0.0, strike_price - underlying_close)
-
-
 def synthetic_ticker(identifiers: list[str]) -> str:
     return "|".join(identifiers)
 
@@ -158,14 +152,8 @@ def synthetic_ticker(identifiers: list[str]) -> str:
 
 
 def _norm_cdf(x: float) -> float:
-    """Standard normal CDF approximation (Abramowitz & Stegun)."""
-    a1, a2, a3, a4, a5 = 0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429
-    p = 0.3275911
-    sign = 1.0 if x >= 0 else -1.0
-    x_abs = abs(x)
-    t_ = 1.0 / (1.0 + p * x_abs)
-    y = 1.0 - (((((a5 * t_ + a4) * t_) + a3) * t_ + a2) * t_ + a1) * t_ * math.exp(-x_abs * x_abs / 2.0)
-    return 0.5 * (1.0 + sign * y)
+    """Standard normal CDF using math.erf (exact, matches rules.normal_cdf)."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
 def _approx_bsm_delta(

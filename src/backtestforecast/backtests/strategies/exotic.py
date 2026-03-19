@@ -225,7 +225,13 @@ class IronButterflyStrategy(StrategyDefinition):
                 "call_wing": call_wing,
                 "put_wing": put_wing,
                 "credit": credit,
-                "max_loss": max_loss,
+                "max_loss": max(max_loss, 0.0),
+                "legs": [
+                    {"asset_type": "option", "ticker": long_put.ticker, "side": "long", "contract_type": "put", "strike_price": put_wing, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": lpq.mid_price},
+                    {"asset_type": "option", "ticker": short_put.ticker, "side": "short", "contract_type": "put", "strike_price": center_strike, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": spq.mid_price},
+                    {"asset_type": "option", "ticker": short_call.ticker, "side": "short", "contract_type": "call", "strike_price": center_strike, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": scq.mid_price},
+                    {"asset_type": "option", "ticker": long_call.ticker, "side": "long", "contract_type": "call", "strike_price": call_wing, "expiration_date": expiration.isoformat(), "quantity_per_unit": 1, "entry_mid": lcq.mid_price},
+                ],
             },
         )
 

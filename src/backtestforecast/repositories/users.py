@@ -14,8 +14,7 @@ class UserRepository:
         self.session = session
 
     def get_by_id(self, user_id: UUID) -> User | None:
-        stmt = select(User).where(User.id == user_id)
-        return self.session.scalar(stmt)
+        return self.session.get(User, user_id)
 
     def get_by_clerk_user_id(self, clerk_user_id: str) -> User | None:
         stmt = select(User).where(User.clerk_user_id == clerk_user_id)
@@ -46,8 +45,8 @@ class UserRepository:
         except IntegrityError:
             nested.rollback()
             import time as _time
-            for _attempt in range(5):
-                self.session.expire_all()
+            for _attempt in range(3):
+                self.session.expire(user)
                 existing = self.get_by_clerk_user_id(clerk_user_id)
                 if existing is not None:
                     return existing

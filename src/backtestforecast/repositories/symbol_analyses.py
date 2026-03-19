@@ -14,15 +14,19 @@ class SymbolAnalysisRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def add(self, analysis: SymbolAnalysis) -> None:
+    def add(self, analysis: SymbolAnalysis) -> SymbolAnalysis:
         self.session.add(analysis)
         self.session.flush()
+        return analysis
 
     def get_by_idempotency_key(self, user_id: UUID, idempotency_key: str) -> SymbolAnalysis | None:
-        stmt = select(SymbolAnalysis).where(
-            SymbolAnalysis.user_id == user_id,
-            SymbolAnalysis.idempotency_key == idempotency_key,
-            SymbolAnalysis.status.notin_(["failed", "cancelled"]),
+        stmt = (
+            select(SymbolAnalysis).where(
+                SymbolAnalysis.user_id == user_id,
+                SymbolAnalysis.idempotency_key == idempotency_key,
+                SymbolAnalysis.status.notin_(["failed", "cancelled"]),
+            )
+            .with_for_update()
         )
         return self.session.scalar(stmt)
 
@@ -34,10 +38,9 @@ class SymbolAnalysisRepository:
         stmt = select(SymbolAnalysis).where(SymbolAnalysis.id == analysis_id, SymbolAnalysis.user_id == user_id)
         return self.session.scalar(stmt)
 
-    def get_for_user(self, analysis_id: UUID, user_id: UUID) -> SymbolAnalysis | None:
-        return self.get_by_id(analysis_id, user_id=user_id)
-
     def list_for_user(self, user_id: UUID, *, limit: int = 50, offset: int = 0) -> list[SymbolAnalysis]:
+        limit = max(limit, 1)
+        offset = max(offset, 0)
         stmt = (
             select(SymbolAnalysis)
             .where(SymbolAnalysis.user_id == user_id)

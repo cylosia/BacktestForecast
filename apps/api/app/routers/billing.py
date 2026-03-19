@@ -81,9 +81,6 @@ def stripe_webhook(
     signature: str | None = Header(default=None, alias="Stripe-Signature"),
     db: Session = Depends(get_db),
 ) -> WebhookResponse:
-    if signature is None:
-        raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
-
     request_id = getattr(request.state, "request_id", None)
     meta = get_request_metadata(request)
     ip_address = meta.ip_address
@@ -101,22 +98,8 @@ def stripe_webhook(
         window_seconds=settings.rate_limit_window_seconds,
     )
 
-    # Informational only — this list is incomplete and NOT a security control.
-    # Webhook authenticity is verified by Stripe signature validation above.
-    # These IPs are logged to aid debugging; non-matching IPs are NOT rejected.
-    known_stripe_cidrs = [
-        "54.187.174.169/32", "54.187.205.235/32", "54.187.216.72/32",
-        "54.241.31.99/32", "54.241.31.102/32", "54.241.34.107/32",
-    ]
-    if ip_address:
-        import ipaddress as _ipaddress
-        try:
-            client_addr = _ipaddress.ip_address(ip_address)
-            is_known = any(client_addr in _ipaddress.ip_network(cidr) for cidr in known_stripe_cidrs)
-            if not is_known:
-                _webhook_logger.info("billing.webhook.unknown_source_ip", ip=ip_address)
-        except ValueError:
-            pass
+    if signature is None:
+        raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
 
     try:
         with BillingService(db) as service:
@@ -161,7 +144,4 @@ def stripe_webhook(
             )
             return WebhookResponse(received=True, reason=f"Deterministic error ({exc.code}); will not retry.")
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
-        raise HTTPException(
-            status_code=500,
-            detail={"code": "webhook_processing_failed", "message": "Webhook could not be processed."},
-        )
+        return WebhookResponse(received=True, reason="Unhandled processing error; will not retry.")

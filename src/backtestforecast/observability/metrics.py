@@ -209,6 +209,12 @@ ACCOUNT_DELETIONS_TOTAL = Counter(
     ["stripe_cleanup_result"],
 )
 
+STRIPE_ORPHAN_CLEANUP_TOTAL = Counter(
+    "stripe_orphan_cleanup_total",
+    "Async Stripe cleanup attempts after account deletion",
+    ["result"],
+)
+
 REDIS_CONNECTION_ERRORS_TOTAL = Counter(
     "redis_connection_errors_total",
     "Total Redis connection errors",
@@ -323,6 +329,18 @@ EXPORT_EXECUTION_DURATION_SECONDS = Histogram(
     buckets=[0.5, 1, 2.5, 5, 10, 30, 60],
 )
 
+DISPATCH_RESULTS_TOTAL = Counter(
+    "bff_dispatch_results_total",
+    "Celery dispatch outcomes",
+    ["result", "task_name"],
+)
+
+OUTBOX_RECOVERED_TOTAL = Counter(
+    "bff_outbox_recovered_total",
+    "Tasks recovered via outbox poller after inline dispatch failure",
+    ["task_name"],
+)
+
 DB_QUERY_DURATION_SECONDS = Histogram(
     "db_query_duration_seconds",
     "Database query latency",
@@ -349,7 +367,10 @@ _KNOWN_PATH_PREFIXES = frozenset({
     "/health", "/admin", "/metrics", "/meta",
 })
 
+import threading as _threading
+
 _unknown_path_counter: int = 0
+_unknown_path_lock = _threading.Lock()
 
 
 def _normalize_path(path: str) -> str:
@@ -368,8 +389,10 @@ def _normalize_path(path: str) -> str:
                 path = path[:idx] + "{symbol}" + rest[slug_end:]
             break
     if not any(path.startswith(p) for p in _KNOWN_PATH_PREFIXES):
-        _unknown_path_counter += 1
-        if _unknown_path_counter % 100 == 1:
+        with _unknown_path_lock:
+            _unknown_path_counter += 1
+            count = _unknown_path_counter
+        if count % 100 == 1:
             structlog.get_logger("observability.metrics").warning(
                 "metrics.unknown_path_prefix",
                 original_path=path,

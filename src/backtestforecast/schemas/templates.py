@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
 
@@ -38,7 +38,14 @@ class TemplateConfig(BaseModel):
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
 
     # Optional pre-fill hints — not required, but useful if the user always tests the same symbol/window
-    default_symbol: str | None = Field(default=None, max_length=16, pattern=r"^[A-Z][A-Z0-9./^-]{0,15}$")
+    default_symbol: str | None = Field(default=None, max_length=16, pattern=r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
+
+    @field_validator("default_symbol", mode="before")
+    @classmethod
+    def normalize_default_symbol(cls, v: str | None) -> str | None:
+        if v is not None:
+            return v.strip().upper()
+        return v
 
     @model_validator(mode="after")
     def validate_template_rules(self) -> "TemplateConfig":

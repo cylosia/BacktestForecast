@@ -6,7 +6,16 @@ import type {
   StrategyType,
 } from "@backtestforecast/api-client";
 import { daysAgo } from "@/lib/utils";
-import { TICKER_RE } from "@/lib/validation-constants";
+import {
+  ACCOUNT_SIZE_MAX,
+  ACCOUNT_SIZE_MIN,
+  DTE_TOLERANCE_MAX,
+  MAX_HOLDING_DAYS_MAX,
+  MAX_HOLDING_DAYS_MIN,
+  TARGET_DTE_MAX,
+  TARGET_DTE_MIN,
+  TICKER_RE,
+} from "@/lib/validation-constants";
 
 export interface BacktestFormValues {
   symbol: string;
@@ -130,10 +139,10 @@ export function validateBacktestForm(values: BacktestFormValues): {
     integer?: boolean;
     label: string;
   }> = [
-    { key: "targetDte", min: 1, max: 365, integer: true, label: "Target DTE" },
-    { key: "dteToleranceDays", min: 0, max: 60, integer: true, label: "DTE tolerance" },
-    { key: "maxHoldingDays", min: 1, max: 120, integer: true, label: "Max holding days" },
-    { key: "accountSize", min: 100, max: 100_000_000, label: "Account size" },
+    { key: "targetDte", min: TARGET_DTE_MIN, max: TARGET_DTE_MAX, integer: true, label: "Target DTE" },
+    { key: "dteToleranceDays", min: 0, max: DTE_TOLERANCE_MAX, integer: true, label: "DTE tolerance" },
+    { key: "maxHoldingDays", min: MAX_HOLDING_DAYS_MIN, max: MAX_HOLDING_DAYS_MAX, integer: true, label: "Max holding days" },
+    { key: "accountSize", min: ACCOUNT_SIZE_MIN, max: ACCOUNT_SIZE_MAX, label: "Account size" },
     { key: "riskPerTradePct", min: 0, max: 100, exclusiveMin: true, label: "Risk per trade" },
     { key: "commissionPerContract", min: 0, max: 100, label: "Commission per contract" },
   ];

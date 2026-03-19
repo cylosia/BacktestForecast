@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Defaults to redis_url when not set.  In production, point this at a dedicated
     # Redis instance or database number to isolate cache/SSE traffic from Celery broker traffic.
     redis_cache_url: str | None = Field(default=None, repr=False)
+    # Separate Redis URL for Celery result backend.  Defaults to redis_url.
+    # In production, use a different Redis database (e.g. redis://host:6379/2)
+    # to isolate result storage from broker message queues and prevent
+    # contention under high task throughput.
+    celery_result_backend_url: str | None = Field(default=None, repr=False)
 
     web_cors_origins_raw: str = "http://localhost:3000"
     api_allowed_hosts_raw: str = "localhost,127.0.0.1"
@@ -188,8 +193,10 @@ class Settings(BaseSettings):
 
     db_pool_size: int = Field(default=5, ge=1, le=100)
     db_pool_max_overflow: int = Field(default=10, ge=0, le=100)
-    db_pool_recycle: int = 1800
+    db_pool_recycle: int = Field(default=1800, ge=60, le=7200)
     db_pool_timeout: int = Field(default=10, ge=1, le=120)
+    db_statement_timeout_ms: int = Field(default=30_000, ge=1000)
+    db_worker_statement_timeout_ms: int = Field(default=300_000, ge=1000)
 
     trusted_proxy_cidrs: str = "127.0.0.0/8"
 
@@ -215,6 +222,8 @@ class Settings(BaseSettings):
     sse_redis_max_connections: int = 50
     sse_redis_socket_timeout: float = 10.0
     sse_redis_connect_timeout: float = 5.0
+    redis_reconnect_backoff_seconds: float = 30.0
+    sse_max_payload_bytes: int = 10_000
     rate_limit_window_seconds: int = 60
 
     pipeline_max_workers: int = Field(default=20, ge=1, le=64)
@@ -224,11 +233,15 @@ class Settings(BaseSettings):
     sweep_genetic_timeout_seconds: int = Field(default=3600, ge=1)
     max_concurrent_sweeps: int = Field(default=10, ge=1, le=100)
 
+    sweep_score_min_trades: int = Field(default=3, ge=1, le=50)
     sweep_score_win_rate_weight: float = 0.25
     sweep_score_roi_weight: float = 0.35
     sweep_score_sharpe_weight: float = 0.20
     sweep_score_sharpe_multiplier: float = 2.0
     sweep_score_drawdown_weight: float = 0.20
+
+    max_scan_equity_points: int = Field(default=500, ge=10, le=5000)
+    max_pdf_trades: int = Field(default=100, ge=10, le=1000)
 
     max_concurrent_analyses_default: int = Field(default=3, ge=1, le=20)
     max_concurrent_analyses_premium: int = Field(default=5, ge=1, le=20)
@@ -239,6 +252,7 @@ class Settings(BaseSettings):
     past_due_grace_days: int = 7
 
     risk_free_rate: float = 0.045
+    fallback_entry_rule_rsi_threshold: int = Field(default=40, ge=1, le=100)
 
     max_backtest_window_days: int = 1_825
     max_scanner_window_days: int = 730
@@ -250,25 +264,15 @@ class Settings(BaseSettings):
     aws_secret_access_key: str | None = Field(default=None, repr=False)
 
     # Runtime feature flags — toggle via env vars without code deployment.
-    # FIXME(#100): Extend to support percentage-based rollouts and
-    # user-segment targeting for gradual feature releases.
     #
-    # Current boolean flags are all-or-nothing. For safe rollouts of risky
-    # changes, we need:
-    # 1. Percentage rollout: e.g., `feature_sweeps_rollout_pct: int = 100`
-    #    where 0-100 controls what fraction of users see the feature. Use
-    #    a deterministic hash of `user_id` so the same user always gets a
-    #    consistent experience: `hash(user_id) % 100 < rollout_pct`.
-    # 2. User-segment targeting: allow flags like
-    #    `feature_sweeps_segments: str = "pro,premium"` to restrict a
-    #    feature to specific plan tiers during beta.
-    # 3. Override list: `feature_sweeps_allow_user_ids: str = ""` for
-    #    individual opt-in during internal testing.
-    # 4. Store rollout config in Redis (not just env vars) so it can be
-    #    changed without redeployment. The Settings singleton would read
-    #    Redis overrides and merge them with env-var defaults.
-    # 5. Emit structured logs when a user hits a feature gate so we can
-    #    monitor adoption and error rates per cohort.
+    # Each feature supports four layers of control (see feature_flags.py):
+    #   1. Kill-switch: feature_{name}_enabled = False → disabled for all
+    #   2. Allow-list: feature_{name}_allow_user_ids = "uuid1,uuid2"
+    #   3. Tier targeting: feature_{name}_tiers = "pro,premium"
+    #   4. Percentage rollout: feature_{name}_rollout_pct = 50
+    #
+    # Use `from backtestforecast.feature_flags import is_feature_enabled`
+    # for user-aware checks.  The boolean flags below remain the kill-switch.
     feature_backtests_enabled: bool = True
     feature_scanner_enabled: bool = True
     feature_exports_enabled: bool = True
@@ -277,6 +281,18 @@ class Settings(BaseSettings):
     feature_daily_picks_enabled: bool = True
     feature_billing_enabled: bool = True
     feature_sweeps_enabled: bool = True
+
+    # Percentage rollout (0-100). 100 = enabled for all users.
+    feature_sweeps_rollout_pct: int = Field(default=100, ge=0, le=100)
+    feature_analysis_rollout_pct: int = Field(default=100, ge=0, le=100)
+
+    # Tier targeting (comma-separated). Empty = all tiers allowed.
+    feature_sweeps_tiers: str = ""
+    feature_analysis_tiers: str = ""
+
+    # Allow-list override (comma-separated UUIDs). Empty = no overrides.
+    feature_sweeps_allow_user_ids: str = ""
+    feature_analysis_allow_user_ids: str = ""
 
     @field_validator("app_env")
     @classmethod
@@ -313,12 +329,27 @@ class Settings(BaseSettings):
         "scan_timeout_seconds",
         "forecast_max_analogs",
         "option_cache_ttl_seconds",
+        "request_timeout_seconds",
+        "active_renewal_grace_hours",
+        "past_due_grace_days",
+        "stripe_circuit_cooldown_seconds",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
         v = int(value)
         if v < 1:
             raise ValueError(f"Value must be >= 1, got {v}")
+        return v
+
+    @field_validator(
+        "sweep_score_win_rate_weight", "sweep_score_roi_weight",
+        "sweep_score_sharpe_weight", "sweep_score_drawdown_weight",
+    )
+    @classmethod
+    def validate_sweep_score_weight_range(cls, value: float) -> float:
+        v = float(value)
+        if v < 0.0 or v > 1.0:
+            raise ValueError(f"Sweep score weight must be between 0.0 and 1.0, got {v}")
         return v
 
     @field_validator("massive_timeout_seconds", "sse_redis_socket_timeout", "sse_redis_connect_timeout", "clerk_jwks_fetch_timeout")
@@ -486,7 +517,7 @@ class Settings(BaseSettings):
             import urllib.parse
             from urllib.parse import urlparse, urlunparse
 
-            for attr in ("redis_url", "redis_cache_url"):
+            for attr in ("redis_url", "redis_cache_url", "celery_result_backend_url"):
                 url = getattr(self, attr, None)
                 if not url:
                     continue
@@ -504,6 +535,62 @@ class Settings(BaseSettings):
     def default_redis_cache_url(self) -> "Settings":
         if not self.redis_cache_url:
             self.redis_cache_url = self.redis_url
+        if not self.celery_result_backend_url:
+            self.celery_result_backend_url = self.redis_url
+        return self
+
+    @model_validator(mode="after")
+    def _validate_cors_no_wildcard_with_credentials(self) -> "Settings":
+        """Reject wildcard CORS origin in production/staging and warn elsewhere.
+
+        The CORS spec forbids Access-Control-Allow-Origin: * when
+        Access-Control-Allow-Credentials: true — browsers silently ignore
+        the response.  Since the API sets allow_credentials=True for Clerk
+        auth cookies, a wildcard origin will break authentication.
+        """
+        if "*" in self.web_cors_origins:
+            if self.app_env in {"production", "staging"}:
+                raise ValueError(
+                    "WEB_CORS_ORIGINS contains '*' (wildcard) which is incompatible "
+                    "with allow_credentials=True (required for auth cookies). "
+                    "Browsers reject credentialed responses with wildcard origin "
+                    "per the CORS spec. List explicit origins instead."
+                )
+            logger.warning(
+                "config.cors_wildcard_with_credentials",
+                msg=(
+                    "WEB_CORS_ORIGINS contains '*'. This is incompatible with "
+                    "allow_credentials=True and will break browser auth in production. "
+                    "Set explicit origins instead."
+                ),
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_timeout_minimums(self) -> "Settings":
+        _MIN_TIMEOUT = 240
+        if self.scan_timeout_seconds < _MIN_TIMEOUT:
+            logger.warning(
+                "config.scan_timeout_too_low",
+                configured=self.scan_timeout_seconds,
+                minimum=_MIN_TIMEOUT,
+                msg=(
+                    f"scan_timeout_seconds ({self.scan_timeout_seconds}) is below the "
+                    f"recommended minimum of {_MIN_TIMEOUT}s (2\u00d7 the 120s candidate timeout). "
+                    "Individual candidates may not have enough time to complete."
+                ),
+            )
+        if self.sweep_timeout_seconds < _MIN_TIMEOUT:
+            logger.warning(
+                "config.sweep_timeout_too_low",
+                configured=self.sweep_timeout_seconds,
+                minimum=_MIN_TIMEOUT,
+                msg=(
+                    f"sweep_timeout_seconds ({self.sweep_timeout_seconds}) is below the "
+                    f"recommended minimum of {_MIN_TIMEOUT}s (2\u00d7 the 120s candidate timeout). "
+                    "Individual candidates may not have enough time to complete."
+                ),
+            )
         return self
 
     @model_validator(mode="after")
@@ -529,18 +616,30 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_concurrency_tiers(self) -> "Settings":
+        if self.max_concurrent_analyses_premium < self.max_concurrent_analyses_default:
+            raise ValueError(
+                f"max_concurrent_analyses_premium ({self.max_concurrent_analyses_premium}) "
+                f"must be >= max_concurrent_analyses_default ({self.max_concurrent_analyses_default})"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
-        if "default" in self.ip_hash_salt.lower() or "change" in self.ip_hash_salt.lower():
-            if self.app_env in {"staging"}:
+        _salt_is_placeholder = "default" in self.ip_hash_salt.lower() or "change" in self.ip_hash_salt.lower()
+        if _salt_is_placeholder:
+            if self.app_env in {"production", "staging"}:
                 raise ValueError(
                     "IP_HASH_SALT contains a placeholder value. "
-                    "Staging environments must use a unique IP_HASH_SALT."
+                    "Production/staging environments must use a unique IP_HASH_SALT."
                 )
-            if self.app_env not in {"production", "staging"}:
-                logger.warning(
-                    "config.production_warning",
-                    msg="IP_HASH_SALT appears to be a placeholder; set a unique secret in production.",
-                )
+            import secrets
+            self.ip_hash_salt = secrets.token_urlsafe(32)
+            logger.warning(
+                "config.ip_hash_salt_auto_generated",
+                msg="IP_HASH_SALT was a placeholder; generated a random per-process salt for development. "
+                    "Set IP_HASH_SALT explicitly for consistent IP hashing across restarts.",
+            )
         if self.app_env in {"production", "staging"}:
             if not self.clerk_issuer:
                 raise ValueError("Production-like environments require CLERK_ISSUER for JWT issuer verification.")
@@ -570,6 +669,22 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "CLERK_AUTHORIZED_PARTIES is using the default value. "
                     "Set the actual authorized party URLs for production."
+                )
+            _normalized_cors = {o.strip().lower().rstrip("/") for o in self.web_cors_origins}
+            _azp_not_in_cors = [
+                p for p in self.clerk_authorized_parties
+                if p.strip().lower().rstrip("/") not in _normalized_cors
+            ]
+            if _azp_not_in_cors:
+                logger.warning(
+                    "config.azp_cors_divergence",
+                    azp_not_in_cors=_azp_not_in_cors,
+                    msg=(
+                        "CLERK_AUTHORIZED_PARTIES entries not present in WEB_CORS_ORIGINS. "
+                        "Cookie-based auth checks the Origin header against CORS origins, "
+                        "while JWT azp is checked against authorized_parties. If these lists "
+                        "diverge, cookie auth may fail for valid tokens or vice versa."
+                    ),
                 )
             if not self.massive_base_url.startswith("https://"):
                 raise ValueError("MASSIVE_BASE_URL must use HTTPS in production.")

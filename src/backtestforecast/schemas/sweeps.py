@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any, Literal
 from uuid import UUID
 
@@ -16,7 +16,7 @@ from backtestforecast.schemas.backtests import (
     SpreadWidthMode,
     StrategyType,
 )
-from backtestforecast.schemas.common import PlanTier, sanitize_error_message
+from backtestforecast.schemas.common import PlanTier, RunJobStatus, sanitize_error_message
 from backtestforecast.schemas.scans import RuleSetDefinition
 
 
@@ -70,8 +70,6 @@ class GeneticSweepConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "GeneticSweepConfig":
-        if self.num_legs not in (2, 3, 4, 5, 6, 7, 8):
-            raise ValueError("num_legs must be one of 2, 3, 4, 5, 6, 7, or 8")
         if self.elitism_count >= self.population_size:
             raise ValueError("elitism_count must be less than population_size")
         return self
@@ -141,13 +139,7 @@ class CreateSweepRequest(BaseModel):
         return self
 
 
-class SweepJobStatus(StrEnum):
-    """Status values valid for sweep jobs (excludes 'expired')."""
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+SweepJobStatus = RunJobStatus
 
 
 # Built manually in SweepService._build_result_response — NOT directly from
@@ -163,21 +155,22 @@ class SweepResultResponse(BaseModel):
     width_value: Decimal | None = None
     entry_rule_set_name: str = "default"
     exit_rule_set_name: str | None = None
-    profit_target_pct: float | None = None
-    stop_loss_pct: float | None = None
+    profit_target_pct: Decimal | None = None
+    stop_loss_pct: Decimal | None = None
     parameter_snapshot_json: dict[str, Any] = Field(default_factory=dict)
     summary: BacktestSummaryResponse
     warnings: list[dict[str, Any]] = Field(default_factory=list)
-    trades_json: list[dict[str, Any]] = Field(default_factory=list)
-    equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list)
+    trades_json: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
+    equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list, max_length=10000)
     trades_truncated: bool = False
+    created_at: datetime | None = None
 
 
 class SweepResultListResponse(BaseModel):
     items: list[SweepResultResponse]
-    total: int = 0
-    offset: int = 0
-    limit: int = 100
+    total: int = Field(default=0, ge=0)
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=100, ge=1, le=200)
 
 
 class SweepJobResponse(BaseModel):
@@ -196,8 +189,8 @@ class SweepJobResponse(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
-    started_at: datetime | None
-    completed_at: datetime | None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

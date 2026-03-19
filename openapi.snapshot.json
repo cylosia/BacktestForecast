@@ -122,16 +122,20 @@
             "title": "Stage",
             "type": "string"
           },
-          "status": {
-            "enum": [
-              "queued",
-              "running",
-              "succeeded",
-              "failed",
-              "cancelled"
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Status",
-            "type": "string"
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
           },
           "strategies_tested": {
             "title": "Strategies Tested",
@@ -184,16 +188,19 @@
           },
           "limit": {
             "default": 50,
+            "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
           },
           "offset": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
           },
           "total": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -289,16 +296,20 @@
             "title": "Stage",
             "type": "string"
           },
-          "status": {
-            "enum": [
-              "queued",
-              "running",
-              "succeeded",
-              "failed",
-              "cancelled"
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Status",
-            "type": "string"
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
           },
           "strategies_tested": {
             "title": "Strategies Tested",
@@ -338,6 +349,7 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 10000,
             "title": "Equity Curve",
             "type": "array"
           },
@@ -473,8 +485,14 @@
             "items": {
               "$ref": "#/components/schemas/EquityCurvePointResponse"
             },
+            "maxItems": 10000,
             "title": "Equity Curve",
             "type": "array"
+          },
+          "equity_curve_truncated": {
+            "default": false,
+            "title": "Equity Curve Truncated",
+            "type": "boolean"
           },
           "error_code": {
             "anyOf": [
@@ -510,7 +528,8 @@
           "risk_free_rate": {
             "anyOf": [
               {
-                "type": "number"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
               },
               {
                 "type": "null"
@@ -537,7 +556,7 @@
             "title": "Started At"
           },
           "status": {
-            "$ref": "#/components/schemas/RunStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           },
           "strategy_type": {
             "title": "Strategy Type",
@@ -558,6 +577,7 @@
             "items": {
               "$ref": "#/components/schemas/BacktestTradeResponse"
             },
+            "maxItems": 10000,
             "title": "Trades",
             "type": "array"
           },
@@ -566,6 +586,7 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 100,
             "title": "Warnings Json",
             "type": "array"
           }
@@ -586,7 +607,6 @@
           "engine_version",
           "data_source",
           "created_at",
-          "completed_at",
           "warnings_json",
           "summary",
           "trades",
@@ -636,7 +656,7 @@
             "type": "integer"
           },
           "status": {
-            "$ref": "#/components/schemas/RunStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           },
           "strategy_type": {
             "title": "Strategy Type",
@@ -755,7 +775,7 @@
             "title": "Started At"
           },
           "status": {
-            "$ref": "#/components/schemas/RunStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           }
         },
         "required": [
@@ -768,21 +788,25 @@
       "BacktestSummaryResponse": {
         "properties": {
           "average_dte_at_open": {
+            "default": "0",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Average Dte At Open",
             "type": "string"
           },
           "average_holding_period_days": {
+            "default": "0",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Average Holding Period Days",
             "type": "string"
           },
           "average_loss_amount": {
+            "default": "0",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Average Loss Amount",
             "type": "string"
           },
           "average_win_amount": {
+            "default": "0",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Average Win Amount",
             "type": "string"
@@ -811,27 +835,22 @@
             ],
             "title": "Calmar Ratio"
           },
-          "decided_trades": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Decided Trades"
-          },
           "ending_equity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Ending Equity",
             "type": "string"
           },
           "expectancy": {
-            "default": "0",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Expectancy",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectancy"
           },
           "max_consecutive_losses": {
             "default": 0,
@@ -844,6 +863,7 @@
             "type": "integer"
           },
           "max_drawdown_pct": {
+            "default": "0",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Max Drawdown Pct",
             "type": "string"
@@ -924,29 +944,36 @@
             "type": "string"
           },
           "total_roi_pct": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total Roi Pct",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Roi Pct"
           },
           "trade_count": {
             "title": "Trade Count",
             "type": "integer"
           },
           "win_rate": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Win Rate",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
           }
         },
         "required": [
           "trade_count",
-          "win_rate",
-          "total_roi_pct",
-          "average_win_amount",
-          "average_loss_amount",
-          "average_holding_period_days",
-          "average_dte_at_open",
-          "max_drawdown_pct",
           "total_commissions",
           "total_net_pnl",
           "starting_equity",
@@ -1213,13 +1240,14 @@
         "type": "object"
       },
       "CompareBacktestsRequest": {
+        "additionalProperties": false,
         "properties": {
           "run_ids": {
             "items": {
               "format": "uuid",
               "type": "string"
             },
-            "maxItems": 10,
+            "maxItems": 8,
             "minItems": 2,
             "title": "Run Ids",
             "type": "array"
@@ -1307,8 +1335,8 @@
           "account_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
                 "maximum": 100000000.0,
+                "minimum": 100.0,
                 "type": "number"
               },
               {
@@ -1407,6 +1435,7 @@
               ]
             },
             "maxItems": 8,
+            "minItems": 1,
             "title": "Entry Rules",
             "type": "array"
           },
@@ -1537,12 +1566,14 @@
           "max_holding_days",
           "account_size",
           "risk_per_trade_pct",
-          "commission_per_contract"
+          "commission_per_contract",
+          "entry_rules"
         ],
         "title": "CreateBacktestRunRequest",
         "type": "object"
       },
       "CreateCheckoutSessionRequest": {
+        "additionalProperties": false,
         "properties": {
           "billing_interval": {
             "$ref": "#/components/schemas/BillingInterval",
@@ -1601,7 +1632,7 @@
             "anyOf": [
               {
                 "maxLength": 200,
-                "pattern": "^/[^\\s]*$",
+                "pattern": "^/[a-zA-Z0-9/_\\-\\.~]*$",
                 "type": "string"
               },
               {
@@ -1621,8 +1652,8 @@
           "account_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
                 "maximum": 100000000.0,
+                "minimum": 100.0,
                 "type": "number"
               },
               {
@@ -1706,7 +1737,7 @@
             "type": "boolean"
           },
           "refresh_priority": {
-            "default": 50,
+            "default": 0,
             "maximum": 100.0,
             "minimum": 0.0,
             "title": "Refresh Priority",
@@ -1786,8 +1817,8 @@
           "account_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
                 "maximum": 100000000.0,
+                "minimum": 100.0,
                 "type": "number"
               },
               {
@@ -2339,6 +2370,7 @@
           "pipeline_run_id": {
             "anyOf": [
               {
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -2358,8 +2390,7 @@
             ]
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/JobStatus"
           },
           "trade_date": {
             "anyOf": [
@@ -2441,6 +2472,37 @@
             "properties": {
               "code": {
                 "type": "string"
+              },
+              "detail": {
+                "description": "Present on 403 quota/feature errors. Contains current_tier and/or required_tier.",
+                "nullable": true,
+                "properties": {
+                  "current_tier": {
+                    "enum": [
+                      "free",
+                      "pro",
+                      "premium"
+                    ],
+                    "type": "string"
+                  },
+                  "required_tier": {
+                    "enum": [
+                      "free",
+                      "pro",
+                      "premium"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "details": {
+                "description": "Present on 422 validation errors. Each item describes one field-level error.",
+                "items": {
+                  "type": "object"
+                },
+                "nullable": true,
+                "type": "array"
               },
               "message": {
                 "type": "string"
@@ -2610,6 +2672,7 @@
             "title": "Expires At"
           },
           "export_format": {
+            "pattern": "^(csv|pdf)$",
             "title": "Export Format",
             "type": "string"
           },
@@ -2626,10 +2689,27 @@
             "title": "Mime Type",
             "type": "string"
           },
+          "sha256_hex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256 Hex"
+          },
           "size_bytes": {
-            "default": 0,
-            "title": "Size Bytes",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
           },
           "started_at": {
             "anyOf": [
@@ -2645,6 +2725,21 @@
           },
           "status": {
             "$ref": "#/components/schemas/JobStatus"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "required": [
@@ -2725,6 +2820,47 @@
           "forecasting_access"
         ],
         "title": "FeatureAccessResponse",
+        "type": "object"
+      },
+      "FeatureFlagsResponse": {
+        "properties": {
+          "analysis": {
+            "default": true,
+            "title": "Analysis",
+            "type": "boolean"
+          },
+          "backtests": {
+            "default": true,
+            "title": "Backtests",
+            "type": "boolean"
+          },
+          "billing": {
+            "default": true,
+            "title": "Billing",
+            "type": "boolean"
+          },
+          "daily_picks": {
+            "default": true,
+            "title": "Daily Picks",
+            "type": "boolean"
+          },
+          "exports": {
+            "default": true,
+            "title": "Exports",
+            "type": "boolean"
+          },
+          "forecasts": {
+            "default": true,
+            "title": "Forecasts",
+            "type": "boolean"
+          },
+          "scanner": {
+            "default": true,
+            "title": "Scanner",
+            "type": "boolean"
+          }
+        },
+        "title": "FeatureFlagsResponse",
         "type": "object"
       },
       "ForecastEnvelopeResponse": {
@@ -3167,6 +3303,7 @@
         "type": "object"
       },
       "JobStatus": {
+        "description": "Status values for jobs that support expiration (exports).",
         "enum": [
           "queued",
           "running",
@@ -3272,6 +3409,56 @@
         "title": "MacdRule",
         "type": "object"
       },
+      "MetaResponse": {
+        "properties": {
+          "billing_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Enabled"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "features": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeatureFlagsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "version"
+        ],
+        "title": "MetaResponse",
+        "type": "object"
+      },
       "MovingAverageCrossoverRule": {
         "additionalProperties": false,
         "properties": {
@@ -3325,13 +3512,25 @@
           "duration_seconds": {
             "anyOf": [
               {
-                "type": "number"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Duration Seconds"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
           },
           "error_message": {
             "anyOf": [
@@ -3421,7 +3620,8 @@
           "duration_seconds": {
             "anyOf": [
               {
-                "type": "number"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
               },
               {
                 "type": "null"
@@ -3778,8 +3978,8 @@
         "title": "RuleSetDefinition",
         "type": "object"
       },
-      "RunStatus": {
-        "description": "Status enum for backtest runs. Unlike JobStatus, this excludes\n``expired`` which only applies to export jobs.",
+      "RunJobStatus": {
+        "description": "Status values for jobs that do not support expiration (backtests, scans, sweeps, analyses).",
         "enum": [
           "queued",
           "running",
@@ -3787,7 +3987,7 @@
           "failed",
           "cancelled"
         ],
-        "title": "RunStatus",
+        "title": "RunJobStatus",
         "type": "string"
       },
       "ScannerJobListResponse": {
@@ -3844,6 +4044,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "engine_version": {
+            "default": "options-multileg-v2",
+            "title": "Engine Version",
+            "type": "string"
+          },
           "error_code": {
             "anyOf": [
               {
@@ -3875,6 +4080,17 @@
             "title": "Id",
             "type": "string"
           },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
           "job_kind": {
             "title": "Job Kind",
             "type": "string"
@@ -3895,6 +4111,11 @@
           },
           "plan_tier_snapshot": {
             "$ref": "#/components/schemas/PlanTier"
+          },
+          "ranking_version": {
+            "default": "scanner-ranking-v1",
+            "title": "Ranking Version",
+            "type": "string"
           },
           "recommendation_count": {
             "title": "Recommendation Count",
@@ -3921,7 +4142,7 @@
             "title": "Started At"
           },
           "status": {
-            "$ref": "#/components/schemas/JobStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           },
           "warnings_json": {
             "items": {
@@ -3944,9 +4165,7 @@
           "recommendation_count",
           "refresh_daily",
           "refresh_priority",
-          "created_at",
-          "started_at",
-          "completed_at"
+          "created_at"
         ],
         "title": "ScannerJobResponse",
         "type": "object"
@@ -3988,7 +4207,7 @@
             "title": "Started At"
           },
           "status": {
-            "$ref": "#/components/schemas/JobStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           }
         },
         "required": [
@@ -4018,16 +4237,20 @@
           },
           "limit": {
             "default": 100,
+            "maximum": 200.0,
+            "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
           },
           "offset": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
           },
           "total": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -4044,6 +4267,7 @@
             "items": {
               "$ref": "#/components/schemas/EquityCurvePointResponse"
             },
+            "maxItems": 10000,
             "title": "Equity Curve",
             "type": "array"
           },
@@ -4094,8 +4318,14 @@
             "items": {
               "$ref": "#/components/schemas/TradeJsonResponse"
             },
+            "maxItems": 10000,
             "title": "Trades",
             "type": "array"
+          },
+          "trades_truncated": {
+            "default": false,
+            "title": "Trades Truncated",
+            "type": "boolean"
           },
           "warnings": {
             "items": {
@@ -4207,8 +4437,7 @@
             "type": "string"
           },
           "min_tier": {
-            "title": "Min Tier",
-            "type": "string"
+            "$ref": "#/components/schemas/PlanTier"
           },
           "notes": {
             "default": "",
@@ -4260,13 +4489,12 @@
           "user_tier": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/PlanTier"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "User Tier"
+            ]
           }
         },
         "required": [
@@ -4373,6 +4601,7 @@
           "custom_4_leg",
           "custom_5_leg",
           "custom_6_leg",
+          "custom_7_leg",
           "custom_8_leg",
           "naked_call",
           "naked_put"
@@ -4556,6 +4785,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "engine_version": {
+            "default": "options-multileg-v2",
+            "title": "Engine Version",
+            "type": "string"
+          },
           "error_code": {
             "anyOf": [
               {
@@ -4587,6 +4821,10 @@
             "title": "Id",
             "type": "string"
           },
+          "mode": {
+            "$ref": "#/components/schemas/SweepMode",
+            "default": "grid"
+          },
           "plan_tier_snapshot": {
             "$ref": "#/components/schemas/PlanTier"
           },
@@ -4601,6 +4839,11 @@
               }
             ],
             "title": "Prefetch Summary Json"
+          },
+          "request_snapshot_json": {
+            "additionalProperties": true,
+            "title": "Request Snapshot Json",
+            "type": "object"
           },
           "result_count": {
             "title": "Result Count",
@@ -4619,7 +4862,7 @@
             "title": "Started At"
           },
           "status": {
-            "$ref": "#/components/schemas/JobStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           },
           "symbol": {
             "title": "Symbol",
@@ -4642,9 +4885,7 @@
           "candidate_count",
           "evaluated_candidate_count",
           "result_count",
-          "created_at",
-          "started_at",
-          "completed_at"
+          "created_at"
         ],
         "title": "SweepJobResponse",
         "type": "object"
@@ -4686,7 +4927,7 @@
             "title": "Started At"
           },
           "status": {
-            "$ref": "#/components/schemas/JobStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           }
         },
         "required": [
@@ -4716,16 +4957,20 @@
           },
           "limit": {
             "default": 100,
+            "maximum": 200.0,
+            "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
           },
           "offset": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
           },
           "total": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -4738,6 +4983,18 @@
       },
       "SweepResultResponse": {
         "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
           "delta": {
             "anyOf": [
               {
@@ -4750,6 +5007,7 @@
             "title": "Delta"
           },
           "entry_rule_set_name": {
+            "default": "default",
             "title": "Entry Rule Set Name",
             "type": "string"
           },
@@ -4757,6 +5015,7 @@
             "items": {
               "$ref": "#/components/schemas/EquityCurvePointResponse"
             },
+            "maxItems": 10000,
             "title": "Equity Curve",
             "type": "array"
           },
@@ -4784,7 +5043,8 @@
           "profit_target_pct": {
             "anyOf": [
               {
-                "type": "number"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
               },
               {
                 "type": "null"
@@ -4804,7 +5064,8 @@
           "stop_loss_pct": {
             "anyOf": [
               {
-                "type": "number"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
               },
               {
                 "type": "null"
@@ -4824,8 +5085,14 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 10000,
             "title": "Trades Json",
             "type": "array"
+          },
+          "trades_truncated": {
+            "default": false,
+            "title": "Trades Truncated",
+            "type": "boolean"
           },
           "warnings": {
             "items": {
@@ -4864,7 +5131,6 @@
           "rank",
           "score",
           "strategy_type",
-          "entry_rule_set_name",
           "summary"
         ],
         "title": "SweepResultResponse",
@@ -4877,8 +5143,8 @@
           "account_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
                 "maximum": 100000000.0,
+                "minimum": 100.0,
                 "type": "number"
               },
               {
@@ -4906,7 +5172,7 @@
             "anyOf": [
               {
                 "maxLength": 16,
-                "pattern": "^[A-Z][A-Z0-9./^-]{0,15}$",
+                "pattern": "^[\\^A-Z][A-Z0-9./^-]{0,15}$",
                 "type": "string"
               },
               {
@@ -5032,7 +5298,7 @@
             "anyOf": [
               {
                 "maxLength": 16,
-                "pattern": "^[A-Z][A-Z0-9./^-]{0,15}$",
+                "pattern": "^[\\^A-Z][A-Z0-9./^-]{0,15}$",
                 "type": "string"
               },
               {
@@ -5714,13 +5980,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Live Health Live Get",
-                  "type": "object"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"
@@ -6003,6 +6263,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 100000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -6670,7 +6931,7 @@
             "required": false,
             "schema": {
               "default": 0,
-              "maximum": 100000,
+              "maximum": 10000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -7088,7 +7349,7 @@
             "required": false,
             "schema": {
               "default": 10000,
-              "maximum": 50000,
+              "maximum": 20000,
               "minimum": 0,
               "title": "Trade Limit",
               "type": "integer"
@@ -7764,6 +8025,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 50,
                   "type": "string"
                 },
                 {
@@ -9235,9 +9497,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Meta V1 Meta Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MetaResponse"
                 }
               }
             },

@@ -56,6 +56,10 @@ class BacktestRunRepository:
         created_since: datetime | None = None,
         cursor_before: datetime | None = None,
     ) -> list[BacktestRun]:
+        if offset > 0 and cursor_before is not None:
+            raise ValueError("Cannot combine offset and cursor_before pagination; use one or the other.")
+        limit = max(limit, 1)
+        offset = max(offset, 0)
         stmt = (
             select(BacktestRun)
             .where(BacktestRun.user_id == user_id)
@@ -90,6 +94,7 @@ class BacktestRunRepository:
         start_inclusive: datetime,
         end_exclusive: datetime,
         exclude_error_codes: tuple[str, ...] = ("enqueue_failed",),
+        exclude_id: UUID | None = None,
     ) -> int:
         stmt = select(func.count(BacktestRun.id)).where(
             BacktestRun.user_id == user_id,
@@ -101,6 +106,8 @@ class BacktestRunRepository:
             stmt = stmt.where(
                 (BacktestRun.error_code.is_(None)) | (BacktestRun.error_code.notin_(exclude_error_codes))
             )
+        if exclude_id is not None:
+            stmt = stmt.where(BacktestRun.id != exclude_id)
         return int(self.session.scalar(stmt) or 0)
 
     def get_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRun | None:
@@ -119,10 +126,6 @@ class BacktestRunRepository:
         """Ownership check + scalar columns only; no collection eager-loading."""
         stmt = select(BacktestRun).where(BacktestRun.id == run_id, BacktestRun.user_id == user_id)
         return self.session.scalar(stmt)
-
-    def get_status_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRun | None:
-        """Alias for lightweight lookup (polling endpoints)."""
-        return self.get_lightweight_for_user(run_id, user_id)
 
     def get_many_for_user(self, run_ids: list[UUID], user_id: UUID) -> list[BacktestRun]:
         if not run_ids:
@@ -168,6 +171,7 @@ class BacktestRunRepository:
     ) -> dict[UUID, list[BacktestTrade]]:
         if not run_ids:
             return {}
+        run_ids = run_ids[:50]
         from sqlalchemy import func as sa_func
         from sqlalchemy.orm import aliased
         row_num = sa_func.row_number().over(
@@ -196,6 +200,7 @@ class BacktestRunRepository:
     ) -> dict[UUID, list[BacktestEquityPoint]]:
         if not run_ids:
             return {}
+        run_ids = run_ids[:50]
         from sqlalchemy import func as sa_func
         row_num = sa_func.row_number().over(
             partition_by=BacktestEquityPoint.run_id,

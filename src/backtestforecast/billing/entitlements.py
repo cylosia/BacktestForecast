@@ -53,6 +53,7 @@ class FeaturePolicy:
     history_item_limit: int
     side_by_side_comparison_limit: int
     forecasting_access: bool
+    sweep_access: bool
     export_formats: frozenset[ExportFormat]
     basic_scanner_access: bool
     advanced_scanner_access: bool
@@ -110,6 +111,7 @@ FEATURE_POLICIES = {
         history_item_limit=25,
         side_by_side_comparison_limit=2,
         forecasting_access=False,
+        sweep_access=False,
         export_formats=frozenset(),
         basic_scanner_access=False,
         advanced_scanner_access=False,
@@ -122,6 +124,7 @@ FEATURE_POLICIES = {
         history_item_limit=500,
         side_by_side_comparison_limit=3,
         forecasting_access=True,
+        sweep_access=True,
         export_formats=frozenset({ExportFormat.CSV}),
         basic_scanner_access=True,
         advanced_scanner_access=False,
@@ -134,6 +137,7 @@ FEATURE_POLICIES = {
         history_item_limit=5000,
         side_by_side_comparison_limit=8,
         forecasting_access=True,
+        sweep_access=True,
         export_formats=frozenset({ExportFormat.CSV, ExportFormat.PDF}),
         basic_scanner_access=True,
         advanced_scanner_access=True,
@@ -183,6 +187,16 @@ POLICIES = {
 }
 
 
+def _resolve_tier(plan_tier: str | None) -> PlanTier:
+    """Map a raw plan_tier string to the corresponding PlanTier enum value."""
+    tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
+    if tier_lower == PlanTier.PREMIUM.value:
+        return PlanTier.PREMIUM
+    if tier_lower == PlanTier.PRO.value:
+        return PlanTier.PRO
+    return PlanTier.FREE
+
+
 def normalize_plan_tier(
     plan_tier: str | None,
     subscription_status: str | None = None,
@@ -201,24 +215,25 @@ def normalize_plan_tier(
                 period_end=str(subscription_current_period_end),
             )
             return PlanTier.FREE
-        # Within grace window — skip the period-end check and resolve tier directly
+        resolved = _resolve_tier(plan_tier)
+        if resolved != PlanTier.FREE:
+            return resolved
         tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
-        if tier_lower == PlanTier.PREMIUM.value:
-            return PlanTier.PREMIUM
-        if tier_lower == PlanTier.PRO.value:
-            return PlanTier.PRO
+        if tier_lower and tier_lower not in ("free", ""):
+            _logger.warning(
+                "normalize_plan_tier.unknown_tier_value",
+                plan_tier=plan_tier,
+                subscription_status=subscription_status,
+                hint="Unrecognized plan_tier defaults to FREE. User may lose features.",
+            )
         return PlanTier.FREE
     elif subscription_status is not None and subscription_status not in PAID_STATUSES:
         _logger.warning(
             "normalize_plan_tier.unknown_subscription_status",
             subscription_status=subscription_status,
             plan_tier=plan_tier,
+            hint="Unrecognized status defaults to FREE for safety. If this is a new Stripe status, add it to PAID_STATUSES or INACTIVE_STATUSES.",
         )
-        tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
-        if tier_lower == PlanTier.PREMIUM.value:
-            return PlanTier.PREMIUM
-        if tier_lower == PlanTier.PRO.value:
-            return PlanTier.PRO
         return PlanTier.FREE
     elif subscription_status is None:
         return PlanTier.FREE
@@ -228,11 +243,17 @@ def normalize_plan_tier(
             period_end = period_end.replace(tzinfo=UTC)
         if period_end + _active_renewal_grace() < datetime.now(UTC):
             return PlanTier.FREE
+    resolved = _resolve_tier(plan_tier)
+    if resolved != PlanTier.FREE:
+        return resolved
     tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
-    if tier_lower == PlanTier.PREMIUM.value:
-        return PlanTier.PREMIUM
-    if tier_lower == PlanTier.PRO.value:
-        return PlanTier.PRO
+    if tier_lower and tier_lower not in ("free", ""):
+        _logger.warning(
+            "normalize_plan_tier.unknown_tier_value",
+            plan_tier=plan_tier,
+            subscription_status=subscription_status,
+            hint="Unrecognized plan_tier defaults to FREE. User may lose features.",
+        )
     return PlanTier.FREE
 
 
@@ -280,20 +301,9 @@ def ensure_sweep_access(
     subscription_status: str | None,
     subscription_current_period_end: datetime | None = None,
 ) -> None:
-    """Sweeps require at least Pro tier.
-
-    NOTE: Currently gates on ``forecasting_access`` from the feature policy
-    as a proxy for sweep entitlement.  This works today because every tier
-    that grants sweep access also grants forecasting access, but the coupling
-    is fragile.
-
-    TODO: Add a dedicated ``sweep_access: bool`` field to ``FeaturePolicy``
-    and check it here instead of ``forecasting_access``.  This will allow
-    sweeps to be offered as a standalone feature or add-on without affecting
-    forecasting entitlements.
-    """
+    """Sweeps require at least Pro tier."""
     feature_policy = resolve_feature_policy(plan_tier, subscription_status, subscription_current_period_end)
-    if not feature_policy.forecasting_access:
+    if not feature_policy.sweep_access:
         raise FeatureLockedError(
             "Sweeps require Pro or Premium.",
             required_tier="pro",

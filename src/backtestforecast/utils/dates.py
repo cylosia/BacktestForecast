@@ -176,6 +176,19 @@ _holiday_redis_client = None
 _holiday_redis_lock = threading.Lock()
 
 
+def _reset_holiday_redis() -> None:
+    """Close the holiday Redis client so the next call reconnects."""
+    global _holiday_redis_client
+    with _holiday_redis_lock:
+        client = _holiday_redis_client
+        _holiday_redis_client = None
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
 def _get_redis_client():
     """Return a shared, lazily-initialised Redis client for holiday data."""
     global _holiday_redis_client
@@ -184,7 +197,8 @@ def _get_redis_client():
     with _holiday_redis_lock:
         if _holiday_redis_client is not None:
             return _holiday_redis_client
-        from backtestforecast.config import get_settings
+        from backtestforecast.config import get_settings, register_invalidation_callback
+        import atexit
         import redis
         settings = get_settings()
         url = settings.redis_cache_url or settings.redis_url
@@ -196,6 +210,8 @@ def _get_redis_client():
             socket_timeout=5,
             socket_connect_timeout=5,
         )
+        atexit.register(_reset_holiday_redis)
+        register_invalidation_callback(_reset_holiday_redis)
         return _holiday_redis_client
 
 
@@ -206,8 +222,12 @@ def _load_dynamic_holidays_from_redis() -> frozenset[date]:
         if r is None:
             return frozenset()
         raw_dates = r.smembers(REDIS_HOLIDAYS_KEY)
-        return frozenset(date.fromisoformat(d) for d in raw_dates if d)
     except Exception:
+        return frozenset()
+    try:
+        return frozenset(date.fromisoformat(d) for d in raw_dates if d)
+    except (ValueError, TypeError):
+        logger.warning("dates.holiday_parse_error", exc_info=True)
         return frozenset()
 
 

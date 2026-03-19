@@ -18,6 +18,8 @@ class _JsonDefault(ClauseElement):
     __visit_name__ = "json_default"
 
     def __init__(self, value: str) -> None:
+        if value not in ("{}", "[]"):
+            raise ValueError(f"_JsonDefault only supports '{{}}' and '[]', got: {value!r}")
         self.value = value
 
 

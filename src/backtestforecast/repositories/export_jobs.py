@@ -21,6 +21,7 @@ class ExportJobRepository:
         return job
 
     def get(self, export_job_id: UUID, *, for_update: bool = False) -> ExportJob | None:
+        """Fetch by ID without ownership check. WORKER-ONLY — never call from API routes."""
         stmt = select(ExportJob).where(ExportJob.id == export_job_id).options(defer(ExportJob.content_bytes))
         if for_update:
             stmt = stmt.with_for_update()
@@ -43,10 +44,13 @@ class ExportJobRepository:
                 ExportJob.status.notin_(["failed", "cancelled", "expired"]),
             )
             .options(defer(ExportJob.content_bytes))
+            .with_for_update()
         )
         return self.session.scalar(stmt)
 
     def list_for_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[ExportJob]:
+        limit = max(limit, 1)
+        offset = max(offset, 0)
         stmt = (
             select(ExportJob)
             .where(ExportJob.user_id == user_id)

@@ -28,6 +28,8 @@ class SweepJobRepository:
         return job
 
     def list_for_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[SweepJob]:
+        limit = max(limit, 1)
+        offset = max(offset, 0)
         stmt = (
             select(SweepJob)
             .where(SweepJob.user_id == user_id)
@@ -54,6 +56,7 @@ class SweepJobRepository:
             SweepJob.user_id == user_id,
             SweepJob.created_at >= start_inclusive,
             SweepJob.created_at < end_exclusive,
+            SweepJob.status.notin_(("failed", "cancelled")),
         )
         if exclude_id is not None:
             stmt = stmt.where(SweepJob.id != exclude_id)
@@ -79,10 +82,13 @@ class SweepJobRepository:
         return self.session.scalar(stmt)
 
     def get_by_idempotency_key(self, user_id: UUID, idempotency_key: str) -> SweepJob | None:
-        stmt = select(SweepJob).where(
-            SweepJob.user_id == user_id,
-            SweepJob.idempotency_key == idempotency_key,
-            SweepJob.status.notin_(["failed", "cancelled"]),
+        stmt = (
+            select(SweepJob).where(
+                SweepJob.user_id == user_id,
+                SweepJob.idempotency_key == idempotency_key,
+                SweepJob.status.notin_(["failed", "cancelled"]),
+            )
+            .with_for_update()
         )
         return self.session.scalar(stmt)
 
@@ -155,5 +161,5 @@ class SweepJobRepository:
         self.session.execute(
             sa_delete(SweepResult)
             .where(SweepResult.sweep_job_id == job_id)
-            .execution_options(synchronize_session="fetch")
+            .execution_options(synchronize_session=False)
         )

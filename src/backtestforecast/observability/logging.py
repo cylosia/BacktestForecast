@@ -19,12 +19,16 @@ from backtestforecast.config import Settings, get_settings, register_invalidatio
 REQUEST_ID_HEADER = "x-request-id"
 _SAFE_REQUEST_ID = re.compile(r"^[a-zA-Z0-9\-_.]{1,128}$")
 
-_SENSITIVE_KEYS = frozenset({
+_SENSITIVE_FRAGMENTS = (
     "password", "secret", "token", "api_key", "apikey",
     "aws_secret_access_key", "secret_key", "authorization",
     "cookie", "credentials", "private_key",
-})
+)
 _REDACTED = "[REDACTED]"
+
+
+def _is_sensitive_key(lower_key: str) -> bool:
+    return any(fragment in lower_key for fragment in _SENSITIVE_FRAGMENTS)
 
 
 def _deep_sanitize_value(value: Any, _logger: Any, _method: str) -> Any:
@@ -41,12 +45,15 @@ def _sanitize_sensitive_keys(
 ) -> dict[str, Any]:
     """Drop or redact values whose keys suggest they contain secrets.
 
+    Uses substring matching so compound keys like ``access_token``,
+    ``stripe_secret_key``, or ``webhook_secret`` are caught automatically.
+
     Nested dicts and lists are shallow-copied before mutation to avoid
     corrupting shared objects that other code paths may still reference.
     """
     for key in list(event_dict):
         lower = key.lower()
-        if lower in _SENSITIVE_KEYS:
+        if _is_sensitive_key(lower):
             event_dict[key] = _REDACTED
         elif isinstance(event_dict[key], dict):
             event_dict[key] = _sanitize_sensitive_keys(_logger, _method, dict(event_dict[key]))
@@ -82,6 +89,7 @@ def configure_logging(settings: Settings | None = None) -> None:
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
+    structlog.contextvars.bind_contextvars(app_env=cfg.app_env)
 
 
 class RequestContextMiddleware:

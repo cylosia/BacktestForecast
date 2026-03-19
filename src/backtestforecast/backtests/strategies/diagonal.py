@@ -12,6 +12,7 @@ from backtestforecast.backtests.strategies.common import (
     offset_strike,
     require_contract_for_strike,
     resolve_strike,
+    resolve_wing_strike,
     sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
@@ -111,6 +112,9 @@ class PMCCStrategy(StrategyDefinition):
             detail_json={
                 "long_expiration": far_exp.isoformat(),
                 "short_expiration": near_exp.isoformat(),
+                "capital_required_per_unit": capital,
+                "max_loss_per_unit": max_loss,
+                "entry_package_market_value": entry_value,
                 "legs": [
                     {
                         "asset_type": "option",
@@ -160,8 +164,7 @@ class DiagonalSpreadStrategy(StrategyDefinition):
             contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
         )
         far_strikes = sorted_unique_strikes(far_cc)
-        spread_offset = -(overrides.spread_width if overrides and overrides.spread_width else 1)
-        far_strike = offset_strike(far_strikes, near_strike, spread_offset)
+        far_strike = resolve_wing_strike(far_strikes, near_strike, -1, bar.close_price, overrides.spread_width)
         if far_strike is None:
             raise DataUnavailableError(
                 "No lower strike available in far-dated chain for diagonal spread."
@@ -211,6 +214,9 @@ class DiagonalSpreadStrategy(StrategyDefinition):
             detail_json={
                 "long_expiration": far_exp.isoformat(),
                 "short_expiration": near_exp.isoformat(),
+                "capital_required_per_unit": capital,
+                "max_loss_per_unit": max_loss,
+                "entry_package_market_value": entry_value,
                 "legs": [
                     {
                         "asset_type": "option",
@@ -283,9 +289,8 @@ class DoubleDiagonalStrategy(StrategyDefinition):
             [c.strike_price for c in near_pc], bar.close_price, "put", overrides.short_put_strike, dte,
             contracts=near_pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
-        dd_offset = overrides.spread_width if overrides and overrides.spread_width else 1
-        far_call_strike = offset_strike(sorted_unique_strikes(far_cc), near_call_strike, -dd_offset)
-        far_put_strike = offset_strike(sorted_unique_strikes(far_pc), near_put_strike, dd_offset)
+        far_call_strike = resolve_wing_strike(sorted_unique_strikes(far_cc), near_call_strike, -1, bar.close_price, overrides.spread_width)
+        far_put_strike = resolve_wing_strike(sorted_unique_strikes(far_pc), near_put_strike, 1, bar.close_price, overrides.spread_width)
         if far_call_strike is None or far_put_strike is None:
             raise DataUnavailableError("No adjacent strike available in far-dated chain for double diagonal spread.")
 
@@ -342,6 +347,9 @@ class DoubleDiagonalStrategy(StrategyDefinition):
             detail_json={
                 "near_expiration": near_exp.isoformat(),
                 "far_expiration": far_exp.isoformat(),
+                "capital_required_per_unit": capital,
+                "max_loss_per_unit": max_loss,
+                "entry_package_market_value": entry_value,
                 "legs": [
                     {
                         "asset_type": "option",

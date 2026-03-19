@@ -33,7 +33,7 @@ _LOOKS_NUMERIC = re.compile(r"^-?(\d[\d,]*\.?\d*|\.\d+)([eE][+-]?\d+)?$")
 
 _MAX_CSV_TRADES = 10_000
 _MAX_CSV_EQUITY_POINTS = 50_000
-_MAX_PDF_TRADES = 100
+_MAX_PDF_PAGES = 50
 _MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
@@ -150,6 +150,7 @@ class ExportService:
                     error_code="user_not_found",
                     error_message="User account not found.",
                     completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
             )
             self.session.commit()
@@ -171,6 +172,7 @@ class ExportService:
                     error_code="entitlement_revoked",
                     error_message="Subscription no longer active.",
                     completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
             )
             self.session.commit()
@@ -180,7 +182,7 @@ class ExportService:
         rows = self.session.execute(
             sa_update(ExportJob)
             .where(ExportJob.id == export_job_id, ExportJob.status == "queued")
-            .values(status="running", started_at=datetime.now(UTC))
+            .values(status="running", started_at=datetime.now(UTC), updated_at=datetime.now(UTC))
         )
         self.session.commit()
         if rows.rowcount == 0:
@@ -201,6 +203,7 @@ class ExportService:
                         error_code="export_too_large",
                         error_message=f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades).",
                         completed_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
                     )
                 )
                 self.session.commit()
@@ -275,6 +278,7 @@ class ExportService:
                     error_code="export_generation_failed",
                     error_message="Export generation failed. Please try again.",
                     completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
             )
             self.session.commit()
@@ -290,6 +294,7 @@ class ExportService:
                     error_code="export_generation_failed",
                     error_message="Export generation failed due to a data or configuration error.",
                     completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
             )
             self.session.commit()
@@ -305,6 +310,7 @@ class ExportService:
                     error_code="export_generation_failed",
                     error_message="Export generation failed due to an unexpected error.",
                     completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
             )
             self.session.commit()
@@ -362,6 +368,7 @@ class ExportService:
                     status="expired",
                     size_bytes=0,
                     sha256_hex=None,
+                    updated_at=datetime.now(UTC),
                 )
             )
 
@@ -380,8 +387,10 @@ class ExportService:
                     storage_failures += 1
                     logger.warning("cleanup.storage_delete_failed", storage_key=key, exc_info=True)
 
-            cleaned += len(jobs) - storage_failures
-            logger.info("cleanup.batch_completed", batch=batch_count, cleaned=len(jobs) - storage_failures, storage_deleted=len(storage_keys_to_delete) - storage_failures)
+            db_cleaned = len(jobs)
+            storage_cleaned = len(storage_keys_to_delete) - storage_failures
+            cleaned += db_cleaned
+            logger.info("cleanup.batch_completed", batch=batch_count, db_cleaned=db_cleaned, storage_cleaned=storage_cleaned, storage_failures=storage_failures)
 
             if len(jobs) < batch_size:
                 break
@@ -414,7 +423,6 @@ class ExportService:
                     storage_key=storage_key,
                     exc_info=True,
                 )
-                raise
         self.session.delete(export_job)
         self.session.commit()
 
@@ -432,26 +440,12 @@ class ExportService:
         ``enqueue_export`` followed by the Celery task instead.
         """
         settings = get_settings()
-        assert settings.app_env not in ("production", "staging"), (
-            "create_export is for tests only; use enqueue_export + Celery in production"
-        )
+        if settings.app_env in ("production", "staging"):
+            raise RuntimeError(
+                "create_export is for tests only; use enqueue_export + Celery in production"
+            )
         enqueued = self.enqueue_export(user, payload, request_id=request_id, ip_address=ip_address)
         export_job = self.execute_export_by_id(enqueued.id)
-        if export_job.status == "succeeded":
-            self.audit.record(
-                event_type="export.created",
-                subject_type="export_job",
-                subject_id=export_job.id,
-                user_id=user.id,
-                request_id=request_id,
-                ip_address=ip_address,
-                metadata={
-                    "run_id": str(export_job.backtest_run_id),
-                    "format": export_job.export_format,
-                    "size_bytes": export_job.size_bytes,
-                },
-            )
-            self.session.commit()
         return self.to_response(export_job)
 
     def get_export_for_download(
@@ -517,11 +511,18 @@ class ExportService:
                 f"the {_MAX_EXPORT_BYTES // (1024 * 1024)} MB limit. "
                 f"Trades: {len(detail.trades)}, equity points: {len(detail.equity_curve)}."
             )
-        output = io.StringIO()
-        writer = csv.writer(output)
+        buf = io.BytesIO()
+        text_wrapper = io.TextIOWrapper(buf, encoding="utf-8", newline="")
+        writer = csv.writer(text_wrapper)
 
         def safe_row(values: list[object]) -> list[object]:
             return [self._sanitize_csv_cell(value) for value in values]
+
+        def _check_size() -> None:
+            if buf.tell() > _MAX_EXPORT_BYTES:
+                raise ValueError(
+                    f"CSV export exceeded {_MAX_EXPORT_BYTES // (1024 * 1024)} MB during generation."
+                )
 
         writer.writerow(safe_row(["section", "field", "value"]))
         writer.writerow(safe_row(["run", "symbol", detail.symbol]))
@@ -549,7 +550,7 @@ class ExportService:
         ]))
         writer.writerow(safe_row([
             "note", "Sharpe ratio uses sample standard deviation (N-1 denominator). "
-            "Sortino ratio uses population downside deviation (N denominator). "
+            "Sortino ratio uses sample downside deviation (N-1 denominator). "
             "Win rate excludes break-even trades (net_pnl == 0) from the denominator. "
             "Values may differ from other platforms.",
         ]))
@@ -596,6 +597,7 @@ class ExportService:
             writer.writerow(
                 safe_row(["trade", f"... {len(detail.trades) - _MAX_CSV_TRADES} additional trades omitted ..."])
             )
+        _check_size()
 
         writer.writerow([])
         writer.writerow(safe_row(["equity_curve", "trade_date", "equity", "cash", "position_value", "drawdown_pct"]))
@@ -620,7 +622,9 @@ class ExportService:
                 )
             )
 
-        return output.getvalue().encode("utf-8")
+        text_wrapper.flush()
+        text_wrapper.detach()
+        return buf.getvalue()
 
     def _build_pdf(self, detail: BacktestRunDetailResponse) -> bytes:
         try:
@@ -653,6 +657,10 @@ class ExportService:
 
         def line(text: str, *, bold: bool = False, step: float = 16.0) -> None:
             nonlocal y, _page_number
+            if _page_number > _MAX_PDF_PAGES:
+                raise ValueError(
+                    f"PDF export exceeded the maximum of {_MAX_PDF_PAGES} pages."
+                )
             pdf.setFont(_BOLD_FONT if bold else _BASE_FONT, 10 if not bold else 12)
             pdf.drawString(0.75 * inch, y, text)
             y -= step
@@ -702,14 +710,15 @@ class ExportService:
             line(f"CAGR: {_fmt_pct(s.cagr_pct)}")
         line("")
         line("Trades", bold=True, step=20.0)
-        for trade in detail.trades[:_MAX_PDF_TRADES]:
+        max_pdf_trades = get_settings().max_pdf_trades
+        for trade in detail.trades[:max_pdf_trades]:
             line(
                 f"{trade.entry_date.isoformat()} -> {trade.exit_date.isoformat()} | "
                 f"{trade.option_ticker} | qty {trade.quantity} | net {_fmt_usd(trade.net_pnl)}",
                 step=14.0,
             )
-        if len(detail.trades) > _MAX_PDF_TRADES:
-            line(f"... {len(detail.trades) - _MAX_PDF_TRADES} additional trades omitted from PDF view ...")
+        if len(detail.trades) > max_pdf_trades:
+            line(f"... {len(detail.trades) - max_pdf_trades} additional trades omitted from PDF view ...")
 
         if detail.equity_curve:
             line("")
@@ -757,6 +766,7 @@ class ExportService:
             file_name=job.file_name,
             mime_type=job.mime_type,
             size_bytes=job.size_bytes,
+            sha256_hex=job.sha256_hex,
             error_code=job.error_code,
             error_message=job.error_message,
             created_at=job.created_at,

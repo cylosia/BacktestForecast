@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import math
 import time as _time
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from typing import Self
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -44,42 +43,13 @@ from backtestforecast.schemas.backtests import (
 from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.utils import to_decimal
 
 logger = structlog.get_logger("services.backtests")
 
-DECIMAL_QUANT = Decimal("0.0001")
 # Hard limit on equity points per response. For runs with more points,
 # consider adding server-side downsampling or cursor-based pagination.
 EQUITY_CURVE_LIMIT = 10_000
-
-
-def to_decimal(value: float | Decimal | None, *, allow_infinite: bool = False) -> Decimal | None:
-    """Convert a float or Decimal to a quantized Decimal.
-
-    NaN returns ``None`` so that scan/sweep serialization does not crash
-    on unexpected NaN values from the backtest engine.  Infinite values
-    return ``None`` when *allow_infinite* is True (appropriate for
-    metrics like profit_factor where infinity is a valid result meaning
-    "no losses"), or raise ``ValueError`` when False (the default, for
-    fields that must be finite).
-    """
-    if value is None:
-        return None
-    if isinstance(value, Decimal):
-        if value.is_nan():
-            return None
-        if value.is_infinite():
-            if allow_infinite:
-                return None
-            raise ValueError(f"Non-finite Decimal value: {value}")
-        return value.quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
-    if math.isnan(value):
-        return None
-    if math.isinf(value):
-        if allow_infinite:
-            return None
-        raise ValueError(f"Non-finite float value: {value}")
-    return Decimal(str(value)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 
 
 class BacktestService:
@@ -131,7 +101,8 @@ class BacktestService:
             account_size=to_decimal(request.account_size),
             risk_per_trade_pct=to_decimal(request.risk_per_trade_pct),
             commission_per_contract=to_decimal(request.commission_per_contract),
-            input_snapshot_json=request.model_dump(mode="json"),
+            risk_free_rate=to_decimal(get_settings().risk_free_rate),
+            input_snapshot_json={**request.model_dump(mode="json"), "risk_free_rate": get_settings().risk_free_rate},
             idempotency_key=request.idempotency_key,
             warnings_json=[],
             engine_version="options-multileg-v2",
@@ -161,6 +132,13 @@ class BacktestService:
 
         run = self._build_initial_run(user.id, request, status="queued")
         self.run_repository.add(run)
+        self.audit.record(
+            event_type="backtest.created",
+            subject_type="backtest_run",
+            subject_id=run.id,
+            user_id=user.id,
+            metadata={"symbol": run.symbol, "strategy_type": run.strategy_type},
+        )
         try:
             self.session.commit()
         except IntegrityError:
@@ -175,14 +153,6 @@ class BacktestService:
                     return existing
             raise
         self.session.refresh(run)
-        self.audit.record(
-            event_type="backtest.created",
-            subject_type="backtest_run",
-            subject_id=run.id,
-            user_id=user.id,
-            metadata={"symbol": run.symbol, "strategy_type": run.strategy_type},
-        )
-        self.session.commit()
         return run
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:
@@ -221,24 +191,25 @@ class BacktestService:
         _exec_start = _time.monotonic()
         try:
             execution_result = self.execution_service.execute_request(request)
-            self._apply_execution_result(run, execution_result)
-            completed_at = datetime.now(UTC)
-            # CAS guard: only set status to "succeeded" if the reaper has not
-            # concurrently marked this run as "failed".  The FOR UPDATE lock
-            # was released by the commit on the queued→running transition, so
-            # the reaper can legitimately change status while execution is in
-            # progress.  We must NOT flush ORM changes before the CAS check
-            # because flush() would unconditionally overwrite the reaper's
-            # status change.
-            success_rows = self.session.execute(
-                update(BacktestRun)
-                .where(BacktestRun.id == run.id, BacktestRun.status == "running")
-                .values(
-                    status="succeeded",
-                    completed_at=completed_at,
-                    updated_at=datetime.now(UTC),
+            with self.session.no_autoflush:
+                self._apply_execution_result(run, execution_result)
+                completed_at = datetime.now(UTC)
+                # CAS guard: only set status to "succeeded" if the reaper has not
+                # concurrently marked this run as "failed".  The FOR UPDATE lock
+                # was released by the commit on the queued→running transition, so
+                # the reaper can legitimately change status while execution is in
+                # progress.  no_autoflush prevents the ORM dirty state from being
+                # flushed (and acquiring a row lock) before the CAS UPDATE, ensuring
+                # the reaper can win the race if it changed status first.
+                success_rows = self.session.execute(
+                    update(BacktestRun)
+                    .where(BacktestRun.id == run.id, BacktestRun.status == "running")
+                    .values(
+                        status="succeeded",
+                        completed_at=completed_at,
+                        updated_at=datetime.now(UTC),
+                    )
                 )
-            )
             if success_rows.rowcount == 0:
                 self.session.rollback()
                 logger.warning(
@@ -402,7 +373,7 @@ class BacktestService:
 
     def get_run_status(self, user: User, run_id: UUID) -> BacktestRunStatusResponse:
         """Lightweight status check without loading trades/equity."""
-        run = self.run_repository.get_status_for_user(run_id, user.id)
+        run = self.run_repository.get_lightweight_for_user(run_id, user.id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
         return BacktestRunStatusResponse(
@@ -416,6 +387,8 @@ class BacktestService:
 
     def get_run(self, user: User, run_id: UUID, *, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
         """Deprecated: use ``get_run_for_owner`` directly. Kept for backward compatibility."""
+        import warnings
+        warnings.warn("get_run is deprecated; use get_run_for_owner directly", DeprecationWarning, stacklevel=2)
         return self.get_run_for_owner(user_id=user.id, run_id=run_id, trade_limit=trade_limit)
 
     def get_run_for_owner(self, *, user_id: UUID, run_id: UUID, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
@@ -434,6 +407,13 @@ class BacktestService:
             raise ConflictError(
                 "Cannot delete a job that is currently queued or running. Cancel it first."
             )
+        self.audit.record(
+            event_type="backtest.deleted",
+            subject_type="backtest_run",
+            subject_id=run.id,
+            user_id=user_id,
+            metadata={"symbol": run.symbol, "strategy_type": run.strategy_type},
+        )
         self.session.delete(run)
         try:
             self.session.commit()
@@ -608,43 +588,52 @@ class BacktestService:
         run.max_consecutive_losses = summary.max_consecutive_losses
         run.recovery_factor = to_decimal(summary.recovery_factor, allow_infinite=True) if summary.recovery_factor is not None else None
 
-        for trade in execution_result.trades:
-            if not validate_json_shape(trade.detail_json, "BacktestTrade.detail_json", required_keys=_TRADE_DETAIL_REQUIRED_KEYS):
-                logger.warning("backtests.malformed_trade_detail_json", option_ticker=trade.option_ticker, keys=list(trade.detail_json.keys()) if trade.detail_json else [])
-            run.trades.append(
-                BacktestTrade(
-                    option_ticker=trade.option_ticker,
-                    strategy_type=trade.strategy_type,
-                    underlying_symbol=trade.underlying_symbol,
-                    entry_date=trade.entry_date,
-                    exit_date=trade.exit_date,
-                    expiration_date=trade.expiration_date,
-                    quantity=trade.quantity,
-                    dte_at_open=trade.dte_at_open,
-                    holding_period_days=trade.holding_period_days,
-                    entry_underlying_close=to_decimal(trade.entry_underlying_close),
-                    exit_underlying_close=to_decimal(trade.exit_underlying_close),
-                    entry_mid=to_decimal(trade.entry_mid),
-                    exit_mid=to_decimal(trade.exit_mid),
-                    gross_pnl=to_decimal(trade.gross_pnl),
-                    net_pnl=to_decimal(trade.net_pnl),
-                    total_commissions=to_decimal(trade.total_commissions),
-                    entry_reason=trade.entry_reason,
-                    exit_reason=trade.exit_reason,
-                    detail_json=trade.detail_json,
-                )
-            )
+        with self.session.no_autoflush:
+            if execution_result.trades:
+                trade_dicts: list[dict] = []
+                for trade in execution_result.trades:
+                    if not validate_json_shape(trade.detail_json, "BacktestTrade.detail_json", required_keys=_TRADE_DETAIL_REQUIRED_KEYS):
+                        logger.warning("backtests.malformed_trade_detail_json", option_ticker=trade.option_ticker, keys=list(trade.detail_json.keys()) if trade.detail_json else [])
+                    trade_dicts.append({
+                        "id": uuid4(),
+                        "run_id": run.id,
+                        "option_ticker": trade.option_ticker,
+                        "strategy_type": trade.strategy_type,
+                        "underlying_symbol": trade.underlying_symbol,
+                        "entry_date": trade.entry_date,
+                        "exit_date": trade.exit_date,
+                        "expiration_date": trade.expiration_date,
+                        "quantity": trade.quantity,
+                        "dte_at_open": trade.dte_at_open,
+                        "holding_period_days": trade.holding_period_days,
+                        "entry_underlying_close": to_decimal(trade.entry_underlying_close),
+                        "exit_underlying_close": to_decimal(trade.exit_underlying_close),
+                        "entry_mid": to_decimal(trade.entry_mid),
+                        "exit_mid": to_decimal(trade.exit_mid),
+                        "gross_pnl": to_decimal(trade.gross_pnl),
+                        "net_pnl": to_decimal(trade.net_pnl),
+                        "total_commissions": to_decimal(trade.total_commissions),
+                        "entry_reason": trade.entry_reason,
+                        "exit_reason": trade.exit_reason,
+                        "detail_json": trade.detail_json,
+                    })
+                self.session.execute(insert(BacktestTrade).values(trade_dicts))
 
-        for point in execution_result.equity_curve:
-            run.equity_points.append(
-                BacktestEquityPoint(
-                    trade_date=point.trade_date,
-                    equity=to_decimal(point.equity),
-                    cash=to_decimal(point.cash),
-                    position_value=to_decimal(point.position_value),
-                    drawdown_pct=to_decimal(point.drawdown_pct),
-                )
-            )
+            if execution_result.equity_curve:
+                equity_dicts: list[dict] = []
+                for point in execution_result.equity_curve:
+                    equity_dicts.append({
+                        "id": uuid4(),
+                        "run_id": run.id,
+                        "trade_date": point.trade_date,
+                        "equity": to_decimal(point.equity),
+                        "cash": to_decimal(point.cash),
+                        "position_value": to_decimal(point.position_value),
+                        "drawdown_pct": to_decimal(point.drawdown_pct),
+                    })
+                self.session.execute(insert(BacktestEquityPoint).values(equity_dicts))
+
+        self.session.expire(run, ["trades", "equity_points"])
 
     @staticmethod
     def _summary_response(run: BacktestRun) -> BacktestSummaryResponse:
@@ -724,5 +713,6 @@ class BacktestService:
             summary=self._summary_response(run),
             trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
             equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
-            risk_free_rate=get_settings().risk_free_rate,
+            equity_curve_truncated=len(equity_points) >= EQUITY_CURVE_LIMIT,
+            risk_free_rate=float(run.risk_free_rate) if run.risk_free_rate is not None else get_settings().risk_free_rate,
         )

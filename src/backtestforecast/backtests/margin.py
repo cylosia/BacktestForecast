@@ -17,7 +17,7 @@ _MIN_MARGIN_PER_CONTRACT = 50.0
 
 def _require_non_negative(**kwargs: float) -> None:
     for name, value in kwargs.items():
-        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        if isinstance(value, (float, int)) and (math.isnan(value) or math.isinf(value)):
             raise ValueError(f"{name} must be a finite number, got {value}")
         if value < 0:
             raise ValueError(f"{name} must be non-negative, got {value}")
@@ -133,6 +133,7 @@ def credit_spread_margin(
 
     Returns margin per contract (× 100).
     """
+    _require_non_negative(spread_width_per_share=abs(spread_width_per_share))
     return abs(spread_width_per_share) * 100.0
 
 
@@ -152,6 +153,10 @@ def iron_condor_margin(
 
     Returns margin per contract (× 100).
     """
+    _require_non_negative(
+        call_spread_width=abs(call_spread_width_per_share),
+        put_spread_width=abs(put_spread_width_per_share),
+    )
     return max(abs(call_spread_width_per_share), abs(put_spread_width_per_share)) * 100.0
 
 
@@ -260,6 +265,7 @@ def ratio_backspread_margin(
 
     Returns margin per contract unit.
     """
+    _require_non_negative(short_strike=short_strike, long_strike=long_strike)
     return abs(long_strike - short_strike) * 100.0
 
 

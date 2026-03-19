@@ -62,5 +62,5 @@ class DailyPicksRepository:
                 )
             else:
                 stmt = stmt.where(NightlyPipelineRun.created_at < cursor_dt)
-        stmt = stmt.limit(limit)
+        stmt = stmt.limit(min(limit, 200))
         return list(self.session.scalars(stmt))

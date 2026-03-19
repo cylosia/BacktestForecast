@@ -6,12 +6,12 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import BillingInterval
-from backtestforecast.billing.entitlements import PlanTier as EntitlementPlanTier
 from backtestforecast.schemas.common import PlanTier
 
 
 class CreateCheckoutSessionRequest(BaseModel):
-    tier: Literal[EntitlementPlanTier.PRO.value, EntitlementPlanTier.PREMIUM.value]
+    model_config = {"extra": "forbid"}
+    tier: Literal[PlanTier.PRO.value, PlanTier.PREMIUM.value]
     billing_interval: BillingInterval = Field(default=BillingInterval.MONTHLY)
 
 
@@ -45,10 +45,23 @@ class PortalSessionResponse(BaseModel):
         return v
 
 
+_VALID_SUBSCRIPTION_STATUSES = frozenset({
+    "incomplete", "incomplete_expired", "trialing", "active",
+    "past_due", "canceled", "unpaid", "paused",
+})
+
+
 class BillingStateResponse(BaseModel):
     plan_tier: PlanTier
     subscription_status: str | None = None
     subscription_billing_interval: str | None = None
+
+    @field_validator("subscription_status", mode="before")
+    @classmethod
+    def validate_subscription_status(cls, v: str | None) -> str | None:
+        if v is not None and v not in _VALID_SUBSCRIPTION_STATUSES:
+            raise ValueError(f"Invalid subscription_status: {v}")
+        return v
     subscription_current_period_end: datetime | None = None
     cancel_at_period_end: bool = False
 

@@ -71,13 +71,13 @@ class TradeResult:
     quantity: int
     dte_at_open: int
     holding_period_days: int
-    entry_underlying_close: float
-    exit_underlying_close: float
-    entry_mid: float  # Per-contract value / 100 (e.g., $2.50 mid → 0.025). NOT the raw option mid-price.
-    exit_mid: float  # Per-contract value / 100 at exit. Same convention as entry_mid.
-    gross_pnl: float
-    net_pnl: float
-    total_commissions: float
+    entry_underlying_close: Decimal
+    exit_underlying_close: Decimal
+    entry_mid: Decimal  # Per-unit value / 100 (e.g., $2.50 mid → 0.025). NOT the raw option mid-price.
+    exit_mid: Decimal  # Per-unit value / 100 at exit. Same convention as entry_mid.
+    gross_pnl: Decimal
+    net_pnl: Decimal
+    total_commissions: Decimal
     entry_reason: str
     exit_reason: str
     detail_json: dict[str, Any] = field(default_factory=dict)
@@ -86,10 +86,10 @@ class TradeResult:
 @dataclass(frozen=True, slots=True)
 class EquityPointResult:
     trade_date: date
-    equity: float
-    cash: float
-    position_value: float
-    drawdown_pct: float
+    equity: Decimal
+    cash: Decimal
+    position_value: Decimal
+    drawdown_pct: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,12 +172,12 @@ class OpenMultiLegPosition:
     max_loss_per_unit: float | None = None
     max_profit_per_unit: float | None = None
     entry_reason: str = "entry_rules_met"
-    entry_commission_total: float = 0.0
+    entry_commission_total: Decimal = Decimal("0")
     detail_json: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class PositionSnapshot:
-    position_value: float
+    position_value: Decimal
     position_missing_quote: bool
     missing_quote_tickers: tuple[str, ...]

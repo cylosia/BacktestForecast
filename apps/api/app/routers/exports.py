@@ -225,6 +225,7 @@ def download_export(
                 headers = {
                     "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
                     "X-Accel-Buffering": "no",
+                    "X-Content-Type-Options": "nosniff",
                 }
                 if content_length is not None:
                     headers["Content-Length"] = str(content_length)
@@ -294,6 +295,7 @@ def download_export(
             "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
             "Content-Length": str(len(content)),
             "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
         }
 
         _FALLBACK_CHUNK_SIZE = 32_768  # 32 KB

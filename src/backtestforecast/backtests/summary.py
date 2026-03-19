@@ -17,6 +17,10 @@ def build_summary(
 ) -> BacktestSummary:
     """Build a summary of backtest results from trade and equity data.
 
+    TradeResult and EquityPointResult financial fields are Decimal.
+    All values are converted to float at this statistics boundary since
+    summary metrics use ``math.sqrt`` and other float-only functions.
+
     Break-even trades (net_pnl == 0) are excluded from both wins and losses.
     This can inflate win rate when many trades break even, as the effective
     sample size is reduced. Consider this when interpreting results.
@@ -28,21 +32,20 @@ def build_summary(
     sum_holding = 0.0
     sum_dte = 0.0
     for trade in trades:
-        if trade.net_pnl > 0:
-            win_pnls.append(trade.net_pnl)
-        elif trade.net_pnl < 0:
-            loss_pnls.append(trade.net_pnl)
-        total_net_pnl += trade.net_pnl
-        total_commissions += trade.total_commissions
+        pnl_f = float(trade.net_pnl)
+        if pnl_f > 0:
+            win_pnls.append(pnl_f)
+        elif pnl_f < 0:
+            loss_pnls.append(pnl_f)
+        total_net_pnl += pnl_f
+        total_commissions += float(trade.total_commissions)
         sum_holding += trade.holding_period_days
         sum_dte += trade.dte_at_open
 
     trade_count = len(trades)
-    # Break-even trades (net_pnl == 0) are excluded from both wins and losses.
-    # This can inflate the win rate slightly when many near-zero P&L trades exist.
     decided = len(win_pnls) + len(loss_pnls)
     win_rate = (len(win_pnls) / decided * 100.0) if decided else 0.0
-    max_drawdown_pct = max((point.drawdown_pct for point in equity_curve), default=0.0)
+    max_drawdown_pct = max((float(point.drawdown_pct) for point in equity_curve), default=0.0)
     avg_win = fmean(win_pnls) if win_pnls else 0.0
     avg_loss = fmean(loss_pnls) if loss_pnls else 0.0
 
@@ -74,9 +77,10 @@ def build_summary(
         running_peak = starting_equity
         max_drawdown_dollars = 0.0
         for pt in equity_curve:
-            if pt.equity > running_peak:
-                running_peak = pt.equity
-            dd = running_peak - pt.equity
+            eq_f = float(pt.equity)
+            if eq_f > running_peak:
+                running_peak = eq_f
+            dd = running_peak - eq_f
             if dd > max_drawdown_dollars:
                 max_drawdown_dollars = dd
         if max_drawdown_dollars > 0:
@@ -153,7 +157,7 @@ def _compute_sharpe_sortino(
     if calendar_days < _MIN_CALENDAR_DAYS_FOR_RATIOS:
         return None, None
 
-    equities = [point.equity for point in equity_curve]
+    equities = [float(point.equity) for point in equity_curve]
     if any(eq <= 0 for eq in equities):
         return None, None
     daily_rf = risk_free_rate / 252.0
@@ -174,8 +178,8 @@ def _compute_sharpe_sortino(
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
-    if downside_sq_sum > 0 and n > 0:
-        down_dev = math.sqrt(downside_sq_sum / n)
+    if downside_sq_sum > 0 and n > 1:
+        down_dev = math.sqrt(downside_sq_sum / (n - 1))
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None

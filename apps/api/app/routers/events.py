@@ -58,11 +58,15 @@ _REDIS_PING_INTERVAL = 60.0
 
 
 async def _get_async_redis():
-    """Return a lazily-initialised shared async Redis connection pool.
+    """Return the shared async Redis pool for slot acquire/release operations.
+
+    This pool is used **only** for short-lived atomic Lua scripts that manage
+    per-user connection slot counts.  Pub/Sub subscriptions use dedicated
+    per-connection clients created by ``_create_subscription_client()`` so
+    that a failure on one subscription never disrupts other SSE streams.
 
     Validates pool health via ``ping()`` at most once every 60 s; recreates on
-    failure.  All checks and mutations are done under the lock to prevent
-    races between concurrent coroutines.
+    failure.
     """
     from redis.exceptions import RedisError
 
@@ -121,7 +125,12 @@ async def _close_async_redis(*, suppress_errors: bool = True) -> None:
 
 
 async def _invalidate_async_redis() -> None:
-    """Alias: close and discard the shared pool (suppresses errors)."""
+    """Close and discard the shared slot-management pool (suppresses errors).
+
+    The shared pool is only used for slot acquire/release Lua scripts.
+    Per-connection subscription clients are managed within each
+    ``_subscribe_redis`` generator and cleaned up independently.
+    """
     await _close_async_redis(suppress_errors=True)
 
 
@@ -157,30 +166,55 @@ def _verify_ownership(model: type, resource_id: UUID, user_id: UUID) -> bool:
         return True
 
 
+async def _create_subscription_client():
+    """Create a dedicated async Redis client for a single SSE subscription.
+
+    Each SSE connection gets its own lightweight client so that a failure
+    (or close) on one subscription does not disrupt any other concurrent
+    SSE stream.  The shared pool (``_get_async_redis``) is still used for
+    short-lived slot acquire/release operations.
+    """
+    import redis.asyncio as aioredis
+
+    settings = get_settings()
+    return aioredis.from_url(
+        settings.redis_cache_url,
+        decode_responses=True,
+        max_connections=1,
+        socket_timeout=settings.sse_redis_socket_timeout,
+        socket_connect_timeout=settings.sse_redis_connect_timeout,
+    )
+
+
 async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGenerator[str | None, None]:
     """Subscribe to a Redis Pub/Sub channel and yield messages.
+
+    Each call creates a **dedicated** Redis client so that reconnection
+    or failure on one SSE stream never disrupts other concurrent streams.
+    The client is closed when the generator exits.
 
     Yields ``None`` when no message arrives within the heartbeat window so
     callers can check deadlines / disconnections during quiet periods.
     Automatically retries subscription up to *max_reconnects* times on
     transient Redis errors.
-
-    Future optimization: multiple SSE clients watching the same resource
-    could share a single Redis subscription via a local fan-out pattern
-    instead of each client creating its own SUBSCRIBE.
     """
     from redis.exceptions import RedisError
 
     for attempt in range(max_reconnects + 1):
-        pool = await _get_async_redis()
-        pubsub = pool.pubsub()
+        client = await _create_subscription_client()
+        pubsub = client.pubsub()
         try:
             await pubsub.subscribe(channel)
             while True:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True,
-                    timeout=SSE_HEARTBEAT_SECONDS,
-                )
+                try:
+                    async with asyncio.timeout(SSE_TIMEOUT_SECONDS):
+                        message = await pubsub.get_message(
+                            ignore_subscribe_messages=True,
+                            timeout=SSE_HEARTBEAT_SECONDS,
+                        )
+                except TimeoutError:
+                    logger.info("sse.subscription_timeout", channel=channel)
+                    return
                 if message and message["type"] == "message":
                     raw = message["data"]
                     if isinstance(raw, str) and len(raw) > 65_536:
@@ -199,7 +233,6 @@ async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGen
         except (RedisError, OSError):
             if attempt < max_reconnects:
                 logger.warning("sse.redis_subscription_retry", channel=channel, attempt=attempt + 1)
-                await _invalidate_async_redis()
                 await asyncio.sleep(1)
                 continue
             raise
@@ -207,6 +240,10 @@ async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGen
             try:
                 await pubsub.unsubscribe(channel)
                 await pubsub.close()
+            except Exception:
+                pass
+            try:
+                await client.aclose()
             except Exception:
                 pass
 
@@ -375,7 +412,7 @@ async def backtest_events(
     return EventSourceResponse(
         _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache, no-store", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -392,7 +429,7 @@ async def scan_events(
     return EventSourceResponse(
         _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache, no-store", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -409,7 +446,7 @@ async def sweep_events(
     return EventSourceResponse(
         _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache, no-store", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -426,7 +463,7 @@ async def export_events(
     return EventSourceResponse(
         _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache, no-store", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -443,5 +480,5 @@ async def analysis_events(
     return EventSourceResponse(
         _event_stream(channel, request, user.id),
         ping=SSE_HEARTBEAT_SECONDS,
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache, no-store", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

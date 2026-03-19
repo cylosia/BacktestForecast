@@ -25,6 +25,44 @@ logger = structlog.get_logger("api.account")
 _EXPORT_PAGE_SIZE = 1000
 
 
+def _count_all_for_user(db: Session, user_id: uuid.UUID) -> dict[str, int]:
+    """Fetch all entity counts for a user in a single round-trip.
+
+    Replaces 6 separate ``SELECT COUNT(*)`` queries with one query
+    that uses scalar subqueries, reducing DB round-trips from 6 to 1.
+    """
+    from sqlalchemy import func, select
+
+    from backtestforecast.models import (
+        BacktestRun,
+        BacktestTemplate,
+        ExportJob,
+        ScannerJob,
+        SweepJob,
+        SymbolAnalysis,
+    )
+
+    counts = db.execute(
+        select(
+            select(func.count(BacktestRun.id)).where(BacktestRun.user_id == user_id).correlate(None).scalar_subquery().label("backtests"),
+            select(func.count(BacktestTemplate.id)).where(BacktestTemplate.user_id == user_id).correlate(None).scalar_subquery().label("templates"),
+            select(func.count(ScannerJob.id)).where(ScannerJob.user_id == user_id).correlate(None).scalar_subquery().label("scanner_jobs"),
+            select(func.count(SweepJob.id)).where(SweepJob.user_id == user_id).correlate(None).scalar_subquery().label("sweep_jobs"),
+            select(func.count(ExportJob.id)).where(ExportJob.user_id == user_id).correlate(None).scalar_subquery().label("export_jobs"),
+            select(func.count(SymbolAnalysis.id)).where(SymbolAnalysis.user_id == user_id).correlate(None).scalar_subquery().label("symbol_analyses"),
+        )
+    ).one()
+
+    return {
+        "backtests": counts.backtests,
+        "templates": counts.templates,
+        "scanner_jobs": counts.scanner_jobs,
+        "sweep_jobs": counts.sweep_jobs,
+        "export_jobs": counts.export_jobs,
+        "symbol_analyses": counts.symbol_analyses,
+    }
+
+
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(
     user: User = Depends(get_current_user),
@@ -56,63 +94,71 @@ def delete_account(
 
     from backtestforecast.services.billing import BillingService
     billing = BillingService(db)
-    cancelled_ids: list = []
     try:
-        cancelled_ids = billing.cancel_in_flight_jobs(user.id)
-    except Exception:
-        logger.warning("account.cancel_in_flight_failed", user_id=str(user.id), exc_info=True)
+        cancelled_ids: list = []
+        try:
+            cancelled_ids = billing.cancel_in_flight_jobs(user.id)
+        except Exception:
+            logger.warning("account.cancel_in_flight_failed", user_id=str(user.id), exc_info=True)
 
-    stripe_sub_id = user.stripe_subscription_id
-    stripe_cust_id = user.stripe_customer_id
+        stripe_sub_id = user.stripe_subscription_id
+        stripe_cust_id = user.stripe_customer_id
 
-    # DB delete FIRST, then Stripe cleanup. This ordering ensures that if
-    # the DB commit fails the Stripe state is unchanged. If Stripe cleanup
-    # fails after DB commit, the user is deleted but Stripe may retain a
-    # customer object — acceptable since it won't be billed (no matching
-    # DB user). The reverse order would leave the user's DB record intact
-    # but Stripe already cancelled, which is harder to recover from.
-    try:
-        AuditService(db).record_always(
-            event_type="account.deleted",
-            subject_type="user",
-            subject_id=user.id,
-            user_id=user.id,
-            request_id=metadata.request_id,
-            ip_address=metadata.ip_address,
-            metadata={
-                "deleted_user_id": str(user.id),
-                "clerk_user_id": user.clerk_user_id,
-                "stripe_subscription_id": stripe_sub_id,
-                "stripe_customer_id": stripe_cust_id,
-            },
+        try:
+            # user_id is set to None because the CASCADE from db.delete(user)
+            # will SET NULL the FK on audit_events anyway. Passing None makes
+            # the intent explicit and avoids a misleading non-null user_id
+            # that gets nullified milliseconds later. The user reference is
+            # preserved in metadata.deleted_user_id for audit trail queries.
+            AuditService(db).record_always(
+                event_type="account.deleted",
+                subject_type="user",
+                subject_id=user.id,
+                user_id=None,
+                request_id=metadata.request_id,
+                ip_address=metadata.ip_address,
+                metadata={
+                    "deleted_user_id": str(user.id),
+                    "clerk_user_id": user.clerk_user_id,
+                    "email": user.email,
+                    "plan_tier": user.plan_tier,
+                    "stripe_subscription_id": stripe_sub_id,
+                    "stripe_customer_id": stripe_cust_id,
+                },
+            )
+            db.delete(user)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("account.delete_failed", user_id=str(user.id))
+            raise
+
+        stripe_cleanup = _cleanup_stripe(billing, stripe_sub_id, stripe_cust_id, user.id)
+        ACCOUNT_DELETIONS_TOTAL.labels(stripe_cleanup_result=stripe_cleanup).inc()
+
+        if stripe_cleanup in ("partial", "failed", "client_unavailable"):
+            _dispatch_stripe_cleanup_retry(stripe_sub_id, stripe_cust_id, user.id, stripe_cleanup)
+
+        if cancelled_ids:
+            BillingService.publish_cancellation_events(cancelled_ids)
+
+        logger.warning(
+            "account.deleted",
+            user_id=str(user.id),
+            clerk_user_id=user.clerk_user_id,
+            stripe_cleanup_result=stripe_cleanup,
         )
-        db.delete(user)
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("account.delete_failed", user_id=str(user.id))
-        raise
-
-    stripe_cleanup = _cleanup_stripe(billing, stripe_sub_id, stripe_cust_id, user.id)
-    ACCOUNT_DELETIONS_TOTAL.labels(stripe_cleanup_result=stripe_cleanup).inc()
-
-    if cancelled_ids:
-        BillingService.publish_cancellation_events(cancelled_ids)
-
-    logger.warning(
-        "account.deleted",
-        user_id=str(user.id),
-        clerk_user_id=user.clerk_user_id,
-        stripe_cleanup_result=stripe_cleanup,
-    )
+    finally:
+        if hasattr(billing, 'close'):
+            billing.close()
 
 
-@router.get("/me/export", response_model=dict[str, object])
+@router.get("/me/export")
 def export_account_data(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(default=_EXPORT_PAGE_SIZE, ge=1, le=_EXPORT_PAGE_SIZE),
-    offset: int = Query(default=0, ge=0, le=10_000),
+    offset: int = Query(default=0, ge=0, le=100_000),
 ) -> dict[str, Any]:
     """Export all user data for GDPR data portability.
 
@@ -147,6 +193,8 @@ def export_account_data(
     export_jobs = export_repo.list_for_user(user.id, limit=limit, offset=offset)
     analyses = analysis_repo.list_for_user(user.id, limit=limit, offset=offset)
 
+    totals = _count_all_for_user(db, user.id)
+
     return {
         "user": {
             "id": str(user.id),
@@ -156,14 +204,7 @@ def export_account_data(
             "created_at": user.created_at.isoformat() if user.created_at else None,
         },
         "pagination": {"limit": limit, "offset": offset},
-        "totals": {
-            "backtests": backtest_repo.count_for_user(user.id),
-            "templates": template_repo.count_for_user(user.id),
-            "scanner_jobs": scanner_repo.count_for_user(user.id),
-            "sweep_jobs": sweep_repo.count_for_user(user.id),
-            "export_jobs": export_repo.count_for_user(user.id),
-            "symbol_analyses": analysis_repo.count_for_user(user.id),
-        },
+        "totals": totals,
         "backtests": [
             {
                 "id": str(r.id),
@@ -235,7 +276,7 @@ def export_account_data(
 
 
 def _cleanup_stripe(
-    billing: BillingService,
+    billing: "BillingService",
     subscription_id: str | None,
     customer_id: str | None,
     user_id: uuid.UUID,
@@ -248,7 +289,7 @@ def _cleanup_stripe(
         return "skipped"
 
     try:
-        client = billing.get_stripe_client()
+        client = billing.get_stripe_client(skip_circuit_check=True)
     except Exception:
         logger.warning("account.stripe_client_unavailable", user_id=str(user_id))
         return "client_unavailable"
@@ -285,3 +326,46 @@ def _cleanup_stripe(
     if sub_ok or cust_ok:
         return "partial"
     return "failed"
+
+
+def _dispatch_stripe_cleanup_retry(
+    subscription_id: str | None,
+    customer_id: str | None,
+    user_id: uuid.UUID,
+    sync_result: str,
+) -> None:
+    """Dispatch an async Celery task to retry Stripe cleanup.
+
+    Called when the synchronous cleanup in ``_cleanup_stripe`` fails
+    (returns "partial", "failed", or "client_unavailable"). The async
+    task retries with exponential backoff up to 5 times.
+    """
+    try:
+        from apps.worker.app.celery_app import celery_app
+
+        celery_app.send_task(
+            "maintenance.cleanup_stripe_orphan",
+            kwargs={
+                "subscription_id": subscription_id,
+                "customer_id": customer_id,
+                "user_id_str": str(user_id),
+            },
+            queue="maintenance",
+            countdown=30,
+        )
+        logger.info(
+            "account.stripe_cleanup_retry_dispatched",
+            user_id=str(user_id),
+            sync_result=sync_result,
+            subscription_id=subscription_id,
+            customer_id=customer_id,
+        )
+    except Exception:
+        logger.error(
+            "account.stripe_cleanup_retry_dispatch_failed",
+            user_id=str(user_id),
+            sync_result=sync_result,
+            subscription_id=subscription_id,
+            customer_id=customer_id,
+            exc_info=True,
+        )

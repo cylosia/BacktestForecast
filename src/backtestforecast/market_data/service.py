@@ -66,7 +66,7 @@ class MassiveOptionGateway:
         self._snapshot_cache: OrderedDict[str, OptionSnapshotRecord | None] = OrderedDict()
         self._iv_cache: OrderedDict[tuple[str, date], float | None] = OrderedDict()
         self._chain_snapshot_loaded: bool = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._tracked_entries = 0
 
     def _track_add(self, count: int = 1) -> None:
@@ -412,7 +412,10 @@ class MarketDataService:
                 if error_entry is not None:
                     cached_exc = error_entry[0]
                     if isinstance(cached_exc, Exception):
-                        raise type(cached_exc)(str(cached_exc)) from cached_exc
+                        try:
+                            raise type(cached_exc)(str(cached_exc)) from cached_exc
+                        except TypeError:
+                            raise DataUnavailableError(str(cached_exc)) from cached_exc
                     raise DataUnavailableError(
                         f"Market data fetch failed: {cached_exc}"
                     )
@@ -493,6 +496,14 @@ class MarketDataService:
 
         max_days_before = max(rule.days_before for rule in avoid_rules)
         max_days_after = max(rule.days_after for rule in avoid_rules)
+        # Widen the earnings window beyond the backtest range so the engine
+        # can evaluate proximity in both directions:
+        #   - Subtract max_days_after from start: captures earnings that
+        #     occurred *before* the backtest starts, since the engine checks
+        #     "are we within N days *after* an earnings event?"
+        #   - Add max_days_before to end: captures earnings that occur
+        #     *after* the backtest ends, since the engine checks "are we
+        #     within N days *before* an earnings event?"
         earnings_start = request.start_date - timedelta(days=max_days_after)
         earnings_end = request.end_date + timedelta(days=max_days_before)
 

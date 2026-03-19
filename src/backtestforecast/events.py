@@ -48,7 +48,7 @@ def _get_redis():
             )
         except Exception:
             _redis_client = None
-            _redis_retry_after = time.monotonic() + 30.0
+            _redis_retry_after = time.monotonic() + settings.redis_reconnect_backoff_seconds
             logger.warning("events.redis_connect_failed", exc_info=True)
             return None
         if not _atexit_registered:
@@ -98,7 +98,7 @@ def publish_job_status(
 
     channel = f"job:{job_type}:{job_id}:status"
     payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), **safe_meta}, default=str)
-    if len(payload.encode("utf-8")) > 10_000:
+    if len(payload.encode("utf-8")) > get_settings().sse_max_payload_bytes:
         logger.warning("events.metadata_too_large", job_type=job_type, job_id=str(job_id))
         payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), "_truncated": True}, default=str)
 

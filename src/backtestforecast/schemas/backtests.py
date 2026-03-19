@@ -10,7 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import JobStatus, PlanTier, sanitize_error_message
+from backtestforecast.schemas.common import JobStatus, PlanTier, RunJobStatus, sanitize_error_message
 
 SYMBOL_ALLOWED_CHARS = re.compile(r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
 
@@ -80,14 +80,7 @@ class SupportResistanceMode(str, Enum):
     BREAKDOWN_BELOW_SUPPORT = "breakdown_below_support"
 
 
-class RunStatus(str, Enum):
-    """Status enum for backtest runs. Unlike JobStatus, this excludes
-    ``expired`` which only applies to export jobs."""
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+RunStatus = RunJobStatus
 
 
 class RsiRule(BaseModel):
@@ -295,8 +288,11 @@ class CustomLegDefinition(BaseModel):
     def validate_leg(self) -> "CustomLegDefinition":
         if self.asset_type == "option" and self.contract_type is None:
             raise ValueError("contract_type is required for option legs")
-        if self.asset_type == "stock" and self.contract_type is not None:
-            raise ValueError("contract_type must be null for stock legs")
+        if self.asset_type == "stock":
+            if self.contract_type is not None:
+                raise ValueError("contract_type must be null for stock legs")
+            if self.expiration_offset != 0:
+                raise ValueError("expiration_offset must be 0 for stock legs")
         return self
 
 
@@ -524,9 +520,8 @@ class BacktestSummaryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     trade_count: int
-    decided_trades: int | None = None
-    win_rate: Decimal = Decimal("0")
-    total_roi_pct: Decimal = Decimal("0")
+    win_rate: Decimal | None = None
+    total_roi_pct: Decimal | None = None
     average_win_amount: Decimal = Decimal("0")
     average_loss_amount: Decimal = Decimal("0")
     average_holding_period_days: Decimal = Decimal("0")
@@ -538,7 +533,7 @@ class BacktestSummaryResponse(BaseModel):
     ending_equity: Decimal
     profit_factor: Decimal | None = None
     payoff_ratio: Decimal | None = None
-    expectancy: Decimal = Decimal("0")
+    expectancy: Decimal | None = None
     sharpe_ratio: Decimal | None = None
     sortino_ratio: Decimal | None = None
     cagr_pct: Decimal | None = None
@@ -649,13 +644,14 @@ class BacktestRunDetailResponse(BaseModel):
     data_source: str
     created_at: datetime
     started_at: datetime | None = None
-    completed_at: datetime | None
-    warnings: list[dict[str, Any]] = Field(alias="warnings_json")
+    completed_at: datetime | None = None
+    warnings: list[dict[str, Any]] = Field(alias="warnings_json", max_length=100)
     error_code: str | None = None
     error_message: str | None = None
     summary: BacktestSummaryResponse
-    trades: list[BacktestTradeResponse]
-    equity_curve: list[EquityCurvePointResponse]
+    trades: list[BacktestTradeResponse] = Field(max_length=10000)
+    equity_curve: list[EquityCurvePointResponse] = Field(max_length=10000)
+    equity_curve_truncated: bool = False
     risk_free_rate: Decimal | None = Field(
         default=None,
         description="Annualized risk-free rate used for Sharpe and Sortino ratio calculations.",
@@ -686,7 +682,7 @@ class BacktestRunListResponse(BaseModel):
 
 class CompareBacktestsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    run_ids: list[UUID] = Field(min_length=2, max_length=10)
+    run_ids: list[UUID] = Field(min_length=2, max_length=8)
 
     @field_validator("run_ids")
     @classmethod

@@ -8,7 +8,7 @@ definitions efficiently.  Fitness evaluation is parallelized via
 from __future__ import annotations
 
 import random
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Callable
@@ -157,12 +157,12 @@ class GeneticOptimizer:
         for key, fit_val in all_scored[:top_n]:
             ind = [
                 {
-                    "asset_type": "option",
-                    "contract_type": gene[0],
-                    "side": gene[1],
-                    "strike_offset": gene[2],
-                    "expiration_offset": gene[3],
-                    "quantity_ratio": Decimal(gene[4]),
+                    "asset_type": gene[0],
+                    "contract_type": gene[1],
+                    "side": gene[2],
+                    "strike_offset": gene[3],
+                    "expiration_offset": gene[4],
+                    "quantity_ratio": Decimal(gene[5]),
                 }
                 for gene in key
             ]

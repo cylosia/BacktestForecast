@@ -3,14 +3,14 @@ from __future__ import annotations
 import re
 from enum import Enum, StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 _SENSITIVE_PATTERNS = [
     re.compile(r"Traceback \(most recent call"),
     re.compile(
-        r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b.{0,500}\b(FROM|INTO|SET|TABLE|WHERE|VALUES|INDEX)\b",
-        re.IGNORECASE,
+        r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b.{0,2000}\b(FROM|INTO|SET|TABLE|WHERE|VALUES|INDEX)\b",
+        re.IGNORECASE | re.DOTALL,
     ),
     re.compile(r"psycopg|sqlalchemy\.exc|SQLSTATE|pg_catalog", re.IGNORECASE),
     re.compile(r"[A-Za-z]:\\(?:[^\s\\]+\\){2,}[^\s]*|/(?:home|usr|var|tmp|etc)/[^\s]+"),
@@ -22,14 +22,14 @@ _SENSITIVE_PATTERNS = [
 
 
 def sanitize_error_message(msg: str | None) -> str | None:
-    """Truncate and redact potentially sensitive details from error messages."""
+    """Redact potentially sensitive details, then truncate error messages."""
     if msg is None:
         return None
-    if len(msg) > 500:
-        msg = msg[:500] + "..."
     for pattern in _SENSITIVE_PATTERNS:
         if pattern.search(msg):
             return "An internal error occurred."
+    if len(msg) > 500:
+        msg = msg[:500] + "..."
     return msg
 
 
@@ -52,20 +52,31 @@ class JobStatus(StrEnum):
     EXPIRED = "expired"
 
 
-ExportJobStatus = JobStatus
-
-
-class PlanTier(str, Enum):
+class PlanTier(StrEnum):
     FREE = "free"
     PRO = "pro"
     PREMIUM = "premium"
 
 
+class QuotaErrorDetail(BaseModel):
+    """Extra fields attached to 403 quota_exceeded / feature_locked errors."""
+    current_tier: str | None = None
+    required_tier: str | None = None
+
+
 class ErrorDetail(BaseModel):
-    code: str
-    message: str
-    request_id: str | None = None
-    details: list[dict[str, object]] | None = None
+    code: str = Field(max_length=128)
+    message: str = Field(max_length=2000)
+    request_id: str | None = Field(default=None, max_length=64)
+    detail: QuotaErrorDetail | None = Field(
+        default=None,
+        description="Present on 403 quota/feature errors with current_tier and/or required_tier.",
+    )
+    details: list[dict[str, object]] | None = Field(
+        default=None,
+        max_length=20,
+        description="Present on 422 validation errors with per-field error descriptions.",
+    )
 
 
 class ErrorResponse(BaseModel):

@@ -491,7 +491,13 @@ class BillingService:
                 if dry_run:
                     action["action"] = "would_sync"
                 else:
-                    self._apply_subscription_to_user(user, subscription)
+                    nested = self.session.begin_nested()
+                    try:
+                        self._apply_subscription_to_user(user, subscription)
+                        nested.commit()
+                    except Exception:
+                        nested.rollback()
+                        raise
                     self.session.commit()
                     action["action"] = "synced"
                 logger.info(
@@ -663,10 +669,11 @@ class BillingService:
         result = self.session.execute(
             sa_update(User)
             .where(User.id == user.id, User.stripe_customer_id.is_(None))
-            .values(stripe_customer_id=customer.id)
+            .values(stripe_customer_id=customer.id, updated_at=datetime.now(UTC))
         )
         self.session.flush()
         if result.rowcount == 0:
+            import time as _time
             for _attempt in range(5):
                 try:
                     client.customers.delete(customer.id)
@@ -677,6 +684,7 @@ class BillingService:
                         customer_id=customer.id,
                         attempt=_attempt + 1,
                     )
+                    _time.sleep(0.2 * (2 ** _attempt))
             self.session.refresh(user)
             if user.stripe_customer_id is None:
                 raise ExternalServiceError(

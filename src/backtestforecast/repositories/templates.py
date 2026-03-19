@@ -29,6 +29,8 @@ class BacktestTemplateRepository:
         return self.session.scalar(stmt)
 
     def list_for_user(self, user_id: UUID, *, limit: int = 100, offset: int = 0) -> list[BacktestTemplate]:
+        limit = max(limit, 1)
+        offset = max(offset, 0)
         stmt = (
             select(BacktestTemplate)
             .where(BacktestTemplate.user_id == user_id)

@@ -63,6 +63,13 @@ class BacktestTemplateService:
             config_json=config_data,
         )
         self.repository.add(template)
+        self.audit.record(
+            event_type="template.created",
+            subject_type="backtest_template",
+            subject_id=template.id,
+            user_id=user.id,
+            metadata={"name": template.name, "strategy_type": template.strategy_type},
+        )
         try:
             self.session.commit()
         except IntegrityError as exc:
@@ -72,14 +79,6 @@ class BacktestTemplateService:
                 raise ValidationError(f"A template named '{request.name}' already exists.")
             raise
         self.session.refresh(template)
-        self.audit.record(
-            event_type="template.created",
-            subject_type="backtest_template",
-            subject_id=template.id,
-            user_id=user.id,
-            metadata={"name": template.name, "strategy_type": template.strategy_type},
-        )
-        self.session.commit()
         return self._to_response(template)
 
     def list_templates(self, user: User, *, limit: int = 100, offset: int = 0) -> TemplateListResponse:
@@ -87,14 +86,16 @@ class BacktestTemplateService:
         total = self.repository.count_for_user(user.id)
         template_limit = _resolve_template_limit(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
         items = []
+        skipped = 0
         for t in templates:
             try:
                 items.append(self._to_response(t))
             except Exception:
+                skipped += 1
                 logger.warning("templates.invalid_template_skipped", template_id=str(t.id))
         return TemplateListResponse(
             items=items,
-            total=total,
+            total=max(total - skipped, len(items)),
             template_limit=template_limit,
         )
 
@@ -122,7 +123,7 @@ class BacktestTemplateService:
                 expected = expected.replace(tzinfo=timezone.utc)
             if actual is not None and actual.tzinfo is None:
                 actual = actual.replace(tzinfo=timezone.utc)
-            if actual is not None and abs((actual - expected).total_seconds()) > 0.001:
+            if actual is not None and abs((actual - expected).total_seconds()) > 1.0:
                 raise ConflictError(
                     "Template was modified by another request. Please refresh and try again."
                 )
@@ -143,6 +144,14 @@ class BacktestTemplateService:
         if changed:
             template.updated_at = datetime.now(UTC)  # type: ignore[assignment]
 
+        if changed:
+            self.audit.record(
+                event_type="template.updated",
+                subject_type="backtest_template",
+                subject_id=template.id,
+                user_id=user.id,
+                metadata={"name": template.name, "strategy_type": template.strategy_type},
+            )
         from sqlalchemy.exc import IntegrityError
         try:
             self.session.commit()
@@ -153,15 +162,6 @@ class BacktestTemplateService:
                 raise ValidationError(f"A template named '{request.name or template.name}' already exists.")
             raise
         self.session.refresh(template)
-        if changed:
-            self.audit.record(
-                event_type="template.updated",
-                subject_type="backtest_template",
-                subject_id=template.id,
-                user_id=user.id,
-                metadata={"name": template.name, "strategy_type": template.strategy_type},
-            )
-            self.session.commit()
         return self._to_response(template)
 
     def delete(self, user: User, template_id: UUID) -> None:

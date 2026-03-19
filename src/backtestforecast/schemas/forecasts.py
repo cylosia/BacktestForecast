@@ -19,7 +19,7 @@ class ForecastRequestParams(BaseModel):
         v = v.strip().upper()
         if not SYMBOL_ALLOWED_CHARS.match(v):
             raise ValueError(
-                "Symbol must be 1-16 characters starting with a letter (A-Z, 0-9, ., /, ^)."
+                "Symbol must be 1-16 characters starting with a letter (A-Z) or ^, followed by A-Z, 0-9, ., /, ^, or -."
             )
         return v
 
@@ -32,4 +32,4 @@ class ForecastEnvelopeResponse(BaseModel):
             "and is not financial advice or a certainty of future results."
         )
     )
-    expected_move_abs_pct: Decimal
+    expected_move_abs_pct: Decimal = Field(ge=Decimal("0"), le=Decimal("500"))

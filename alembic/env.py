@@ -1,3 +1,19 @@
+"""Alembic environment configuration.
+
+MIGRATION BEST PRACTICES FOR ZERO-DOWNTIME DEPLOYMENTS:
+
+1. Index creation: Use ``op.execute("CREATE INDEX CONCURRENTLY ...")``
+   instead of ``op.create_index()`` to avoid holding SHARE locks on
+   production tables. CONCURRENTLY requires ``autocommit`` mode.
+
+2. Constraint addition: Add constraints as NOT VALID in one migration
+   (fast, no table scan), then VALIDATE in a separate subsequent
+   migration. This avoids holding ACCESS EXCLUSIVE locks during the
+   full-table validation scan.
+
+3. Column additions: Always provide a server_default for new NOT NULL
+   columns to avoid rewriting the entire table.
+"""
 from __future__ import annotations
 
 from logging.config import fileConfig

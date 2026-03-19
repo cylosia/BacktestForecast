@@ -21,6 +21,8 @@ class ScannerJobRepository:
         return job
 
     def list_for_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[ScannerJob]:
+        limit = max(limit, 1)
+        offset = max(offset, 0)
         stmt = (
             select(ScannerJob)
             .where(ScannerJob.user_id == user_id)
@@ -55,10 +57,13 @@ class ScannerJobRepository:
         return self.session.scalar(stmt)
 
     def get_by_idempotency_key(self, user_id: UUID, idempotency_key: str) -> ScannerJob | None:
-        stmt = select(ScannerJob).where(
-            ScannerJob.user_id == user_id,
-            ScannerJob.idempotency_key == idempotency_key,
-            ScannerJob.status.notin_(["failed", "cancelled"]),
+        stmt = (
+            select(ScannerJob).where(
+                ScannerJob.user_id == user_id,
+                ScannerJob.idempotency_key == idempotency_key,
+                ScannerJob.status.notin_(["failed", "cancelled"]),
+            )
+            .with_for_update()
         )
         return self.session.scalar(stmt)
 
@@ -85,6 +90,7 @@ class ScannerJobRepository:
         return self.session.scalar(stmt)
 
     def delete_recommendations(self, job_id: UUID) -> None:
+        """Remove recommendations for a job. WORKER-ONLY — never call from API routes without verifying ownership first."""
         self.session.execute(
             delete(ScannerRecommendation)
             .where(ScannerRecommendation.scanner_job_id == job_id)

@@ -34,6 +34,15 @@ from backtestforecast.pipeline.regime import classify_regime
 
 logger = structlog.get_logger("deep_analysis")
 
+_STAGE_ORDER = ["pending", "regime", "landscape", "deep_dive", "forecast"]
+
+
+def _validate_stage_transition(current: str, target: str) -> bool:
+    try:
+        return _STAGE_ORDER.index(target) >= _STAGE_ORDER.index(current)
+    except ValueError:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Dense parameter grid for exhaustive single-symbol scanning
@@ -282,6 +291,8 @@ class SymbolDeepAnalysisService:
 
         started_at = time.monotonic()
         analysis.status = "running"
+        if not _validate_stage_transition(analysis.stage, "regime"):
+            logger.warning("deep_analysis.backward_stage_transition", current=analysis.stage, target="regime", analysis_id=str(analysis_id))
         analysis.stage = "regime"
         analysis.started_at = datetime.now(UTC)
         self.session.commit()
@@ -321,6 +332,8 @@ class SymbolDeepAnalysisService:
             }
             validate_json_shape(regime_dict, "SymbolAnalysis.regime_json", required_keys=_REGIME_REQUIRED_KEYS)
             analysis.regime_json = regime_dict
+            if not _validate_stage_transition(analysis.stage, "landscape"):
+                logger.warning("deep_analysis.backward_stage_transition", current=analysis.stage, target="landscape", analysis_id=str(analysis_id))
             analysis.stage = "landscape"
             self.session.commit()
             logger.info("deep_analysis.regime_done", analysis_id=str(analysis_id), symbol=symbol)
@@ -343,6 +356,8 @@ class SymbolDeepAnalysisService:
             ]
             analysis.strategies_tested = len({c.strategy_type for c in landscape})
             analysis.configs_tested = len(landscape)
+            if not _validate_stage_transition(analysis.stage, "deep_dive"):
+                logger.warning("deep_analysis.backward_stage_transition", current=analysis.stage, target="deep_dive", analysis_id=str(analysis_id))
             analysis.stage = "deep_dive"
             self.session.commit()
             logger.info(
@@ -380,6 +395,8 @@ class SymbolDeepAnalysisService:
                 for r in top_results
             ]
             analysis.top_results_count = len(top_results)
+            if not _validate_stage_transition(analysis.stage, "forecast"):
+                logger.warning("deep_analysis.backward_stage_transition", current=analysis.stage, target="forecast", analysis_id=str(analysis_id))
             analysis.stage = "forecast"
             self.session.commit()
 

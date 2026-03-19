@@ -116,9 +116,13 @@ class StripeEventRepository:
             return False
         return True
 
-    def mark_error(self, stripe_event_id: str, error_detail: str) -> Any:
-        """Update a previously claimed event to record a processing error."""
-        return self.session.execute(
+    def mark_error(self, stripe_event_id: str, error_detail: str) -> bool:
+        """Update a previously claimed event to record a processing error.
+
+        Returns True if the row was updated, False if it was already in a
+        non-processing state (no-op).
+        """
+        result = self.session.execute(
             update(StripeEvent)
             .where(
                 StripeEvent.stripe_event_id == stripe_event_id,
@@ -126,13 +130,15 @@ class StripeEventRepository:
             )
             .values(idempotency_status="error", error_detail=error_detail[:2000])
         )
+        return result.rowcount > 0
 
-    def list_recent(self, *, limit: int = 50) -> list[StripeEvent]:
+    def list_recent(self, *, limit: int = 50, offset: int = 0) -> list[StripeEvent]:
         """Return the most recent Stripe events, newest first."""
         limit = min(limit, _MAX_PAGE_SIZE)
         stmt = (
             select(StripeEvent)
             .order_by(StripeEvent.created_at.desc())
+            .offset(offset)
             .limit(limit)
         )
         return list(self.session.scalars(stmt))

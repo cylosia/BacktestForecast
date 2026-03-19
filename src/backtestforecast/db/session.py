@@ -48,7 +48,8 @@ def build_engine(
 
 @lru_cache
 def _get_engine() -> Engine:
-    return build_engine(get_settings())
+    settings = get_settings()
+    return build_engine(settings, statement_timeout_ms=settings.db_statement_timeout_ms)
 
 
 @lru_cache
@@ -66,7 +67,8 @@ def create_session() -> Session:
 
 @lru_cache
 def _get_worker_engine() -> Engine:
-    return build_engine(get_settings(), statement_timeout_ms=300_000)
+    settings = get_settings()
+    return build_engine(settings, statement_timeout_ms=settings.db_worker_statement_timeout_ms)
 
 
 @lru_cache
@@ -106,6 +108,7 @@ def get_db() -> Generator[Session, None, None]:
                 dirty=len(db.dirty),
                 deleted=len(db.deleted),
             )
+            db.rollback()
     except Exception:
         db.rollback()
         raise
@@ -148,7 +151,7 @@ register_invalidation_callback(_invalidate_db_caches)
 def get_pool_stats() -> dict[str, int]:
     """Return connection pool statistics for monitoring."""
     pool = _get_engine().pool
-    stats = {
+    stats: dict[str, int] = {
         "pool_size": pool.size(),
         "checked_in": pool.checkedin(),
         "checked_out": pool.checkedout(),
@@ -157,7 +160,7 @@ def get_pool_stats() -> dict[str, int]:
     from sqlalchemy.pool import QueuePool
     if isinstance(pool, QueuePool):
         try:
-            stats["max_overflow"] = pool._max_overflow
-        except AttributeError:
+            stats["max_overflow"] = int(getattr(pool, "_max_overflow", -1))
+        except (AttributeError, TypeError, ValueError):
             stats["max_overflow"] = -1
     return stats

@@ -160,6 +160,7 @@ def individual_to_key(individual: Individual) -> tuple:
     canon = canonicalize(list(individual))
     return tuple(
         (
+            leg.get("asset_type", "option"),
             leg.get("contract_type"),
             leg.get("side"),
             leg.get("strike_offset", 0),

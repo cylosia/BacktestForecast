@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
-from backtestforecast.schemas.common import sanitize_error_message
+from backtestforecast.schemas.common import JobStatus, sanitize_error_message
 
 
 class AnalysisSummaryResponse(BaseModel):
@@ -16,7 +16,7 @@ class AnalysisSummaryResponse(BaseModel):
 
     id: UUID
     symbol: str
-    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    status: JobStatus
     stage: Literal["pending", "regime", "landscape", "deep_dive", "forecast"]
     close_price: Decimal | None = None
     strategies_tested: int
@@ -26,6 +26,7 @@ class AnalysisSummaryResponse(BaseModel):
     error_message: str | None = None
     error_code: str | None = None
     created_at: datetime
+    started_at: datetime | None = None
     completed_at: datetime | None = None
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
@@ -70,7 +71,7 @@ class AnalysisTopResult(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     summary: dict[str, Any] = Field(default_factory=dict)
     trades: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
-    equity_curve: list[dict[str, Any]] = Field(default_factory=list)
+    equity_curve: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
     forecast: dict[str, Any] = Field(default_factory=dict)
     score: float = 0.0
 
@@ -103,9 +104,9 @@ class CreateAnalysisRequest(BaseModel):
 
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisSummaryResponse]
-    total: int = 0
-    offset: int = 0
-    limit: int = 50
+    total: int = Field(default=0, ge=0)
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1)
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +168,8 @@ class DailyPickItemResponse(BaseModel):
 
 class DailyPicksResponse(BaseModel):
     trade_date: date | None = None
-    pipeline_run_id: str | None = None
-    status: str
+    pipeline_run_id: UUID | None = None
+    status: JobStatus
     items: list[DailyPickItemResponse] = Field(default_factory=list)
     pipeline_stats: PipelineStatsResponse | None = None
 
@@ -181,6 +182,7 @@ class PipelineHistoryItemResponse(BaseModel):
     recommendations_produced: int
     duration_seconds: Decimal | None = None
     completed_at: datetime | None = None
+    error_code: str | None = None
     error_message: str | None = None
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)

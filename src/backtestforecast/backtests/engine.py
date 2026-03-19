@@ -27,6 +27,14 @@ logger = structlog.get_logger(__name__)
 
 CONTRACT_MULTIPLIER: float = 100.0  # Default; prefer leg.contract_multiplier
 
+_D0 = Decimal("0")
+_D100 = Decimal("100")
+
+
+def _D(v: float | int) -> Decimal:
+    """Convert a float/int to Decimal via string to avoid IEEE 754 artefacts."""
+    return Decimal(str(v))
+
 
 class OptionsBacktestEngine:
     def __init__(self) -> None:
@@ -72,31 +80,23 @@ class OptionsBacktestEngine:
         #   and add a warning to the trade result.
         # - For P&L accuracy, the assignment should use intrinsic value (not
         #   mid-price) since assigned options settle at intrinsic.
-        # FIXME(#96): Convert all financial arithmetic to Decimal.
+        # Decimal precision: Phase 1 & 2 complete.
         #
-        # Currently, position values, P&L, slippage, and commission calculations
-        # use Python `float`, which introduces IEEE 754 rounding errors that
-        # compound over hundreds of trades. The `cash` variable already uses
-        # Decimal, but intermediate values (`position_value`, `entry_cost`,
-        # `gross_pnl`, `net_pnl`, etc.) are float, causing Decimal ↔ float
-        # conversions via `Decimal(str(...))` that mask precision loss.
+        # Phase 1: `cash` uses Decimal throughout.
+        # Phase 2: `position_value`, `entry_cost`, `gross_pnl`, `net_pnl`,
+        # commissions, slippage, and all P&L math use Decimal. TradeResult
+        # and EquityPointResult financial fields are Decimal. Float inputs
+        # from strategy legs/quotes are converted at the computation boundary
+        # via _D(). build_summary converts to float at the statistics boundary.
         #
-        # Migration approach:
-        # 1. Change `OpenOptionLeg.entry_mid`, `last_mid`, `strike_price` and
-        #    `OpenStockLeg.entry_price`, `last_price` to Decimal.
-        # 2. Update `_entry_value_per_unit`, `_current_position_value`,
-        #    `_mark_position`, and `_close_position` to use Decimal throughout.
-        # 3. Change `TradeResult` P&L fields to Decimal.
-        # 4. Update `build_summary` and equity curve to accept Decimal.
-        # 5. Serialize Decimal → str in JSON responses (Pydantic v2 handles
-        #    this natively).
-        # 6. Add regression tests comparing float vs Decimal results on a
-        #    multi-year backtest to quantify the drift.
+        # Remaining: OpenOptionLeg/OpenStockLeg price fields are still float
+        # (they come from external API data). Conversion happens at the point
+        # of financial computation, not at storage.
 
         if config.start_date > config.end_date:
-            raise ValueError("start_date must not be after end_date")
+            raise ValidationError("start_date must not be after end_date")
         if config.account_size <= 0:
-            raise ValueError("account_size must be positive")
+            raise ValidationError("account_size must be positive")
 
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         _pre_filter_len = len(sorted_bars)
@@ -127,7 +127,7 @@ class OptionsBacktestEngine:
             if bar.trade_date < config.start_date:
                 continue
 
-            position_value = 0.0
+            position_value = _D0
             exit_prices: dict[str, float] = {}
 
             if position is not None:
@@ -137,14 +137,14 @@ class OptionsBacktestEngine:
                 for stock_leg in position.stock_legs:
                     exit_prices[stock_leg.symbol] = stock_leg.last_price
 
-                entry_cost = self._entry_value_per_unit(position) * position.quantity
-                if not math.isfinite(position_value):
+                entry_cost = self._entry_value_per_unit(position) * _D(position.quantity)
+                if not position_value.is_finite():
                     logger.warning("engine.nan_position_value_exit_guard", bar_date=str(bar.trade_date))
                     position_value = entry_cost
-                if not math.isfinite(entry_cost):
+                if not entry_cost.is_finite():
                     logger.warning("engine.nan_entry_cost", bar_date=str(bar.trade_date))
-                    entry_cost = 0.0
-                    position_value = 0.0
+                    entry_cost = _D0
+                    position_value = _D0
                 if math.isnan(position.capital_required_per_unit):
                     logger.warning(
                         "engine.nan_capital_required_per_unit",
@@ -164,8 +164,8 @@ class OptionsBacktestEngine:
                     max_holding_days=config.max_holding_days,
                     backtest_end_date=config.end_date,
                     last_bar_date=sorted_bars[-1].trade_date,
-                    position_value=snapshot.position_value,
-                    entry_cost=entry_cost,
+                    position_value=float(snapshot.position_value),
+                    entry_cost=float(entry_cost),
                     capital_at_risk=capital_at_risk,
                     profit_target_pct=config.profit_target_pct,
                     stop_loss_pct=config.stop_loss_pct,
@@ -174,15 +174,16 @@ class OptionsBacktestEngine:
                 if should_exit:
                     trade, cash_delta = self._close_position(
                         position, config, snapshot.position_value, bar.trade_date, bar.close_price,
-                        exit_prices, exit_reason,
+                        exit_prices, exit_reason, warnings, warning_codes,
                     )
-                    cash += Decimal(str(cash_delta))
+                    cash += cash_delta
                     trades.append(trade)
                     position = None
-                    position_value = 0.0
+                    position_value = _D0
 
             entry_allowed = False
-            if position is None and bar.trade_date <= config.end_date:
+            just_closed = len(trades) > 0 and trades[-1].exit_date == bar.trade_date
+            if position is None and not just_closed and bar.trade_date <= config.end_date:
                 try:
                     entry_allowed = evaluator.is_entry_allowed(index)
                 except Exception:
@@ -233,7 +234,7 @@ class OptionsBacktestEngine:
                             risk_per_trade_pct=float(config.risk_per_trade_pct),
                             capital_required_per_unit=candidate.capital_required_per_unit,
                             max_loss_per_unit=candidate.max_loss_per_unit,
-                            entry_cost_per_unit=abs(ev_per_unit),
+                            entry_cost_per_unit=float(abs(ev_per_unit)),
                             commission_per_unit=commission_per_unit,
                             slippage_pct=config.slippage_pct,
                             gross_notional_per_unit=gross_notional_per_unit,
@@ -249,21 +250,21 @@ class OptionsBacktestEngine:
                         else:
                             candidate.quantity = quantity
                             candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
-                            entry_commission = self._option_commission_total(candidate, float(config.commission_per_contract))
+                            entry_commission = self._option_commission_total(candidate, config.commission_per_contract)
                             candidate.entry_commission_total = entry_commission
-                            slippage_cost = gross_notional_per_unit * quantity * (config.slippage_pct / 100.0)
-                            total_entry_cost = (ev_per_unit * quantity) + entry_commission + slippage_cost
-                            if cash - Decimal(str(total_entry_cost)) < 0:
+                            slippage_cost_d = _D(gross_notional_per_unit) * _D(quantity) * (_D(config.slippage_pct) / _D100)
+                            total_entry_cost = (ev_per_unit * _D(quantity)) + entry_commission + slippage_cost_d
+                            if cash - total_entry_cost < 0:
                                 self._add_warning_once(
                                     warnings, warning_codes, "negative_cash_rejected",
                                     "One or more entries were skipped because the total cost "
                                     "(including slippage) would have exceeded available cash.",
                                 )
                             else:
-                                cash -= Decimal(str(total_entry_cost))
+                                cash -= total_entry_cost
                                 position = candidate
-                                if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
-                                    ev_per_unit
+                                if strategy.margin_warning_message and candidate.capital_required_per_unit > float(
+                                    abs(ev_per_unit)
                                 ):
                                     self._add_warning_once(
                                         warnings, warning_codes, "margin_reserved", strategy.margin_warning_message
@@ -271,18 +272,18 @@ class OptionsBacktestEngine:
 
             if position is not None:
                 position_value = self._current_position_value(position, bar.close_price)
-                if not math.isfinite(position_value):
+                if not position_value.is_finite():
                     logger.warning("engine.nan_position_value", ticker=position.display_ticker, bar_date=str(bar.trade_date))
-                    position_value = 0.0
+                    position_value = _D0
 
-            equity = cash + Decimal(str(position_value))
+            equity = cash + position_value
             peak_equity = max(peak_equity, equity)
-            drawdown_pct = float((peak_equity - equity) / peak_equity * 100) if peak_equity else 0.0
+            drawdown_pct = (peak_equity - equity) / peak_equity * _D100 if peak_equity else _D0
             equity_curve.append(
                 EquityPointResult(
                     trade_date=bar.trade_date,
-                    equity=float(equity),
-                    cash=float(cash),
+                    equity=equity,
+                    cash=cash,
                     position_value=position_value,
                     drawdown_pct=drawdown_pct,
                 )
@@ -299,18 +300,19 @@ class OptionsBacktestEngine:
             trade, cash_delta = self._close_position(
                 position, config, snapshot.position_value, sorted_bars[-1].trade_date,
                 sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
+                warnings, warning_codes,
             )
-            cash += Decimal(str(cash_delta))
+            cash += cash_delta
             trades.append(trade)
             position = None
             equity = cash
             peak_equity = max(peak_equity, equity)
-            drawdown_pct = float((peak_equity - equity) / peak_equity * 100) if peak_equity else 0.0
+            drawdown_pct = (peak_equity - equity) / peak_equity * _D100 if peak_equity else _D0
             force_close_point = EquityPointResult(
                 trade_date=sorted_bars[-1].trade_date,
-                equity=float(equity),
-                cash=float(cash),
-                position_value=0.0,
+                equity=equity,
+                cash=cash,
+                position_value=_D0,
                 drawdown_pct=drawdown_pct,
             )
             if equity_curve and equity_curve[-1].trade_date == sorted_bars[-1].trade_date:
@@ -326,9 +328,9 @@ class OptionsBacktestEngine:
                 "Position force-closed at last available bar price. Actual settlement price may differ significantly.",
             )
 
-        ending_equity = equity_curve[-1].equity if equity_curve else float(config.account_size)
+        ending_equity_f = float(equity_curve[-1].equity) if equity_curve else float(config.account_size)
         summary = build_summary(
-            float(config.account_size), ending_equity, trades, equity_curve, risk_free_rate=config.risk_free_rate,
+            float(config.account_size), ending_equity_f, trades, equity_curve, risk_free_rate=config.risk_free_rate,
             warnings=warnings,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
@@ -341,13 +343,13 @@ class OptionsBacktestEngine:
         warnings: list[dict[str, Any]],
         warning_codes: set[str],
     ) -> PositionSnapshot:
-        option_value = 0.0
+        option_value = _D0
         missing_quote_tickers: list[str] = []
         for leg in position.option_legs:
             quote = option_gateway.get_quote(leg.ticker, bar.trade_date)
             if quote is None:
                 if bar.trade_date >= leg.expiration_date:
-                    current_mid = self._intrinsic_value(leg.contract_type, leg.strike_price, bar.close_price)
+                    current_mid = float(self._intrinsic_value(leg.contract_type, leg.strike_price, bar.close_price))
                 else:
                     current_mid = leg.last_mid
                     missing_quote_tickers.append(leg.ticker)
@@ -358,7 +360,7 @@ class OptionsBacktestEngine:
                     missing_quote_tickers.append(leg.ticker)
             leg.last_mid = current_mid
             multiplier = getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)
-            option_value += leg.side * leg.quantity_per_unit * current_mid * multiplier * position.quantity
+            option_value += _D(leg.side) * _D(leg.quantity_per_unit) * _D(current_mid) * _D(multiplier) * _D(position.quantity)
 
         if missing_quote_tickers:
             self._add_warning_once(
@@ -368,10 +370,10 @@ class OptionsBacktestEngine:
                 "One or more daily option marks were missing; the engine carried forward the previous mid-price.",
             )
 
-        stock_value = 0.0
+        stock_value = _D0
         for leg in position.stock_legs:
             leg.last_price = bar.close_price
-            stock_value += leg.side * leg.share_quantity_per_unit * bar.close_price * position.quantity
+            stock_value += _D(leg.side) * _D(leg.share_quantity_per_unit) * _D(bar.close_price) * _D(position.quantity)
 
         return PositionSnapshot(
             position_value=option_value + stock_value,
@@ -380,16 +382,19 @@ class OptionsBacktestEngine:
         )
 
     @staticmethod
-    def _current_position_value(position: OpenMultiLegPosition, underlying_close: float) -> float:
+    def _current_position_value(position: OpenMultiLegPosition, underlying_close: float) -> Decimal:
         option_value = sum(
-            leg.side * leg.quantity_per_unit * leg.last_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER) * position.quantity for leg in position.option_legs
-        )
+            (_D(leg.side) * _D(leg.quantity_per_unit) * _D(leg.last_mid)
+             * _D(getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)) * _D(position.quantity))
+            for leg in position.option_legs
+        ) or _D0
         stock_value = sum(
-            leg.side * leg.share_quantity_per_unit * underlying_close * position.quantity for leg in position.stock_legs
-        )
+            (_D(leg.side) * _D(leg.share_quantity_per_unit) * _D(underlying_close) * _D(position.quantity))
+            for leg in position.stock_legs
+        ) or _D0
         result = option_value + stock_value
-        if not math.isfinite(result):
-            return 0.0
+        if not result.is_finite():
+            return _D0
         return result
 
     @staticmethod
@@ -427,44 +432,78 @@ class OptionsBacktestEngine:
         self,
         position: OpenMultiLegPosition,
         config: BacktestConfig,
-        exit_value: float,
+        exit_value: Decimal,
         exit_date: date,
         exit_underlying_close: float,
         exit_prices: dict[str, float],
         exit_reason: str,
-    ) -> tuple[TradeResult, float]:
+        warnings: list[dict[str, Any]] | None = None,
+        warning_codes: set[str] | None = None,
+    ) -> tuple[TradeResult, Decimal]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
-        exit_commission = self._option_commission_total(position, float(config.commission_per_contract))
-        option_exit_notional = sum(abs(leg.last_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
-        stock_exit_notional = sum(abs(leg.last_price * leg.share_quantity_per_unit) for leg in position.stock_legs) * position.quantity if position.stock_legs else 0.0
+        exit_commission = self._option_commission_total(position, config.commission_per_contract)
+        option_exit_notional: Decimal = sum(
+            (abs(_D(leg.last_mid) * _D(getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)))
+             * _D(leg.quantity_per_unit))
+            for leg in position.option_legs
+        ) or _D0
+        option_exit_notional *= _D(position.quantity)
+        stock_exit_notional: Decimal = (
+            sum(abs(_D(leg.last_price) * _D(leg.share_quantity_per_unit)) for leg in position.stock_legs) * _D(position.quantity)
+            if position.stock_legs else _D0
+        )
         exit_gross_notional = option_exit_notional + stock_exit_notional
-        exit_slippage = exit_gross_notional * (config.slippage_pct / 100.0)
+        slippage_pct_d = _D(config.slippage_pct) / _D100
+        exit_slippage = exit_gross_notional * slippage_pct_d
         entry_value_per_unit = self._entry_value_per_unit(position)
-        option_entry_notional = sum(abs(leg.entry_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)) * leg.quantity_per_unit for leg in position.option_legs) * position.quantity
-        stock_entry_notional = sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in position.stock_legs) * position.quantity if position.stock_legs else 0.0
+        option_entry_notional: Decimal = sum(
+            (abs(_D(leg.entry_mid) * _D(getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)))
+             * _D(leg.quantity_per_unit))
+            for leg in position.option_legs
+        ) or _D0
+        option_entry_notional *= _D(position.quantity)
+        stock_entry_notional: Decimal = (
+            sum(abs(_D(leg.entry_price) * _D(leg.share_quantity_per_unit)) for leg in position.stock_legs) * _D(position.quantity)
+            if position.stock_legs else _D0
+        )
         entry_gross_notional = option_entry_notional + stock_entry_notional
-        entry_slippage = entry_gross_notional * (config.slippage_pct / 100.0)
+        entry_slippage = entry_gross_notional * slippage_pct_d
         cash_delta = exit_value - exit_commission - exit_slippage
-        exit_value_per_unit = exit_value / position.quantity if position.quantity else 0.0
-        gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position.quantity
+        exit_value_per_unit = exit_value / _D(position.quantity) if position.quantity else _D0
+        gross_pnl = (exit_value_per_unit - entry_value_per_unit) * _D(position.quantity)
         total_commissions = position.entry_commission_total + exit_commission
         total_slippage = entry_slippage + exit_slippage
         net_pnl = gross_pnl - total_commissions - total_slippage
+
+        def _is_finite_d(v: Decimal) -> bool:
+            return v.is_finite()
+
+        nan_fields: list[str] = []
         for name, val in [("gross_pnl", gross_pnl), ("net_pnl", net_pnl), ("exit_value_per_unit", exit_value_per_unit)]:
-            if not math.isfinite(val):
+            if not _is_finite_d(val):
                 logger.warning("engine.non_finite_trade_value", field=name, value=str(val), ticker=position.display_ticker)
-        if not math.isfinite(gross_pnl):
-            gross_pnl = 0.0
-        if not math.isfinite(net_pnl):
-            net_pnl = 0.0
-        if not math.isfinite(exit_value_per_unit):
-            exit_value_per_unit = 0.0
-        if not math.isfinite(total_commissions):
-            total_commissions = 0.0
-        if not math.isfinite(total_slippage):
-            total_slippage = 0.0
-        if not math.isfinite(cash_delta):
-            cash_delta = 0.0
+                nan_fields.append(name)
+        if not _is_finite_d(gross_pnl):
+            gross_pnl = _D0
+        if not _is_finite_d(net_pnl):
+            net_pnl = _D0
+        if not _is_finite_d(exit_value_per_unit):
+            exit_value_per_unit = _D0
+        if not _is_finite_d(total_commissions):
+            nan_fields.append("total_commissions")
+            total_commissions = _D0
+        if not _is_finite_d(total_slippage):
+            nan_fields.append("total_slippage")
+            total_slippage = _D0
+        if not _is_finite_d(cash_delta):
+            nan_fields.append("cash_delta")
+            cash_delta = _D0
+        if nan_fields and warnings is not None and warning_codes is not None:
+            self._add_warning_once(
+                warnings, warning_codes, "nan_in_trade_values",
+                f"One or more trade values ({', '.join(nan_fields)}) were NaN/Inf and "
+                f"were zeroed. This may indicate poor data quality for {position.display_ticker}.",
+            )
         expiration_date = position.scheduled_exit_date or (
             max(leg.expiration_date for leg in position.option_legs)
             if position.option_legs
@@ -480,37 +519,36 @@ class OptionsBacktestEngine:
             quantity=position.quantity,
             dte_at_open=position.dte_at_open,
             holding_period_days=(exit_date - position.entry_date).days,
-            entry_underlying_close=self._entry_underlying_close(position),
-            exit_underlying_close=exit_underlying_close,
-            # IMPORTANT: entry_mid and exit_mid are stored as per-share equivalents,
-            # NOT raw option mid-prices. They are computed as:
-            #   entry_value_per_unit / 100.0
-            # where entry_value_per_unit is the total position value for one unit
-            # (e.g., one spread). To reconstruct the actual trade cost:
-            #   actual_cost = entry_mid * 100 * quantity
-            # This convention ensures consistent P&L math but differs from
-            # the market quotes a user would see on their broker platform.
-            entry_mid=entry_value_per_unit / 100.0,
-            exit_mid=exit_value_per_unit / 100.0,
+            entry_underlying_close=_D(self._entry_underlying_close(position)),
+            exit_underlying_close=_D(exit_underlying_close),
+            entry_mid=entry_value_per_unit / _D100,
+            exit_mid=exit_value_per_unit / _D100,
             gross_pnl=gross_pnl,
             net_pnl=net_pnl,
             total_commissions=total_commissions,
             entry_reason=position.entry_reason,
             exit_reason=exit_reason,
             detail_json={
-                **self._build_trade_detail_json(position, exit_prices, exit_value_per_unit),
+                **self._build_trade_detail_json(position, exit_prices, float(exit_value_per_unit)),
                 "unit_convention": "per_unit_divided_by_100",
-                "total_slippage": total_slippage,
-                "entry_slippage": entry_slippage,
-                "exit_slippage": exit_slippage,
+                "total_slippage": float(total_slippage),
+                "entry_slippage": float(entry_slippage),
+                "exit_slippage": float(exit_slippage),
             },
         )
         return trade, cash_delta
 
     @staticmethod
-    def _entry_value_per_unit(position: OpenMultiLegPosition) -> float:
-        option_value = sum(leg.side * leg.quantity_per_unit * leg.entry_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER) for leg in position.option_legs)
-        stock_value = sum(leg.side * leg.share_quantity_per_unit * leg.entry_price for leg in position.stock_legs)
+    def _entry_value_per_unit(position: OpenMultiLegPosition) -> Decimal:
+        option_value = sum(
+            (_D(leg.side) * _D(leg.quantity_per_unit) * _D(leg.entry_mid)
+             * _D(getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)))
+            for leg in position.option_legs
+        ) or _D0
+        stock_value = sum(
+            (_D(leg.side) * _D(leg.share_quantity_per_unit) * _D(leg.entry_price))
+            for leg in position.stock_legs
+        ) or _D0
         return option_value + stock_value
 
     @staticmethod
@@ -521,9 +559,9 @@ class OptionsBacktestEngine:
         return position.detail_json.get("entry_underlying_close", 0.0) or 0.0
 
     @staticmethod
-    def _option_commission_total(position: OpenMultiLegPosition, commission_per_contract: float) -> float:
+    def _option_commission_total(position: OpenMultiLegPosition, commission_per_contract: Decimal) -> Decimal:
         contracts_per_unit = sum(leg.quantity_per_unit for leg in position.option_legs)
-        return commission_per_contract * contracts_per_unit * position.quantity
+        return commission_per_contract * _D(contracts_per_unit) * _D(position.quantity)
 
     @staticmethod
     def _build_trade_detail_json(
@@ -614,10 +652,10 @@ class OptionsBacktestEngine:
         return False, ""
 
     @staticmethod
-    def _intrinsic_value(contract_type: str, strike_price: float, underlying_close: float) -> float:
+    def _intrinsic_value(contract_type: str, strike_price: float, underlying_close: float) -> Decimal:
         if contract_type == "call":
-            return max(0.0, underlying_close - strike_price)
-        return max(0.0, strike_price - underlying_close)
+            return max(_D0, _D(underlying_close) - _D(strike_price))
+        return max(_D0, _D(strike_price) - _D(underlying_close))
 
     @staticmethod
     def _add_warning_once(

@@ -393,3 +393,36 @@ During rolling deployments, old and new API instances coexist briefly. Ensure:
 1. New migrations are backward-compatible (additive columns, nullable defaults)
 2. Old instances can still read/write the schema after migration
 3. Worker instances are restarted after API instances to pick up new task signatures
+
+## Rate Limiting During Redis Outage
+
+When Redis is unavailable, the rate limiter falls back to in-memory counters.
+These counters are **per-process** — in a deployment with N API workers, the
+effective rate limit is multiplied by N. For example, a configured limit of
+10 requests/minute becomes 40 requests/minute with 4 workers.
+
+**Mitigation:** Set `RATE_LIMIT_FAIL_CLOSED=true` in production to return 503
+instead of falling back to in-memory counters. This is the default and is
+enforced by the production security validator.
+
+## Database Connection Pool Tuning
+
+Default pool settings: `DB_POOL_SIZE=5`, `DB_POOL_MAX_OVERFLOW=10`, `DB_POOL_TIMEOUT=10s`.
+Workers use a separate pool with 5-minute `statement_timeout`.
+
+Monitor via `/health/ready` (includes pool stats) and Prometheus metric
+`bff_db_pool_checked_out`. If you see `DB_POOL_TIMEOUT` errors under load,
+increase `DB_POOL_SIZE` and `DB_POOL_MAX_OVERFLOW`. Ensure the total
+(pool_size + max_overflow) × worker_count does not exceed PostgreSQL's
+`max_connections` setting.
+
+## Query Performance Monitoring
+
+Enable `pg_stat_statements` in PostgreSQL for query-level performance data.
+Key queries to monitor:
+- Scanner recommendation lookups (JOIN scanner_recommendations + scanner_jobs)
+- Backtest trade insertion (batch INSERT into backtest_trades)
+- Export job cleanup (batch UPDATE + DELETE)
+
+Run `EXPLAIN ANALYZE` on slow queries identified via `pg_stat_statements`.
+The API sets `statement_timeout=30s` and workers use `statement_timeout=300s`.

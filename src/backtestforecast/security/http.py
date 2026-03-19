@@ -9,6 +9,11 @@ from backtestforecast.observability import REQUEST_ID_HEADER
 
 BODY_LIMIT_OVERRIDES: dict[str, int] = {
     "/v1/billing/webhook": 512_000,
+    "/v1/events/backtest": 0,
+    "/v1/events/scan": 0,
+    "/v1/events/sweep": 0,
+    "/v1/events/export": 0,
+    "/v1/events/analysis": 0,
 }
 
 
@@ -51,7 +56,7 @@ class RequestBodyLimitMiddleware:
                 return
 
         method = scope.get("method", "GET")
-        if method in {"POST", "PUT", "PATCH"} and content_length_str is None:
+        if method in {"POST", "PUT", "PATCH", "DELETE"} and content_length_str is None:
             total_bytes = 0
 
             async def limited_receive() -> Message:
@@ -115,7 +120,22 @@ class RequestBodyLimitMiddleware:
         })
 
 
-API_VERSION = "0.1.0"
+def normalize_origin(value: str) -> str:
+    """Normalize an origin URL for comparison.
+
+    Lowercases, strips trailing slashes, and removes default ports
+    (:443 for https, :80 for http).  Used by cookie-auth CSRF checks
+    and CORS validation.
+    """
+    v = value.strip().lower().rstrip("/")
+    if v.startswith("https://") and v.endswith(":443"):
+        v = v[:-4]
+    elif v.startswith("http://") and v.endswith(":80"):
+        v = v[:-3]
+    return v
+
+
+from backtestforecast import __version__ as API_VERSION
 
 
 class ApiSecurityHeadersMiddleware:

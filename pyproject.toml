@@ -43,7 +43,8 @@ dev = [
   "respx>=0.22,<1.0",
   "ruff>=0.7,<1.0",
   "mypy>=1.13,<2.0",
-  "locust>=2.29,<3.0"
+  "locust>=2.29,<3.0",
+  "pytest-timeout>=2.3,<3.0"
 ]
 
 [tool.setuptools]
@@ -102,6 +103,7 @@ filterwarnings = [
     "ignore::DeprecationWarning:celery.*",
     "ignore::DeprecationWarning:kombu.*",
 ]
+timeout = 120
 asyncio_mode = "auto"
 
 [tool.mypy]

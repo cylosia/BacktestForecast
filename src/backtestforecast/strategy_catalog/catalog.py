@@ -453,6 +453,17 @@ _register(
         tags=("custom", "advanced"),
     ),
     StrategyCatalogEntry(
+        strategy_type=StrategyType.CUSTOM_7_LEG.value,
+        label="Custom 7-Leg",
+        short_description="Define any 7-leg option/stock combination.",
+        category=StrategyCategory.CUSTOM,
+        bias=StrategyBias.DIRECTIONAL,
+        leg_count=7,
+        min_tier=StrategyTier.PREMIUM,
+        max_loss_description="Depends on configuration",
+        tags=("custom", "advanced"),
+    ),
+    StrategyCatalogEntry(
         strategy_type=StrategyType.CUSTOM_8_LEG.value,
         label="Custom 8-Leg",
         short_description="Define any 8-leg option/stock combination. Maximum complexity.",

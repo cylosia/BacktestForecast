@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from enum import StrEnum
+
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from backtestforecast.billing.entitlements import ScannerMode
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import PlanTier, sanitize_error_message
+from backtestforecast.schemas.common import PlanTier, RunJobStatus, sanitize_error_message
 from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
@@ -22,13 +22,7 @@ from backtestforecast.schemas.backtests import (
 )
 
 
-class ScannerJobStatus(StrEnum):
-    """Status values valid for scanner jobs (excludes 'expired')."""
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+ScannerJobStatus = RunJobStatus
 
 
 class RuleSetDefinition(BaseModel):
@@ -194,16 +188,16 @@ class ScannerRecommendationResponse(BaseModel):
     historical_performance: HistoricalPerformanceResponse
     forecast: HistoricalAnalogForecastResponse
     ranking_breakdown: RankingBreakdownResponse
-    trades: list[TradeJsonResponse] = Field(default_factory=list)
-    equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list)
+    trades: list[TradeJsonResponse] = Field(default_factory=list, max_length=10000)
+    equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list, max_length=10000)
     trades_truncated: bool = False
 
 
 class ScannerRecommendationListResponse(BaseModel):
     items: list[ScannerRecommendationResponse]
-    total: int = 0
-    offset: int = 0
-    limit: int = 100
+    total: int = Field(default=0, ge=0)
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=100, ge=1, le=200)
 
 
 class ScannerJobResponse(BaseModel):
@@ -218,14 +212,15 @@ class ScannerJobResponse(BaseModel):
     recommendation_count: int
     refresh_daily: bool
     refresh_priority: int
-    ranking_version: str | None = None
-    engine_version: str | None = None
+    ranking_version: str = "scanner-ranking-v1"
+    engine_version: str = "options-multileg-v2"
     warnings: list[dict[str, Any]] = Field(default_factory=list, alias="warnings_json")
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
-    started_at: datetime | None
-    completed_at: datetime | None
+    idempotency_key: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

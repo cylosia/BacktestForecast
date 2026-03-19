@@ -27,6 +27,15 @@ from backtestforecast.services.backtest_execution import BacktestExecutionServic
 logger = structlog.get_logger("pipeline.adapters")
 
 
+class _RefCountedLock:
+    """A lock paired with a reference count so cleanup never evicts in-use entries."""
+    __slots__ = ("lock", "refs")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.refs = 0
+
+
 class PipelineMarketDataFetcher:
     """Fetches daily bars and earnings dates for the pipeline."""
 
@@ -81,7 +90,7 @@ class PipelineBacktestExecutor:
         self._execution_service = execution_service or BacktestExecutionService()
         self._bundle_cache: OrderedDict[tuple, HistoricalDataBundle] = OrderedDict()
         self._bundle_cache_lock = threading.Lock()
-        self._bundle_fetch_locks: dict[tuple, threading.Lock] = {}
+        self._bundle_fetch_locks: dict[tuple, _RefCountedLock] = {}
         self._bundle_fetch_locks_lock = threading.Lock()
 
     def close(self) -> None:
@@ -128,7 +137,12 @@ class PipelineBacktestExecutor:
                 return bundle
 
         with self._bundle_fetch_locks_lock:
-            fetch_lock = self._bundle_fetch_locks.setdefault(key, threading.Lock())
+            entry = self._bundle_fetch_locks.get(key)
+            if entry is None:
+                entry = _RefCountedLock()
+                self._bundle_fetch_locks[key] = entry
+            entry.refs += 1
+            fetch_lock = entry.lock
             if len(self._bundle_fetch_locks) > self._MAX_BUNDLE_CACHE_SIZE * 4:
                 target = len(self._bundle_fetch_locks) - self._MAX_BUNDLE_CACHE_SIZE
                 removed = 0
@@ -137,30 +151,36 @@ class PipelineBacktestExecutor:
                         break
                     if k == key:
                         continue
-                    lock = self._bundle_fetch_locks.get(k)
-                    if lock is None:
+                    e = self._bundle_fetch_locks.get(k)
+                    if e is None or e.refs > 0:
                         continue
-                    acquired = lock.acquire(blocking=False)
-                    if acquired:
-                        lock.release()
-                        self._bundle_fetch_locks.pop(k, None)
-                        removed += 1
+                    self._bundle_fetch_locks.pop(k, None)
+                    removed += 1
+                if removed == 0 and len(self._bundle_fetch_locks) > self._MAX_BUNDLE_CACHE_SIZE * 8:
+                    logger.warning(
+                        "adapters.bundle_fetch_locks_hard_cap",
+                        size=len(self._bundle_fetch_locks),
+                    )
 
-        with fetch_lock:
-            with self._bundle_cache_lock:
-                bundle = self._bundle_cache.get(key)
-                if bundle is not None:
+        try:
+            with fetch_lock:
+                with self._bundle_cache_lock:
+                    bundle = self._bundle_cache.get(key)
+                    if bundle is not None:
+                        self._bundle_cache.move_to_end(key)
+                        return bundle
+
+                bundle = self._execution_service.market_data_service.prepare_backtest(request)
+                with self._bundle_cache_lock:
+                    if key not in self._bundle_cache:
+                        if len(self._bundle_cache) >= self._MAX_BUNDLE_CACHE_SIZE:
+                            self._bundle_cache.popitem(last=False)
+                        self._bundle_cache[key] = bundle
                     self._bundle_cache.move_to_end(key)
-                    return bundle
-
-            bundle = self._execution_service.market_data_service.prepare_backtest(request)
-            with self._bundle_cache_lock:
-                if key not in self._bundle_cache:
-                    if len(self._bundle_cache) >= self._MAX_BUNDLE_CACHE_SIZE:
-                        self._bundle_cache.popitem(last=False)
-                    self._bundle_cache[key] = bundle
-                self._bundle_cache.move_to_end(key)
-                return self._bundle_cache[key]
+                    return self._bundle_cache[key]
+        finally:
+            with self._bundle_fetch_locks_lock:
+                entry.refs -= 1
 
     def run_quick_backtest(
         self,
@@ -229,7 +249,7 @@ class PipelineBacktestExecutor:
                     {
                         "entry_date": t.entry_date.isoformat(),
                         "exit_date": t.exit_date.isoformat(),
-                        "net_pnl": t.net_pnl,
+                        "net_pnl": float(t.net_pnl),
                         "holding_period_days": t.holding_period_days,
                     }
                     for t in result.trades[:50]
@@ -237,7 +257,7 @@ class PipelineBacktestExecutor:
                 "trades_truncated": len(result.trades) > 50,
                 "total_trade_count": len(result.trades),
                 "equity_curve": self._downsample_equity_curve(result.equity_curve),
-                "warnings": [w for w in result.warnings],
+                "warnings": list(result.warnings),
             }
         except (DataUnavailableError, ExternalServiceError, ValidationError):
             logger.warning("pipeline.full_backtest_failed", symbol=symbol, strategy_type=strategy_type, exc_info=True)
@@ -273,21 +293,21 @@ class PipelineBacktestExecutor:
     def _downsample_equity_curve(curve: list[Any]) -> list[dict[str, Any]]:
         if not curve:
             return []
-        max_dd_idx = max(range(len(curve)), key=lambda i: curve[i].drawdown_pct)
+        max_dd_idx = max(range(len(curve)), key=lambda i: float(curve[i].drawdown_pct))
 
         recovery_idx = None
         if max_dd_idx < len(curve) - 1:
-            max_dd_val = curve[max_dd_idx].drawdown_pct
+            max_dd_val = float(curve[max_dd_idx].drawdown_pct)
             for ri in range(max_dd_idx + 1, len(curve)):
-                if curve[ri].drawdown_pct < max_dd_val * 0.5:
+                if float(curve[ri].drawdown_pct) < max_dd_val * 0.5:
                     recovery_idx = ri
                     break
 
         return [
             {
                 "trade_date": p.trade_date.isoformat(),
-                "equity": p.equity,
-                "drawdown_pct": p.drawdown_pct,
+                "equity": float(p.equity),
+                "drawdown_pct": float(p.drawdown_pct),
             }
             for i, p in enumerate(curve)
             if i % 5 == 0 or i == max_dd_idx or i == recovery_idx or i == len(curve) - 1
@@ -304,7 +324,7 @@ class PipelineForecaster:
         self._market_data = market_data
         self._bar_cache: OrderedDict[tuple[str, date, int], list[DailyBar]] = OrderedDict()
         self._bar_cache_lock = threading.Lock()
-        self._bar_fetch_locks: dict[tuple[str, date, int], threading.Lock] = {}
+        self._bar_fetch_locks: dict[tuple[str, date, int], _RefCountedLock] = {}
         self._bar_fetch_locks_lock = threading.Lock()
 
     def get_forecast(
@@ -324,32 +344,41 @@ class PipelineForecaster:
                     self._bar_cache.move_to_end(cache_key)
             if bars is None:
                 with self._bar_fetch_locks_lock:
-                    fetch_lock = self._bar_fetch_locks.setdefault(cache_key, threading.Lock())
+                    bar_entry = self._bar_fetch_locks.get(cache_key)
+                    if bar_entry is None:
+                        bar_entry = _RefCountedLock()
+                        self._bar_fetch_locks[cache_key] = bar_entry
+                    bar_entry.refs += 1
+                    fetch_lock = bar_entry.lock
                     if len(self._bar_fetch_locks) > 1000:
                         keys_to_remove = [
                             k for k in list(self._bar_fetch_locks.keys())
-                            if k != cache_key and not self._bar_fetch_locks[k].locked()
+                            if k != cache_key and self._bar_fetch_locks[k].refs == 0
                         ][:len(self._bar_fetch_locks) - 500]
                         for k in keys_to_remove:
                             self._bar_fetch_locks.pop(k, None)
-                with fetch_lock:
-                    with self._bar_cache_lock:
-                        bars = self._bar_cache.get(cache_key)
-                        if bars is not None:
-                            self._bar_cache.move_to_end(cache_key)
-                    if bars is None:
-                        bars = self._market_data.get_daily_bars(
-                            symbol,
-                            end_date - timedelta(days=400),
-                            end_date,
-                        )
+                try:
+                    with fetch_lock:
                         with self._bar_cache_lock:
-                            if cache_key not in self._bar_cache:
-                                if len(self._bar_cache) >= self._MAX_BAR_CACHE_SIZE:
-                                    self._bar_cache.popitem(last=False)
-                                self._bar_cache[cache_key] = bars
-                            self._bar_cache.move_to_end(cache_key)
-                            bars = self._bar_cache[cache_key]
+                            bars = self._bar_cache.get(cache_key)
+                            if bars is not None:
+                                self._bar_cache.move_to_end(cache_key)
+                        if bars is None:
+                            bars = self._market_data.get_daily_bars(
+                                symbol,
+                                end_date - timedelta(days=400),
+                                end_date,
+                            )
+                            with self._bar_cache_lock:
+                                if cache_key not in self._bar_cache:
+                                    if len(self._bar_cache) >= self._MAX_BAR_CACHE_SIZE:
+                                        self._bar_cache.popitem(last=False)
+                                    self._bar_cache[cache_key] = bars
+                                self._bar_cache.move_to_end(cache_key)
+                                bars = self._bar_cache[cache_key]
+                finally:
+                    with self._bar_fetch_locks_lock:
+                        bar_entry.refs -= 1
             if len(bars) < 80:
                 return None
             result = self._forecaster.forecast(

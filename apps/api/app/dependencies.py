@@ -69,7 +69,7 @@ def _is_trusted_proxy(host: str | None) -> bool:
     return any(addr in network for network in _get_trusted_networks())
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class RequestMetadata:
     request_id: str | None
     ip_address: str | None
@@ -116,14 +116,12 @@ def get_request_metadata(request: Request) -> RequestMetadata:
 
 
 def _normalize_origin(value: str) -> str:
-    """Normalize an origin for comparison: lowercase, strip trailing slashes,
-    and remove default ports (:443 for https, :80 for http)."""
-    v = value.strip().lower().rstrip("/")
-    if v.startswith("https://") and v.endswith(":443"):
-        v = v[:-4]
-    elif v.startswith("http://") and v.endswith(":80"):
-        v = v[:-3]
-    return v
+    """Normalize an origin for comparison.
+
+    Delegates to the canonical implementation in the security module.
+    """
+    from backtestforecast.security.http import normalize_origin
+    return normalize_origin(value)
 
 
 def get_current_user(
@@ -149,26 +147,51 @@ def get_current_user(
         # The __session cookie is set by Clerk with SameSite=Lax by default.
         # If Clerk configuration changes, verify SameSite is at least Lax
         # to prevent cross-site cookie attachment in sub-requests.
+        # See: https://clerk.com/docs/backend-requests/handling/manual-jwt
         token = request.cookies.get("__session")
-        if token and request.method in {"POST", "PATCH", "DELETE"}:
+        if token:
+            fetch_site = request.headers.get("sec-fetch-site")
+            if fetch_site and fetch_site not in ("same-origin", "same-site", "none"):
+                structlog.get_logger("security").warning(
+                    "auth.cookie_cross_site_detected",
+                    sec_fetch_site=fetch_site,
+                    method=request.method,
+                    hint="A cookie-auth request arrived with a cross-site Sec-Fetch-Site header. "
+                         "This may indicate SameSite=None on the __session cookie or a misconfigured proxy.",
+                )
+        if token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             xrw = request.headers.get("x-requested-with")
             if not xrw or xrw.strip().lower() != "xmlhttprequest":
                 raise AuthenticationError(
                     "Cookie-based authentication requires the X-Requested-With: XMLHttpRequest header for state-changing requests."
                 )
         if token:
+            _allowed = [_normalize_origin(o) for o in get_settings().web_cors_origins]
             origin = request.headers.get("origin")
             if origin:
-                normalized_origin = _normalize_origin(origin)
-                allowed_origins = [_normalize_origin(o) for o in get_settings().web_cors_origins]
-                if normalized_origin not in allowed_origins:
+                if _normalize_origin(origin) not in _allowed:
                     structlog.get_logger("security").warning(
                         "auth.cookie_origin_rejected",
-                        origin=normalized_origin,
+                        origin=_normalize_origin(origin),
                     )
                     raise AuthenticationError(
                         "Cookie-based request origin not in allowed list."
                     )
+            elif request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                referer = request.headers.get("referer")
+                if referer:
+                    from urllib.parse import urlparse as _urlparse
+                    referer_origin = _normalize_origin(
+                        f"{_urlparse(referer).scheme}://{_urlparse(referer).netloc}"
+                    )
+                    if referer_origin and referer_origin not in _allowed:
+                        structlog.get_logger("security").warning(
+                            "auth.cookie_referer_rejected",
+                            referer_origin=referer_origin,
+                        )
+                        raise AuthenticationError(
+                            "Cookie-based request referer not in allowed list."
+                        )
 
     if not token:
         raise AuthenticationError()

@@ -41,6 +41,8 @@ services:
     # 2. Add to redis.conf: tls-port 6380, tls-cert-file, tls-key-file, tls-ca-cert-file
     # 3. Update REDIS_URL to use rediss:// scheme
     # 4. Set tls=True in Redis client configuration
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     command: ["sh", "-c", "echo requirepass \"$REDIS_PASSWORD\" > /tmp/redis.conf && cat /usr/local/etc/redis/redis.conf >> /tmp/redis.conf && redis-server /tmp/redis.conf"]
     volumes:
       - redis_data:/data

@@ -72,19 +72,6 @@ def create_sweep(
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-    from sqlalchemy import func, select
-    from backtestforecast.models import SweepJob as SweepJobModel
-    active_count = db.scalar(
-        select(func.count()).select_from(SweepJobModel).where(
-            SweepJobModel.user_id == user.id,
-            SweepJobModel.status.in_(["queued", "running"]),
-        )
-    ) or 0
-    if active_count >= settings.max_concurrent_sweeps:
-        from backtestforecast.errors import QuotaExceededError
-        raise QuotaExceededError(
-            f"You have {active_count} active sweeps. Maximum concurrent sweeps is {settings.max_concurrent_sweeps}."
-        )
     with SweepService(db) as service:
         job = service.create_job(user, payload)
         dispatch_celery_task(

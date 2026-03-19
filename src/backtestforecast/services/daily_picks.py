@@ -21,7 +21,7 @@ class DailyPicksService:
 
     def get_latest_picks(
         self, trade_date: date | None = None, limit: int = 20, offset: int = 0,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | DailyPicksResponse:
         pipeline_run = self.repository.get_latest_succeeded_run(trade_date)
         if pipeline_run is None:
             return {

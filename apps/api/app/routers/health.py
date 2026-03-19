@@ -113,6 +113,10 @@ def _check_migration_drift() -> bool:
         match = current == head
         MIGRATION_HEAD_MATCH.set(1 if match else 0)
         return match
+    except (ImportError, FileNotFoundError):
+        import structlog
+        structlog.get_logger("health").debug("health.migration_check_unavailable", exc_info=True)
+        return False
     except Exception:
         import structlog
         structlog.get_logger("health").warning("health.migration_check_failed", exc_info=True)
@@ -126,8 +130,20 @@ _health_lock = Lock()
 HEALTH_VERSION = "0.1.0"
 
 
-@router.get("/health/live")
-def live() -> dict[str, str]:
+_LIVE_MAX_RPM = 300
+_live_window: deque[float] = deque(maxlen=_LIVE_MAX_RPM + 50)
+_live_lock = Lock()
+
+
+@router.get("/health/live", response_model=None)
+def live() -> dict[str, str] | JSONResponse:
+    now = time.monotonic()
+    with _live_lock:
+        while _live_window and _live_window[0] < now - 60:
+            _live_window.popleft()
+        if len(_live_window) >= _LIVE_MAX_RPM:
+            return JSONResponse(status_code=429, content={"status": "rate_limited"})
+        _live_window.append(now)
     return {"status": "ok", "service": "api", "version": HEALTH_VERSION}
 
 
@@ -193,7 +209,7 @@ def ready(request: Request) -> JSONResponse:
     massive_status = _check_massive_health(settings)
 
     all_ok = redis_up and broker_up and massive_status in ("ok", "unconfigured")
-    payload: dict[str, str] = {
+    payload: dict[str, object] = {
         "status": "ok" if all_ok else "degraded",
         "version": HEALTH_VERSION,
     }

@@ -3,6 +3,7 @@ from typing import Any
 import jwt.exceptions
 import structlog
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -13,6 +14,24 @@ from backtestforecast.db.session import get_db
 from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
 from backtestforecast.security import get_rate_limiter
+
+
+class FeatureFlagsResponse(BaseModel):
+    backtests: bool = True
+    scanner: bool = True
+    exports: bool = True
+    forecasts: bool = True
+    analysis: bool = True
+    daily_picks: bool = True
+    billing: bool = True
+
+
+class MetaResponse(BaseModel):
+    service: str
+    version: str
+    billing_enabled: bool | None = None
+    features: FeatureFlagsResponse | None = None
+    environment: str | None = None
 
 router = APIRouter(tags=["meta"])
 logger = structlog.get_logger("api.meta")
@@ -40,7 +59,7 @@ def _try_authenticate(request: Request, db: Session) -> User | None:
         return None
 
 
-@router.get("/meta", response_model=dict[str, Any])
+@router.get("/meta", response_model=MetaResponse)
 def get_meta(request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
     settings = get_settings()
     client_ip = _extract_client_ip(request)

@@ -7,7 +7,7 @@ import type { components } from "./schema";
 // ---------------------------------------------------------------------------
 
 export type StrategyType = components["schemas"]["StrategyType"];
-export type RunStatus = components["schemas"]["JobStatus"];
+export type RunStatus = components["schemas"]["RunStatus"];
 export type ComparisonOperator = components["schemas"]["ComparisonOperator"];
 export type CrossoverDirection = components["schemas"]["CrossoverDirection"];
 export type BillingInterval = components["schemas"]["BillingInterval"];
@@ -181,7 +181,7 @@ export type SymbolAnalysisFullResponse = AnalysisDetailResponse;
 // `warnings_json`), because FastAPI serializes by field name when
 // `populate_by_name=True`.
 //
-// Last cross-checked against backend: 2026-03-19
+// Last cross-checked against backend: 2026-03-19 (created_at added to SweepResultResponse)
 // ---------------------------------------------------------------------------
 
 /** Sweep mode: grid (exhaustive) or genetic (evolutionary optimization). */
@@ -229,6 +229,7 @@ export interface SweepResultResponse { // MANUAL: sync with backend schemas/swee
   equity_curve: EquityCurvePointResponse[];
   /** True when the trade list was truncated (>50 trades per result). */
   trades_truncated: boolean;
+  created_at: string | null;
 }
 
 

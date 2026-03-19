@@ -237,6 +237,13 @@ class EntryRuleEvaluator:
         # Blackout window: avoid entry if earnings fell within [bar_date - days_after, bar_date + days_before].
         # days_after = how many days AFTER an earnings date we still avoid (look backward),
         # days_before = how many days BEFORE an upcoming earnings date we avoid (look forward).
+        #
+        # Known approximation: timedelta uses calendar days, not trading days.
+        # A 3-day blackout over a Friday earnings date also covers the weekend
+        # (Sat/Sun), which means fewer *trading* days are actually blocked than
+        # the user might expect.  Switching to trading days would require a
+        # trading-calendar lookup (e.g. pandas_market_calendars) which is not
+        # currently available in the engine's dependency set.
         blackout_start = bar_date - timedelta(days=rule.days_after)
         blackout_end = bar_date + timedelta(days=rule.days_before)
         return not any(blackout_start <= earnings_date <= blackout_end for earnings_date in self.earnings_dates)
@@ -380,6 +387,8 @@ def implied_volatility_from_price(
     time_to_expiry_years: float,
     option_type: str,
     risk_free_rate: float = 0.045,
+    # NOTE: Dividend yield is hardcoded to 0. For high-yield stocks (>3%),
+    # this biases IV estimates upward for calls and downward for puts.
     dividend_yield: float = 0.0,
 ) -> float | None:
     if option_price <= 0 or underlying_price <= 0 or strike_price <= 0 or time_to_expiry_years <= 0:
@@ -406,7 +415,7 @@ def implied_volatility_from_price(
         else:
             low = midpoint
     final = (low + high) / 2.0
-    residual_threshold = max(_CONVERGENCE_TOL * 100, option_price * 0.05)
+    residual_threshold = max(_CONVERGENCE_TOL * 100, option_price * 0.01)
     final_theoretical = black_scholes_price(
         option_type=option_type,
         underlying_price=underlying_price,

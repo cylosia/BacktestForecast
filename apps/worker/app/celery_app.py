@@ -34,7 +34,7 @@ if settings.sentry_dsn:
 celery_app = Celery(
     "backtestforecast",
     broker=settings.redis_url,
-    backend=settings.redis_url,
+    backend=settings.celery_result_backend_url or settings.redis_url,
     include=["apps.worker.app.tasks"],
 )
 
@@ -64,6 +64,13 @@ celery_app.conf.update(
     broker_transport_options={"visibility_timeout": 4200},
 )
 
+_visibility_timeout = celery_app.conf.broker_transport_options.get("visibility_timeout", 3600)
+_hard_limit = celery_app.conf.task_time_limit or 3900
+assert _visibility_timeout > _hard_limit, (
+    f"visibility_timeout ({_visibility_timeout}s) must exceed task_time_limit ({_hard_limit}s) "
+    f"to prevent premature task redelivery"
+)
+
 celery_app.conf.task_queues = (
     Queue("research"),
     Queue("exports"),
@@ -87,6 +94,8 @@ celery_app.conf.task_routes = {
     "maintenance.refresh_market_holidays": {"queue": "maintenance"},
     "maintenance.cleanup_outbox": {"queue": "maintenance"},
     "maintenance.poll_outbox": {"queue": "maintenance"},
+    "maintenance.reconcile_subscriptions": {"queue": "maintenance"},
+    "maintenance.cleanup_stripe_orphan": {"queue": "maintenance"},
 }
 
 # RedBeat loads these entries on first run and stores them in Redis.
@@ -128,6 +137,14 @@ celery_app.conf.beat_schedule = {
     "cleanup-outbox-daily": {
         "task": "maintenance.cleanup_outbox",
         "schedule": crontab(hour=4, minute=0),
+    },
+    "poll-outbox": {
+        "task": "maintenance.poll_outbox",
+        "schedule": 30.0,
+    },
+    "reconcile-subscriptions-daily": {
+        "task": "maintenance.reconcile_subscriptions",
+        "schedule": crontab(hour=5, minute=0),
     },
 }
 
@@ -192,7 +209,12 @@ def _start_worker_metrics_server() -> None:
         _shutdown_logger.warning("worker.metrics_server_no_auth", msg="Metrics server started without authentication token")
 
     bind_host = os.environ.get("WORKER_METRICS_BIND", "127.0.0.1")
-    server = HTTPServer((bind_host, port), _MetricsHandler)
+    try:
+        server = HTTPServer((bind_host, port), _MetricsHandler)
+    except OSError:
+        _shutdown_logger.warning("worker.metrics_port_in_use", port=port)
+        server = HTTPServer((bind_host, 0), _MetricsHandler)
+        port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     _shutdown_logger.info(
@@ -234,7 +256,7 @@ def _start_heartbeat_loop() -> None:
                     except Exception:
                         pass
                     conn = None
-            sleep_secs = min(15 * (2 ** consecutive_errors), 30)
+            sleep_secs = min(5 * (2 ** consecutive_errors), 60)
             _heartbeat_stop.wait(sleep_secs)
         if conn is not None:
             try:

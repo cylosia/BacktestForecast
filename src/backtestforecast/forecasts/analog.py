@@ -36,8 +36,7 @@ class HistoricalAnalogForecaster:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         calendar_horizon = horizon_days
         trading_horizon = self._calendar_to_trading_days(horizon_days)
-        horizon_days = trading_horizon
-        if len(sorted_bars) < max(80, horizon_days + 40):
+        if len(sorted_bars) < max(80, trading_horizon + 40):
             raise ValueError("Not enough historical bars were available to build a forecast.")
 
         closes = [bar.close_price for bar in sorted_bars]
@@ -66,7 +65,7 @@ class HistoricalAnalogForecaster:
 
         candidates: list[ForecastCandidate] = []
         min_index = 30
-        max_index = len(sorted_bars) - horizon_days
+        max_index = len(sorted_bars) - trading_horizon
         for index in range(min_index, max_index):
             candidate_features = self._features_for_index(
                 index=index,
@@ -82,7 +81,7 @@ class HistoricalAnalogForecaster:
             if candidate_features is None:
                 continue
             start_close = closes[index]
-            end_close = closes[index + horizon_days]
+            end_close = closes[index + trading_horizon]
             if start_close <= 0:
                 continue
             forward_return_pct = ((end_close - start_close) / start_close) * 100.0

@@ -11,6 +11,7 @@ import type {
   CreateScannerJobRequest,
   CreateSweepRequest,
   CreateTemplateRequest,
+  UpdateTemplateRequest,
   ExportJobResponse,
   ForecastEnvelopeResponse,
   PortalSessionResponse,
@@ -127,7 +128,7 @@ export async function createTemplate(
 export async function updateTemplate(
   token: string,
   templateId: string,
-  payload: { name?: string; description?: string },
+  payload: UpdateTemplateRequest,
   signal?: AbortSignal,
 ): Promise<TemplateResponse> {
   return apiRequest<TemplateResponse>(`/v1/templates/${encodeURIComponent(templateId)}`, token, {

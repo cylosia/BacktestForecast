@@ -28,37 +28,50 @@ class TestMigrationChain:
                 )
                 revisions[rev_id] = py_file.name
 
-    def test_down_revision_chain_is_linear(self):
-        """Each down_revision must point to exactly one existing revision (except root)."""
+    def test_down_revision_chain_is_connected(self):
+        """Each down_revision must point to existing revision(s) (except root).
+
+        Handles both string and tuple down_revision values (merge migrations).
+        Handles type-annotated assignments like ``revision: str = "..."``.
+        """
+        import ast
         from pathlib import Path
 
         versions_dir = Path(__file__).resolve().parents[2] / "alembic" / "versions"
         revisions: dict[str, str] = {}
-        down_revisions: dict[str, str | None] = {}
+        down_map: dict[str, list[str]] = {}
 
         for py_file in sorted(versions_dir.glob("*.py")):
             if py_file.name == "__init__.py":
                 continue
             content = py_file.read_text(encoding="utf-8")
-            rev_match = re.search(r'^revision\s*=\s*["\'](.+?)["\']', content, re.MULTILINE)
-            down_match = re.search(r'^down_revision\s*=\s*(.+?)$', content, re.MULTILINE)
+            rev_match = re.search(r'^revision[\s:]*(?:str\s*)?=\s*["\'](.+?)["\']', content, re.MULTILINE)
+            down_match = re.search(r'^down_revision[\s:]*(?:str\s*)?=\s*(.+?)$', content, re.MULTILINE)
             if rev_match:
                 rev_id = rev_match.group(1)
                 revisions[rev_id] = py_file.name
                 if down_match:
                     raw = down_match.group(1).strip()
-                    if raw == "None":
-                        down_revisions[rev_id] = None
+                    try:
+                        parsed = ast.literal_eval(raw)
+                    except (ValueError, SyntaxError):
+                        parsed = raw.strip("\"'")
+                    if parsed is None:
+                        down_map[rev_id] = []
+                    elif isinstance(parsed, str):
+                        down_map[rev_id] = [parsed]
+                    elif isinstance(parsed, (tuple, list)):
+                        down_map[rev_id] = [str(v) for v in parsed if v is not None]
                     else:
-                        down_revisions[rev_id] = raw.strip("\"'")
+                        down_map[rev_id] = []
 
-        roots = [r for r, d in down_revisions.items() if d is None]
+        roots = [r for r, deps in down_map.items() if not deps]
         assert len(roots) == 1, f"Expected exactly one root migration, found {len(roots)}: {roots}"
 
-        for rev_id, down_rev in down_revisions.items():
-            if down_rev is not None:
-                assert down_rev in revisions, (
-                    f"Migration {revisions[rev_id]} has down_revision='{down_rev}' "
+        for rev_id, deps in down_map.items():
+            for dep in deps:
+                assert dep in revisions, (
+                    f"Migration {revisions[rev_id]} has down_revision='{dep}' "
                     f"which doesn't exist in any migration file"
                 )
 

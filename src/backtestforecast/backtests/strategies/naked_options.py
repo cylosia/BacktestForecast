@@ -84,7 +84,7 @@ class NakedOptionStrategy(StrategyDefinition):
             ],
             scheduled_exit_date=expiration,
             capital_required_per_unit=margin,
-            max_loss_per_unit=None,
+            max_loss_per_unit=None if self.contract_type == "call" else (strike * 100.0 - credit),
             max_profit_per_unit=credit,
             detail_json={
                 "legs": [

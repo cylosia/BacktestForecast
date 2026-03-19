@@ -118,7 +118,7 @@ def compare_backtests(
     get_rate_limiter().check(
         bucket="backtests:compare",
         actor_key=str(user.id),
-        limit=settings.backtest_create_rate_limit * 2,
+        limit=settings.backtest_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:

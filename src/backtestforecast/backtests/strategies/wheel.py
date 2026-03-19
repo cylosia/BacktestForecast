@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import date
 from typing import Any
 
@@ -30,6 +31,10 @@ from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar
 
 logger = structlog.get_logger(__name__)
+
+
+def _D(v: float | int) -> Decimal:
+    return Decimal(str(v))
 
 
 @dataclass(slots=True)
@@ -70,7 +75,14 @@ class WheelStrategyBacktestEngine:
 
         warnings: list[dict[str, Any]] = []
         warning_codes: set[str] = set()
-        # Precision loss: Decimal->float for engine arithmetic (mixed with option_value, etc.)
+        # Known inconsistency: config.account_size is Decimal but the engine
+        # converts to float here because all downstream arithmetic (option mids,
+        # strike prices, close prices, commissions, slippage) uses float.  Python
+        # raises TypeError on Decimal+float, so keeping cash as Decimal would
+        # require wrapping every interacting value in Decimal(str(...)) — too
+        # invasive for the marginal precision gain on a value that's already
+        # rounded to cents.  If sub-cent precision becomes important (e.g. for
+        # regulatory reporting), convert the entire engine to Decimal.
         cash = float(config.account_size)
         peak_equity = cash
         active_option: OpenShortOptionPhase | None = None
@@ -195,13 +207,13 @@ class WheelStrategyBacktestEngine:
                                 quantity=active_option.quantity,
                                 dte_at_open=(active_option.expiration_date - active_option.entry_date).days,
                                 holding_period_days=(bar.trade_date - active_option.entry_date).days,
-                                entry_underlying_close=sorted_bars[active_option.entry_index].close_price,
-                                exit_underlying_close=bar.close_price,
-                                entry_mid=active_option.entry_mid,
-                                exit_mid=exit_mid,
-                                gross_pnl=option_gross_pnl,
-                                net_pnl=option_net_pnl,
-                                total_commissions=float(config.commission_per_contract) * active_option.quantity,
+                                entry_underlying_close=_D(sorted_bars[active_option.entry_index].close_price),
+                                exit_underlying_close=_D(bar.close_price),
+                                entry_mid=_D(active_option.entry_mid),
+                                exit_mid=_D(exit_mid),
+                                gross_pnl=_D(option_gross_pnl),
+                                net_pnl=_D(option_net_pnl),
+                                total_commissions=_D(float(config.commission_per_contract) * active_option.quantity),
                                 entry_reason="entry_rules_met",
                                 exit_reason="assignment",
                                 detail_json={**option_detail, "assignment": True, "unit_convention": "per_share_option_premium"},
@@ -236,13 +248,13 @@ class WheelStrategyBacktestEngine:
                                 quantity=active_option.quantity,
                                 dte_at_open=(active_option.expiration_date - active_option.entry_date).days,
                                 holding_period_days=(bar.trade_date - active_option.entry_date).days,
-                                entry_underlying_close=sorted_bars[active_option.entry_index].close_price,
-                                exit_underlying_close=bar.close_price,
-                                entry_mid=active_option.entry_mid,
-                                exit_mid=exit_mid,
-                                gross_pnl=option_gross_pnl,
-                                net_pnl=option_net_pnl,
-                                total_commissions=float(config.commission_per_contract) * active_option.quantity,
+                                entry_underlying_close=_D(sorted_bars[active_option.entry_index].close_price),
+                                exit_underlying_close=_D(bar.close_price),
+                                entry_mid=_D(active_option.entry_mid),
+                                exit_mid=_D(exit_mid),
+                                gross_pnl=_D(option_gross_pnl),
+                                net_pnl=_D(option_net_pnl),
+                                total_commissions=_D(float(config.commission_per_contract) * active_option.quantity),
                                 entry_reason="entry_rules_met",
                                 exit_reason="call_assignment",
                                 detail_json={**option_detail, "assignment": True, "unit_convention": "per_share_option_premium"},
@@ -261,13 +273,13 @@ class WheelStrategyBacktestEngine:
                                 quantity=held_shares.quantity,
                                 dte_at_open=0,
                                 holding_period_days=max((bar.trade_date - held_shares.entry_date).days, 0),
-                                entry_underlying_close=held_shares.entry_price,
-                                exit_underlying_close=called_away_price,
-                                entry_mid=held_shares.entry_price,
-                                exit_mid=called_away_price,
-                                gross_pnl=stock_gross,
-                                net_pnl=stock_gross,
-                                total_commissions=0.0,
+                                entry_underlying_close=_D(held_shares.entry_price),
+                                exit_underlying_close=_D(called_away_price),
+                                entry_mid=_D(held_shares.entry_price),
+                                exit_mid=_D(called_away_price),
+                                gross_pnl=_D(stock_gross),
+                                net_pnl=_D(stock_gross),
+                                total_commissions=_D(0.0),
                                 entry_reason="put_assignment",
                                 exit_reason="called_away",
                                 detail_json={
@@ -295,14 +307,14 @@ class WheelStrategyBacktestEngine:
                                 quantity=active_option.quantity,
                                 dte_at_open=(active_option.expiration_date - active_option.entry_date).days,
                                 holding_period_days=(bar.trade_date - active_option.entry_date).days,
-                                entry_underlying_close=sorted_bars[active_option.entry_index].close_price,
-                                exit_underlying_close=bar.close_price,
-                                entry_mid=active_option.entry_mid,
-                                exit_mid=exit_mid,
-                                gross_pnl=option_gross_pnl,
-                                net_pnl=option_net_pnl,
-                                total_commissions=(float(config.commission_per_contract) * active_option.quantity)
-                                + exit_commission,
+                                entry_underlying_close=_D(sorted_bars[active_option.entry_index].close_price),
+                                exit_underlying_close=_D(bar.close_price),
+                                entry_mid=_D(active_option.entry_mid),
+                                exit_mid=_D(exit_mid),
+                                gross_pnl=_D(option_gross_pnl),
+                                net_pnl=_D(option_net_pnl),
+                                total_commissions=_D((float(config.commission_per_contract) * active_option.quantity)
+                                + exit_commission),
                                 entry_reason="entry_rules_met",
                                 exit_reason=exit_reason,
                                 detail_json={**option_detail, "assignment": False, "unit_convention": "per_share_option_premium"},
@@ -359,10 +371,10 @@ class WheelStrategyBacktestEngine:
             equity_curve.append(
                 EquityPointResult(
                     trade_date=bar.trade_date,
-                    equity=equity,
-                    cash=cash,
-                    position_value=shares_value + option_value,
-                    drawdown_pct=drawdown_pct,
+                    equity=_D(equity),
+                    cash=_D(cash),
+                    position_value=_D(shares_value + option_value),
+                    drawdown_pct=_D(drawdown_pct),
                 )
             )
 
@@ -390,13 +402,13 @@ class WheelStrategyBacktestEngine:
                     quantity=active_option.quantity,
                     dte_at_open=(active_option.expiration_date - active_option.entry_date).days,
                     holding_period_days=max((final_bar.trade_date - active_option.entry_date).days, 0),
-                    entry_underlying_close=sorted_bars[active_option.entry_index].close_price,
-                    exit_underlying_close=final_bar.close_price,
-                    entry_mid=active_option.entry_mid,
-                    exit_mid=exit_mid,
-                    gross_pnl=option_gross,
-                    net_pnl=option_net,
-                    total_commissions=entry_commission + exit_commission,
+                    entry_underlying_close=_D(sorted_bars[active_option.entry_index].close_price),
+                    exit_underlying_close=_D(final_bar.close_price),
+                    entry_mid=_D(active_option.entry_mid),
+                    exit_mid=_D(exit_mid),
+                    gross_pnl=_D(option_gross),
+                    net_pnl=_D(option_net),
+                    total_commissions=_D(entry_commission + exit_commission),
                     entry_reason="entry_rules_met",
                     exit_reason="backtest_end_option_liquidation",
                     detail_json={
@@ -425,13 +437,13 @@ class WheelStrategyBacktestEngine:
                     quantity=held_shares.quantity,
                     dte_at_open=0,
                     holding_period_days=max((final_bar.trade_date - held_shares.entry_date).days, 0),
-                    entry_underlying_close=held_shares.entry_price,
-                    exit_underlying_close=final_bar.close_price,
-                    entry_mid=held_shares.entry_price,
-                    exit_mid=final_bar.close_price,
-                    gross_pnl=stock_gross,
-                    net_pnl=stock_gross,
-                    total_commissions=0.0,
+                    entry_underlying_close=_D(held_shares.entry_price),
+                    exit_underlying_close=_D(final_bar.close_price),
+                    entry_mid=_D(held_shares.entry_price),
+                    exit_mid=_D(final_bar.close_price),
+                    gross_pnl=_D(stock_gross),
+                    net_pnl=_D(stock_gross),
+                    total_commissions=_D(0.0),
                     entry_reason="put_assignment",
                     exit_reason="backtest_end_share_liquidation",
                     detail_json={
@@ -445,16 +457,16 @@ class WheelStrategyBacktestEngine:
 
         ending_equity = cash
 
-        if equity_curve and ending_equity != equity_curve[-1].equity:
+        if equity_curve and _D(ending_equity) != equity_curve[-1].equity:
             last_td = equity_curve[-1].trade_date
             peak_equity = max(peak_equity, ending_equity)
             dd = 0.0 if peak_equity == 0 else ((peak_equity - ending_equity) / peak_equity) * 100.0
             equity_curve[-1] = EquityPointResult(
                 trade_date=last_td,
-                equity=ending_equity,
-                cash=cash,
-                position_value=0.0,
-                drawdown_pct=dd,
+                equity=_D(ending_equity),
+                cash=_D(cash),
+                position_value=_D(0.0),
+                drawdown_pct=_D(dd),
             )
 
         summary = build_summary(
