@@ -93,7 +93,7 @@ export function usePolling<T>({
       onProgressRef.current?.(result);
 
       if (isCompleteRef.current(result)) {
-        setStatus("done");
+        if (mountedRef.current) setStatus("done");
         try {
           Promise.resolve(onCompleteRef.current(result)).catch((err) => {
             console.error("[usePolling] onComplete failed:", err);

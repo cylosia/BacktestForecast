@@ -9,15 +9,18 @@ the DB record first, then sends the Celery task. A proper outbox would:
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+import time
+from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
 import structlog
 from sqlalchemy.orm import Session
 
-from apps.worker.app.celery_app import celery_app
-from backtestforecast.models import JobStatus
+from backtestforecast.models import JobStatus, RunJobStatus
+
+_SEND_MAX_ATTEMPTS = 3
+_SEND_RETRY_DELAY = 0.5
 
 
 class DispatchResult(enum.Enum):
@@ -58,7 +61,7 @@ def dispatch_celery_task(
 
     Returns a :class:`DispatchResult` indicating the outcome.
     """
-    if job.status != JobStatus.QUEUED or job.celery_task_id is not None:
+    if job.status != RunJobStatus.QUEUED or job.celery_task_id is not None:
         logger.info(
             "dispatch.dispatch_skipped",
             log_event=log_event,
@@ -80,23 +83,14 @@ def dispatch_celery_task(
     # is a brief window where the job is committed but the task hasn't been
     # sent yet (stuck-job). The reaper/stale-job recovery process handles this
     # by marking jobs that stay "queued" with a celery_task_id as failed.
-    from backtestforecast.models import OutboxMessage
     task_id = str(uuid4())
     job.celery_task_id = task_id
-    outbox_msg = OutboxMessage(
-        task_name=task_name,
-        task_kwargs_json=task_kwargs,
-        queue=queue,
-        status="pending",
-        correlation_id=getattr(job, "id", None),
-    )
-    db.add(outbox_msg)
     try:
         db.commit()
     except Exception:
         db.rollback()
         logger.exception(f"{log_event}.pre_commit_failed", **task_kwargs)
-        job.status = JobStatus.FAILED
+        job.status = RunJobStatus.FAILED
         job.error_code = "enqueue_failed"
         job.error_message = "Unable to persist task state before dispatch."
         try:
@@ -105,27 +99,44 @@ def dispatch_celery_task(
             db.rollback()
         return DispatchResult.PRE_COMMIT_FAILED
 
-    try:
-        celery_app.send_task(
-            task_name, kwargs=task_kwargs, queue=queue,
-            headers=headers if headers else None,
-            task_id=task_id,
-        )
-    except Exception:
-        logger.exception(
-            "dispatch.enqueue_failed",
-            log_event=log_event,
-            celery_task_id=task_id,
-            msg="Outbox message left pending for poller recovery.",
-            **task_kwargs,
-        )
-        return DispatchResult.ENQUEUE_FAILED
+    from apps.worker.app.celery_app import celery_app
 
+    last_exc: Exception | None = None
+    for attempt in range(1, _SEND_MAX_ATTEMPTS + 1):
+        try:
+            celery_app.send_task(
+                task_name, kwargs=task_kwargs, queue=queue,
+                headers=headers if headers else None,
+                task_id=task_id,
+            )
+            logger.info("dispatch.enqueued", log_event=log_event, celery_task_id=task_id, attempt=attempt, **task_kwargs)
+            return DispatchResult.SENT
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "dispatch.send_attempt_failed",
+                log_event=log_event,
+                celery_task_id=task_id,
+                attempt=attempt,
+                max_attempts=_SEND_MAX_ATTEMPTS,
+                **task_kwargs,
+            )
+            if attempt < _SEND_MAX_ATTEMPTS:
+                time.sleep(_SEND_RETRY_DELAY * attempt)
+
+    logger.exception(
+        "dispatch.enqueue_failed",
+        log_event=log_event,
+        celery_task_id=task_id,
+        **task_kwargs,
+        exc_info=last_exc,
+    )
+    job.status = RunJobStatus.FAILED
+    job.error_code = "enqueue_failed"
+    job.error_message = "Unable to dispatch task to broker after retries."
+    job.completed_at = datetime.now(UTC)
     try:
-        outbox_msg.status = "sent"
         db.commit()
     except Exception:
         db.rollback()
-
-    logger.info("dispatch.enqueued", log_event=log_event, celery_task_id=task_id, **task_kwargs)
-    return DispatchResult.SENT
+    return DispatchResult.ENQUEUE_FAILED

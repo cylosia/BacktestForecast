@@ -6,6 +6,7 @@ Create Date: 2026-03-18
 """
 from __future__ import annotations
 
+import sqlalchemy as sa
 from alembic import op
 
 revision = "20260318_0009"
@@ -15,11 +16,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.alter_column("sweep_jobs", "request_snapshot_json", server_default="'{}'")
-    op.alter_column("sweep_results", "parameter_snapshot_json", server_default="'{}'")
-    op.alter_column("sweep_results", "summary_json", server_default="'{}'")
-    op.alter_column("sweep_results", "trades_json", server_default="'[]'")
-    op.alter_column("sweep_results", "equity_curve_json", server_default="'[]'")
+    op.alter_column("sweep_jobs", "request_snapshot_json", server_default=sa.text("'{}'::jsonb"))
+    op.alter_column("sweep_results", "parameter_snapshot_json", server_default=sa.text("'{}'::jsonb"))
+    op.alter_column("sweep_results", "summary_json", server_default=sa.text("'{}'::jsonb"))
+    op.alter_column("sweep_results", "trades_json", server_default=sa.text("'[]'::jsonb"))
+    op.alter_column("sweep_results", "equity_curve_json", server_default=sa.text("'[]'::jsonb"))
 
 
 def downgrade() -> None:

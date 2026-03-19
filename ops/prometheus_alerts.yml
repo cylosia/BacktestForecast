@@ -4,23 +4,32 @@
 groups:
   - name: backtestforecast
     rules:
-      - alert: DLQDepthHigh
+      - alert: DeadLetterQueueDepth
         expr: dlq_depth > 0
-        for: 5m
+        for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "Dead-letter queue has unprocessed messages"
-          description: "DLQ has {{ $value }} entries. Inspect via GET /admin/dlq."
+          summary: "Dead letter queue has {{ $value }} items"
+          description: "The DLQ has had items for >15 minutes. Inspect via GET /admin/dlq."
 
-      - alert: CircuitBreakerTripped
-        expr: rate(circuit_breaker_trips_total[5m]) > 0
+      - alert: DLQDepthHigh
+        expr: dlq_depth > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dead-letter queue depth >10"
+          description: "{{ $value }} messages in the dead-letter queue. Tasks are exhausting retries."
+
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state == 2
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Circuit breaker tripped for {{ $labels.service }}"
-          description: "The circuit breaker for {{ $labels.service }} has tripped. External service may be unavailable."
+          summary: "Circuit breaker open for {{ $labels.service }}"
+          description: "The circuit breaker for {{ $labels.service }} has been open for over 2 minutes. External service may be unavailable."
 
       - alert: HighTaskFailureRate
         expr: |
@@ -123,14 +132,6 @@ groups:
       # job_updated_at_seconds metric is instrumented.
       # expr: time() - max(job_updated_at_seconds) > 7200
 
-      - alert: DBConnectionPoolExhaustion
-        expr: backtestforecast_pool_checked_out / backtestforecast_pool_size > 0.8
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Database connection pool >80% utilized"
-
       - alert: WorkerMemoryHigh
         expr: process_resident_memory_bytes{job="worker"} > 400 * 1024 * 1024
         for: 10m
@@ -169,23 +170,26 @@ groups:
           summary: "Dead-letter queue is growing"
           description: "DLQ is accumulating messages at {{ $value }} per hour, indicating persistent task failures."
 
-      - alert: EphemeralPortExhaustion
+      - alert: HighExternalAPIRequestRate
         expr: rate(external_api_requests_total[5m]) > 50
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High external API request rate suggesting port pressure"
-          description: "External API request rate is {{ $value }}/s over 5m. May indicate ephemeral port exhaustion."
+          summary: "High external API request rate — monitor for connection pool exhaustion"
+          description: >-
+            External API request rate is {{ $value | printf "%.1f" }} req/s,
+            which may cause connection pool pressure.
 
-      - alert: RedisMemoryHigh
+      - alert: RedisConnectionPoolHigh
         expr: redis_pool_in_use > 40
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High Redis connection pool usage"
-          description: "Redis pool has {{ $value }} connections in use. May indicate connection leaks or high concurrency."
+          summary: "Redis connection pool utilization is high"
+          description: >-
+            {{ $value }} Redis connections are in use, approaching pool limits.
 
       - alert: PostgresPoolExhausted
         expr: db_pool_checked_out / (db_pool_size + db_pool_max_overflow) > 0.8
@@ -222,3 +226,70 @@ groups:
         annotations:
           summary: "Database migration version does not match code"
           description: "The database is not at the expected Alembic head revision. Run `alembic upgrade head` to resolve."
+
+      - alert: OutboxTableGrowth
+        expr: pg_stat_user_tables_n_live_tup{relname="outbox_messages"} > 1000
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox messages table has >1000 rows"
+          description: "The outbox_messages table is growing. Until the outbox poller is implemented, these rows are dead writes."
+
+      - alert: DiskUsageHigh
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage above 85%"
+          description: >-
+            Root filesystem has only {{ $value | humanize1024 }}B available.
+
+      - alert: DiskUsageCritical
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk usage above 95% — immediate action required"
+          description: >-
+            Root filesystem has only {{ $value | humanize1024 }}B available.
+
+      - alert: ContainerRestartLoop
+        expr: increase(container_restart_count[30m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container restarting frequently"
+          description: >-
+            Container {{ $labels.name }} has restarted {{ $value }} times in 30 minutes.
+
+      - alert: StripeWebhookRetryExhaustion
+        expr: increase(stripe_webhook_events_total{result="error"}[1h]) > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Stripe webhook errors >10 in 1 hour"
+          description: "{{ $value }} webhook processing errors. Billing state may be inconsistent."
+
+      - alert: ExpiredExportsNotCleaned
+        expr: increase(export_cleanup_deleted_total[24h]) == 0 and increase(export_jobs_created_total[24h]) > 0
+        for: 25h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Export cleanup has not run in 24 hours"
+          description: "New exports are being created but no expired exports are being cleaned up."
+
+      - alert: APIMemoryHigh
+        expr: process_resident_memory_bytes{job="backtestforecast-api"} > 450e6
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API process memory usage is high"
+          description: >-
+            API process is using {{ $value | humanize }}B of memory.

@@ -22,7 +22,8 @@ async function getServerToken(): Promise<string> {
   const { isAuthenticated, getToken, redirectToSignIn } = await auth();
 
   if (!isAuthenticated) {
-    return redirectToSignIn() as never;
+    redirectToSignIn();
+    throw new Error("Redirecting to sign-in.");
   }
 
   const token = await getToken();

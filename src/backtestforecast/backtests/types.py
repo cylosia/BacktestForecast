@@ -34,6 +34,8 @@ class BacktestConfig:
     risk_per_trade_pct: Decimal
     commission_per_contract: Decimal
     entry_rules: Sequence[EntryRule]
+    # FIXME(#97): Use a time-varying risk-free rate based on the backtest
+    # date range (e.g., average 3-month T-bill rate over the period).
     risk_free_rate: float = 0.045
     slippage_pct: float = 0.0
     strategy_overrides: StrategyOverrides | None = None

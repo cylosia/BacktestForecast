@@ -98,8 +98,17 @@ export function validateBacktestForm(values: BacktestFormValues): {
     errors.endDate = "End date must be a valid date (YYYY-MM-DD).";
   }
 
-  if (!errors.startDate && !errors.endDate && values.startDate >= values.endDate) {
+  if (!errors.startDate && !errors.endDate && new Date(values.startDate) >= new Date(values.endDate)) {
     errors.endDate = "End date must be later than start date.";
+  }
+
+  if (!errors.endDate) {
+    const endDate = new Date(values.endDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (endDate > today) {
+      errors.endDate = "End date cannot be in the future.";
+    }
   }
 
   if (!errors.startDate && !errors.endDate) {

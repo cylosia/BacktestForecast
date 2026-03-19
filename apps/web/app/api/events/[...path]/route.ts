@@ -42,11 +42,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   if (!path.length || !ALLOWED_RESOURCE_TYPES.has(path[0])) {
     return new Response("Invalid resource type", { status: 400 });
   }
+  if (path.length !== 2) {
+    return new Response("Invalid event path", { status: 400 });
+  }
+  if (path.some(segment => segment === "." || segment === ".." || segment.includes("/"))) {
+    return new Response("Invalid path segment", { status: 400 });
+  }
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (path.length >= 2 && !UUID_RE.test(path[1])) {
+  if (!UUID_RE.test(path[1])) {
     return new Response("Invalid resource ID", { status: 400 });
   }
-  const backendPath = `/v1/events/${path.join("/")}`;
+  const backendPath = `/v1/events/${path[0]}/${path[1]}`;
   const backendUrl = `${API_BASE}${backendPath}`;
 
   try {
@@ -55,11 +61,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
         Authorization: `Bearer ${token}`,
         Accept: "text/event-stream",
       },
+      cache: "no-store",
       signal: req.signal,
     });
 
     if (!backendResponse.ok) {
-      return new Response(backendResponse.statusText, { status: backendResponse.status });
+      const safe = backendResponse.status === 401 ? "Unauthorized"
+        : backendResponse.status === 403 ? "Forbidden"
+        : backendResponse.status === 404 ? "Not found"
+        : "Upstream error";
+      return new Response(safe, { status: backendResponse.status });
     }
 
     if (!backendResponse.body) {
@@ -72,6 +83,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (err) {

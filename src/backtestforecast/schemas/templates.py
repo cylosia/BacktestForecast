@@ -10,8 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
 
-TEMPLATE_SCHEMA_VERSION = 1
-
 
 # NOTE: Consider migrating to Pydantic's model_fields_set for distinguishing
 # "not provided" from "explicitly null" in PATCH operations. The _Unset
@@ -34,6 +32,8 @@ class TemplateConfig(BaseModel):
     account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
+    # No min_length: empty entry_rules are intentional for template drafts
+    # and sweep-style templates that enter on every eligible date.
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
 
     # Optional pre-fill hints — not required, but useful if the user always tests the same symbol/window
@@ -87,14 +87,12 @@ class TemplateResponse(BaseModel):
                     for k in cls.model_fields
                     if k != "config" and hasattr(data, k)
                 }
-                cleaned = {k: v for k, v in raw.items() if not k.startswith("_")}
-                attrs["config_json"] = TemplateConfig(**cleaned)
+                attrs["config_json"] = TemplateConfig(**raw)
                 return attrs
         elif isinstance(data, dict):
             raw = data.get("config_json") or data.get("config")
             if isinstance(raw, dict):
-                cleaned = {k: v for k, v in raw.items() if not k.startswith("_")}
-                data = {**data, "config_json": TemplateConfig(**cleaned)}
+                data = {**data, "config_json": TemplateConfig(**raw)}
         return data
 
 

@@ -109,10 +109,12 @@ export async function fetchExportStatus(
 export async function createTemplate(
   token: string,
   payload: CreateTemplateRequest,
+  signal?: AbortSignal,
 ): Promise<TemplateResponse> {
   return apiRequest<TemplateResponse>("/v1/templates", token, {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   });
 }
 

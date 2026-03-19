@@ -7,9 +7,11 @@ import hashlib
 class TestExportSha256:
     def test_sha256_computed_correctly(self):
         content = b"test export content"
-        expected = hashlib.sha256(content).hexdigest()
-        assert len(expected) == 64
-        assert expected == hashlib.sha256(content).hexdigest()
+        digest = hashlib.sha256(content).hexdigest()
+        assert len(digest) == 64
+        assert all(c in "0123456789abcdef" for c in digest)
+        assert digest != hashlib.sha256(b"different content").hexdigest(), \
+            "Different content must produce different hashes"
 
     def test_empty_content_has_known_hash(self):
         content = b""

@@ -72,9 +72,9 @@ class ClerkTokenVerifier:
 
         if not audience or not issuer:
             from backtestforecast.config import get_settings as _get_settings
-            if _get_settings().app_env == "production":
+            if _get_settings().app_env in ("production", "staging"):
                 raise ConfigurationError(
-                    "CLERK_AUDIENCE and CLERK_ISSUER must be set in production."
+                    "CLERK_AUDIENCE and CLERK_ISSUER must be set in production/staging."
                 )
 
         try:
@@ -84,7 +84,7 @@ class ClerkTokenVerifier:
                 algorithms=["RS256"],
                 audience=audience,
                 issuer=issuer,
-                leeway=15,
+                leeway=5,
                 options=decode_options,
             )
         except InvalidTokenError as exc:

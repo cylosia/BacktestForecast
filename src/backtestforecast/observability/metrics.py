@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import time
 
+import structlog
+
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -302,7 +304,7 @@ SWEEP_EXECUTION_DURATION_SECONDS = Histogram(
 SWEEP_CANDIDATE_FAILURES_TOTAL = Counter(
     "sweep_candidate_failures_total",
     "Sweep candidates that failed during evaluation",
-    ["symbol"],
+    ["reason"],
 )
 
 BACKTEST_EXECUTION_DURATION_SECONDS = Histogram(
@@ -315,6 +317,13 @@ EXPORT_EXECUTION_DURATION_SECONDS = Histogram(
     "export_execution_duration_seconds",
     "Time to execute an export job end-to-end",
     buckets=[0.5, 1, 2.5, 5, 10, 30, 60],
+)
+
+DB_QUERY_DURATION_SECONDS = Histogram(
+    "db_query_duration_seconds",
+    "Database query latency",
+    ["operation"],
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
 )
 
 
@@ -352,6 +361,9 @@ def _normalize_path(path: str) -> str:
                 path = path[:idx] + "{symbol}" + rest[slug_end:]
             break
     if not any(path.startswith(p) for p in _KNOWN_PATH_PREFIXES):
+        structlog.get_logger("observability.metrics").warning(
+            "metrics.unknown_path_prefix", original_path=path,
+        )
         path = "/unknown"
     return path
 

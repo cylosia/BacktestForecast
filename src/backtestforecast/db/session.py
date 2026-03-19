@@ -35,6 +35,10 @@ def build_engine(
     else:
         engine_kwargs["pool_size"] = cfg.db_pool_size
         engine_kwargs["max_overflow"] = cfg.db_pool_max_overflow
+        # pool_recycle should be shorter than the DB's idle connection timeout
+        # (default 300s for PostgreSQL's tcp_keepalives_idle). pool_pre_ping
+        # provides a safety net, but pool_recycle proactively avoids reusing
+        # connections that the DB may have already closed.
         engine_kwargs["pool_recycle"] = cfg.db_pool_recycle
         engine_kwargs["pool_timeout"] = cfg.db_pool_timeout
         engine_kwargs["connect_args"] = {"options": f"-c statement_timeout={statement_timeout_ms}"}

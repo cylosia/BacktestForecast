@@ -64,9 +64,13 @@ def delete_account(
 
     stripe_sub_id = user.stripe_subscription_id
     stripe_cust_id = user.stripe_customer_id
-    stripe_cleanup = _cleanup_stripe(billing, stripe_sub_id, stripe_cust_id, user.id)
-    ACCOUNT_DELETIONS_TOTAL.labels(stripe_cleanup_result=stripe_cleanup).inc()
 
+    # DB delete FIRST, then Stripe cleanup. This ordering ensures that if
+    # the DB commit fails the Stripe state is unchanged. If Stripe cleanup
+    # fails after DB commit, the user is deleted but Stripe may retain a
+    # customer object — acceptable since it won't be billed (no matching
+    # DB user). The reverse order would leave the user's DB record intact
+    # but Stripe already cancelled, which is harder to recover from.
     try:
         AuditService(db).record_always(
             event_type="account.deleted",
@@ -80,7 +84,6 @@ def delete_account(
                 "clerk_user_id": user.clerk_user_id,
                 "stripe_subscription_id": stripe_sub_id,
                 "stripe_customer_id": stripe_cust_id,
-                "stripe_cleanup_result": stripe_cleanup,
             },
         )
         db.delete(user)
@@ -90,6 +93,9 @@ def delete_account(
         logger.exception("account.delete_failed", user_id=str(user.id))
         raise
 
+    stripe_cleanup = _cleanup_stripe(billing, stripe_sub_id, stripe_cust_id, user.id)
+    ACCOUNT_DELETIONS_TOTAL.labels(stripe_cleanup_result=stripe_cleanup).inc()
+
     if cancelled_ids:
         BillingService.publish_cancellation_events(cancelled_ids)
 
@@ -97,6 +103,7 @@ def delete_account(
         "account.deleted",
         user_id=str(user.id),
         clerk_user_id=user.clerk_user_id,
+        stripe_cleanup_result=stripe_cleanup,
     )
 
 
@@ -105,7 +112,7 @@ def export_account_data(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(default=_EXPORT_PAGE_SIZE, ge=1, le=_EXPORT_PAGE_SIZE),
-    offset: int = Query(default=0, ge=0, le=100_000),
+    offset: int = Query(default=0, ge=0, le=10_000),
 ) -> dict[str, Any]:
     """Export all user data for GDPR data portability.
 
@@ -226,7 +233,7 @@ def _cleanup_stripe(
         return "skipped"
 
     try:
-        client = billing._get_stripe_client()
+        client = billing.get_stripe_client()
     except Exception:
         logger.warning("account.stripe_client_unavailable", user_id=str(user_id))
         return "client_unavailable"

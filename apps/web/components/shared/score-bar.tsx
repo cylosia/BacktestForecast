@@ -1,6 +1,6 @@
 export function ScoreBar({ score, max }: { score: number | null | undefined; max: number | null | undefined }) {
-  const safeScore = Number.isFinite(score as number) ? (score as number) : 0;
-  const safeMax = Number.isFinite(max as number) && (max as number) > 0 ? (max as number) : 0;
+  const safeScore = typeof score === "number" && Number.isFinite(score) ? score : 0;
+  const safeMax = typeof max === "number" && Number.isFinite(max) && max > 0 ? max : 0;
   const pct = safeMax > 0 ? Math.max(0, Math.min((safeScore / safeMax) * 100, 100)) : 0;
   return (
     <div

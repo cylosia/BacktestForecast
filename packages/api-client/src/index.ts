@@ -1,7 +1,9 @@
 import type { components } from "./schema";
 
 // ---------------------------------------------------------------------------
-// Enum / literal union types
+// Enum / literal union types (from OpenAPI schema)
+// The OpenAPI codegen step (Fix #35) ensures these stay in sync with the
+// backend. Regenerate via: npx openapi-typescript openapi.snapshot.json -o src/schema.d.ts
 // ---------------------------------------------------------------------------
 
 export type StrategyType = components["schemas"]["StrategyType"];
@@ -158,16 +160,19 @@ export type SymbolAnalysisFullResponse = AnalysisDetailResponse;
 // ---------------------------------------------------------------------------
 // Sweep types
 //
-// WARNING: These types are manually maintained and MUST stay in sync with
-// the backend Pydantic schemas in backtestforecast.schemas.sweeps.
-// Run `python scripts/check_contract_drift.py` to verify alignment.
-// TODO: Add sweep endpoints to OpenAPI export and generate these types
-// automatically. Until then, any backend schema change must be mirrored here.
+// TODO: These types are manually defined. Sweep endpoints are not yet in the
+// OpenAPI export. Add sweep endpoints to OpenAPI (Fix #35) and regenerate
+// via `npx openapi-typescript openapi.snapshot.json -o src/schema.d.ts` to
+// derive these from the schema. Until then, any backend schema change must be
+// mirrored here. Run `python scripts/check_contract_drift.py` to verify alignment.
 // NOTE: SweepJobResponse fields `prefetch_summary` and `warnings` match the
 // Pydantic *field* names (not the aliases `prefetch_summary_json` /
 // `warnings_json`), because FastAPI serializes by field name when
 // `populate_by_name=True`.
 // ---------------------------------------------------------------------------
+
+/** Sweep mode: grid (exhaustive) or genetic (evolutionary optimization). */
+export type SweepMode = "grid" | "genetic";
 
 export interface ParameterSnapshotJson {
   strategy_type?: string;
@@ -209,6 +214,7 @@ export interface SweepResultResponse {
   warnings: Record<string, unknown>[];
   trades_json: Record<string, unknown>[];
   equity_curve: EquityCurvePointResponse[];
+  trades_truncated: boolean;
 }
 
 export interface SweepResultListResponse {
@@ -221,13 +227,16 @@ export interface SweepResultListResponse {
 export interface SweepJobResponse {
   id: string;
   status: RunStatus;
+  mode: "grid" | "genetic";
   symbol: string;
+  engine_version: string | null;
   plan_tier_snapshot: string;
   candidate_count: number;
   evaluated_candidate_count: number;
   result_count: number;
   prefetch_summary: Record<string, unknown> | null;
   warnings: Record<string, unknown>[];
+  request_snapshot: Record<string, unknown>;
   error_code: string | null;
   error_message: string | null;
   created_at: string;

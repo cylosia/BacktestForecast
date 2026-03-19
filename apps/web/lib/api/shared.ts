@@ -164,7 +164,9 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
     }
 
     if (response.status === 204) {
-      return undefined as T;
+      // 204 No Content — callers expecting void/undefined are safe;
+      // callers expecting a structured response should not hit this path.
+      return undefined as unknown as T;
     }
 
     try {

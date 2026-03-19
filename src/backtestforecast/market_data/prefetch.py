@@ -11,7 +11,7 @@ from backtestforecast.market_data.types import DailyBar, OptionContractRecord
 
 logger = structlog.get_logger("market_data.prefetch")
 
-_API_CONCURRENCY = threading.Semaphore(10)
+_DEFAULT_API_CONCURRENCY = 10
 
 
 @dataclass(slots=True)
@@ -47,11 +47,12 @@ class OptionDataPrefetcher:
     writes are safe.
     """
 
-    def __init__(self, max_workers: int | None = None) -> None:
+    def __init__(self, max_workers: int | None = None, api_concurrency: int = _DEFAULT_API_CONCURRENCY) -> None:
         if max_workers is None:
             from backtestforecast.config import get_settings
             max_workers = get_settings().prefetch_max_workers
         self._max_workers = max_workers
+        self._api_concurrency = threading.Semaphore(api_concurrency)
 
     def prefetch_for_symbol(
         self,
@@ -92,7 +93,7 @@ class OptionDataPrefetcher:
             result = _DateResult()
             for contract_type in ("put", "call"):
                 try:
-                    with _API_CONCURRENCY:
+                    with self._api_concurrency:
                         contracts = option_gateway.list_contracts(
                             entry_date=trade_date,
                             contract_type=contract_type,
@@ -101,7 +102,7 @@ class OptionDataPrefetcher:
                         )
                     result.contracts_fetched += len(contracts)
                     for contract in contracts:
-                        with _API_CONCURRENCY:
+                        with self._api_concurrency:
                             option_gateway.get_quote(contract.ticker, trade_date)
                         result.quotes_fetched += 1
                 except Exception as exc:
@@ -152,6 +153,8 @@ class OptionDataPrefetcher:
                     dates_total=len(trade_dates),
                 )
                 summary.errors.append(f"{symbol}: prefetch timed out after 300s")
+                for f in futures:
+                    f.cancel()
 
         logger.info(
             "prefetch.completed",

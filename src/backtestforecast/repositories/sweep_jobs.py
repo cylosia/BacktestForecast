@@ -35,6 +35,23 @@ class SweepJobRepository:
         stmt = select(func.count(SweepJob.id)).where(SweepJob.user_id == user_id)
         return int(self.session.scalar(stmt) or 0)
 
+    def count_for_user_created_between(
+        self,
+        user_id: UUID,
+        *,
+        start_inclusive: datetime,
+        end_exclusive: datetime,
+        exclude_id: UUID | None = None,
+    ) -> int:
+        stmt = select(func.count(SweepJob.id)).where(
+            SweepJob.user_id == user_id,
+            SweepJob.created_at >= start_inclusive,
+            SweepJob.created_at < end_exclusive,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(SweepJob.id != exclude_id)
+        return int(self.session.scalar(stmt) or 0)
+
     def get_for_user(
         self,
         job_id: UUID,
@@ -62,21 +79,27 @@ class SweepJobRepository:
         )
         return self.session.scalar(stmt)
 
-    def count_results(self, job_id: UUID) -> int:
+    def count_results(self, job_id: UUID, *, user_id: UUID | None = None) -> int:
         stmt = select(func.count(SweepResult.id)).where(SweepResult.sweep_job_id == job_id)
+        if user_id is not None:
+            stmt = stmt.join(SweepJob, SweepResult.sweep_job_id == SweepJob.id).where(
+                SweepJob.user_id == user_id,
+            )
         return int(self.session.scalar(stmt) or 0)
 
     def list_results(
-        self, job_id: UUID, *, limit: int = 100, offset: int = 0,
+        self, job_id: UUID, *, limit: int = 100, offset: int = 0, user_id: UUID | None = None,
     ) -> list[SweepResult]:
         limit = min(limit, _MAX_PAGE_SIZE)
         stmt = (
             select(SweepResult)
             .where(SweepResult.sweep_job_id == job_id)
-            .order_by(SweepResult.rank)
-            .offset(offset)
-            .limit(limit)
         )
+        if user_id is not None:
+            stmt = stmt.join(SweepJob, SweepResult.sweep_job_id == SweepJob.id).where(
+                SweepJob.user_id == user_id,
+            )
+        stmt = stmt.order_by(SweepResult.rank).offset(offset).limit(limit)
         return list(self.session.scalars(stmt))
 
     def find_recent_duplicate(

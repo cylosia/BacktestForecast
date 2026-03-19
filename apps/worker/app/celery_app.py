@@ -51,7 +51,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_soft_time_limit=3600,
     task_time_limit=3900,
-    result_expires=300,
+    result_expires=7200,
     worker_max_tasks_per_child=200,
     worker_max_memory_per_child=500_000,
     broker_connection_retry_on_startup=True,
@@ -85,6 +85,8 @@ celery_app.conf.task_routes = {
     "maintenance.cleanup_audit_events": {"queue": "maintenance"},
     "maintenance.cleanup_daily_recommendations": {"queue": "maintenance"},
     "maintenance.refresh_market_holidays": {"queue": "maintenance"},
+    "maintenance.cleanup_outbox": {"queue": "maintenance"},
+    "maintenance.poll_outbox": {"queue": "maintenance"},
 }
 
 # RedBeat loads these entries on first run and stores them in Redis.
@@ -95,7 +97,7 @@ celery_app.conf.beat_schedule = {
         "task": "scans.refresh_prioritized",
         "schedule": crontab(hour=6, minute=30),
     },
-    # Runs at 6:00 UTC (~2 AM ET / 1 AM EDT) to ensure end-of-day prices
+    # Runs at 6:00 UTC (~1 AM EST / 2 AM EDT) to ensure end-of-day prices
     # from market data providers are fully finalized before the pipeline
     # consumes them.
     "nightly-scan-pipeline": {
@@ -122,6 +124,10 @@ celery_app.conf.beat_schedule = {
     "cleanup-daily-recommendations-weekly": {
         "task": "maintenance.cleanup_daily_recommendations",
         "schedule": crontab(hour=2, minute=30, day_of_week=0),
+    },
+    "cleanup-outbox-daily": {
+        "task": "maintenance.cleanup_outbox",
+        "schedule": crontab(hour=4, minute=0),
     },
 }
 
@@ -185,7 +191,7 @@ def _start_worker_metrics_server() -> None:
     if not metrics_token:
         _shutdown_logger.warning("worker.metrics_server_no_auth", msg="Metrics server started without authentication token")
 
-    bind_host = os.environ.get("WORKER_METRICS_BIND", "127.0.0.1")
+    bind_host = os.environ.get("WORKER_METRICS_BIND", "0.0.0.0")
     server = HTTPServer((bind_host, port), _MetricsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -228,7 +234,7 @@ def _start_heartbeat_loop() -> None:
                     except Exception:
                         pass
                     conn = None
-            sleep_secs = min(15 * (2 ** consecutive_errors), 45)
+            sleep_secs = min(15 * (2 ** consecutive_errors), 30)
             _heartbeat_stop.wait(sleep_secs)
         if conn is not None:
             try:
@@ -270,8 +276,13 @@ def _seed_market_holidays() -> None:
     r = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=3)
     try:
         if r.exists("bff:market_holidays"):
-            _shutdown_logger.info("worker.market_holidays_already_cached")
-            return
+            try:
+                count = r.scard("bff:market_holidays")
+            except Exception:
+                count = 1
+            if count > 0:
+                _shutdown_logger.info("worker.market_holidays_already_cached")
+                return
         acquired = r.set("bff:market_holidays_seed_lock", "1", nx=True, ex=300)
         if not acquired:
             _shutdown_logger.info("worker.market_holidays_seed_already_dispatched")
@@ -308,10 +319,10 @@ def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
         except Exception:
             pass
     try:
-        from backtestforecast.db.session import _get_engine
+        from backtestforecast.db.session import _get_worker_engine
 
-        if _get_engine.cache_info().currsize > 0:
-            _get_engine().dispose()
+        if _get_worker_engine.cache_info().currsize > 0:
+            _get_worker_engine().dispose()
             _shutdown_logger.info("worker.db_engine_disposed")
         else:
             _shutdown_logger.info("worker.db_engine_never_created")

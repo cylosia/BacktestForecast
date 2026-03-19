@@ -1,11 +1,9 @@
-"""Add CHECK constraints for status columns and unique constraints for result ranking.
+"""Audit schema hardening: status CHECKs, unique constraints, outbox defaults, email CHECK.
 
-Ensures all job-status columns have a DB-level CHECK constraint limiting
-them to their valid status values, and that (job_id, rank) is unique in
-scanner_recommendations and sweep_results.
-
-The constraints may already exist if the baseline migration created them;
-every statement uses IF NOT EXISTS / existence checks to be idempotent.
+Consolidates three previously duplicate 0023 migrations:
+- add_status_check_constraints (status CHECKs + result unique constraints)
+- outbox_server_defaults (outbox_messages.task_kwargs_json default)
+- audit_schema_hardening (sweep mode validation, outbox index, email CHECK)
 
 Revision ID: 20260318_0023
 Revises: 20260318_0022
@@ -50,7 +48,17 @@ def _constraint_exists(table: str, name: str) -> bool:
     return row is not None
 
 
+def _index_exists(name: str) -> bool:
+    bind = op.get_bind()
+    result = bind.execute(
+        sa.text("SELECT 1 FROM pg_indexes WHERE indexname = :name"),
+        {"name": name},
+    )
+    return result.fetchone() is not None
+
+
 def upgrade() -> None:
+    # --- Status CHECK constraints (idempotent) ---
     for table, name, expr in _STATUS_CONSTRAINTS:
         if not _constraint_exists(table, name):
             op.execute(sa.text(
@@ -61,12 +69,57 @@ def upgrade() -> None:
                 f"ALTER TABLE {table} VALIDATE CONSTRAINT {name}"
             ))
 
+    # --- Unique constraints on (job_id, rank) ---
     for table, name, columns in _UNIQUE_CONSTRAINTS:
         if not _constraint_exists(table, name):
             op.create_unique_constraint(name, table, columns)
 
+    # --- Outbox server default ---
+    op.alter_column(
+        "outbox_messages",
+        "task_kwargs_json",
+        server_default=sa.text("'{}'::jsonb"),
+    )
+
+    # --- Validate sweep mode constraint from 0022 ---
+    if _constraint_exists("sweep_jobs", "ck_sweep_jobs_valid_mode"):
+        op.execute(sa.text(
+            "ALTER TABLE sweep_jobs VALIDATE CONSTRAINT ck_sweep_jobs_valid_mode"
+        ))
+
+    # --- Outbox correlation_id index ---
+    if not _index_exists("ix_outbox_messages_correlation_id"):
+        op.create_index(
+            "ix_outbox_messages_correlation_id",
+            "outbox_messages",
+            ["correlation_id"],
+            unique=False,
+        )
+
+    # --- Email non-empty CHECK ---
+    if not _constraint_exists("users", "ck_users_email_not_empty"):
+        op.execute(sa.text(
+            "ALTER TABLE users "
+            "ADD CONSTRAINT ck_users_email_not_empty "
+            "CHECK (email IS NULL OR length(email) > 0) NOT VALID"
+        ))
+        op.execute(sa.text(
+            "ALTER TABLE users VALIDATE CONSTRAINT ck_users_email_not_empty"
+        ))
+
 
 def downgrade() -> None:
+    op.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS ck_users_email_not_empty")
+
+    if _index_exists("ix_outbox_messages_correlation_id"):
+        op.drop_index("ix_outbox_messages_correlation_id", table_name="outbox_messages")
+
+    op.alter_column(
+        "outbox_messages",
+        "task_kwargs_json",
+        server_default=None,
+    )
+
     for table, name, _columns in reversed(_UNIQUE_CONSTRAINTS):
         if _constraint_exists(table, name):
             op.drop_constraint(name, table)

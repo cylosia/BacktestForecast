@@ -24,8 +24,13 @@ scrape_configs:
     metrics_path: /metrics
     scheme: http
     scrape_interval: 30s
-    static_configs:
-      - targets: ["worker:9090"]
+    # NOTE: Docker Compose DNS round-robins across replicas for "worker",
+    # so static_configs only hits one instance. Use dns_sd_configs to
+    # discover all replica IPs and scrape each independently.
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 9090
     # In production, mount the same bearer_token_file as the API scrape job.
     # The worker now requires METRICS_TOKEN when it is set in the environment.
     bearer_token_file: /etc/prometheus/secrets/metrics_token

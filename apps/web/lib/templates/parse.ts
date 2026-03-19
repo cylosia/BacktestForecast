@@ -25,6 +25,7 @@ const KNOWN_RULE_TYPES = new Set([
 export function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
   if (!obj || typeof obj !== "object") return false;
   const record = obj as Record<string, unknown>;
+  if ("entry_rules" in record && !Array.isArray(record.entry_rules)) return false;
   return (
     typeof record.strategy_type === "string" &&
     typeof record.target_dte === "number" &&

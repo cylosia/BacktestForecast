@@ -33,6 +33,18 @@ Query the `audit_events` table for `event_type = 'account.deleted'` and cross-re
 
 ## Common Alerts
 
+### HealthReadyDegraded
+**Cause:** The `/health/ready` endpoint is returning non-200 responses.
+
+> **Note**: The `HealthReadyDegraded` alert requires a blackbox exporter.
+> If using docker-compose.monitoring.yml, the blackbox-exporter service is
+> included. Configure Prometheus to scrape it by adding a blackbox target
+> in infra/prometheus/prometheus.yml.
+
+1. Check `/health/ready` directly — it will report which dependency (DB or Redis) is unhealthy
+2. Check PostgreSQL and Redis connectivity from the API pod
+3. Review recent deployments or infrastructure changes
+
 ### StuckJobsHigh
 **Cause:** Workers are down or Redis is unreachable.
 1. Check worker pods/processes: `celery -A apps.worker.app.celery_app.celery_app inspect ping`
@@ -149,7 +161,7 @@ redis-cli ping
 
 ### Clear rate limit counters (emergency)
 ```bash
-redis-cli KEYS "bff:rate-limit:*" | xargs redis-cli DEL
+redis-cli --scan --pattern "bff:rate-limit:*" | xargs redis-cli DEL
 ```
 
 ## Redis Failover Impact on Rate Limiting

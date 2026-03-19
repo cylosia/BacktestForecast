@@ -102,6 +102,15 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 
     _shutdown_sync_redis()
 
+    global _dlq_redis
+    if _dlq_redis is not None:
+        try:
+            _dlq_redis.close()
+            _dlq_redis = None
+            logger.info("lifespan.dlq_redis_closed")
+        except Exception:
+            logger.warning("lifespan.dlq_redis_close_failed", exc_info=True)
+
     from backtestforecast.db.session import _get_engine
 
     try:
@@ -209,6 +218,10 @@ class _CancelledErrorMiddleware:
         try:
             await self.app(scope, receive, tracked_send)
         except asyncio.CancelledError:
+            # If response headers were already sent, we must not attempt to
+            # send a new HTTP response — the ASGI contract forbids a second
+            # http.response.start message.  Silently swallow the error so the
+            # connection simply closes.
             if not response_started:
                 try:
                     response = JSONResponse(
@@ -254,6 +267,33 @@ app.add_middleware(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(_CancelledErrorMiddleware)
+
+
+class _RequestTimeoutMiddleware:
+    """Cancel requests that exceed a configurable wall-clock timeout."""
+
+    _EXEMPT_PREFIXES = ("/v1/events/",)
+
+    def __init__(self, app: object, *, timeout_seconds: int = 60) -> None:
+        self.app = app
+        self.timeout_seconds = timeout_seconds
+
+    async def __call__(self, scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        if scope["type"] != "http" or any(scope["path"].startswith(p) for p in self._EXEMPT_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+        import asyncio
+
+        try:
+            await asyncio.wait_for(self.app(scope, receive, send), timeout=self.timeout_seconds)
+        except asyncio.TimeoutError:
+            from starlette.responses import JSONResponse as _JR
+
+            resp = _JR(status_code=504, content={"error": {"code": "request_timeout", "message": "Request timed out."}})
+            await resp(scope, receive, send)
+
+
+app.add_middleware(_RequestTimeoutMiddleware, timeout_seconds=settings.request_timeout_seconds)
 app.add_middleware(PrometheusMiddleware)
 
 app.include_router(health.router)
@@ -391,7 +431,8 @@ def prometheus_metrics(request: Request) -> Response:
         auth = request.headers.get("Authorization", "")
         token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
         if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
-            return JSONResponse(status_code=403, content={"error": "forbidden"})
+            get_rate_limiter().check(bucket="admin_auth_fail", actor_key=ip_address or "unknown", limit=5, window_seconds=60)
+            return JSONResponse(status_code=403, content={"error": {"code": "forbidden", "message": "Forbidden"}})
     return metrics_response()
 
 
@@ -417,7 +458,7 @@ def _get_dlq_redis():
 def dlq_status(request: Request) -> Response:
     """Inspect the dead-letter queue depth and recent items.
 
-    Always requires the metrics token regardless of environment.
+    Requires the admin token (falls back to metrics token if admin_token is not set).
     """
     ip_address = _extract_client_ip(request)
     get_rate_limiter().check(bucket="admin", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
@@ -425,8 +466,9 @@ def dlq_status(request: Request) -> Response:
 
     auth = request.headers.get("Authorization", "")
     token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-    if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
-        return JSONResponse(status_code=403, content={"error": "forbidden"})
+    expected_token = settings.admin_token or settings.metrics_token
+    if not expected_token or not token or not _hmac.compare_digest(token, expected_token):
+        return JSONResponse(status_code=403, content={"error": {"code": "forbidden", "message": "Forbidden"}})
     try:
         import json
 
@@ -434,12 +476,29 @@ def dlq_status(request: Request) -> Response:
         depth = r.llen("bff:dead_letter_queue")
         recent_raw = r.lrange("bff:dead_letter_queue", 0, 9)
 
+        _REDACT_KEYS = frozenset({
+            "email", "password", "secret", "token", "api_key",
+            "stripe_customer_id", "stripe_subscription_id", "clerk_user_id",
+            "ip_address", "ip_hash",
+        })
+
+        def _redact_dict(d: dict) -> dict:
+            return {
+                k: "[REDACTED]" if k in _REDACT_KEYS else v
+                for k, v in d.items()
+            }
+
         recent = []
         for raw in recent_raw:
             try:
-                recent.append(json.loads(raw))
+                item = json.loads(raw)
+                if isinstance(item, dict):
+                    item = _redact_dict(item)
+                    if "kwargs" in item and isinstance(item["kwargs"], dict):
+                        item["kwargs"] = _redact_dict(item["kwargs"])
+                recent.append(item)
             except (ValueError, TypeError, UnicodeDecodeError):
-                recent.append({"raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)})
+                recent.append({"raw": "[binary data]"})
         return JSONResponse(content={"depth": depth, "recent": recent})
     except Exception:
         logger.exception("admin.dlq_unavailable")

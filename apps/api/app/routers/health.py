@@ -1,3 +1,4 @@
+import hmac
 import time
 from collections import deque
 from threading import Lock
@@ -140,6 +141,13 @@ def ready(request: Request) -> JSONResponse:
             return JSONResponse(status_code=429, content={"status": "rate_limited"})
         _health_window.append(now)
     settings = get_settings()
+
+    show_details = False
+    if settings.metrics_token:
+        token = request.headers.get("x-metrics-token", "")
+        if token and hmac.compare_digest(token, settings.metrics_token):
+            show_details = True
+
     redis_up = ping_redis()
     broker_up = _ping_broker_redis()
 
@@ -151,7 +159,7 @@ def ready(request: Request) -> JSONResponse:
 
     if not db_up:
         content: dict[str, str] = {"status": "degraded", "version": HEALTH_VERSION}
-        if settings.app_env not in ("production", "staging"):
+        if show_details:
             content["environment"] = settings.app_env
             content["database"] = "down"
             content["redis"] = "up" if redis_up else "degraded"
@@ -160,7 +168,7 @@ def ready(request: Request) -> JSONResponse:
 
     if not broker_up:
         content = {"status": "degraded", "version": HEALTH_VERSION}
-        if settings.app_env not in ("production", "staging"):
+        if show_details:
             content["environment"] = settings.app_env
             content["database"] = "up"
             content["redis"] = "up" if redis_up else "down"
@@ -169,7 +177,7 @@ def ready(request: Request) -> JSONResponse:
 
     if not redis_up and settings.rate_limit_fail_closed:
         content = {"status": "unavailable", "version": HEALTH_VERSION}
-        if settings.app_env not in ("production", "staging"):
+        if show_details:
             content["environment"] = settings.app_env
             content["database"] = "up"
             content["redis"] = "down"
@@ -189,12 +197,6 @@ def ready(request: Request) -> JSONResponse:
         "status": "ok" if all_ok else "degraded",
         "version": HEALTH_VERSION,
     }
-    show_details = settings.app_env not in ("production", "staging")
-    if show_details and settings.metrics_token:
-        from fastapi import Query as _Q
-        token = request.query_params.get("token", "")
-        if token != settings.metrics_token:
-            show_details = False
     if show_details:
         payload["environment"] = settings.app_env
         payload["database"] = "up"
@@ -220,6 +222,12 @@ def ready(request: Request) -> JSONResponse:
                 _cache.close()
         except Exception:
             pass
+        if settings.sentry_dsn:
+            try:
+                import sentry_sdk
+                payload["sentry"] = "initialized" if sentry_sdk.is_initialized() else "not_initialized"
+            except Exception:
+                payload["sentry"] = "unavailable"
         if settings.app_env not in ("development",):
             payload["migration_aligned"] = _check_migration_drift()
     return JSONResponse(status_code=200, content=payload)

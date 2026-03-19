@@ -45,9 +45,9 @@ export default async function BacktestsPage() {
               <CardTitle className="text-sm font-medium text-muted-foreground">History depth</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-3xl font-semibold tracking-tight">{user.features.history_item_limit}</p>
+              <p className="text-3xl font-semibold tracking-tight">{user.features?.history_item_limit}</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {user.features.history_days ? `${user.features.history_days} day window` : "Full available history"}
+                {user.features?.history_days ? `${user.features.history_days} day window` : "Full available history"}
               </p>
             </CardContent>
           </Card>
@@ -57,7 +57,7 @@ export default async function BacktestsPage() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Comparison slots</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-3xl font-semibold tracking-tight">{user.features.side_by_side_comparison_limit}</p>
+              <p className="text-3xl font-semibold tracking-tight">{user.features?.side_by_side_comparison_limit}</p>
               <p className="mt-1 text-sm text-muted-foreground">Max runs per side-by-side comparison.</p>
             </CardContent>
           </Card>
@@ -67,7 +67,7 @@ export default async function BacktestsPage() {
           <CardContent className="pt-6">
             <SelectableHistoryList
               items={history.items}
-              comparisonLimit={user.features.side_by_side_comparison_limit}
+              comparisonLimit={user.features?.side_by_side_comparison_limit}
             />
           </CardContent>
         </Card>

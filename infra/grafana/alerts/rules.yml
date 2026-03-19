@@ -1,7 +1,7 @@
 # Grafana-managed alert rules for BacktestForecast.
-# These are the Grafana-specific format of production alerts.
-# The canonical Prometheus-native definitions live in ops/prometheus_alerts.yml.
-# Keep both files in sync when editing shared alert logic.
+# These are Grafana-ONLY alerts not duplicated in ops/prometheus_alerts.yml.
+# Canonical Prometheus-native alerts live in ops/prometheus_alerts.yml.
+# DO NOT duplicate alerts across both files — each alert belongs in exactly one.
 groups:
   - name: backtestforecast-job-health
     interval: 60s
@@ -19,22 +19,7 @@ groups:
             The job reaper has re-dispatched {{ $value }} stale jobs in the
             last 10 minutes.  Investigate worker health and queue depth.
 
-      - alert: HighTaskFailureRate
-        expr: |
-          (
-            sum(rate(celery_tasks_total{status="failed"}[5m]))
-            / sum(rate(celery_tasks_total[5m]))
-            > 0.1
-          )
-          and sum(rate(celery_tasks_total[5m])) > 0.01
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Celery task failure rate >10%"
-          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#task-failure-rate"
-          description: >-
-            More than 10% of Celery tasks are failing.  Check worker logs.
+      # HighTaskFailureRate is defined in ops/prometheus_alerts.yml — not duplicated here.
 
       - alert: AuditDedupeConflictsSpike
         expr: |
@@ -358,6 +343,7 @@ groups:
           severity: warning
         annotations:
           summary: "In-memory option cache is approaching budget limit"
+          runbook_url: "https://github.com/your-org/BacktestForecast/blob/main/docs/RUNBOOK.md#option-cache-over-budget"
           description: >-
             {{ $value }} option cache entries are held in memory across all
             gateway instances. Budget is 50,000. Large scans may cause OOM.

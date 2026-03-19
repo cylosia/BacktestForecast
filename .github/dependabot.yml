@@ -1,0 +1,57 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(py)"
+    labels: ["dependencies", "python"]
+
+  - package-ecosystem: npm
+    directory: "/apps/web"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(js)"
+    labels: ["dependencies", "javascript"]
+
+  - package-ecosystem: npm
+    directory: "/packages/api-client"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(js)"
+    labels: ["dependencies", "javascript"]
+
+  - package-ecosystem: docker
+    directory: "/apps/api"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "deps(docker)"
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: docker
+    directory: "/apps/worker"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "deps(docker)"
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: docker
+    directory: "/apps/web"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "deps(docker)"
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(actions)"
+    labels: ["dependencies", "ci"]

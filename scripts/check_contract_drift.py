@@ -98,5 +98,44 @@ def main() -> int:
     return 1
 
 
+def check_sweep_types() -> int:
+    """Verify manually-maintained sweep TypeScript types include all backend fields."""
+    from backtestforecast.schemas.sweeps import SweepJobResponse, SweepResultResponse
+
+    ts_path = PROJECT_ROOT / "packages" / "api-client" / "src" / "index.ts"
+    if not ts_path.exists():
+        print(f"ERROR: {ts_path} not found", file=sys.stderr)
+        return 1
+
+    ts_content = ts_path.read_text(encoding="utf-8")
+    errors: list[str] = []
+
+    sweep_job_fields = set(SweepJobResponse.model_fields.keys())
+    sweep_result_fields = set(SweepResultResponse.model_fields.keys())
+
+    for field_name in sweep_job_fields:
+        alias = SweepJobResponse.model_fields[field_name].alias
+        ts_name = alias if alias else field_name
+        if ts_name not in ts_content and field_name not in ts_content:
+            errors.append(f"SweepJobResponse.{field_name} (ts: {ts_name}) missing from TypeScript")
+
+    for field_name in sweep_result_fields:
+        alias = SweepResultResponse.model_fields[field_name].alias
+        ts_name = alias if alias else field_name
+        if ts_name not in ts_content and field_name not in ts_content:
+            errors.append(f"SweepResultResponse.{field_name} (ts: {ts_name}) missing from TypeScript")
+
+    if errors:
+        print("Sweep TypeScript type drift detected:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    print("Sweep types OK: all backend fields present in TypeScript.")
+    return 0
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    code = main()
+    code = max(code, check_sweep_types())
+    raise SystemExit(code)

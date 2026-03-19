@@ -120,7 +120,7 @@ class PipelineStatsResponse(BaseModel):
     quick_backtests_run: int
     full_backtests_run: int
     recommendations_produced: int
-    duration_seconds: float | None = None
+    duration_seconds: Decimal | None = None
     completed_at: datetime | None = None
 
 
@@ -157,6 +157,13 @@ class DailyPickItemResponse(BaseModel):
     summary: DailyPickSummary = Field(default_factory=DailyPickSummary)
     forecast: DailyPickForecast = Field(default_factory=DailyPickForecast)
 
+    @field_validator("regime_labels", mode="before")
+    @classmethod
+    def coerce_regime_labels(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [str(item) for item in v if item is not None]
+
 
 class DailyPicksResponse(BaseModel):
     trade_date: date | None = None
@@ -172,7 +179,7 @@ class PipelineHistoryItemResponse(BaseModel):
     status: str
     symbols_screened: int
     recommendations_produced: int
-    duration_seconds: float | None = None
+    duration_seconds: Decimal | None = None
     completed_at: datetime | None = None
     error_message: str | None = None
 

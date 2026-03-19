@@ -51,6 +51,21 @@ if abs(stored.updated_at - expected_updated_at) > tolerance:
   happen within 2 ms of each other, but this is extremely unlikely in
   practice given network latency.
 
+## Statement Timeouts
+
+PostgreSQL `statement_timeout` is configured per session type to bound
+the maximum duration of any single SQL statement:
+
+| Session type            | Timeout  | Rationale                                                       |
+|-------------------------|----------|-----------------------------------------------------------------|
+| API sessions            | 30 s     | User-facing requests should fail fast.                          |
+| Worker sessions         | 300 s    | Background jobs (backtests, scans, sweeps) need more headroom.  |
+| Scan candidate timeout  | 120 s    | Must be strictly less than the worker `statement_timeout` so an individual candidate times out before the whole session is killed. |
+
+If you increase the worker `statement_timeout`, verify that
+`soft_time_limit` on the corresponding Celery task is still greater
+than `statement_timeout` to allow graceful cleanup.
+
 ## HTTP Connection Reuse
 
 MassiveClient uses httpx connection pooling with `max_connections=20`,

@@ -18,9 +18,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 const PAGE_SIZE = 100;
 
 export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) {
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const visibleTrades = trades.slice(0, visibleCount);
-  const hasMore = visibleCount < trades.length;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(trades.length / PAGE_SIZE));
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const endIdx = Math.min(startIdx + PAGE_SIZE, trades.length);
+  const visibleTrades = trades.slice(startIdx, endIdx);
 
   return (
     <Card>
@@ -105,12 +107,25 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
           </Table>
           {trades.length > PAGE_SIZE && (
             <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-              <p>Showing {Math.min(visibleCount, trades.length)} of {trades.length} trades</p>
-              {hasMore && (
-                <Button variant="outline" size="sm" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
-                  Show more
+              <p>Showing {startIdx + 1}–{endIdx} of {trades.length} trades</p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => p - 1)}
+                >
+                  Previous
                 </Button>
-              )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           )}
         )}

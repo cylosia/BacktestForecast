@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   # IMPORTANT: Production DATABASE_URL values (set in .env.prod) MUST include
   # ?sslmode=require to encrypt Postgres traffic in transit.
@@ -55,6 +61,7 @@ services:
   api:
     image: ${API_IMAGE:?API_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
+    logging: *default-logging
     # Security hardening: read-only root filesystem prevents runtime modification
     # of application binaries.  no-new-privileges blocks SUID/SGID escalation.
     # cap_drop ALL removes all Linux capabilities the container doesn't need.
@@ -94,7 +101,7 @@ services:
   worker:
     image: ${WORKER_IMAGE:?WORKER_IMAGE must be set to a SHA-tagged image}
     restart: unless-stopped
-    # Security hardening — see api service comment above for rationale.
+    logging: *default-logging
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -108,15 +115,59 @@ services:
       redis:
         condition: service_healthy
     env_file: .env.prod
+    environment:
+      WORKER_METRICS_BIND: "127.0.0.1"
     networks:
       - backend
     stop_grace_period: 40s
+    command: >-
+      celery -A apps.worker.app.celery_app.celery_app worker
+      --loglevel=INFO --queues=research,exports,pipeline
+      --concurrency=${CELERY_CONCURRENCY:-4}
     deploy:
       replicas: ${WORKER_REPLICAS:-2}
       resources:
         limits:
           memory: 1g
           cpus: '4.0'
+    healthcheck:
+      test: ["CMD", "celery", "-A", "apps.worker.app.celery_app", "inspect", "ping", "--timeout", "5"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  worker-maintenance:
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be set to a SHA-tagged image}
+    restart: unless-stopped
+    logging: *default-logging
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env.prod
+    environment:
+      WORKER_METRICS_BIND: "127.0.0.1"
+    networks:
+      - backend
+    stop_grace_period: 20s
+    command: >-
+      celery -A apps.worker.app.celery_app.celery_app worker
+      --loglevel=INFO --queues=maintenance --concurrency=2
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
     healthcheck:
       test: ["CMD", "celery", "-A", "apps.worker.app.celery_app", "inspect", "ping", "--timeout", "5"]
       interval: 30s

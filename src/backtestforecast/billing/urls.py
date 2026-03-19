@@ -17,6 +17,10 @@ def resolve_return_url(app_public_url: str, return_path: str | None) -> str:
     if return_path.startswith("//"):
         raise ValidationError("return_path must not use protocol-relative URLs.")
 
+    lower = return_path.lower().strip()
+    if lower.startswith("javascript:") or lower.startswith("data:") or lower.startswith("vbscript:"):
+        raise ValidationError("return_path must not use javascript:, data:, or vbscript: schemes.")
+
     if return_path.startswith("http://") or return_path.startswith("https://"):
         requested = urlparse(return_path)
         allowed = urlparse(base_app_url)

@@ -22,6 +22,8 @@ __pycache__
 
 # Env files
 .env
+.env.*
+!.env.example
 .env.local
 .env.*.local
 apps/api/.env
@@ -30,6 +32,10 @@ apps/web/.env.local
 # Local data
 postgres_data
 redis_data
+
+# Secrets / certificates
+*.pem
+*.key
 
 # Playwright auth state (contains session cookies)
 apps/web/e2e/.auth/user.json

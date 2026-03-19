@@ -93,13 +93,16 @@ class StripeEventRepository:
             STRIPE_WEBHOOK_DEDUPE_TOTAL.inc()
             return None
 
-    def mark_processed(self, stripe_event_id: str) -> None:
+    def mark_processed(self, stripe_event_id: str) -> bool:
         """Mark a claimed event as successfully processed.
 
         Only transitions from ``processing`` to ``processed`` to avoid
         overwriting a concurrent ``error`` status.
+
+        Returns True if the transition was applied, False if the event
+        was already in a different state (e.g. concurrently marked as error).
         """
-        self.session.execute(
+        result = self.session.execute(
             update(StripeEvent)
             .where(
                 StripeEvent.stripe_event_id == stripe_event_id,
@@ -107,6 +110,10 @@ class StripeEventRepository:
             )
             .values(idempotency_status="processed")
         )
+        if result.rowcount == 0:
+            logger.warning("stripe_event.mark_processed_noop", stripe_event_id=stripe_event_id)
+            return False
+        return True
 
     def mark_error(self, stripe_event_id: str, error_detail: str) -> Any:
         """Update a previously claimed event to record a processing error."""

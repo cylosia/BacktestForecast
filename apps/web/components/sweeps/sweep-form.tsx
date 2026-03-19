@@ -4,10 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
-import type { CreateSweepRequest } from "@backtestforecast/api-client";
+import type { CreateSweepRequest, StrategyType, SweepMode } from "@backtestforecast/api-client";
 import { createSweepJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { TICKER_RE } from "@/lib/validation-constants";
+import { isPlanLimitError } from "@/lib/billing/errors";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { daysAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -59,8 +60,8 @@ export function SweepForm() {
   const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [errorCode, setErrorCode] = useState<string | undefined>();
-  const [selectedStrategies, setSelectedStrategies] = useState<Set<string>>(
-    new Set(["bull_put_credit_spread", "bear_call_credit_spread"]),
+  const [selectedStrategies, setSelectedStrategies] = useState<Set<StrategyType>>(
+    new Set<StrategyType>(["bull_put_credit_spread", "bear_call_credit_spread"]),
   );
 
   const [form, setForm] = useState<FormState>({
@@ -93,7 +94,7 @@ export function SweepForm() {
     }
   };
 
-  const toggleStrategy = (val: string) => {
+  const toggleStrategy = (val: StrategyType) => {
     setSelectedStrategies((prev) => {
       const next = new Set(prev);
       if (next.has(val)) next.delete(val);
@@ -126,12 +127,21 @@ export function SweepForm() {
       setErrorMessage("Start date must be before end date.");
       return;
     }
+    {
+      const diffMs = new Date(form.endDate).getTime() - new Date(form.startDate).getTime();
+      const diffDays = diffMs / (1000 * 60 * 60 * 24);
+      if (diffDays > 365 * 20) {
+        setStatus("error");
+        setErrorMessage("Date range cannot exceed 20 years.");
+        return;
+      }
+    }
     const accountSize = Number(form.accountSize);
     const riskPct = Number(form.riskPct);
     const commission = Number(form.commission);
-    if (!Number.isFinite(accountSize) || accountSize <= 0) {
+    if (!Number.isFinite(accountSize) || accountSize <= 0 || accountSize > 100_000_000) {
       setStatus("error");
-      setErrorMessage("Account size must be a positive number.");
+      setErrorMessage("Account size must be between 1 and 100,000,000.");
       return;
     }
     if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > 100) {
@@ -139,13 +149,13 @@ export function SweepForm() {
       setErrorMessage("Risk per trade must be between 0 and 100%.");
       return;
     }
-    if (!Number.isFinite(commission) || commission < 0) {
+    if (!Number.isFinite(commission) || commission < 0 || commission > 100) {
       setStatus("error");
-      setErrorMessage("Commission must be zero or a positive number.");
+      setErrorMessage("Commission must be between 0 and 100.");
       return;
     }
     const targetDte = Number(form.targetDte);
-    if (!Number.isFinite(targetDte) || targetDte < 1 || targetDte > 365) {
+    if (!Number.isFinite(targetDte) || !Number.isInteger(targetDte) || targetDte < 1 || targetDte > 365) {
       setStatus("error");
       setErrorMessage("Target DTE must be an integer between 1 and 365.");
       return;
@@ -162,7 +172,7 @@ export function SweepForm() {
       return;
     }
     const maxHoldingDays = Number(form.maxHoldingDays);
-    if (!Number.isFinite(maxHoldingDays) || maxHoldingDays < 1 || maxHoldingDays > 120) {
+    if (!Number.isFinite(maxHoldingDays) || !Number.isInteger(maxHoldingDays) || maxHoldingDays < 1 || maxHoldingDays > 120) {
       setStatus("error");
       setErrorMessage("Max holding days must be between 1 and 120.");
       return;
@@ -174,22 +184,22 @@ export function SweepForm() {
       return;
     }
     const maxResults = Number(form.maxResults);
-    if (!Number.isFinite(maxResults) || maxResults < 1 || maxResults > 100) {
+    if (!Number.isFinite(maxResults) || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > 100) {
       setStatus("error");
       setErrorMessage("Max results must be between 1 and 100.");
       return;
     }
     if (form.mode === "genetic") {
       const populationSize = Number(form.populationSize);
-      if (!Number.isFinite(populationSize) || populationSize < 20 || populationSize > 500) {
+      if (!Number.isFinite(populationSize) || !Number.isInteger(populationSize) || populationSize < 20 || populationSize > 500) {
         setStatus("error");
-        setErrorMessage("Population size must be between 20 and 500.");
+        setErrorMessage("Population size must be an integer between 20 and 500.");
         return;
       }
       const maxGenerations = Number(form.maxGenerations);
-      if (!Number.isFinite(maxGenerations) || maxGenerations < 5 || maxGenerations > 200) {
+      if (!Number.isFinite(maxGenerations) || !Number.isInteger(maxGenerations) || maxGenerations < 5 || maxGenerations > 200) {
         setStatus("error");
-        setErrorMessage("Max generations must be between 5 and 200.");
+        setErrorMessage("Max generations must be an integer between 5 and 200.");
         return;
       }
       const mutationRate = Number(form.mutationRate);
@@ -279,6 +289,7 @@ export function SweepForm() {
 
       const job = await createSweepJob(token, payload, controller.signal);
       router.replace(`/app/sweeps/${job.id}`);
+      router.refresh();
     } catch (err) {
       if (controller.signal.aborted) return;
       setStatus("error");
@@ -294,7 +305,7 @@ export function SweepForm() {
   }, [form, selectedStrategies, getToken, router]);
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6" aria-label="Parameter sweep configuration">
+    <form onSubmit={handleSubmit} noValidate className="space-y-6" aria-label="Parameter sweep configuration">
       <Card>
         <CardHeader>
           <CardTitle>Sweep mode</CardTitle>
@@ -348,7 +359,7 @@ export function SweepForm() {
         <CardHeader>
           <CardTitle>Risk and sizing</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-2">
             <Label htmlFor="dteTolerance">DTE tolerance</Label>
             <Input id="dteTolerance" type="number" min={0} value={form.dteTolerance} onChange={(e) => update("dteTolerance", e.target.value)} />
@@ -368,6 +379,10 @@ export function SweepForm() {
           <div className="space-y-2">
             <Label htmlFor="commission">Commission/contract</Label>
             <Input id="commission" type="number" min={0} step={0.01} value={form.commission} onChange={(e) => update("commission", e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="slippage">Slippage %</Label>
+            <Input id="slippage" type="number" min={0} max={5} step={0.1} value={form.slippage} onChange={(e) => update("slippage", e.target.value)} />
           </div>
         </CardContent>
       </Card>
@@ -450,13 +465,13 @@ export function SweepForm() {
         </Card>
       )}
 
-      {status === "error" && !(errorCode && ["quota_exceeded", "feature_locked"].includes(errorCode)) ? (
+      {status === "error" && !isPlanLimitError(errorCode) ? (
         <Card role="alert">
           <CardContent className="p-4 text-destructive text-sm">{errorMessage}</CardContent>
         </Card>
       ) : null}
 
-      {errorCode && ["quota_exceeded", "feature_locked"].includes(errorCode) ? (
+      {isPlanLimitError(errorCode) ? (
         <UpgradePrompt message="Sweep optimization requires a Pro or Premium plan." />
       ) : null}
 

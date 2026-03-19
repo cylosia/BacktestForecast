@@ -1,8 +1,10 @@
-import type { SweepResultResponse } from "@backtestforecast/api-client";
+import type { SweepResultResponse, SweepMode } from "@backtestforecast/api-client";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+const GENETIC_MODE: SweepMode = "genetic";
 
 interface LegData {
   contract_type?: string;
@@ -73,9 +75,9 @@ export function SweepResultList({ items }: { items: SweepResultResponse[] }) {
       </CardHeader>
       <CardContent className="space-y-4">
         {items.map((result) => {
-          const params = result.parameter_snapshot_json ?? result;
-          const customLegs = params.custom_legs;
-          const isGenetic = params.mode === "genetic";
+          const params = result.parameter_snapshot_json;
+          const customLegs = params?.custom_legs;
+          const isGenetic = params?.mode === GENETIC_MODE;
 
           return (
             <div key={result.id} className="rounded-xl border border-border/70 p-4 space-y-3">
@@ -145,7 +147,7 @@ export function SweepResultList({ items }: { items: SweepResultResponse[] }) {
                   </p>
                   <ul className="list-disc list-inside text-xs text-amber-700 dark:text-amber-400">
                     {(result.warnings ?? []).map((w: Record<string, unknown>, i: number) => (
-                      <li key={i}>{typeof w === "string" ? w : String(w.message ?? JSON.stringify(w))}</li>
+                      <li key={i}>{typeof w === "string" ? w : String(w?.message ?? w?.type ?? "Unknown warning")}</li>
                     ))}
                   </ul>
                 </div>

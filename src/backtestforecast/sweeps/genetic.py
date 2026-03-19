@@ -67,6 +67,7 @@ class GeneticOptimizer:
     def run(self, fitness_fn: FitnessFunc) -> GAResult:
         cfg = self.config
         population = self._seed_population(cfg.num_legs, cfg.population_size)
+        _MAX_FITNESS_CACHE_SIZE = 10_000
         fitness_cache: dict[tuple, float] = {}
         total_evals = 0
         best_fitness = float("-inf")
@@ -81,6 +82,11 @@ class GeneticOptimizer:
 
             for ind, fit_val in scored:
                 fitness_cache[individual_to_key(ind)] = fit_val
+
+            if len(fitness_cache) > _MAX_FITNESS_CACHE_SIZE:
+                sorted_keys = sorted(fitness_cache, key=fitness_cache.get)
+                for k in sorted_keys[:len(fitness_cache) - _MAX_FITNESS_CACHE_SIZE]:
+                    del fitness_cache[k]
 
             scored.sort(key=lambda x: x[1], reverse=True)
             gen_best = scored[0][1]
@@ -114,7 +120,10 @@ class GeneticOptimizer:
             for ind, _ in scored[:cfg.elitism_count]:
                 next_pop.append(list(ind))
 
-            while len(next_pop) < cfg.population_size:
+            _fill_attempts = 0
+            _max_fill_attempts = cfg.population_size * 50
+            while len(next_pop) < cfg.population_size and _fill_attempts < _max_fill_attempts:
+                _fill_attempts += 1
                 parent_a = self._tournament_select(scored, cfg.tournament_size)
                 parent_b = self._tournament_select(scored, cfg.tournament_size)
 
@@ -129,6 +138,14 @@ class GeneticOptimizer:
 
                 if is_valid(child):
                     next_pop.append(child)
+
+            if _fill_attempts >= _max_fill_attempts:
+                logger.warning(
+                    "ga.fill_exhausted",
+                    generation=gen,
+                    filled=len(next_pop),
+                    target=cfg.population_size,
+                )
 
             population = next_pop
 
@@ -171,7 +188,10 @@ class GeneticOptimizer:
                 population.append(ind)
             attempts += 1
         if not population:
-            population.append(random_individual(num_legs))
+            fallback = random_individual(num_legs)
+            if not is_valid(fallback):
+                logger.warning("genetic.fallback_individual_invalid", num_legs=num_legs)
+            population.append(fallback)
         return population
 
     @staticmethod

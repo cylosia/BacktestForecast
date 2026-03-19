@@ -347,7 +347,7 @@ class TestGeneticSweepConfigSchema:
         )
 
 
-class TestGeneticSweepConfigSchema:
+class TestGeneticCreateSweepRequest:
     def test_genetic_config_required_for_genetic_mode(self):
         from backtestforecast.schemas.sweeps import CreateSweepRequest
 

@@ -6,6 +6,13 @@ import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], display: "swap" });
 
+import type { Viewport } from "next";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
+
 export const metadata: Metadata = {
   title: "BacktestForecast.com",
   description: "Historical options backtesting for retail traders.",
@@ -25,6 +32,8 @@ export default async function RootLayout({
   // NOTE: The nonce is propagated to ClerkProvider. For full CSP compliance
   // with Next.js hydration scripts, ensure next.config.ts sets experimental
   // headers or uses the nonce middleware pattern.
+  // When middleware doesn't run (e.g. static assets, ISR), x-nonce is absent
+  // and nonce resolves to undefined — ClerkProvider safely ignores it.
   const nonce = headersList.get("x-nonce") ?? undefined;
 
   return (

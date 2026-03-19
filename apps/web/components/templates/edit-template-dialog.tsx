@@ -28,6 +28,7 @@ export function EditTemplateDialog({
   const abortRef = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<Element | null>(null);
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -47,6 +48,10 @@ export function EditTemplateDialog({
       "input, textarea, button, [tabindex]",
     );
     firstInput?.focus();
+
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
   }, [open]);
 
   const handleKeyDown = useCallback(
@@ -57,7 +62,7 @@ export function EditTemplateDialog({
       }
       if (e.key !== "Tab" || !dialogRef.current) return;
       const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
-        'input, textarea, button, [tabindex]:not([tabindex="-1"])',
+        'a[href], input, textarea, button, [tabindex]:not([tabindex="-1"])',
       );
       if (focusable.length === 0) return;
       const first = focusable[0];
@@ -79,14 +84,13 @@ export function EditTemplateDialog({
     };
   }, []);
 
-  if (!open) return null;
-
   const handleSave = useCallback(async () => {
     if (!name.trim()) {
       setError("Name is required.");
       return;
     }
-    if (saving) return;
+    if (savingRef.current || saving) return;
+    savingRef.current = true;
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -103,15 +107,30 @@ export function EditTemplateDialog({
       }
       await updateTemplate(token, templateId, { name: name.trim(), description: description.trim() || undefined }, controller.signal);
       if (controller.signal.aborted) return;
+      savingRef.current = false;
       setSaving(false);
       onClose();
       router.refresh();
-    } catch {
+    } catch (err) {
       if (controller.signal.aborted) return;
-      setError("Failed to update template. Please try again.");
+      console.error("[EditTemplateDialog] update failed:", err);
+      const message = err instanceof Error ? err.message : "Failed to update template. Please try again.";
+      setError(message);
+      savingRef.current = false;
       setSaving(false);
     }
   }, [name, description, saving, templateId, getToken, onClose, router]);
+
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
+
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="edit-template-title" onKeyDown={handleKeyDown}>

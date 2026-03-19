@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     web_cors_origins_raw: str = "http://localhost:3000"
     api_allowed_hosts_raw: str = "localhost,127.0.0.1"
     request_max_body_bytes: int = 1_048_576
+    request_timeout_seconds: int = 60
+
+    audit_cleanup_enabled: bool = True
 
     clerk_secret_key: str | None = Field(default=None, repr=False)
     clerk_issuer: str | None = None
@@ -53,6 +56,7 @@ class Settings(BaseSettings):
     stripe_pro_yearly_price_id: str | None = None
     stripe_premium_monthly_price_id: str | None = None
     stripe_premium_yearly_price_id: str | None = None
+    stripe_circuit_cooldown_seconds: int = 30
 
     massive_api_key: str | None = Field(default=None, repr=False)
     massive_base_url: str = "https://api.massive.com"
@@ -177,15 +181,16 @@ class Settings(BaseSettings):
     sentry_traces_sample_rate: float = 0.1
 
     metrics_token: str | None = None
+    admin_token: str | None = None
 
     ip_hash_salt: str = Field(default="backtestforecast-default-ip-salt-change-me")
 
     db_pool_size: int = Field(default=5, ge=1, le=100)
-    db_pool_max_overflow: int = Field(default=10, ge=1, le=100)
+    db_pool_max_overflow: int = Field(default=10, ge=0, le=100)
     db_pool_recycle: int = 1800
     db_pool_timeout: int = Field(default=10, ge=1, le=120)
 
-    trusted_proxy_cidrs: str = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    trusted_proxy_cidrs: str = "127.0.0.0/8"
 
     rate_limit_prefix: str = "bff:rate-limit"
     rate_limit_fail_closed: bool = True
@@ -218,6 +223,12 @@ class Settings(BaseSettings):
     sweep_genetic_timeout_seconds: int = Field(default=3600, ge=1)
     max_concurrent_sweeps: int = Field(default=10, ge=1, le=100)
 
+    sweep_score_win_rate_weight: float = 0.25
+    sweep_score_roi_weight: float = 0.35
+    sweep_score_sharpe_weight: float = 0.20
+    sweep_score_sharpe_multiplier: float = 2.0
+    sweep_score_drawdown_weight: float = 0.20
+
     max_concurrent_analyses_default: int = Field(default=3, ge=1, le=20)
     max_concurrent_analyses_premium: int = Field(default=5, ge=1, le=20)
 
@@ -235,6 +246,8 @@ class Settings(BaseSettings):
     aws_secret_access_key: str | None = Field(default=None, repr=False)
 
     # Runtime feature flags — toggle via env vars without code deployment.
+    # FIXME(#100): Extend to support percentage-based rollouts and
+    # user-segment targeting for gradual feature releases.
     feature_backtests_enabled: bool = True
     feature_scanner_enabled: bool = True
     feature_exports_enabled: bool = True
@@ -474,14 +487,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
-        _production_warnings: list[str] = []
-        if self.ip_hash_salt == "backtestforecast-default-ip-salt-change-me":
-            _production_warnings.append(
-                "IP_HASH_SALT is using the default value; set a unique secret in production."
-            )
-        if _production_warnings:
-            for w in _production_warnings:
-                logger.warning("config.production_warning", msg=w)
+        if "default" in self.ip_hash_salt.lower() or "change" in self.ip_hash_salt.lower():
+            if self.app_env in {"staging"}:
+                raise ValueError(
+                    "IP_HASH_SALT contains a placeholder value. "
+                    "Staging environments must use a unique IP_HASH_SALT."
+                )
+            if self.app_env not in {"production", "staging"}:
+                logger.warning(
+                    "config.production_warning",
+                    msg="IP_HASH_SALT appears to be a placeholder; set a unique secret in production.",
+                )
         if self.app_env in {"production", "staging"}:
             if not self.clerk_issuer:
                 raise ValueError("Production-like environments require CLERK_ISSUER for JWT issuer verification.")
@@ -588,6 +604,20 @@ class Settings(BaseSettings):
                             f"Consider using rediss:// for TLS encryption."
                         ),
                     )
+
+        _data_features = (
+            self.feature_backtests_enabled
+            or self.feature_scanner_enabled
+            or self.feature_sweeps_enabled
+            or self.feature_analysis_enabled
+        )
+        if _data_features and not self.massive_api_key and self.app_env not in ("production", "staging"):
+            import warnings
+            warnings.warn(
+                "MASSIVE_API_KEY is not set. Data-fetching features will fail at runtime.",
+                stacklevel=2,
+            )
+
         return self
 
 
@@ -628,8 +658,8 @@ def invalidate_settings() -> None:
     with _settings_lock:
         _settings_cache = None
         callbacks = list(_invalidation_callbacks)
-    for cb in callbacks:
-        try:
-            cb()
-        except Exception:
-            logger.exception("settings_invalidation_callback_failed", callback=repr(cb))
+        for cb in callbacks:
+            try:
+                cb()
+            except Exception:
+                logger.exception("settings_invalidation_callback_failed", callback=repr(cb))

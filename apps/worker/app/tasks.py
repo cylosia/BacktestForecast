@@ -202,8 +202,8 @@ def nightly_scan_pipeline(
                 if _override:
                     parsed = [s.strip() for s in _override.split(",") if s.strip()]
                     if parsed:
-                        symbols = parsed
-                        logger.info("pipeline.symbols_from_redis", count=len(parsed))
+                        symbols = parsed[:500]
+                        logger.info("pipeline.symbols_from_redis", count=len(symbols))
             except Exception:
                 pass
         if symbols is None:
@@ -223,6 +223,12 @@ def nightly_scan_pipeline(
         if trade_date_iso is None and trade_date.weekday() >= 5:
             logger.info("pipeline.skipped_weekend", trade_date=str(trade_date))
             return {"status": "skipped", "reason": "weekend"}
+
+        if trade_date_iso is None:
+            from backtestforecast.utils.dates import is_market_holiday
+            if is_market_holiday(trade_date):
+                logger.info("pipeline.skipped_holiday", trade_date=str(trade_date))
+                return {"status": "skipped", "reason": "market_holiday"}
 
         from redis import Redis
         lock_key = f"bff:pipeline:{trade_date.isoformat()}"
@@ -333,6 +339,21 @@ def nightly_scan_pipeline(
 _TERMINAL_STATUSES = _VALID_TARGET_STATUSES | frozenset({"expired"})
 
 
+def _update_heartbeat(session: "Session", model_cls: type, obj_id: UUID) -> None:
+    """Best-effort heartbeat update for long-running tasks."""
+    from datetime import UTC, datetime
+    from sqlalchemy import update
+    try:
+        session.execute(
+            update(model_cls)
+            .where(model_cls.id == obj_id)
+            .values(last_heartbeat_at=datetime.now(UTC))
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+
+
 def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, expected_task_id: str | None) -> bool:
     """Return True if this Celery delivery owns the job, False if it's a duplicate.
 
@@ -417,7 +438,8 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         if run_obj is None:
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
             return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
-        user = session.get(User, run_obj.user_id)
+        from sqlalchemy.orm import with_for_update  # noqa: E402
+        user = session.get(User, run_obj.user_id, with_for_update=True)
         if user is None:
             run_obj.status = "failed"
             run_obj.error_code = "entitlement_revoked"
@@ -441,7 +463,6 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
             next_month_start = datetime(now.year + 1, 1, 1, tzinfo=UTC) if now.month == 12 else datetime(now.year, now.month + 1, 1, tzinfo=UTC)
             used = repo.count_for_user_created_between(user.id, start_inclusive=month_start, end_exclusive=next_month_start)
-            used = max(used - 1, 0)
             if used >= policy.monthly_backtest_quota:
                 run_obj.status = "failed"
                 run_obj.error_code = "quota_exceeded"
@@ -450,6 +471,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": "quota_exceeded"})
                 return {"status": "failed", "run_id": run_id, "error_code": "quota_exceeded"}
         publish_job_status("backtest", UUID(run_id), "running")
+        _update_heartbeat(session, BacktestRun, UUID(run_id))
         service = BacktestService(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
@@ -715,6 +737,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
             publish_job_status("analysis", UUID(analysis_id), "running")
+            _update_heartbeat(session, SymbolAnalysis, UUID(analysis_id))
             service = SymbolDeepAnalysisService(
                 session,
                 market_data_fetcher=market_data,
@@ -844,6 +867,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         publish_job_status("scan", UUID(job_id), "running")
+        _update_heartbeat(session, ScannerJobModel, UUID(job_id))
         service = ScanService(session)
         try:
             job = service.run_job(UUID(job_id))
@@ -961,7 +985,32 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
             session.commit()
             publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
+        if policy.monthly_sweep_quota is not None:
+            from datetime import UTC, datetime as _dt_sweep_quota
+            from backtestforecast.repositories.sweep_jobs import SweepJobRepository
+            sweep_repo = SweepJobRepository(session)
+            now = _dt_sweep_quota.now(UTC)
+            month_start = _dt_sweep_quota(now.year, now.month, 1, tzinfo=UTC)
+            next_month_start = (
+                _dt_sweep_quota(now.year + 1, 1, 1, tzinfo=UTC)
+                if now.month == 12
+                else _dt_sweep_quota(now.year, now.month + 1, 1, tzinfo=UTC)
+            )
+            sweep_used = sweep_repo.count_for_user_created_between(
+                user.id,
+                start_inclusive=month_start,
+                end_exclusive=next_month_start,
+                exclude_id=UUID(job_id),
+            )
+            if sweep_used >= policy.monthly_sweep_quota:
+                sj.status = "failed"
+                sj.error_code = "quota_exceeded"
+                sj.error_message = f"Monthly sweep quota ({policy.monthly_sweep_quota}) reached. Used: {sweep_used}."
+                session.commit()
+                publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "quota_exceeded"})
+                return {"status": "failed", "job_id": job_id, "error_code": "quota_exceeded"}
         publish_job_status("sweep", UUID(job_id), "running")
+        _update_heartbeat(session, SweepJobModel, UUID(job_id))
         service = SweepService(session)
         try:
             job = service.run_job(UUID(job_id))
@@ -1108,7 +1157,11 @@ def _process_orphan_batch(
             break
         if s3_key not in existing:
             logger.info("s3_orphan_deleting", s3_key=s3_key)
-            s3_storage.delete(s3_key)
+            try:
+                s3_storage.delete(s3_key)
+            except Exception:
+                logger.warning("s3_orphan_delete_failed", s3_key=s3_key, exc_info=True)
+                continue
             orphan_count += 1
     return orphan_count, limit_reached
 
@@ -1298,8 +1351,11 @@ def _fail_stale_running_jobs(
         .where(
             model_cls.status == "running",
             or_(
-                model_cls.started_at.isnot(None) & (model_cls.started_at < cutoff),
-                model_cls.started_at.is_(None) & (model_cls.created_at < cutoff),
+                model_cls.last_heartbeat_at.isnot(None) & (model_cls.last_heartbeat_at < cutoff),
+                model_cls.last_heartbeat_at.is_(None) & or_(
+                    model_cls.started_at.isnot(None) & (model_cls.started_at < cutoff),
+                    model_cls.started_at.is_(None) & (model_cls.created_at < cutoff),
+                ),
             ),
         )
         .limit(50)
@@ -1364,6 +1420,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     cutoff = datetime.now(UTC) - timedelta(minutes=stale_minutes)
     pipeline_cutoff = datetime.now(UTC) - timedelta(minutes=max(stale_minutes, 60))
     analysis_cutoff = datetime.now(UTC) - timedelta(minutes=max(stale_minutes, 45))
+    sweep_cutoff = datetime.now(UTC) - timedelta(minutes=max(stale_minutes, 65))
     counts: dict[str, int] = {}
 
     _reap_models = [
@@ -1371,7 +1428,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         (ExportJob, "ExportJob", "exports.generate", "export_job_id", "export", cutoff),
         (ScannerJob, "ScannerJob", "scans.run_job", "job_id", "scan", cutoff),
         (SymbolAnalysis, "SymbolAnalysis", "analysis.deep_symbol", "analysis_id", "analysis", analysis_cutoff),
-        (SweepJob, "SweepJob", "sweeps.run", "job_id", "sweep", cutoff),
+        (SweepJob, "SweepJob", "sweeps.run", "job_id", "sweep", sweep_cutoff),
     ]
     for model_cls, model_name, task_name, kwarg_key, job_type, model_cutoff in _reap_models:
         try:
@@ -1414,7 +1471,10 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         logger.exception("reaper.pipeline_reap_failed")
 
     orphan_cutoff = datetime.now(UTC) - timedelta(minutes=15)
-    result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=600)
+    _result_expires = celery_app.conf.get("result_expires", 7200)
+    if isinstance(_result_expires, timedelta):
+        _result_expires = int(_result_expires.total_seconds())
+    result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=_result_expires)
     for model_cls, model_name in [
         (BacktestRun, "BacktestRun"),
         (ExportJob, "ExportJob"),
@@ -1533,7 +1593,15 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
     WARNING: This permanently deletes audit events. If regulatory compliance
     requires long-term audit trail retention, implement archival to cold
     storage (e.g., S3 JSON export) before deletion.
+
+    Gated by ``AUDIT_CLEANUP_ENABLED`` (default True). Set to False to
+    disable automatic deletion while retaining the scheduled task entry.
     """
+    from backtestforecast.config import get_settings as _gs_audit
+    if not _gs_audit().audit_cleanup_enabled:
+        logger.info("audit.cleanup_disabled")
+        return {"deleted": 0, "batches_run": 0, "limit_reached": False, "reason": "disabled"}
+
     from datetime import datetime, timedelta, timezone
     from sqlalchemy import delete, select
     from backtestforecast.models import AuditEvent
@@ -1565,7 +1633,6 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
                         AuditEvent.created_at < cutoff,
                     )
                     .limit(BATCH_SIZE)
-                    .with_for_update(skip_locked=True)
                 ))
                 if not batch_ids:
                     break
@@ -1577,6 +1644,33 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
                 session.commit()
     logger.info("audit.cleanup_complete", deleted=deleted, cutoff=cutoff.isoformat(), batches_run=batches_run, limit_reached=limit_reached)
     return {"deleted": deleted, "batches_run": batches_run, "limit_reached": limit_reached}
+
+
+@celery_app.task(
+    name="maintenance.cleanup_outbox",
+    base=BaseTaskWithDLQ,
+    bind=True,
+    ignore_result=True,
+    max_retries=0,
+    soft_time_limit=120,
+    time_limit=150,
+)
+def cleanup_outbox(self) -> dict:  # type: ignore[override]
+    """Remove outbox messages older than 7 days."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import delete
+
+    from backtestforecast.models import OutboxMessage
+
+    cutoff = datetime.now(UTC) - timedelta(days=7)
+    with create_worker_session() as session:
+        result = session.execute(
+            delete(OutboxMessage).where(OutboxMessage.created_at < cutoff)
+        )
+        session.commit()
+        logger.info("outbox.cleanup", deleted=result.rowcount)
+    return {"deleted": result.rowcount}
 
 
 @celery_app.task(
@@ -1611,7 +1705,6 @@ def cleanup_daily_recommendations(self, retention_days: int = 90) -> dict:  # ty
                 select(DailyRecommendation.id)
                 .where(DailyRecommendation.created_at < cutoff)
                 .limit(BATCH_SIZE)
-                .with_for_update(skip_locked=True)
             ))
             if not batch_ids:
                 break
@@ -1660,3 +1753,76 @@ def cleanup_daily_recommendations(self, retention_days: int = 90) -> dict:  # ty
         "batches_run": batches_run,
         "limit_reached": limit_reached,
     }
+
+
+@celery_app.task(
+    name="maintenance.poll_outbox",
+    base=BaseTaskWithDLQ,
+    bind=True,
+    ignore_result=True,
+    max_retries=0,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
+    """Re-send pending outbox messages that were committed but never sent.
+
+    This handles the window between DB commit and Celery send_task in the
+    commit-first dispatch pattern. Messages left in 'pending' status for
+    more than 60 seconds are considered stuck and re-dispatched.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select, update
+
+    from backtestforecast.models import OutboxMessage
+
+    sent = 0
+    skipped = 0
+    failed = 0
+    cutoff = datetime.now(UTC) - timedelta(seconds=60)
+
+    with create_worker_session() as session:
+        stmt = (
+            select(OutboxMessage)
+            .where(
+                OutboxMessage.status == "pending",
+                OutboxMessage.created_at < cutoff,
+            )
+            .order_by(OutboxMessage.created_at)
+            .limit(max_messages)
+            .with_for_update(skip_locked=True)
+        )
+        messages = list(session.scalars(stmt))
+        for msg in messages:
+            try:
+                celery_app.send_task(
+                    msg.task_name,
+                    kwargs=msg.task_kwargs_json,
+                    queue=msg.queue,
+                )
+                msg.status = "sent"
+                sent += 1
+            except Exception:
+                msg.status = "failed"
+                failed += 1
+                logger.warning(
+                    "outbox.poll_send_failed",
+                    task_name=msg.task_name,
+                    correlation_id=str(msg.correlation_id),
+                    exc_info=True,
+                )
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception("outbox.poll_commit_failed")
+
+    if sent or failed:
+        logger.info(
+            "outbox.poll_complete",
+            sent=sent,
+            failed=failed,
+            skipped=skipped,
+        )
+    return {"sent": sent, "failed": failed, "skipped": skipped}

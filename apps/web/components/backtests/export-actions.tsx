@@ -29,6 +29,9 @@ function triggerBlobDownload(
   revokeTimersRef: React.MutableRefObject<ReturnType<typeof setTimeout>[]>,
 ): void {
   const blobUrl = window.URL.createObjectURL(blob);
+  if (process.env.NODE_ENV !== "production") {
+    console.debug("[ExportActions] blob URL created:", blobUrl);
+  }
   blobUrlsRef.current.push(blobUrl);
   const anchor = document.createElement("a");
   anchor.href = blobUrl;
@@ -92,7 +95,7 @@ export function ExportActions({
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(resolve, POLL_INTERVAL_MS);
           signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason ?? new DOMException("Aborted", "AbortError")); }, { once: true });
-        }).catch(() => {});
+        }).catch((err) => { if (!(err instanceof DOMException && err.name === "AbortError")) throw err; });
         if (signal.aborted || !mountedRef.current) return;
 
         if (attempt > 0 && attempt % 10 === 0) {

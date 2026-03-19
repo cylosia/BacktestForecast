@@ -5,8 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function BacktestsError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
-  // TODO: Integrate Sentry or similar error tracking for production visibility.
-  useEffect(() => { console.error(error); }, [error]);
+  useEffect(() => { if (process.env.NODE_ENV === "development") console.error(error); }, [error]);
 
   const rawMessage = error instanceof Error
     ? error.message

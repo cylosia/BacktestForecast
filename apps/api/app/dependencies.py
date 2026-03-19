@@ -55,7 +55,8 @@ def _get_trusted_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Networ
 def reset_trusted_networks() -> None:
     """Clear cached networks so they are re-read from settings on next call."""
     global _trusted_networks
-    _trusted_networks = None
+    with _trusted_networks_lock:
+        _trusted_networks = None
 
 
 def _is_trusted_proxy(host: str | None) -> bool:
@@ -149,7 +150,7 @@ def get_current_user(
         # If Clerk configuration changes, verify SameSite is at least Lax
         # to prevent cross-site cookie attachment in sub-requests.
         token = request.cookies.get("__session")
-        if token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if token and request.method in {"POST", "PATCH", "DELETE"}:
             xrw = request.headers.get("x-requested-with")
             if not xrw or xrw.strip().lower() != "xmlhttprequest":
                 raise AuthenticationError(

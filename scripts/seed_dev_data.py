@@ -335,6 +335,14 @@ def seed_export_job(session, user: User, run: BacktestRun) -> ExportJob:
 
 
 def main() -> None:
+    import os
+
+    app_env = os.environ.get("APP_ENV", "").lower()
+    if app_env in ("production", "prod"):
+        print("ERROR: seed_dev_data.py must not be run against a production database.")
+        print("       APP_ENV is set to %r. Aborting." % app_env)
+        raise SystemExit(1)
+
     args = parse_args()
     if args.create_schema:
         Base.metadata.create_all(bind=build_engine())

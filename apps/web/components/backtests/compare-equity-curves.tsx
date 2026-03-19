@@ -47,7 +47,6 @@ export function CompareEquityCurves({
 
   let globalMin = Infinity;
   let globalMax = -Infinity;
-  let maxPointCount = 0;
 
   for (const { run } of nonEmptyEntries) {
     for (const point of run.equity_curve) {
@@ -56,9 +55,6 @@ export function CompareEquityCurves({
       if (eq < globalMin) globalMin = eq;
       if (eq > globalMax) globalMax = eq;
     }
-    if (run.equity_curve.length > maxPointCount) {
-      maxPointCount = run.equity_curve.length;
-    }
   }
 
   if (!Number.isFinite(globalMin)) globalMin = 0;
@@ -66,10 +62,23 @@ export function CompareEquityCurves({
   const range = globalMax - globalMin || 1;
 
   const toPath = useMemo(() => {
+    const MAX_SVG_POINTS = 500;
+
+    const downsample = <T,>(arr: T[]): T[] => {
+      if (arr.length <= MAX_SVG_POINTS) return arr;
+      const result: T[] = [arr[0]];
+      const stride = (arr.length - 1) / (MAX_SVG_POINTS - 1);
+      for (let i = 1; i < MAX_SVG_POINTS - 1; i++) {
+        result.push(arr[Math.round(i * stride)]);
+      }
+      result.push(arr[arr.length - 1]);
+      return result;
+    };
+
     return (run: BacktestRunDetailResponse): string => {
-      const points = run.equity_curve;
-      const count = points.length;
-      return points
+      const sampled = downsample(run.equity_curve);
+      const count = sampled.length;
+      return sampled
         .map((point, index) => {
           const raw = toNumber(point.equity);
           const eq = Number.isFinite(raw) ? raw : 0;
@@ -82,7 +91,7 @@ export function CompareEquityCurves({
         })
         .join(" ");
     };
-  }, [globalMin, range, maxPointCount]);
+  }, [globalMin, range]);
 
   return (
     <Card>
@@ -125,7 +134,7 @@ export function CompareEquityCurves({
                 />
               );
             })}
-            {nonEmptyEntries.map(({ run }, colorIdx) => (
+            {nonEmptyEntries.map(({ run, originalIndex }, colorIdx) => (
               <path
                 key={run.id}
                 d={toPath(run)}
@@ -134,7 +143,11 @@ export function CompareEquityCurves({
                 strokeLinecap="round"
                 strokeWidth="2.5"
                 opacity="0.85"
-              />
+              >
+                <title>
+                  {`${String.fromCharCode(65 + originalIndex)} ${run.symbol} — ${strategyLabel(run.strategy_type)} — End: ${run.summary ? formatCurrency(run.summary.ending_equity) : "N/A"}`}
+                </title>
+              </path>
             ))}
           </svg>
         </div>

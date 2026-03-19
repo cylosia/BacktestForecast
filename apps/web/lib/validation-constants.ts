@@ -1,4 +1,4 @@
-export const TICKER_RE = /^[A-Z][A-Z0-9./^-]{0,15}$/;
+export const TICKER_RE = /^[\^A-Z][A-Z0-9./^-]{0,15}$/;
 
 export const TEMPLATE_NAME_MAX_LENGTH = 120;
 export const TEMPLATE_DESCRIPTION_MAX_LENGTH = 500;

@@ -80,15 +80,15 @@ _CANDIDATE_TIMEOUT_SECONDS = 120
 _MAX_EQUITY_POINTS = 500
 
 def _sweep_scoring_config() -> dict[str, float]:
-    """Return sweep scoring weights, falling back to defaults."""
+    """Return sweep scoring weights from settings."""
     settings = get_settings()
     return {
-        "win_rate_weight": getattr(settings, "sweep_score_win_rate_weight", 0.25),
-        "roi_weight": getattr(settings, "sweep_score_roi_weight", 0.30),
-        "sharpe_weight": getattr(settings, "sweep_score_sharpe_weight", 0.25),
-        "drawdown_weight": getattr(settings, "sweep_score_drawdown_weight", 0.20),
-        "sharpe_multiplier": getattr(settings, "sweep_score_sharpe_multiplier", 10.0),
-        "min_trades": int(getattr(settings, "sweep_score_min_trades", 3)),
+        "win_rate_weight": settings.sweep_score_win_rate_weight,
+        "roi_weight": settings.sweep_score_roi_weight,
+        "sharpe_weight": settings.sweep_score_sharpe_weight,
+        "drawdown_weight": settings.sweep_score_drawdown_weight,
+        "sharpe_multiplier": settings.sweep_score_sharpe_multiplier,
+        "min_trades": 3,
     }
 
 
@@ -120,12 +120,21 @@ class SweepService:
 
     # -- public API ----------------------------------------------------------
 
+    _MONTHLY_SWEEP_QUOTA = {
+        "free": 0,
+        "pro": 10,
+        "premium": 50,
+    }
+    _MAX_CONCURRENT_SWEEPS = 2
+
     def create_job(self, user: User, payload: CreateSweepRequest) -> SweepJob:
         from backtestforecast.billing.entitlements import ensure_sweep_access
         ensure_sweep_access(
             user.plan_tier, user.subscription_status,
             user.subscription_current_period_end,
         )
+
+        self._enforce_sweep_quota(user)
 
         if payload.idempotency_key:
             existing = self.repository.get_by_idempotency_key(user.id, payload.idempotency_key)
@@ -211,14 +220,20 @@ class SweepService:
             return job
 
         self.repository.delete_results(job_id)
-        job.status = "running"
-        job.started_at = datetime.now(UTC)
+
+        from sqlalchemy import update
+        now = datetime.now(UTC)
+        cas_result = self.session.execute(
+            update(SweepJob)
+            .where(SweepJob.id == job_id, SweepJob.status == "queued")
+            .values(status="running", started_at=now, updated_at=now)
+        )
         self.session.commit()
-        # NOTE: The FOR UPDATE lock is released after this commit. Subsequent
-        # modifications to `job` (e.g. evaluated_candidate_count during
-        # execution) are unprotected.  The final status transition uses a CAS
-        # (compare-and-swap) UPDATE ... WHERE status='running' in
-        # _execute_sweep/_execute_genetic to guard against concurrent overwrites.
+        if cas_result.rowcount == 0:
+            self.session.refresh(job)
+            logger.warning("sweep.cas_transition_failed", job_id=str(job_id), status=job.status)
+            return job
+        self.session.refresh(job)
 
         _run_start = _time.monotonic()
         try:
@@ -298,6 +313,53 @@ class SweepService:
             limit=limit,
         )
 
+    def _enforce_sweep_quota(self, user: User) -> None:
+        from backtestforecast.billing.entitlements import normalize_plan_tier
+        from backtestforecast.errors import QuotaExceededError
+        from sqlalchemy import select, func
+
+        tier = normalize_plan_tier(
+            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+        )
+        quota = self._MONTHLY_SWEEP_QUOTA.get(tier.value, 0)
+        if quota <= 0:
+            raise QuotaExceededError(
+                "Your plan does not include sweep access.",
+                current_tier=tier.value,
+            )
+
+        now = datetime.now(UTC)
+        month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+        if now.month == 12:
+            next_month = datetime(now.year + 1, 1, 1, tzinfo=UTC)
+        else:
+            next_month = datetime(now.year, now.month + 1, 1, tzinfo=UTC)
+        used = self.session.scalar(
+            select(func.count()).select_from(SweepJob).where(
+                SweepJob.user_id == user.id,
+                SweepJob.created_at >= month_start,
+                SweepJob.created_at < next_month,
+            )
+        ) or 0
+        if used >= quota:
+            raise QuotaExceededError(
+                f"Monthly sweep quota ({quota}) reached. Used: {used}.",
+                current_tier=tier.value,
+            )
+
+        concurrent = self.session.scalar(
+            select(func.count()).select_from(SweepJob).where(
+                SweepJob.user_id == user.id,
+                SweepJob.status.in_(["queued", "running"]),
+            )
+        ) or 0
+        if concurrent >= self._MAX_CONCURRENT_SWEEPS:
+            raise QuotaExceededError(
+                f"Maximum concurrent sweeps ({self._MAX_CONCURRENT_SWEEPS}) reached. "
+                "Wait for existing sweeps to complete.",
+                current_tier=tier.value,
+            )
+
     # -- execution -----------------------------------------------------------
 
     def _execute_sweep(self, job: SweepJob, payload: CreateSweepRequest) -> None:
@@ -336,6 +398,7 @@ class SweepService:
         sweep_start = _time.monotonic()
         sweep_timeout = max(get_settings().sweep_timeout_seconds, _CANDIDATE_TIMEOUT_SECONDS * 2)
         timed_out = False
+        local_evaluated_count = 0
 
         delta_values = [item.value for item in payload.delta_grid] if payload.delta_grid else [None]
         width_values = [(item.mode, item.value) for item in payload.width_grid] if payload.width_grid else [None]
@@ -395,12 +458,18 @@ class SweepService:
                                     entry_rule_set_name=entry_rule_set.name,
                                     exit_set=exit_set,
                                 ))
-                                job.evaluated_candidate_count += 1
-                                if job.evaluated_candidate_count % 50 == 0:
+                                local_evaluated_count += 1
+                                if local_evaluated_count % 50 == 0:
+                                    job.evaluated_candidate_count = local_evaluated_count
                                     try:
                                         self.session.commit()
                                     except Exception:
                                         self.session.rollback()
+                                        logger.warning(
+                                            "sweep.progress_commit_failed",
+                                            evaluated=local_evaluated_count,
+                                            candidates_in_memory=len(candidates),
+                                        )
                                 if len(candidates) >= _MAX_CANDIDATES_IN_MEMORY:
                                     timed_out = True
                                     warnings.append({
@@ -409,7 +478,7 @@ class SweepService:
                                     })
                                     break
                             except AppError as exc:
-                                SWEEP_CANDIDATE_FAILURES_TOTAL.labels(symbol=payload.symbol).inc()
+                                SWEEP_CANDIDATE_FAILURES_TOTAL.labels(reason=exc.code).inc()
                                 warnings.append({
                                     "code": "candidate_failed",
                                     "message": (
@@ -419,7 +488,7 @@ class SweepService:
                                     "error_code": exc.code,
                                 })
                             except Exception:
-                                SWEEP_CANDIDATE_FAILURES_TOTAL.labels(symbol=payload.symbol).inc()
+                                SWEEP_CANDIDATE_FAILURES_TOTAL.labels(reason="internal").inc()
                                 logger.warning(
                                     "sweep.candidate_failed",
                                     strategy=strategy_type.value,
@@ -432,6 +501,7 @@ class SweepService:
                                 })
 
         # Phase 3: rank and store
+        job.evaluated_candidate_count = local_evaluated_count
         if not candidates:
             job.status = "failed"
             job.error_code = "sweep_empty"

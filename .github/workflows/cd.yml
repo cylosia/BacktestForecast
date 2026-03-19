@@ -128,8 +128,10 @@ jobs:
           cache: pip
 
       - name: Verify staging secrets
+        env:
+          _STAGING_DB: ${{ secrets.STAGING_DATABASE_URL }}
         run: |
-          if [ -z "${{ secrets.STAGING_DATABASE_URL }}" ]; then
+          if [ -z "$_STAGING_DB" ]; then
             echo "::error::STAGING_DATABASE_URL secret is not configured. Staging deployment cannot proceed."
             exit 1
           fi
@@ -141,25 +143,36 @@ jobs:
       - name: Run staging migrations
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --constraint constraints.txt -e '.[dev]'
+          python -m pip install --constraint constraints.txt -e '.'
           alembic upgrade head
         env:
           STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      - name: Validate alertmanager config
+        run: |
+          if [ -f "infra/alertmanager/alertmanager.yml" ]; then
+            if grep -qE 'localhost|ALERT-WEBHOOK-NOT-CONFIGURED' infra/alertmanager/alertmanager.yml; then
+              echo "::error::alertmanager.yml contains placeholder URLs. Run envsubst before deploying."
+              exit 1
+            fi
+          fi
 
       - name: Deploy to staging
         env:
           DEPLOY_COMMAND: ${{ secrets.STAGING_DEPLOY_COMMAND }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          bash -c "${DEPLOY_COMMAND}"
+          set -euo pipefail
+          echo "Deploying images..."
+          eval "${DEPLOY_COMMAND}"
 
       - name: Staging smoke test
         env:
           STAGING_URL: ${{ secrets.STAGING_URL }}
         run: |
           if [ -z "${STAGING_URL}" ]; then
-            echo "Staging URL not configured. Skipping smoke test."
+            echo "::warning::STAGING_URL not configured. Staging smoke test skipped — configure for verification."
             exit 0
           fi
           for i in 1 2 3 4 5; do
@@ -189,7 +202,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --constraint constraints.txt -e '.[dev]'
+          python -m pip install --constraint constraints.txt -e '.'
 
       - name: Run database migrations
         run: alembic upgrade head
@@ -210,7 +223,8 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
-          bash -c "${DEPLOY_COMMAND}"
+          echo "Deploying images..."
+          ${DEPLOY_COMMAND}
 
   post-deploy-smoke:
     needs: deploy
@@ -304,7 +318,7 @@ jobs:
           echo ""
           echo "Images re-tagged to :latest. Triggering deployment restart..."
           if [ -n "${DEPLOY_COMMAND:-}" ]; then
-            bash -c "${DEPLOY_COMMAND}"
+            ${DEPLOY_COMMAND}
           else
             echo "::warning::DEPLOY_COMMAND variable is not configured. Rollback images were re-tagged to :latest but the running deployment was NOT restarted automatically."
             echo "::error::Manual intervention required to complete rollback."

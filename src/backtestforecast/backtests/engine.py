@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any
 
 import structlog
@@ -53,6 +54,13 @@ class OptionsBacktestEngine:
         if strategy is None:
             raise ValidationError(f"Unsupported strategy_type: {config.strategy_type}")
 
+        # FIXME(#98): Model early assignment risk for American-style options.
+        # Deep ITM short legs near ex-dividend dates should be flagged.
+        if config.start_date > config.end_date:
+            raise ValueError("start_date must not be after end_date")
+        if config.account_size <= 0:
+            raise ValueError("account_size must be positive")
+
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         if not sorted_bars:
             return BacktestExecutionResult(
@@ -62,8 +70,7 @@ class OptionsBacktestEngine:
 
         warnings: list[dict[str, Any]] = []
         warning_codes: set[str] = set()
-        # Precision loss: Decimal->float for engine arithmetic (mixed with position_value, etc.)
-        cash = float(config.account_size)
+        cash = Decimal(str(config.account_size))
         peak_equity = cash
         position: OpenMultiLegPosition | None = None
         trades: list[TradeResult] = []
@@ -94,7 +101,19 @@ class OptionsBacktestEngine:
                     logger.warning("engine.nan_entry_cost", bar_date=str(bar.trade_date))
                     entry_cost = 0.0
                     position_value = 0.0
-                capital_at_risk = position.capital_required_per_unit * position.quantity
+                if math.isnan(position.capital_required_per_unit):
+                    logger.warning(
+                        "engine.nan_capital_required_per_unit",
+                        ticker=position.display_ticker,
+                        bar_date=str(bar.trade_date),
+                    )
+                    self._add_warning_once(
+                        warnings, warning_codes, "nan_capital_required",
+                        "Skipped stop/profit check: capital_required_per_unit is NaN.",
+                    )
+                    capital_at_risk = 0.0
+                else:
+                    capital_at_risk = position.capital_required_per_unit * position.quantity
                 should_exit, exit_reason = self._resolve_exit(
                     bar=bar,
                     position=position,
@@ -113,7 +132,7 @@ class OptionsBacktestEngine:
                         position, config, snapshot.position_value, bar.trade_date, bar.close_price,
                         exit_prices, exit_reason,
                     )
-                    cash += cash_delta
+                    cash += Decimal(str(cash_delta))
                     trades.append(trade)
                     position = None
                     position_value = 0.0
@@ -190,14 +209,14 @@ class OptionsBacktestEngine:
                             candidate.entry_commission_total = entry_commission
                             slippage_cost = gross_notional_per_unit * quantity * (config.slippage_pct / 100.0)
                             total_entry_cost = (ev_per_unit * quantity) + entry_commission + slippage_cost
-                            if cash - total_entry_cost < 0:
+                            if cash - Decimal(str(total_entry_cost)) < 0:
                                 self._add_warning_once(
                                     warnings, warning_codes, "negative_cash_rejected",
                                     "One or more entries were skipped because the total cost "
                                     "(including slippage) would have exceeded available cash.",
                                 )
                             else:
-                                cash -= total_entry_cost
+                                cash -= Decimal(str(total_entry_cost))
                                 position = candidate
                                 if strategy.margin_warning_message and candidate.capital_required_per_unit > abs(
                                     ev_per_unit
@@ -212,14 +231,14 @@ class OptionsBacktestEngine:
                     logger.warning("engine.nan_position_value", ticker=position.display_ticker, bar_date=str(bar.trade_date))
                     position_value = 0.0
 
-            equity = cash + position_value
+            equity = cash + Decimal(str(position_value))
             peak_equity = max(peak_equity, equity)
-            drawdown_pct = 0.0 if peak_equity == 0 else ((peak_equity - equity) / peak_equity) * 100.0
+            drawdown_pct = float((peak_equity - equity) / peak_equity * 100) if peak_equity else 0.0
             equity_curve.append(
                 EquityPointResult(
                     trade_date=bar.trade_date,
-                    equity=equity,
-                    cash=cash,
+                    equity=float(equity),
+                    cash=float(cash),
                     position_value=position_value,
                     drawdown_pct=drawdown_pct,
                 )
@@ -237,16 +256,16 @@ class OptionsBacktestEngine:
                 position, config, snapshot.position_value, sorted_bars[-1].trade_date,
                 sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
             )
-            cash += cash_delta
+            cash += Decimal(str(cash_delta))
             trades.append(trade)
             position = None
             equity = cash
             peak_equity = max(peak_equity, equity)
-            drawdown_pct = 0.0 if peak_equity == 0 else ((peak_equity - equity) / peak_equity) * 100.0
+            drawdown_pct = float((peak_equity - equity) / peak_equity * 100) if peak_equity else 0.0
             force_close_point = EquityPointResult(
                 trade_date=sorted_bars[-1].trade_date,
-                equity=equity,
-                cash=cash,
+                equity=float(equity),
+                cash=float(cash),
                 position_value=0.0,
                 drawdown_pct=drawdown_pct,
             )
@@ -341,6 +360,7 @@ class OptionsBacktestEngine:
         slippage_pct: float = 0.0,
         gross_notional_per_unit: float = 0.0,
     ) -> int:
+        available_cash = float(available_cash)
         if capital_required_per_unit < 0:
             return 0
         _MIN_CAPITAL_PER_UNIT = 50.0

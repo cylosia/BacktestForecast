@@ -207,6 +207,13 @@ class WheelStrategyBacktestEngine:
                         and bar.close_price > active_option.strike_price
                         and held_shares is not None
                     ):
+                        if held_shares.quantity != active_option.quantity:
+                            logger.warning(
+                                "wheel.quantity_mismatch_at_assignment",
+                                held_shares_qty=held_shares.quantity,
+                                option_qty=active_option.quantity,
+                                bar_date=str(bar.trade_date),
+                            )
                         exit_mid = 0.0
                         option_detail["legs"][0]["exit_mid"] = exit_mid
                         option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
@@ -508,10 +515,18 @@ class WheelStrategyBacktestEngine:
         capital_required_per_unit = contract.strike_price * 100.0
         commission_per_unit = float(config.commission_per_contract) * 2
         total_cost_per_unit = capital_required_per_unit + commission_per_unit - (quote.mid_price * 100.0)
+        if total_cost_per_unit <= 0:
+            self._add_warning_once(
+                warnings,
+                warning_codes,
+                "negative_cost_per_unit",
+                "Premium exceeds collateral + commission; skipped to avoid unbounded sizing.",
+            )
+            return None
         max_loss_per_unit = max((contract.strike_price - quote.mid_price) * 100.0, 0.0)
         risk_budget = float(config.account_size) * (float(config.risk_per_trade_pct) / 100.0)
         by_risk = int(risk_budget // max_loss_per_unit) if max_loss_per_unit > 0 else 0
-        by_cash = int(cash // total_cost_per_unit) if total_cost_per_unit > 0 else 0
+        by_cash = int(cash // total_cost_per_unit)
         quantity = max(0, min(by_risk, by_cash))
         if quantity <= 0:
             self._add_warning_once(

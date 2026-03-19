@@ -315,7 +315,7 @@ class DoubleDiagonalStrategy(StrategyDefinition):
             # Apply a 50% reduction to approximate the margin benefit of the
             # protective long legs. A precise calculation would require
             # modeling the long legs' delta/gamma offset.
-            capital = int(capital * 0.50)
+            capital = round(capital * 0.50, 2)
             max_loss = None
 
         return OpenMultiLegPosition(

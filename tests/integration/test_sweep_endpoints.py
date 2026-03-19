@@ -42,7 +42,7 @@ def test_create_sweep_job(client, auth_headers, db_session):
     )
     # 202 on success, 422 if required fields are missing/invalid,
     # 403 if the test user lacks entitlement
-    assert resp.status_code in (202, 200, 422, 403)
+    assert resp.status_code == 202, f"Expected 202 Accepted, got {resp.status_code}: {resp.text}"
 
 
 def test_get_nonexistent_sweep(client, auth_headers):

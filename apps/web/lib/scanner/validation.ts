@@ -25,8 +25,11 @@ interface ScannerLimits {
 }
 
 const SCANNER_LIMITS: Record<string, ScannerLimits> = {
-  "pro:basic":      { maxSymbols: 5,  maxStrategies: 4,  maxRecommendations: 10 },
-  "premium:basic":  { maxSymbols: 10, maxStrategies: 6,  maxRecommendations: 15 },
+  "free:basic":       { maxSymbols: 3,  maxStrategies: 2,  maxRecommendations: 5  },
+  "free:advanced":    { maxSymbols: 3,  maxStrategies: 2,  maxRecommendations: 5  },
+  "pro:basic":        { maxSymbols: 5,  maxStrategies: 4,  maxRecommendations: 10 },
+  "pro:advanced":     { maxSymbols: 10, maxStrategies: 8,  maxRecommendations: 20 },
+  "premium:basic":    { maxSymbols: 10, maxStrategies: 6,  maxRecommendations: 15 },
   "premium:advanced": { maxSymbols: 25, maxStrategies: 14, maxRecommendations: 30 },
 };
 
@@ -90,30 +93,40 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
       errors.push("End date cannot be in the future.");
     }
   }
+  if (input.startDate && input.endDate && errors.length === 0) {
+    const start = new Date(input.startDate);
+    const end = new Date(input.endDate);
+    const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDays > 365 * 20) {
+      errors.push("Date range cannot exceed 20 years.");
+    }
+  }
 
   const numericChecks: Array<{
     label: string;
     value: number;
     min: number;
     max?: number;
+    exclusiveMin?: boolean;
     integer?: boolean;
   }> = [
     { label: "Target DTE", value: Number(input.targetDte), min: 1, max: 365, integer: true },
     { label: "DTE tolerance", value: Number(input.dteTolerance), min: 0, max: 60, integer: true },
     { label: "Max holding days", value: Number(input.maxHolding), min: 1, max: 120, integer: true },
     { label: "Account size", value: Number(input.accountSize), min: 100, max: 100_000_000 },
-    { label: "Risk %", value: Number(input.riskPct), min: 0.1, max: 100 },
+    { label: "Risk %", value: Number(input.riskPct), min: 0, max: 100, exclusiveMin: true },
     { label: "Commission", value: Number(input.commission), min: 0, max: 100 },
     { label: "Max recommendations", value: Number(input.maxRecs), min: 1, max: limits.maxRecommendations, integer: true },
   ];
   for (const check of numericChecks) {
+    const tooLow = check.exclusiveMin ? check.value <= check.min : check.value < check.min;
     if (
       !Number.isFinite(check.value) ||
-      check.value < check.min ||
+      tooLow ||
       (check.max !== undefined && check.value > check.max)
     ) {
       errors.push(
-        `${check.label} must be a number between ${check.min} and ${check.max ?? "∞"}.`,
+        `${check.label} must be ${check.exclusiveMin ? "greater than" : "at least"} ${check.min}${check.max !== undefined ? ` and at most ${check.max}` : ""}.`,
       );
     } else if (check.integer && !Number.isInteger(check.value)) {
       errors.push(`${check.label} must be a whole number.`);

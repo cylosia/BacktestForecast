@@ -110,7 +110,8 @@ export function BacktestForm({
       const run = await createBacktestRun(token, payloadWithKey, submitAbortRef.current.signal);
       setStatus("success");
       setServerMessage("Backtest queued. Opening run details...");
-      router.replace(`/app/backtests/${run.id}`);
+      router.push(`/app/backtests/${run.id}`);
+      router.refresh();
     } catch (error) {
       const message =
         error instanceof ApiError

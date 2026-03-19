@@ -12,6 +12,16 @@
 - `market_date_today()` uses a hybrid holiday set: a static fallback covering 2025-2027 plus dynamic holidays fetched weekly from the Massive `/v1/marketstatus/upcoming` endpoint and cached in Redis. If the Massive API or Redis is unavailable, the static set is used alone. The static set should still be extended periodically as a safety net.
 - Sortino ratio uses a sample-corrected denominator (N-1) for internal consistency with the Sharpe ratio calculation. Some academic references use a population denominator (N); results may differ slightly from external tools that use the population formula.
 
+## SSE Infrastructure
+
+The backend implements a full Server-Sent Events (SSE) infrastructure (`apps/api/app/routers/events.py`) with Redis Pub/Sub, connection slot management via Lua scripts, and an SSE proxy route in the Next.js frontend (`apps/web/app/api/events/[...path]/route.ts`). However, the frontend exclusively uses the `usePolling` hook for real-time updates. The SSE code path has no active consumers and exists as a future upgrade path. The `useSSE` hook in `apps/web/hooks/use-sse.ts` is implemented but not wired into any component.
+
+This infrastructure consumes Redis connection pool resources (configured for up to 50 SSE connections) even when unused. If SSE is not planned for near-term activation, consider removing it to reduce operational surface area.
+
+## OutboxMessage Scaffolding
+
+The `OutboxMessage` model and its associated table exist as infrastructure scaffolding for a transactional outbox pattern. The `dispatch.py` module handles task dispatch with inline retries but does **not** create `OutboxMessage` rows. The `poll_outbox` beat task has been disabled since the table is always empty. The `cleanup_outbox` task still runs daily to clean up any manually inserted rows. Remove this infrastructure if not implemented by 2026-06-01.
+
 ## Export Storage
 
 Exports are stored using `DatabaseStorage` (PostgreSQL `LargeBinary` column) by default. For production deployments with significant export volume, configure S3 storage:
@@ -66,3 +76,25 @@ provider has fresher data. This means:
 For backtesting historical scenarios this is acceptable. For near-real-time
 analysis (daily picks, forecasts), consider reducing the TTL or adding a
 cache-bust mechanism.
+
+## Migration Downgrades
+
+Some migrations include destructive downgrade paths:
+- `0017` drops `plan_tier_snapshot` column on downgrade
+- `0008` changes `idempotency_status` from `processing` to `error` on downgrade
+- `0022` drops the `mode` column from `sweep_jobs` on downgrade
+
+Always test downgrade paths in staging before applying in production.
+Prefer forward-fixing (new migration) over downgrading in production.
+
+## Genetic Sweep Convergence
+
+Genetic sweeps with degenerate parameter spaces (e.g., very few valid
+combinations) may not converge within the configured max_generations.
+The sweep will still complete with the best results found, but the
+`generations_run` field in the result may equal `max_generations`,
+indicating premature termination.
+
+Long-running genetic sweeps can also starve other job types. Consider
+configuring a dedicated Celery queue for sweep tasks if this becomes
+an issue.

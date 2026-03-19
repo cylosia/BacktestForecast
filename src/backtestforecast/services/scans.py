@@ -83,16 +83,12 @@ def _safe_validate_list(model_cls, items: list | None, field_name: str) -> list:
 
 
 def _safe_validate_json(data: Any, label: str, *, default: Any = None) -> Any:
-    """Return *data* unchanged, or *default* if data is not JSON-serializable."""
+    """Return *data* if it's a dict or list, otherwise *default*."""
     if data is None:
         return default
-    try:
-        if isinstance(data, (dict, list)):
-            return data
-        return default
-    except Exception:
-        logger.warning(f"scan.corrupt_{label}_json", exc_info=True)
-        return default
+    if isinstance(data, (dict, list)):
+        return data
+    return default
 
 
 def _safe_validate_summary(data: dict) -> BacktestSummaryResponse:
@@ -257,6 +253,13 @@ class ScanService:
             return job
 
         payload = CreateScannerJobRequest.model_validate(job.request_snapshot_json)
+        policy = resolve_scanner_policy(
+            user.plan_tier, job.mode,
+            subscription_status=user.subscription_status,
+            subscription_current_period_end=user.subscription_current_period_end,
+        )
+        self._validate_limits(policy, payload)
+
         from sqlalchemy import update as sa_update
         rows_updated = self.session.execute(
             sa_update(ScannerJob)
@@ -287,7 +290,7 @@ class ScanService:
             try:
                 self.session.rollback()
                 job = self.repository.get(job_id, for_update=True)
-                if job is not None and job.status != "succeeded":
+                if job is not None and job.status not in ("succeeded", "cancelled"):
                     job.status = "failed"
                     job.error_code = "internal_error"
                     job.error_message = "An unexpected error occurred during scan execution."
@@ -795,7 +798,10 @@ class ScanService:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         settings = get_settings()
-        max_workers = min(len(payload.symbols), getattr(settings, "prefetch_max_workers", 8))
+        # Cap concurrency to avoid overwhelming upstream APIs with parallel requests.
+        # If the upstream returns 429s, individual _fetch_one calls will fail and
+        # the warning is surfaced to the user.
+        max_workers = min(len(payload.symbols), getattr(settings, "prefetch_max_workers", 4))
         pool = ThreadPoolExecutor(max_workers=max_workers)
         try:
             futures = {pool.submit(_fetch_one, sym): sym for sym in payload.symbols}
@@ -971,6 +977,8 @@ class ScanService:
             recommendation_count=job.recommendation_count,
             refresh_daily=job.refresh_daily,
             refresh_priority=job.refresh_priority,
+            ranking_version=job.ranking_version,
+            engine_version=job.engine_version,
             warnings=job.warnings_json,
             error_code=job.error_code,
             error_message=job.error_message,
@@ -998,3 +1006,8 @@ class ScanService:
             equity_curve=_safe_validate_list(EquityCurvePointResponse, recommendation.equity_curve_json, "equity_curve"),
             trades_truncated=len(recommendation.trades_json or []) >= 50,
         )
+
+
+assert ScanService._CANDIDATE_TIMEOUT_SECONDS < 300, (
+    "_CANDIDATE_TIMEOUT_SECONDS must be shorter than the worker statement_timeout (300s)"
+)

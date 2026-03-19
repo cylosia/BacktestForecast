@@ -57,17 +57,8 @@ def upgrade() -> None:
         )
 
 
-_TABLES_ADDED_BY_THIS_MIGRATION = [
-    "users",
-    "backtest_runs",
-    "backtest_templates",
-    "export_jobs",
-    "nightly_pipeline_runs",
-    "symbol_analyses",
-]
-
-
 def downgrade() -> None:
-    for table in _TABLES_ADDED_BY_THIS_MIGRATION:
+    for table in _TABLES_WITH_UPDATED_AT:
         trigger_name = f"trg_{table}_updated_at"
         op.execute(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table};")
+    op.execute(_DROP_FUNCTION)

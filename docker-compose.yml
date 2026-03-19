@@ -81,11 +81,13 @@ services:
     env_file: apps/api/.env
     environment:
       APP_ENV: development
+      WORKER_METRICS_BIND: "127.0.0.1"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    stop_grace_period: 40s
     healthcheck:
       test: ["CMD", "celery", "-A", "apps.worker.app.celery_app", "inspect", "ping", "--timeout", "5"]
       interval: 30s
@@ -113,6 +115,12 @@ services:
     env_file: apps/web/.env
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       api:
         condition: service_healthy

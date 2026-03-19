@@ -25,15 +25,25 @@ def sanitize_error_message(msg: str | None) -> str | None:
     """Truncate and redact potentially sensitive details from error messages."""
     if msg is None:
         return None
+    if len(msg) > 500:
+        msg = msg[:500] + "..."
     for pattern in _SENSITIVE_PATTERNS:
         if pattern.search(msg):
             return "An internal error occurred."
-    if len(msg) > 500:
-        msg = msg[:500] + "..."
     return msg
 
 
+class RunJobStatus(StrEnum):
+    """Status values for jobs that do not support expiration (backtests, scans, sweeps, analyses)."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class JobStatus(StrEnum):
+    """Status values for jobs that support expiration (exports)."""
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"

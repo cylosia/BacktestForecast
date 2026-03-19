@@ -123,7 +123,8 @@ def offset_strike(strikes: list[float], base_strike: float, steps: int) -> float
 
 def require_contract_for_strike(contracts: Iterable[OptionContractRecord], strike: float) -> OptionContractRecord:
     for contract in contracts:
-        if abs(contract.strike_price - strike) < 0.005:
+        tolerance = max(0.005, contract.strike_price * 0.0001)
+        if abs(contract.strike_price - strike) < tolerance:
             return contract
     raise DataUnavailableError(f"No contract was available for strike {strike}.")
 
@@ -225,7 +226,8 @@ def _estimate_iv_for_strike(
 
     contract = None
     for c in contracts:
-        if abs(c.strike_price - strike) < 0.005 and c.contract_type == contract_type:
+        tolerance = max(0.005, c.strike_price * 0.0001)
+        if abs(c.strike_price - strike) < tolerance and c.contract_type == contract_type:
             contract = c
             break
     if contract is None:

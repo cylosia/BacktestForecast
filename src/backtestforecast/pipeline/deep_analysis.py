@@ -255,6 +255,25 @@ class SymbolDeepAnalysisService:
             self.session.commit()
             return analysis
 
+        from sqlalchemy import func as sa_func
+        concurrent = self.session.scalar(
+            select(sa_func.count()).select_from(SymbolAnalysis).where(
+                SymbolAnalysis.user_id == analysis.user_id,
+                SymbolAnalysis.status == "running",
+                SymbolAnalysis.id != analysis.id,
+            )
+        ) or 0
+        _MAX_CONCURRENT_ANALYSES = 2
+        if concurrent >= _MAX_CONCURRENT_ANALYSES:
+            analysis.status = "failed"
+            analysis.error_code = "concurrent_limit"
+            analysis.error_message = (
+                f"Too many analyses running concurrently ({concurrent}). "
+                "Wait for existing analyses to complete."
+            )
+            self.session.commit()
+            return analysis
+
         started_at = time.monotonic()
         analysis.status = "running"
         analysis.stage = "regime"
@@ -498,7 +517,7 @@ class SymbolDeepAnalysisService:
                 trade_count = summary.get("trade_count", 0)
                 win_rate = summary.get("win_rate", 0.0)
                 roi = summary.get("total_roi_pct", 0.0)
-                drawdown = min(summary.get("max_drawdown_pct", 50.0), 99.0)
+                drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
                 score = 0.0
                 if trade_count > 0:
                     sample_factor = min(trade_count / 10.0, 1.0)
@@ -522,12 +541,13 @@ class SymbolDeepAnalysisService:
                 )
                 return None
 
-        max_workers = max(1, min(4, len(work_items)))
+        max_workers = max(1, min(8, len(work_items)))
+        landscape_timeout = max(300, min(len(work_items) * 2, 900))
         pool = ThreadPoolExecutor(max_workers=max_workers)
         collected_futures: set = set()
         try:
             futures = {pool.submit(_run_cell, item): item for item in work_items}
-            for future in as_completed(futures, timeout=300):
+            for future in as_completed(futures, timeout=landscape_timeout):
                 collected_futures.add(future)
                 try:
                     cell = future.result(timeout=300)
@@ -616,7 +636,7 @@ class SymbolDeepAnalysisService:
 
             roi = full.get("total_roi_pct", 0.0)
             win_rate = full.get("win_rate", 0.0) / 100.0
-            drawdown = min(full.get("max_drawdown_pct", 50.0), 99.0)
+            drawdown = min(full.get("max_drawdown_pct", 50.0), 100.0)
             trade_count = full.get("trade_count", 1)
             sample_factor = min(trade_count / 10.0, 1.0)
             score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor

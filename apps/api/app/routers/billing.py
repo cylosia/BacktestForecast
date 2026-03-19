@@ -88,7 +88,7 @@ def stripe_webhook(
     settings = get_settings()
     get_rate_limiter().check(
         bucket="billing:webhook",
-        actor_key=ip_address or "unknown",
+        actor_key="stripe_webhook_global",
         limit=300,
         window_seconds=settings.rate_limit_window_seconds,
     )
@@ -136,10 +136,8 @@ def stripe_webhook(
             _webhook_logger.warning(
                 "webhook.user_not_found", code=exc.code, ip=ip_address, request_id=request_id,
             )
-            raise HTTPException(
-                status_code=500,
-                detail={"code": exc.code, "message": "Transient data issue; Stripe should retry."},
-            )
+            return WebhookResponse(received=True, reason="User not found; event skipped.")
+
         if isinstance(exc, _ExtErr):
             _webhook_logger.exception(
                 "webhook.transient_error", code=exc.code, ip=ip_address, request_id=request_id,
@@ -152,10 +150,7 @@ def stripe_webhook(
             _webhook_logger.warning(
                 "webhook.deterministic_error", code=exc.code, ip=ip_address, request_id=request_id,
             )
-            raise HTTPException(
-                status_code=200,
-                detail={"code": exc.code, "message": "Deterministic error; logged for investigation."},
-            )
+            return WebhookResponse(received=True, reason=f"Deterministic error ({exc.code}); will not retry.")
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
         raise HTTPException(
             status_code=500,

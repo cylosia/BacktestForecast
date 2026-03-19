@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
@@ -13,7 +13,6 @@ from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
     EquityCurvePointResponse,
-    JobStatus,
     SpreadWidthMode,
     StrategyType,
 )
@@ -89,7 +88,7 @@ class CreateSweepRequest(BaseModel):
     target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
-    account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
+    account_size: Decimal = Field(ge=Decimal("100"), le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
     entry_rule_sets: list[RuleSetDefinition] = Field(min_length=1, max_length=10)
@@ -139,7 +138,13 @@ class CreateSweepRequest(BaseModel):
         return self
 
 
-SweepJobStatus = JobStatus
+class SweepJobStatus(StrEnum):
+    """Status values valid for sweep jobs (excludes 'expired')."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 # Built manually in SweepService._build_result_response — NOT directly from
@@ -176,12 +181,15 @@ class SweepJobResponse(BaseModel):
     id: UUID
     status: SweepJobStatus
     symbol: str
+    mode: SweepMode = SweepMode.GRID
+    engine_version: str = "options-multileg-v2"
     plan_tier_snapshot: PlanTier
     candidate_count: int
     evaluated_candidate_count: int
     result_count: int
     prefetch_summary: dict[str, Any] | None = Field(default=None, alias="prefetch_summary_json")
     warnings: list[dict[str, Any]] = Field(default_factory=list, alias="warnings_json")
+    request_snapshot: dict[str, Any] = Field(default_factory=dict, alias="request_snapshot_json")
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime

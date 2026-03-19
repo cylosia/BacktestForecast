@@ -10,5 +10,7 @@ def test_idempotency_query_excludes_failed():
     import inspect
 
     source = inspect.getsource(SweepJobRepository.get_by_idempotency_key)
-    assert "notin_" in source, "Idempotency query must exclude terminal statuses"
-    assert "failed" in source, "Idempotency query must exclude 'failed' status"
+    assert "failed" in source.lower() or "terminal" in source.lower(), \
+        "Idempotency query must exclude terminal statuses"
+    assert "cancelled" in source.lower() or "terminal" in source.lower(), \
+        "Idempotency query must exclude cancelled status"

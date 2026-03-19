@@ -21,6 +21,7 @@ from backtestforecast.schemas.sweeps import (
     SweepResultListResponse,
 )
 from backtestforecast.errors import FeatureLockedError
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.sweeps import SweepService
 
@@ -69,6 +70,19 @@ def create_sweep(
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+    from sqlalchemy import func, select
+    from backtestforecast.models import SweepJob as SweepJobModel
+    active_count = db.scalar(
+        select(func.count()).select_from(SweepJobModel).where(
+            SweepJobModel.user_id == user.id,
+            SweepJobModel.status.in_(["queued", "running"]),
+        )
+    ) or 0
+    if active_count >= settings.max_concurrent_sweeps:
+        from backtestforecast.errors import QuotaExceededError
+        raise QuotaExceededError(
+            f"You have {active_count} active sweeps. Maximum concurrent sweeps is {settings.max_concurrent_sweeps}."
+        )
     with SweepService(db) as service:
         job = service.create_job(user, payload)
         dispatch_celery_task(
@@ -87,7 +101,7 @@ def create_sweep(
             from fastapi import HTTPException
             raise HTTPException(
                 status_code=500,
-                detail={"code": "enqueue_failed", "message": job.error_message or "Unable to dispatch sweep job."},
+                detail={"code": "enqueue_failed", "message": sanitize_error_message(job.error_message) or "Unable to dispatch sweep job."},
             )
         return service.get_job(user, job.id)
 

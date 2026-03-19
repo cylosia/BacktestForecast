@@ -6,7 +6,7 @@ from typing import Annotated, Generator
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
@@ -16,6 +16,7 @@ from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobListResponse, ExportJobResponse
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.exports import ExportService
@@ -92,12 +93,13 @@ def create_export(
             )
         else:
             logger.error("export.post_enqueue_missing", export_job_id=str(job_response.id))
+            from backtestforecast.errors import AppError
+            raise AppError(code="enqueue_failed", message="Export job could not be verified after creation.")
 
         if export_job is not None:
             db.refresh(export_job)
             if export_job.status == "failed":
-                from fastapi import HTTPException
-                raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": export_job.error_message or "Unable to dispatch job."})
+                raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(export_job.error_message) or "Unable to dispatch job."})
         return service.get_export_status(user, job_response.id)
 
 
@@ -204,6 +206,19 @@ def download_export(
                     from backtestforecast.errors import ExternalServiceError
                     raise ExternalServiceError(
                         "Export file integrity check failed. Please re-export."
+                    )
+
+                if content_length is not None and content_length > _MAX_EXPORT_SIZE_BYTES:
+                    logger.error(
+                        "export.s3_size_exceeded",
+                        export_job_id=str(export_job_id),
+                        content_length=content_length,
+                        max_allowed=_MAX_EXPORT_SIZE_BYTES,
+                    )
+                    from fastapi import HTTPException
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Export file exceeds maximum allowed size.",
                     )
 
                 headers = {

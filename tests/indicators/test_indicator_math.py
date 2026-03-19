@@ -9,6 +9,9 @@ from backtestforecast.indicators.calculations import (
     bollinger_bands,
     ema,
     macd,
+    rolling_max,
+    rolling_mean,
+    rolling_min,
     rolling_stddev,
     rsi,
     sma,
@@ -140,3 +143,89 @@ class TestRollingStddev:
         mean = sum(window) / 5
         variance = sum((x - mean) ** 2 for x in window) / 5
         assert result[4] == pytest.approx(math.sqrt(variance))
+
+
+class TestRollingMin:
+    def test_basic_period_3(self):
+        values = [5.0, 3.0, 8.0, 1.0, 7.0]
+        result = rolling_min(values, 3)
+        assert result[:2] == [None, None]
+        assert result[2] == pytest.approx(3.0)
+        assert result[3] == pytest.approx(1.0)
+        assert result[4] == pytest.approx(1.0)
+
+    def test_period_1(self):
+        values = [10.0, 5.0, 15.0]
+        result = rolling_min(values, 1)
+        assert result == [pytest.approx(10.0), pytest.approx(5.0), pytest.approx(15.0)]
+
+    def test_constant_series(self):
+        values = [7.0] * 6
+        result = rolling_min(values, 3)
+        for v in result[2:]:
+            assert v == pytest.approx(7.0)
+
+    def test_descending(self):
+        values = [5.0, 4.0, 3.0, 2.0, 1.0]
+        result = rolling_min(values, 3)
+        assert result[2] == pytest.approx(3.0)
+        assert result[3] == pytest.approx(2.0)
+        assert result[4] == pytest.approx(1.0)
+
+    def test_ascending(self):
+        values = [1.0, 2.0, 3.0, 4.0, 5.0]
+        result = rolling_min(values, 3)
+        assert result[2] == pytest.approx(1.0)
+        assert result[3] == pytest.approx(2.0)
+        assert result[4] == pytest.approx(3.0)
+
+    def test_period_0_returns_all_none(self):
+        values = [1.0, 2.0, 3.0]
+        result = rolling_min(values, 0)
+        assert result == [None, None, None]
+
+
+class TestRollingMax:
+    def test_basic_period_3(self):
+        values = [5.0, 8.0, 3.0, 9.0, 2.0]
+        result = rolling_max(values, 3)
+        assert result[:2] == [None, None]
+        assert result[2] == pytest.approx(8.0)
+        assert result[3] == pytest.approx(9.0)
+        assert result[4] == pytest.approx(9.0)
+
+    def test_period_1(self):
+        values = [10.0, 5.0, 15.0]
+        result = rolling_max(values, 1)
+        assert result == [pytest.approx(10.0), pytest.approx(5.0), pytest.approx(15.0)]
+
+    def test_constant_series(self):
+        values = [7.0] * 6
+        result = rolling_max(values, 3)
+        for v in result[2:]:
+            assert v == pytest.approx(7.0)
+
+    def test_ascending(self):
+        values = [1.0, 2.0, 3.0, 4.0, 5.0]
+        result = rolling_max(values, 3)
+        assert result[2] == pytest.approx(3.0)
+        assert result[3] == pytest.approx(4.0)
+        assert result[4] == pytest.approx(5.0)
+
+    def test_descending(self):
+        values = [5.0, 4.0, 3.0, 2.0, 1.0]
+        result = rolling_max(values, 3)
+        assert result[2] == pytest.approx(5.0)
+        assert result[3] == pytest.approx(4.0)
+        assert result[4] == pytest.approx(3.0)
+
+    def test_period_0_returns_all_none(self):
+        values = [1.0, 2.0, 3.0]
+        result = rolling_max(values, 0)
+        assert result == [None, None, None]
+
+
+class TestRollingMean:
+    def test_identical_to_sma(self):
+        values = [1.0, 2.0, 3.0, 4.0, 5.0]
+        assert rolling_mean(values, 3) == sma(values, 3)

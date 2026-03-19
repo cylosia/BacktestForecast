@@ -159,6 +159,8 @@ class BacktestTemplateService:
         if locked_user is None:
             raise NotFoundError("User not found.")
 
+        # PostgreSQL-specific: advisory locks are not supported by SQLite.
+        # Tests using SQLite will skip this lock and rely on serialised test execution.
         from sqlalchemy import text
         self.session.execute(
             text("SELECT pg_advisory_xact_lock(('x' || left(md5(:key), 16))::bit(64)::bigint)"),

@@ -31,11 +31,14 @@ class ExportStorage(Protocol):
         ...
 
     def delete(self, storage_key: str) -> None:
-        """Remove stored content (best-effort)."""
+        """Remove stored content. May raise on persistent failure."""
         ...
 
-    def exists(self, storage_key: str) -> bool:
-        """Check if content exists at the given key."""
+    def exists(self, storage_key: str, **kwargs: Any) -> bool:
+        """Check if content exists at the given key.
+
+        Implementations may accept additional kwargs (e.g. session for DatabaseStorage).
+        """
         ...
 
     def get_object(self, key: str) -> Any:
@@ -58,7 +61,7 @@ class DatabaseStorage:
     def delete(self, storage_key: str) -> None:
         pass
 
-    def exists(self, storage_key: str, *, session: Any = None) -> bool:  # type: ignore[override]
+    def exists(self, storage_key: str, *, session: Any = None, **kwargs: Any) -> bool:
         if not storage_key:
             return False
         from sqlalchemy import select

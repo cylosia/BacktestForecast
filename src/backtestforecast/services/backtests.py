@@ -237,7 +237,7 @@ class BacktestService:
             self.session.rollback()
             self.session.execute(
                 update(BacktestRun)
-                .where(BacktestRun.id == run.id, BacktestRun.status != "succeeded")
+                .where(BacktestRun.id == run.id, BacktestRun.status.notin_(["succeeded", "cancelled"]))
                 .values(
                     status="failed",
                     error_code=exc.code,
@@ -253,7 +253,7 @@ class BacktestService:
             self.session.rollback()
             self.session.execute(
                 update(BacktestRun)
-                .where(BacktestRun.id == run.id, BacktestRun.status != "succeeded")
+                .where(BacktestRun.id == run.id, BacktestRun.status.notin_(["succeeded", "cancelled"]))
                 .values(
                     status="failed",
                     error_code="internal_error",
@@ -280,6 +280,10 @@ class BacktestService:
         followed by the Celery task instead. This method bypasses the
         dispatch layer and holds a DB connection for the entire execution.
         """
+        settings = get_settings()
+        assert settings.app_env not in ("production", "staging"), (
+            "create_and_run is for tests only; use enqueue + Celery in production"
+        )
         if request.idempotency_key:
             existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
             if existing is not None:
@@ -347,6 +351,9 @@ class BacktestService:
         return stored
 
     def list_runs(self, user: User, limit: int = 50, offset: int = 0) -> BacktestRunListResponse:
+        """List backtest runs for the user. Returns BacktestRunHistoryItemResponse items
+        without equity curve data; equity curves are only included in detail/compare responses.
+        """
         feature_policy = resolve_feature_policy(
             user.plan_tier, user.subscription_status, user.subscription_current_period_end,
         )
@@ -356,9 +363,10 @@ class BacktestService:
         effective_limit = min(limit, feature_policy.history_item_limit, 200)
         runs = self.run_repository.list_for_user(user.id, limit=effective_limit, offset=offset, created_since=created_since)
         total = self.run_repository.count_for_user(user.id, created_since=created_since)
+        capped_total = min(total, feature_policy.history_item_limit)
         return BacktestRunListResponse(
             items=[self._to_history_item(run) for run in runs],
-            total=total,
+            total=capped_total,
             offset=offset,
             limit=effective_limit,
         )

@@ -140,6 +140,21 @@ class RequestContextMiddleware:
         structlog.contextvars.clear_contextvars()
 
 
+def bind_request_context(request_id: str | None = None, user_id: str | None = None) -> None:
+    """Bind request-scoped context vars for structured logging.
+
+    RequestContextMiddleware handles this automatically for HTTP requests.
+    Use this helper for non-HTTP entry points (Celery tasks, CLI commands, etc.).
+    """
+    ctx: dict[str, str] = {}
+    if request_id:
+        ctx["request_id"] = request_id
+    if user_id:
+        ctx["user_id"] = user_id
+    if ctx:
+        structlog.contextvars.bind_contextvars(**ctx)
+
+
 def get_logger(name: str):
     return structlog.get_logger(name)
 

@@ -12,7 +12,8 @@ from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import NotFoundError
+from backtestforecast.errors import FeatureLockedError, NotFoundError
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
@@ -39,6 +40,7 @@ def list_backtests(
     offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunListResponse:
+    # Feature flag not checked on read: users may view past results even when creation is disabled.
     get_rate_limiter().check(
         bucket="backtests:read",
         actor_key=str(user.id),
@@ -59,7 +61,6 @@ def create_backtest(
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunDetailResponse:
     if not settings.feature_backtests_enabled:
-        from backtestforecast.errors import FeatureLockedError
         raise FeatureLockedError("Backtesting is temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="backtests:create",
@@ -85,7 +86,7 @@ def create_backtest(
         db.refresh(run)
         if run.status == "failed":
             from fastapi import HTTPException
-            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": run.error_message or "Unable to dispatch job."})
+            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(run.error_message) or "Unable to dispatch job."})
         return service.get_run(user, run.id)
 
 
@@ -98,7 +99,6 @@ def compare_backtests(
     settings: Settings = Depends(get_settings),
 ) -> CompareBacktestsResponse:
     if not settings.feature_backtests_enabled:
-        from backtestforecast.errors import FeatureLockedError
         raise FeatureLockedError("Backtesting is temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="backtests:compare",
@@ -117,6 +117,7 @@ def get_backtest_status(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunStatusResponse:
+    # Feature flag not checked on read: users may view past results even when creation is disabled.
     get_rate_limiter().check(
         bucket="backtests:read",
         actor_key=str(user.id),
@@ -133,9 +134,10 @@ def get_backtest(
     response: Response,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    trade_limit: int = Query(default=10_000, ge=0, le=50_000),
+    trade_limit: int = Query(default=10_000, ge=0, le=20_000),
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunDetailResponse:
+    # Feature flag not checked on read: users may view past results even when creation is disabled.
     get_rate_limiter().check(
         bucket="backtests:read",
         actor_key=str(user.id),
@@ -156,6 +158,7 @@ def delete_backtest(
     settings: Settings = Depends(get_settings),
 ) -> None:
     """Delete a backtest run and its associated data."""
+    # Feature flag not checked on read: users may view past results even when creation is disabled.
     get_rate_limiter().check(
         bucket="backtests:delete",
         actor_key=str(user.id),

@@ -35,8 +35,12 @@ from backtestforecast.services.audit import AuditService
 logger = get_logger("billing")
 
 
-_STRIPE_CIRCUIT_COOLDOWN = 30
 _STRIPE_CIRCUIT_KEY = "bff:stripe_circuit_open"
+
+
+def _get_stripe_circuit_cooldown() -> int:
+    from backtestforecast.config import get_settings
+    return getattr(get_settings(), "stripe_circuit_cooldown_seconds", 30)
 
 
 class BillingService:
@@ -48,6 +52,7 @@ class BillingService:
         self.audit_events = AuditEventRepository(session)
         self.stripe_events = StripeEventRepository(session)
         self._stripe_client: Any = None
+        self._pending_cancellation_events: list[tuple[str, UUID]] = []
 
     def create_checkout_session(
         self,
@@ -230,7 +235,7 @@ class BillingService:
         self.stripe_events.mark_processed(event_id)
         self.session.commit()
 
-        pending = getattr(self, "_pending_cancellation_events", [])
+        pending = self._pending_cancellation_events
         if pending:
             self.publish_cancellation_events(pending)
             self._pending_cancellation_events = []
@@ -347,9 +352,15 @@ class BillingService:
             )
             return
 
+        _TIER_RANK = {"free": 0, "pro": 1, "premium": 2}
+        incoming_tier_rank = _TIER_RANK.get(effective_tier, 0)
+        current_tier_rank = _TIER_RANK.get(user.plan_tier, 0)
+        is_upgrade = incoming_tier_rank > current_tier_rank
+
         is_terminal = status in ("canceled", "unpaid", "incomplete_expired")
         if (
             not is_terminal
+            and not is_upgrade
             and current_period_end is not None
             and user.subscription_current_period_end is not None
             and self._normalize_utc(current_period_end) < self._normalize_utc(user.subscription_current_period_end)
@@ -365,6 +376,7 @@ class BillingService:
 
         if (
             not is_terminal
+            and not is_upgrade
             and event_created_ts is not None
             and current_period_end is not None
             and user.subscription_current_period_end is not None
@@ -556,6 +568,17 @@ class BillingService:
     def _get_or_create_customer(self, user: User) -> str:
         if user.stripe_customer_id:
             return user.stripe_customer_id
+
+        from sqlalchemy import text
+        self.session.execute(
+            text("SELECT pg_advisory_xact_lock(('x' || left(md5(:key), 16))::bit(64)::bigint)"),
+            {"key": f"stripe_customer:{user.id}"},
+        )
+
+        self.session.refresh(user)
+        if user.stripe_customer_id:
+            return user.stripe_customer_id
+
         client = self._get_stripe_client()
         customer = client.customers.create(
             params={
@@ -573,7 +596,7 @@ class BillingService:
         )
         self.session.flush()
         if result.rowcount == 0:
-            for _attempt in range(2):
+            for _attempt in range(5):
                 try:
                     client.customers.delete(customer.id)
                     break
@@ -697,6 +720,15 @@ class BillingService:
         except (TypeError, ValueError, OSError):
             return None
 
+    def get_stripe_client(self, *, skip_circuit_check: bool = False):
+        """Return the Stripe SDK client, initialising it on first call.
+
+        Checks the circuit-breaker key in Redis before returning. Pass
+        ``skip_circuit_check=True`` to bypass (e.g. during account cleanup
+        where the circuit state is irrelevant).
+        """
+        return self._get_stripe_client(skip_circuit_check=skip_circuit_check)
+
     def _get_stripe_client(self, *, skip_circuit_check: bool = False):
         if not skip_circuit_check:
             try:
@@ -751,11 +783,12 @@ class BillingService:
                 logger.debug("billing.stripe_event_error_mark_failed", event_id=stripe_event_id)
 
     def _trip_stripe_circuit(self) -> None:
+        cooldown = _get_stripe_circuit_cooldown()
         try:
             from backtestforecast.security import get_rate_limiter
             r = get_rate_limiter().get_redis()
             if r is not None:
-                r.setex(_STRIPE_CIRCUIT_KEY, _STRIPE_CIRCUIT_COOLDOWN, "1")
+                r.setex(_STRIPE_CIRCUIT_KEY, cooldown, "1")
         except (ConnectionError, OSError, TimeoutError, RuntimeError):
             logger.debug("billing.circuit_trip_skipped", reason="redis_unavailable")
-        logger.warning("billing.stripe_circuit_opened", cooldown_seconds=_STRIPE_CIRCUIT_COOLDOWN)
+        logger.warning("billing.stripe_circuit_opened", cooldown_seconds=cooldown)

@@ -33,6 +33,7 @@ When a user deletes their account via `DELETE /v1/account/me`:
 | Option data cache | 7 days | Redis TTL (`option_cache_ttl_seconds`) |
 | DLQ messages | 30 days | Redis TTL + LTRIM to 5000 entries |
 | Rate limit counters | 60 seconds | Redis TTL (window-based) |
+| Outbox messages | Indefinite | No automatic cleanup; manual purge required |
 
 ## GDPR Considerations
 

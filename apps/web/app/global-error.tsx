@@ -13,8 +13,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // TODO: Integrate Sentry or similar error tracking for production visibility.
-    console.error("Global error boundary caught");
+    console.error("Global error boundary caught:", error.digest);
   }, [error]);
 
   return (

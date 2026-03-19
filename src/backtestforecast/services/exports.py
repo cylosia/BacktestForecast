@@ -188,6 +188,28 @@ class ExportService:
             return export_job
         self.session.refresh(export_job)
 
+        run = self.backtests.get_lightweight_for_user(export_job.backtest_run_id, export_job.user_id)
+        if run is not None:
+            trade_count = run.trade_count if hasattr(run, "trade_count") else 0
+            estimated_size = trade_count * 500
+            if estimated_size > _MAX_EXPORT_BYTES:
+                self.session.execute(
+                    sa_update(ExportJob)
+                    .where(ExportJob.id == export_job_id, ExportJob.status == "running")
+                    .values(
+                        status="failed",
+                        error_code="export_too_large",
+                        error_message=f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades).",
+                        completed_at=datetime.now(UTC),
+                    )
+                )
+                self.session.commit()
+                self.session.refresh(export_job)
+                raise AppError(
+                    code="export_too_large",
+                    message=f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades).",
+                )
+
         _exec_start = _time.monotonic()
         try:
             detail = self.backtest_service.get_run_for_owner(
@@ -428,6 +450,8 @@ class ExportService:
             raise NotFoundError("Export not found.")
         if export_job.status != "succeeded":
             raise NotFoundError("Export content is not available.")
+        if export_job.expires_at is not None and export_job.expires_at < datetime.now(UTC):
+            raise NotFoundError("Export has expired.")
         if use_db_content and export_job.content_bytes is None:
             raise NotFoundError("Export content is not available.")
         if not use_db_content and not export_job.storage_key:
@@ -601,13 +625,21 @@ class ExportService:
             _BASE_FONT = available[0] if available else "Courier"
             _BOLD_FONT = _BASE_FONT
 
+        _page_number = 1
+
+        def _draw_page_footer() -> None:
+            pdf.setFont(_BASE_FONT, 8)
+            pdf.drawRightString(width - 0.75 * inch, 0.5 * inch, f"Page {_page_number}")
+
         def line(text: str, *, bold: bool = False, step: float = 16.0) -> None:
-            nonlocal y
+            nonlocal y, _page_number
             pdf.setFont(_BOLD_FONT if bold else _BASE_FONT, 10 if not bold else 12)
             pdf.drawString(0.75 * inch, y, text)
             y -= step
             if y < 0.75 * inch:
+                _draw_page_footer()
                 pdf.showPage()
+                _page_number += 1
                 y = height - 0.75 * inch
 
         def _fmt(val: object) -> str:
@@ -672,6 +704,7 @@ class ExportService:
             line(f"Max drawdown: {_fmt_pct(detail.summary.max_drawdown_pct)}")
             line(f"Data points: {len(detail.equity_curve)}")
 
+        _draw_page_footer()
         pdf.showPage()
         pdf.save()
         return buffer.getvalue()
@@ -683,7 +716,7 @@ class ExportService:
         if not isinstance(value, str):
             return value
         original_first = value[:1]
-        if original_first in {"\t", "\r"}:
+        if original_first in {"\t", "\r", "\n"}:
             return "'" + value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
         sanitized = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
         stripped = sanitized.strip()

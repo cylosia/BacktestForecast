@@ -13,7 +13,7 @@ from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import ValidationError
+from backtestforecast.errors import FeatureLockedError, ValidationError
 from backtestforecast.models import User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import (
@@ -23,6 +23,7 @@ from backtestforecast.schemas.analysis import (
     CreateAnalysisRequest,
 )
 from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -50,7 +51,6 @@ def create_analysis(
 ) -> AnalysisSummaryResponse:
     """Create and enqueue a single-symbol deep analysis (Pro+ gated)."""
     if not settings.feature_analysis_enabled:
-        from backtestforecast.errors import FeatureLockedError
         raise FeatureLockedError("Analysis is temporarily disabled.", required_tier="free")
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     get_rate_limiter().check(
@@ -84,7 +84,7 @@ def create_analysis(
         db.refresh(analysis)
         if analysis.status == "failed":
             from fastapi import HTTPException
-            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": analysis.error_message or "Unable to dispatch job."})
+            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(analysis.error_message) or "Unable to dispatch job."})
         return _to_summary(analysis)
 
 

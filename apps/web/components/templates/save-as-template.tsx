@@ -60,10 +60,12 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     return () => {
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      abortRef.current?.abort();
     };
   }, []);
 
@@ -91,6 +93,9 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
     setSaving(true);
     setMessage(null);
 
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+
     try {
       const token = await getToken();
       if (!token) {
@@ -100,11 +105,15 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
         return;
       }
 
-      await createTemplate(token, {
-        name: name.trim(),
-        description: description.trim() || null,
-        config: formValuesToTemplateConfig(values),
-      });
+      await createTemplate(
+        token,
+        {
+          name: name.trim(),
+          description: description.trim() || null,
+          config: formValuesToTemplateConfig(values),
+        },
+        abortRef.current.signal,
+      );
 
       setIsError(false);
       setMessage("Template saved.");
@@ -117,6 +126,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
       }, 1500);
       router.refresh();
     } catch (error) {
+      if (abortRef.current?.signal.aborted) return;
       const msg =
         error instanceof ApiError ? error.message : "Could not save template.";
       setIsError(true);

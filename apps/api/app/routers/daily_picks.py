@@ -78,7 +78,7 @@ def get_pipeline_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(default=10, ge=1, le=30),
-    cursor: str | None = Query(default=None, description="created_at ISO cursor from previous page"),
+    cursor: str | None = Query(default=None, max_length=50, description="created_at ISO cursor from previous page"),
 ) -> PipelineHistoryResponse:
     """Return recent pipeline run history (Pro+ gated).
 

@@ -33,10 +33,14 @@ class BacktestRunRepository:
         return self.session.scalar(stmt)
 
     def get_by_idempotency_key(self, user_id: UUID, idempotency_key: str) -> BacktestRun | None:
-        stmt = select(BacktestRun).where(
-            BacktestRun.user_id == user_id,
-            BacktestRun.idempotency_key == idempotency_key,
-            BacktestRun.status.notin_(["failed", "cancelled"]),
+        stmt = (
+            select(BacktestRun)
+            .where(
+                BacktestRun.user_id == user_id,
+                BacktestRun.idempotency_key == idempotency_key,
+                BacktestRun.status.notin_(["failed", "cancelled"]),
+            )
+            .with_for_update(skip_locked=True)
         )
         return self.session.scalar(stmt)
 
@@ -47,6 +51,7 @@ class BacktestRunRepository:
         limit: int = 50,
         offset: int = 0,
         created_since: datetime | None = None,
+        cursor_before: datetime | None = None,
     ) -> list[BacktestRun]:
         stmt = (
             select(BacktestRun)
@@ -59,6 +64,8 @@ class BacktestRunRepository:
         )
         if created_since is not None:
             stmt = stmt.where(BacktestRun.created_at >= created_since)
+        if cursor_before is not None:
+            stmt = stmt.where(BacktestRun.created_at < cursor_before)
         stmt = stmt.order_by(desc(BacktestRun.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 

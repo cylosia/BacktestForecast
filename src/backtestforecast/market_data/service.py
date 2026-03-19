@@ -396,7 +396,7 @@ class MarketDataService:
 
         try:
             if not am_fetcher:
-                inflight_event.wait(timeout=600)
+                inflight_event.wait(timeout=120)
                 with self._bars_cache_lock:
                     cached = self._bars_cache.get(cache_key)
                     if cached is not None:
@@ -405,9 +405,11 @@ class MarketDataService:
                     error_entry = self._bars_errors.get(cache_key)
                 if error_entry is not None:
                     cached_exc = error_entry[0]
+                    if isinstance(cached_exc, Exception):
+                        raise type(cached_exc)(str(cached_exc)) from cached_exc
                     raise DataUnavailableError(
                         f"Market data fetch failed: {cached_exc}"
-                    ) from cached_exc
+                    )
                 raise DataUnavailableError(
                     f"Market data fetch for {symbol} timed out or completed without caching results."
                 )

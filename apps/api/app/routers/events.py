@@ -340,7 +340,13 @@ async def _event_stream(
             await _sse_process_dec()
         if user_slot_acquired:
             if used_redis_for_slot:
-                await _release_sse_slot(user_id)
+                try:
+                    await _release_sse_slot(user_id)
+                except Exception:
+                    logger.warning("sse.slot_release_failed_redis", user_id=str(user_id), exc_info=True)
+                    # Redis failed during release — also decrement in-process
+                    # counter to avoid leaking the slot for the full TTL.
+                    await _release_sse_slot_in_process(user_id)
             else:
                 await _release_sse_slot_in_process(user_id)
 

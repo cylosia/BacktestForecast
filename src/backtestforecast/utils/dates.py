@@ -280,8 +280,12 @@ def market_date_today() -> date:
     """
     holidays = get_all_holidays()
     today = datetime.now(_US_EASTERN).date()
-    while today.weekday() >= 5 or today in holidays:
+    max_iterations = 30
+    for _ in range(max_iterations):
+        if today.weekday() < 5 and today not in holidays:
+            return today
         today -= timedelta(days=1)
+    logger.error("market_date_today.loop_guard_exceeded", date=str(today))
     return today
 
 

@@ -80,10 +80,15 @@ def validate_json_shape(
     *,
     required_keys: frozenset[str] = frozenset(),
     known_keys: frozenset[str] | None = None,
+    strict: bool = False,
 ) -> bool:
     """Log a warning if *data* is missing required keys or is the wrong type.
 
-    Returns True when the shape is valid, False otherwise.  Never raises.
+    Returns True when the shape is valid, False otherwise.
+
+    When *strict* is True, a :class:`ValueError` is raised instead of
+    returning False so that critical code paths can reject malformed data
+    early rather than silently propagating it.
 
     For multi-leg trade shapes that store per-leg data under a ``legs``
     list, required keys that are absent from the top level are checked
@@ -91,6 +96,8 @@ def validate_json_shape(
     """
     if not isinstance(data, dict):
         logger.warning("json_shape_invalid_type", label=label, got_type=type(data).__name__)
+        if strict:
+            raise ValueError(f"[{label}] expected dict, got {type(data).__name__}")
         return False
 
     # Partial/in-progress trade records during live position tracking
@@ -110,6 +117,8 @@ def validate_json_shape(
                     break
         if missing:
             logger.warning("json_shape_missing_keys", label=label, missing=sorted(missing))
+            if strict:
+                raise ValueError(f"[{label}] missing required keys: {sorted(missing)}")
             return False
 
     if known_keys is not None:

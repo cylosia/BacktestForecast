@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -15,15 +16,19 @@ from backtestforecast.schemas.backtests import (
     BacktestSummaryResponse,
     EntryRule,
     EquityCurvePointResponse,
-    JobStatus,
     StrategyType,
     TradeJsonResponse,
     validate_entry_rule_collection,
 )
 
 
-# Alias kept for backward compatibility with existing imports
-ScannerJobStatus = JobStatus
+class ScannerJobStatus(StrEnum):
+    """Status values valid for scanner jobs (excludes 'expired')."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RuleSetDefinition(BaseModel):
@@ -58,7 +63,7 @@ class CreateScannerJobRequest(BaseModel):
     target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
-    account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
+    account_size: Decimal = Field(ge=Decimal("100"), le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
     max_recommendations: int = Field(default=10, ge=1, le=30)
@@ -213,6 +218,8 @@ class ScannerJobResponse(BaseModel):
     recommendation_count: int
     refresh_daily: bool
     refresh_priority: int
+    ranking_version: str | None = None
+    engine_version: str | None = None
     warnings: list[dict[str, Any]] = Field(default_factory=list, alias="warnings_json")
     error_code: str | None = None
     error_message: str | None = None

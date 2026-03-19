@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -29,11 +32,20 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       PYTHONPATH: src:.
       APP_ENV: test
       LOG_JSON: false
       DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_unit
+      REDIS_URL: redis://localhost:6379/0
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
@@ -69,6 +81,26 @@ jobs:
 
       - name: Run Python tests
         run: pytest -q -m "not integration" --ignore=tests/integration --cov=src --cov-report=term --cov-fail-under=80
+
+      - name: Check migration chain integrity
+        run: python -c "
+          import pathlib, re, collections
+          versions = pathlib.Path('alembic/versions')
+          revs = []
+          for f in sorted(versions.glob('*.py')):
+              if f.name.startswith('__'): continue
+              text = f.read_text()
+              m = re.search(r'revision\s*=\s*\"([^\"]+)\"', text)
+              if m: revs.append((m.group(1), f.name))
+          counts = collections.Counter(r for r, _ in revs)
+          dups = {r: c for r, c in counts.items() if c > 1}
+          if dups:
+              for r, c in dups.items():
+                  files = [f for rev, f in revs if rev == r]
+                  print(f'DUPLICATE revision {r} in: {files}')
+              exit(1)
+          print(f'OK: {len(revs)} unique revisions')
+        "
 
       - name: Check service close() methods
         run: python scripts/check_service_close.py
@@ -109,6 +141,8 @@ jobs:
       - name: Install web dependencies
         run: pnpm install --frozen-lockfile
 
+      # NOTE: This check only validates the static docker-compose file. Runtime
+      # env var overrides (e.g. WORKER_REPLICAS) are not caught by this check.
       - name: Verify beat single-replica
         run: |
           if ! grep -A2 'beat' docker-compose.prod.yml | grep -q 'replicas: 1'; then
@@ -127,9 +161,7 @@ jobs:
           fi
 
       - name: Check generated API client types drift
-        run: |
-          pnpm --filter @backtestforecast/api-client generate
-          git diff --exit-code packages/api-client/src/schema.d.ts
+        run: bash scripts/check_openapi_sync.sh
 
       - name: Lint web app
         run: pnpm lint:web
@@ -214,6 +246,9 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
 
+      - name: Check duplicate updated_at triggers
+        run: python scripts/check_duplicate_triggers.py
+
       - name: Worker task registration smoke check
         run: python scripts/check_worker_tasks.py
 
@@ -257,7 +292,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Check Python dependency licenses
-        run: pip install pip-licenses && pip-licenses --fail-on="GPL-3.0" --allow-only="MIT;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;PSF-2.0;LGPL-2.1;MPL-2.0;Python-2.0"
+        run: pip install --constraint constraints.txt pip-licenses && pip-licenses --fail-on="GPL-3.0" --allow-only="MIT;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;PSF-2.0;LGPL-2.1;MPL-2.0;Python-2.0"
 
       - name: Audit JS dependencies (pnpm audit)
         run: pnpm audit --prod --audit-level=high
@@ -314,6 +349,9 @@ jobs:
 
       - name: Check non-nullable columns have server_default
         run: python scripts/check_migration_defaults.py
+
+      - name: Check migration heads (single head, no branches)
+        run: bash scripts/check_migration_heads.sh
 
       - name: Check migration file naming convention
         run: |

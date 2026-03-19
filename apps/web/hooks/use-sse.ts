@@ -14,7 +14,7 @@ import { usePolling, type UsePollingOptions } from "@/hooks/use-polling";
 export type SSEStatus = "connecting" | "streaming" | "polling" | "done" | "error";
 
 export interface UseSSEOptions<T> {
-  /** SSE resource type: "backtests" | "scans" | "exports" | "analyses" */
+  /** SSE resource type: "backtests" | "scans" | "exports" | "analyses" | "sweeps" */
   resourceType: string;
   /** Resource ID (run_id, job_id, etc.) */
   resourceId: string;
@@ -66,13 +66,18 @@ export function useSSE<T>({
     autoStart: false,
   });
 
+  const startPollingRef = useRef(startPolling);
+  const cancelPollingRef = useRef(cancelPolling);
+  useEffect(() => { startPollingRef.current = startPolling; }, [startPolling]);
+  useEffect(() => { cancelPollingRef.current = cancelPolling; }, [cancelPolling]);
+
   const cancel = useCallback(() => {
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
-    cancelPolling();
-  }, [cancelPolling]);
+    cancelPollingRef.current();
+  }, []);
 
   useEffect(() => {
     if (!autoStart) return;
@@ -81,7 +86,7 @@ export function useSSE<T>({
     retryCountRef.current = 0;
     mountedRef.current = true;
 
-    const url = `/api/events/${resourceType}/${resourceId}`;
+    const url = `/api/events/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`;
     const es = new EventSource(url);
     esRef.current = es;
     let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -94,7 +99,7 @@ export function useSSE<T>({
         esRef.current = null;
         setStatus("polling");
         setUseFallback(true);
-        startPolling();
+        startPollingRef.current();
       }, HEARTBEAT_TIMEOUT_MS);
     };
 
@@ -148,6 +153,7 @@ export function useSSE<T>({
     const setupEventSource = (eventSource: EventSource) => {
       eventSource.onerror = () => {
         if (!mountedRef.current) return;
+        if (heartbeatTimer) clearTimeout(heartbeatTimer);
         eventSource.close();
         esRef.current = null;
         if (retryCountRef.current < MAX_RETRIES) {
@@ -156,7 +162,10 @@ export function useSSE<T>({
           if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
           retryTimeoutRef.current = setTimeout(() => {
             if (!mountedRef.current) return;
-            const retryUrl = `/api/events/${resourceType}/${resourceId}`;
+            if (esRef.current) {
+              esRef.current.close();
+            }
+            const retryUrl = `/api/events/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`;
             const newEs = new EventSource(retryUrl);
             esRef.current = newEs;
             attachEventHandlers(newEs);
@@ -165,7 +174,7 @@ export function useSSE<T>({
         } else {
           setStatus("polling");
           setUseFallback(true);
-          startPolling();
+          startPollingRef.current();
         }
       };
     };
@@ -180,9 +189,9 @@ export function useSSE<T>({
         esRef.current.close();
         esRef.current = null;
       }
-      cancelPolling();
+      cancelPollingRef.current();
     };
-  }, [autoStart, resourceType, resourceId, startPolling, cancelPolling]);
+  }, [autoStart, resourceType, resourceId]);
 
   useEffect(() => {
     if (useFallback && mountedRef.current) {

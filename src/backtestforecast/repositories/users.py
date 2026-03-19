@@ -46,11 +46,11 @@ class UserRepository:
         except IntegrityError:
             nested.rollback()
             import time as _time
-            for _attempt in range(3):
+            for _attempt in range(5):
                 self.session.expire_all()
                 existing = self.get_by_clerk_user_id(clerk_user_id)
                 if existing is not None:
                     return existing
-                _time.sleep(0.02 * (_attempt + 1))
+                _time.sleep(0.05 * (2 ** _attempt))
             raise
         return user

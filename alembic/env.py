@@ -48,6 +48,8 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # Lock ID 2817513 derived from CRC32("backtestforecast-alembic") & 0x7FFFFFFF.
+        # Must not collide with any other pg_advisory_lock in this database.
         connection.execute(text("SELECT pg_advisory_lock(2817513)"))
         try:
             context.configure(connection=connection, target_metadata=target_metadata, compare_type=True, compare_server_default=True)

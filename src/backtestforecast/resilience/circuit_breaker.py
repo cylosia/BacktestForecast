@@ -47,6 +47,9 @@ class CircuitBreaker:
         self._probe_started_at: float | None = None
         self._lock = threading.Lock()
         self._redis_key = f"bff:circuit:{name}"
+        self._redis_check_interval = 2.0  # seconds between Redis cluster checks
+        self._last_redis_check: float = 0.0
+        self._last_redis_result: bool | None = None
 
     @property
     def state(self) -> CircuitState:
@@ -141,7 +144,11 @@ class CircuitBreaker:
     def allow_request(self) -> bool:
         with self._lock:
             if self._state == CircuitState.CLOSED:
-                cluster_open = self._redis_is_open()
+                now = time.monotonic()
+                if now - self._last_redis_check >= self._redis_check_interval:
+                    self._last_redis_result = self._redis_is_open()
+                    self._last_redis_check = now
+                cluster_open = self._last_redis_result
                 if cluster_open:
                     self._state = CircuitState.OPEN
                     self._last_failure_time = time.monotonic()
@@ -186,10 +193,13 @@ class CircuitBreaker:
 
     async def allow_request_async(self) -> bool:
         """Non-blocking version of allow_request for async callers."""
-        return self.allow_request()
+        import asyncio
+        return await asyncio.to_thread(self.allow_request)
 
     async def record_success_async(self) -> None:
-        self.record_success()
+        import asyncio
+        await asyncio.to_thread(self.record_success)
 
     async def record_failure_async(self, *, is_transient: bool = True) -> None:
-        self.record_failure(is_transient=is_transient)
+        import asyncio
+        await asyncio.to_thread(self.record_failure, is_transient=is_transient)

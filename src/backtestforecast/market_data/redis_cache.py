@@ -203,10 +203,16 @@ class OptionDataRedisCache:
         conn = self._conn()
         pattern = f"{_KEY_PREFIX}:contracts:{symbol}:*"
         info: dict[str, object] = {"symbol": symbol, "stale_entries": 0, "total_entries": 0}
+        _MAX_SCAN_KEYS = 5000
         try:
+            scanned = 0
             for key in conn.scan_iter(pattern, count=100):
                 if key.endswith(":ts"):
                     continue
+                scanned += 1
+                if scanned > _MAX_SCAN_KEYS:
+                    info["truncated"] = True
+                    break
                 info["total_entries"] = int(info["total_entries"]) + 1
                 age = self.get_cache_age_seconds(key)
                 if age is not None and age > _FRESHNESS_WARN_SECONDS:

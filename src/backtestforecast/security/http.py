@@ -146,13 +146,16 @@ class ApiSecurityHeadersMiddleware:
                 headers.setdefault("X-Frame-Options", "DENY")
                 headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
                 headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
-                headers.setdefault("Cache-Control", "no-store")
+                headers.setdefault("Cache-Control", "private, no-store")
                 headers.setdefault(
                     "Content-Security-Policy",
                     "default-src 'self'; frame-ancestors 'none'",
                 )
                 headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
                 headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+                headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+                headers.setdefault("X-XSS-Protection", "0")
+                headers.setdefault("X-Robots-Tag", "noindex, nofollow")
                 if self._is_production:
                     headers.setdefault(
                         "Strict-Transport-Security",

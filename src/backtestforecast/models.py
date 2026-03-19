@@ -31,7 +31,7 @@ from backtestforecast.db.types import (
     JSON_DEFAULT_EMPTY_OBJECT,
     JSON_VARIANT,
 )
-from backtestforecast.schemas.common import JobStatus  # noqa: F401 – re-exported
+from backtestforecast.schemas.common import JobStatus, RunJobStatus  # noqa: F401 – re-exported
 
 
 class User(Base):
@@ -49,6 +49,10 @@ class User(Base):
         CheckConstraint(
             "subscription_billing_interval IS NULL OR subscription_billing_interval IN ('monthly', 'yearly')",
             name="ck_users_valid_billing_interval",
+        ),
+        CheckConstraint(
+            "email IS NULL OR length(email) > 0",
+            name="ck_users_email_not_empty",
         ),
     )
 
@@ -73,14 +77,14 @@ class User(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    backtest_runs: Mapped[list["BacktestRun"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    scanner_jobs: Mapped[list["ScannerJob"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    export_jobs: Mapped[list["ExportJob"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    templates: Mapped[list["BacktestTemplate"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="user", passive_deletes=True)
-    symbol_analyses: Mapped[list["SymbolAnalysis"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    sweep_jobs: Mapped[list["SweepJob"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    stripe_events: Mapped[list["StripeEvent"]] = relationship(back_populates="user", foreign_keys="StripeEvent.user_id", passive_deletes=True)
+    backtest_runs: Mapped[list["BacktestRun"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    scanner_jobs: Mapped[list["ScannerJob"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    export_jobs: Mapped[list["ExportJob"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    templates: Mapped[list["BacktestTemplate"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="user", passive_deletes=True, lazy="raise")
+    symbol_analyses: Mapped[list["SymbolAnalysis"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    sweep_jobs: Mapped[list["SweepJob"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    stripe_events: Mapped[list["StripeEvent"]] = relationship(back_populates="user", foreign_keys="StripeEvent.user_id", passive_deletes=True, lazy="raise")
 
 
 class BacktestRun(Base):
@@ -102,9 +106,11 @@ class BacktestRun(Base):
         CheckConstraint("risk_per_trade_pct > 0 AND risk_per_trade_pct <= 100", name="ck_backtest_runs_risk_pct_range"),
         CheckConstraint("commission_per_contract >= 0", name="ck_backtest_runs_commission_nonneg"),
         CheckConstraint("date_from < date_to", name="ck_backtest_runs_date_order"),
-        CheckConstraint("max_holding_days >= 1", name="ck_backtest_runs_holding_days_positive"),
-        CheckConstraint("target_dte >= 0", name="ck_backtest_runs_target_dte_nonneg"),
-        CheckConstraint("dte_tolerance_days >= 0", name="ck_backtest_runs_dte_tolerance_nonneg"),
+        CheckConstraint("max_holding_days >= 1 AND max_holding_days <= 120", name="ck_backtest_runs_holding_days_range"),
+        CheckConstraint("target_dte >= 1 AND target_dte <= 365", name="ck_backtest_runs_target_dte_range"),
+        CheckConstraint("dte_tolerance_days >= 0 AND dte_tolerance_days <= 60", name="ck_backtest_runs_dte_tolerance_range"),
+        CheckConstraint("account_size <= 100000000", name="ck_backtest_runs_account_size_max"),
+        CheckConstraint("commission_per_contract <= 100", name="ck_backtest_runs_commission_max"),
         Index("ix_backtest_runs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         CheckConstraint(
             "engine_version IN ('options-multileg-v1', 'options-multileg-v2')",
@@ -129,7 +135,7 @@ class BacktestRun(Base):
     account_size: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     risk_per_trade_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     commission_per_contract: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
-    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
     engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2", server_default="options-multileg-v2")
     data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="massive", server_default="massive")
@@ -164,19 +170,21 @@ class BacktestRun(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="backtest_runs")
+    user: Mapped["User"] = relationship(back_populates="backtest_runs", lazy="raise")
     trades: Mapped[list["BacktestTrade"]] = relationship(
-        back_populates="run", cascade="all, delete-orphan", order_by="BacktestTrade.entry_date"
+        back_populates="run", cascade="all, delete-orphan", order_by="BacktestTrade.entry_date", lazy="raise"
     )
     equity_points: Mapped[list["BacktestEquityPoint"]] = relationship(
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="BacktestEquityPoint.trade_date",
+        lazy="raise",
     )
-    exports: Mapped[list["ExportJob"]] = relationship(back_populates="backtest_run", passive_deletes=True)
+    exports: Mapped[list["ExportJob"]] = relationship(back_populates="backtest_run", passive_deletes=True, lazy="raise")
 
 
 # NOTE: strategy_type columns use String(48) without a DB-level CHECK constraint.
@@ -188,6 +196,7 @@ class BacktestRun(Base):
 class BacktestTrade(Base):
     __tablename__ = "backtest_trades"
     __table_args__ = (
+        Index("ix_backtest_trades_run_id", "run_id"),
         Index("ix_backtest_trades_run_entry_date", "run_id", "entry_date"),
         UniqueConstraint("run_id", "entry_date", "option_ticker", name="uq_backtest_trades_dedup"),
         CheckConstraint("quantity > 0", name="ck_backtest_trades_quantity_positive"),
@@ -218,9 +227,9 @@ class BacktestTrade(Base):
     total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     entry_reason: Mapped[str] = mapped_column(String(128), nullable=False)
     exit_reason: Mapped[str] = mapped_column(String(128), nullable=False)
-    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT, deferred=True)
 
-    run: Mapped["BacktestRun"] = relationship(back_populates="trades")
+    run: Mapped["BacktestRun"] = relationship(back_populates="trades", lazy="raise")
 
 
 class BacktestEquityPoint(Base):
@@ -239,7 +248,7 @@ class BacktestEquityPoint(Base):
     position_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
 
-    run: Mapped["BacktestRun"] = relationship(back_populates="equity_points")
+    run: Mapped["BacktestRun"] = relationship(back_populates="equity_points", lazy="raise")
 
 
 class BacktestTemplate(Base):
@@ -262,7 +271,7 @@ class BacktestTemplate(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    user: Mapped["User"] = relationship(back_populates="templates")
+    user: Mapped["User"] = relationship(back_populates="templates", lazy="raise")
 
 
 class ScannerJob(Base):
@@ -302,6 +311,7 @@ class ScannerJob(Base):
             "job_kind IN ('manual', 'refresh', 'nightly')",
             name="ck_scanner_jobs_valid_job_kind",
         ),
+        CheckConstraint("refresh_priority >= 0 AND refresh_priority <= 100", name="ck_scanner_jobs_refresh_priority_range"),
         CheckConstraint("candidate_count >= 0", name="ck_scanner_jobs_candidate_count_nonneg"),
         CheckConstraint("evaluated_candidate_count >= 0", name="ck_scanner_jobs_evaluated_count_nonneg"),
         CheckConstraint("recommendation_count >= 0", name="ck_scanner_jobs_recommendation_count_nonneg"),
@@ -342,13 +352,15 @@ class ScannerJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="scanner_jobs")
+    user: Mapped["User"] = relationship(back_populates="scanner_jobs", lazy="raise")
     parent_job: Mapped["ScannerJob | None"] = relationship(remote_side=[id], back_populates=None, lazy="raise")
     recommendations: Mapped[list["ScannerRecommendation"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
         order_by="ScannerRecommendation.rank",
+        lazy="raise",
     )
 
 
@@ -383,7 +395,7 @@ class ScannerRecommendation(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    job: Mapped["ScannerJob"] = relationship(back_populates="recommendations")
+    job: Mapped["ScannerJob"] = relationship(back_populates="recommendations", lazy="raise")
 
 
 class ExportJob(Base):
@@ -431,15 +443,30 @@ class ExportJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="export_jobs")
-    backtest_run: Mapped["BacktestRun"] = relationship(back_populates="exports")
+    # Exports with expires_at in the past should be transitioned to 'expired'
+    # status by a scheduled maintenance task (e.g. a periodic Celery beat job).
+    # The ix_export_jobs_status_expires_at index supports efficient lookup of
+    # candidates for this transition.
+    user: Mapped["User"] = relationship(back_populates="export_jobs", lazy="raise")
+    backtest_run: Mapped["BacktestRun"] = relationship(back_populates="exports", lazy="raise")
 
 
 class AuditEvent(Base):
+    """Audit trail for user actions and system events.
+
+    DEDUP CONSTRAINT: ``uq_audit_events_dedup`` on (event_type, subject_type,
+    subject_id) means only ONE event per triple is stored. For repeatable
+    events (e.g. ``export.downloaded``), callers MUST use
+    ``AuditService.record_always()`` instead of ``record()`` to bypass the
+    dedup constraint. Using ``record()`` for repeatable events will silently
+    drop all but the first occurrence.
+    """
+
     __tablename__ = "audit_events"
     __table_args__ = (
         Index("ix_audit_events_user_id", "user_id"),
@@ -475,6 +502,10 @@ class AuditEvent(Base):
 
 
 class NightlyPipelineRun(Base):
+    # Scanner jobs created by this pipeline are linked implicitly by trade_date,
+    # not by a foreign key.  To find scanner jobs spawned by a given pipeline
+    # run, query ScannerJob where job_kind='nightly' and the request_snapshot
+    # trade_date matches this run's trade_date.
     __tablename__ = "nightly_pipeline_runs"
     __table_args__ = (
         Index("ix_nightly_pipeline_runs_trade_date", "trade_date"),
@@ -537,7 +568,7 @@ class NightlyPipelineRun(Base):
     )
 
     recommendations: Mapped[list["DailyRecommendation"]] = relationship(
-        back_populates="pipeline_run", cascade="all, delete-orphan"
+        back_populates="pipeline_run", cascade="all, delete-orphan", lazy="raise"
     )
 
 
@@ -570,7 +601,7 @@ class DailyRecommendation(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    pipeline_run: Mapped["NightlyPipelineRun"] = relationship(back_populates="recommendations")
+    pipeline_run: Mapped["NightlyPipelineRun"] = relationship(back_populates="recommendations", lazy="raise")
 
 
 class StripeEvent(Base):
@@ -580,6 +611,7 @@ class StripeEvent(Base):
         Index("ix_stripe_events_event_type", "event_type"),
         Index("ix_stripe_events_created_at", "created_at"),
         Index("ix_stripe_events_user_id", "user_id"),
+        Index("ix_stripe_events_idempotency_status", "idempotency_status"),
         CheckConstraint(
             "idempotency_status IN ('processing', 'processed', 'ignored', 'error')",
             name="ck_stripe_events_valid_status",
@@ -652,10 +684,11 @@ class SymbolAnalysis(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="symbol_analyses")
+    user: Mapped["User"] = relationship(back_populates="symbol_analyses", lazy="raise")
 
 
 class SweepJob(Base):
@@ -684,6 +717,10 @@ class SweepJob(Base):
             "engine_version IN ('options-multileg-v1', 'options-multileg-v2')",
             name="ck_sweep_jobs_valid_engine_version",
         ),
+        CheckConstraint(
+            "mode IN ('grid', 'genetic')",
+            name="ck_sweep_jobs_valid_mode",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -707,14 +744,16 @@ class SweepJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="sweep_jobs")
+    user: Mapped["User"] = relationship(back_populates="sweep_jobs", lazy="raise")
     results: Mapped[list["SweepResult"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
         order_by="SweepResult.rank",
+        lazy="raise",
     )
 
 
@@ -722,14 +761,15 @@ class SweepJob(Base):
 class OutboxMessage(Base):
     """Transactional outbox for reliable Celery task dispatch.
 
-    STATUS: Infrastructure scaffolding only. The table exists but no code
-    currently creates or polls OutboxMessage rows. Remove this model and
-    the corresponding migration if the outbox pattern is not implemented
-    by 2026-06-01.
+    STATUS: Infrastructure scaffolding only. dispatch.py handles task
+    dispatch with inline retries but does not create OutboxMessage rows.
+    A full outbox poller would provide additional reliability for extended
+    broker outages. Remove this model if not implemented by 2026-06-01.
     """
     __tablename__ = "outbox_messages"
     __table_args__ = (
         Index("ix_outbox_messages_status_created", "status", "created_at"),
+        Index("ix_outbox_messages_correlation_id", "correlation_id"),
         CheckConstraint(
             "status IN ('pending', 'sent', 'failed')",
             name="ck_outbox_messages_valid_status",
@@ -776,4 +816,4 @@ class SweepResult(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    job: Mapped["SweepJob"] = relationship(back_populates="results")
+    job: Mapped["SweepJob"] = relationship(back_populates="results", lazy="raise")

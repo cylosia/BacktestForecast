@@ -141,9 +141,12 @@ export function RecommendationList({
                     {warnings.length} warning(s)
                   </p>
                   <ul className="list-disc list-inside text-xs text-amber-700 dark:text-amber-400">
-                    {warnings.map((w, i) => (
-                      <li key={i}>{typeof w === "string" ? w : String((w as Record<string, unknown>).message ?? "")}</li>
-                    ))}
+                    {warnings.map((w, i) => {
+                      const rec = w as Record<string, unknown> | undefined;
+                      return (
+                        <li key={i}>{typeof w === "string" ? w : String(rec?.message ?? rec?.type ?? "Unknown warning")}</li>
+                      );
+                    })}
                   </ul>
                 </div>
               ) : null;

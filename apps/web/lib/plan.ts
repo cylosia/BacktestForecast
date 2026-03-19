@@ -7,7 +7,9 @@ export function planLabel(planTier: PlanTier): string {
     case "free": return "Free";
     default: {
       const raw = planTier as string;
-      console.warn(`Unknown plan tier: ${raw}`);
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(`Unknown plan tier: ${raw}`);
+      }
       return raw.charAt(0).toUpperCase() + raw.slice(1);
     }
   }
@@ -20,7 +22,9 @@ export function planBadgeVariant(planTier: PlanTier): "success" | "default" | "s
     case "free": return "secondary";
     default: {
       const raw = planTier as string;
-      console.warn(`Unknown plan tier: ${raw}`);
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(`Unknown plan tier: ${raw}`);
+      }
       return "secondary";
     }
   }

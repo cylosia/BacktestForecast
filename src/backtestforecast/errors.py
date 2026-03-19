@@ -27,7 +27,12 @@ class AuthorizationError(AppError):
 # dataclasses themselves, so they get __dict__ and can set arbitrary
 # instance attributes. Do NOT add @dataclass to these subclasses.
 class QuotaExceededError(AppError):
-    """Raised when a user hits a plan-based usage limit (e.g. monthly backtests)."""
+    """Raised when a user hits a plan-based usage limit (e.g. monthly backtests).
+
+    Uses 403 (Forbidden) rather than 429 (Too Many Requests) because this
+    represents a plan-tier restriction, not a transient rate limit. Clients
+    should direct users to upgrade, not retry.
+    """
 
     def __init__(self, message: str, *, current_tier: str = "free") -> None:
         super().__init__(code="quota_exceeded", message=message, status_code=403)
@@ -68,6 +73,8 @@ class NotFoundError(AppError):
 
 
 class RateLimitError(AppError):
+    rate_limit_info: dict[str, str] | None
+
     def __init__(self, message: str = "Rate limit exceeded. Please retry later.") -> None:
         super().__init__(code="rate_limited", message=message, status_code=429)
         self.rate_limit_info = None

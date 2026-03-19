@@ -117,16 +117,16 @@ class NightlyPipelineService:
         started_at = time.monotonic()
 
         # Prevent duplicate runs for the same trade_date (retry safety)
-        succeeded = self.session.scalar(
+        existing = self.session.scalar(
             select(NightlyPipelineRun).where(
                 NightlyPipelineRun.trade_date == trade_date,
-                NightlyPipelineRun.status == "succeeded",
+                NightlyPipelineRun.status.in_(["succeeded", "running"]),
             ).with_for_update()
         )
-        if succeeded is not None:
+        if existing is not None:
             DUPLICATE_NIGHTLY_RUNS_TOTAL.inc()
-            logger.info("pipeline.already_exists", run_id=str(succeeded.id), status=succeeded.status)
-            return succeeded
+            logger.info("pipeline.already_exists", run_id=str(existing.id), status=existing.status)
+            return existing
 
         from sqlalchemy import or_
 
@@ -174,13 +174,13 @@ class NightlyPipelineService:
         _run_id = run.id
 
         max_workers = max(1, get_settings().pipeline_max_workers)
-        executor = ThreadPoolExecutor(max_workers=max_workers)
         try:
             # Stage 1: Universe screening
             run.stage = "universe_screen"
             run.symbols_screened = len(symbols)
 
-            regime_snapshots = self._stage1_screen(symbols, trade_date, executor=executor)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                regime_snapshots = self._stage1_screen(symbols, trade_date, executor=executor)
             run.symbols_after_screen = len(regime_snapshots)
             logger.info(
                 "pipeline.stage1_complete",
@@ -204,7 +204,8 @@ class NightlyPipelineService:
             # Stage 3: Quick backtests
             run.stage = "quick_backtest"
 
-            quick_results = self._stage3_quick_backtest(pairs, trade_date, executor=executor)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                quick_results = self._stage3_quick_backtest(pairs, trade_date, executor=executor)
             run.quick_backtests_run = len(quick_results)
 
             if not quick_results and pairs:
@@ -228,7 +229,8 @@ class NightlyPipelineService:
             # Stage 4: Full backtests
             run.stage = "full_backtest"
 
-            full_results = self._stage4_full_backtest(top_candidates, trade_date, executor=executor)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                full_results = self._stage4_full_backtest(top_candidates, trade_date, executor=executor)
             run.full_backtests_run = len(full_results)
             self.session.flush()
             logger.info(
@@ -240,7 +242,8 @@ class NightlyPipelineService:
             # Stage 5: Forecast + ranking
             run.stage = "forecast_rank"
 
-            final_ranked = self._stage5_forecast_and_rank(full_results, trade_date, executor=executor)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                final_ranked = self._stage5_forecast_and_rank(full_results, trade_date, executor=executor)
             final_ranked = final_ranked[:max_recommendations]
 
             # Persist recommendations
@@ -305,8 +308,6 @@ class NightlyPipelineService:
                 self.session.rollback()
             logger.exception("pipeline.failed", run_id=str(run.id))
             raise
-        finally:
-            executor.shutdown(wait=True, cancel_futures=True)
 
         self.session.refresh(run)
         return run
@@ -434,7 +435,8 @@ class NightlyPipelineService:
                     return None
 
                 roi = summary.get("total_roi_pct", 0.0)
-                win_rate = summary.get("win_rate", 0.0) / 100.0
+                raw_win_rate = summary.get("win_rate", 0.0)
+                win_rate = raw_win_rate / 100.0 if raw_win_rate > 1.0 else raw_win_rate
                 drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
                 trade_count = summary.get("trade_count", 1)
                 sample_factor = min(trade_count / 10.0, 1.0)
@@ -442,7 +444,7 @@ class NightlyPipelineService:
                 if drawdown >= 100.0:
                     score = 0.0
 
-                if score <= 0:
+                if trade_count == 0:
                     return None
 
                 return QuickBacktestResult(

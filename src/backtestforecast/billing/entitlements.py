@@ -37,6 +37,7 @@ INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete", "incomplete_expired", "
 class FeaturePolicy:
     tier: PlanTier
     monthly_backtest_quota: int | None
+    monthly_sweep_quota: int | None
     history_days: int | None
     history_item_limit: int
     side_by_side_comparison_limit: int
@@ -82,16 +83,18 @@ ADVANCED_SCANNER_STRATEGIES: frozenset[str] = BASIC_SCANNER_STRATEGIES | frozens
     "custom_4_leg",
     "custom_5_leg",
     "custom_6_leg",
+    "custom_7_leg",
     "custom_8_leg",
     "naked_call",
     "naked_put",
-}
+})
 
 
 FEATURE_POLICIES = {
     PlanTier.FREE: FeaturePolicy(
         tier=PlanTier.FREE,
         monthly_backtest_quota=5,
+        monthly_sweep_quota=0,
         history_days=30,
         history_item_limit=25,
         side_by_side_comparison_limit=2,
@@ -103,6 +106,7 @@ FEATURE_POLICIES = {
     PlanTier.PRO: FeaturePolicy(
         tier=PlanTier.PRO,
         monthly_backtest_quota=None,
+        monthly_sweep_quota=10,
         history_days=365,
         history_item_limit=500,
         side_by_side_comparison_limit=3,
@@ -114,6 +118,7 @@ FEATURE_POLICIES = {
     PlanTier.PREMIUM: FeaturePolicy(
         tier=PlanTier.PREMIUM,
         monthly_backtest_quota=None,
+        monthly_sweep_quota=50,
         history_days=None,
         history_item_limit=5000,
         side_by_side_comparison_limit=8,
@@ -132,7 +137,7 @@ class ScannerAccessPolicy:
     max_strategies: int
     max_rule_sets: int
     max_recommendations: int
-    allowed_strategies: set[str]
+    allowed_strategies: frozenset[str]
     refresh_allowed: bool
 
 
@@ -198,6 +203,11 @@ def normalize_plan_tier(
             subscription_status=subscription_status,
             plan_tier=plan_tier,
         )
+        tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
+        if tier_lower == PlanTier.PREMIUM.value:
+            return PlanTier.PREMIUM
+        if tier_lower == PlanTier.PRO.value:
+            return PlanTier.PRO
         return PlanTier.FREE
     elif subscription_status is None:
         return PlanTier.FREE

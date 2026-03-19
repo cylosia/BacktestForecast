@@ -54,6 +54,7 @@ export function ForecastLookup() {
   const [result, setResult] = useState<ForecastEnvelopeResponse | null>(null);
   const mountedRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -65,16 +66,19 @@ export function ForecastLookup() {
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (status === "loading") return;
+    if (submittingRef.current || status === "loading") return;
+    submittingRef.current = true;
     const normalizedTicker = ticker.trim().toUpperCase();
     if (!normalizedTicker) {
       setStatus("error");
       setErrorMessage("Enter a ticker symbol.");
+      submittingRef.current = false;
       return;
     }
     if (!TICKER_RE.test(normalizedTicker)) {
       setStatus("error");
       setErrorMessage("Ticker must start with a letter and may contain letters, digits, dots, slashes, ^, or hyphens (max 16 characters).");
+      submittingRef.current = false;
       return;
     }
 
@@ -111,8 +115,10 @@ export function ForecastLookup() {
       setStatus("error");
       setErrorMessage(msg);
       setErrorCode(code);
+    } finally {
+      submittingRef.current = false;
     }
-  }, [ticker, strategyType, horizonDays, getToken]);
+  }, [ticker, strategyType, horizonDays, getToken, status]);
 
   const forecast = result?.forecast;
 

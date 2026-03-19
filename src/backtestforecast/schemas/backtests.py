@@ -519,26 +519,26 @@ class BacktestSummaryResponse(BaseModel):
 
     trade_count: int
     decided_trades: int | None = None
-    win_rate: Decimal | None = None
-    total_roi_pct: Decimal | None = None
-    average_win_amount: Decimal | None = None
-    average_loss_amount: Decimal | None = None
-    average_holding_period_days: Decimal | None = None
-    average_dte_at_open: Decimal | None = None
-    max_drawdown_pct: Decimal | None = None
+    win_rate: Decimal = Decimal("0")
+    total_roi_pct: Decimal = Decimal("0")
+    average_win_amount: Decimal = Decimal("0")
+    average_loss_amount: Decimal = Decimal("0")
+    average_holding_period_days: Decimal = Decimal("0")
+    average_dte_at_open: Decimal = Decimal("0")
+    max_drawdown_pct: Decimal = Decimal("0")
     total_commissions: Decimal
     total_net_pnl: Decimal
     starting_equity: Decimal
     ending_equity: Decimal
     profit_factor: Decimal | None = None
     payoff_ratio: Decimal | None = None
-    expectancy: Decimal | None = None
+    expectancy: Decimal = Decimal("0")
     sharpe_ratio: Decimal | None = None
     sortino_ratio: Decimal | None = None
     cagr_pct: Decimal | None = None
     calmar_ratio: Decimal | None = None
-    max_consecutive_wins: int | None = None
-    max_consecutive_losses: int | None = None
+    max_consecutive_wins: int = 0
+    max_consecutive_losses: int = 0
     recovery_factor: Decimal | None = None
 
 
@@ -650,7 +650,7 @@ class BacktestRunDetailResponse(BaseModel):
     summary: BacktestSummaryResponse
     trades: list[BacktestTradeResponse]
     equity_curve: list[EquityCurvePointResponse]
-    risk_free_rate: float | None = Field(
+    risk_free_rate: Decimal | None = Field(
         default=None,
         description="Annualized risk-free rate used for Sharpe and Sortino ratio calculations.",
     )
@@ -679,6 +679,7 @@ class BacktestRunListResponse(BaseModel):
 
 
 class CompareBacktestsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     run_ids: list[UUID] = Field(min_length=2, max_length=10)
 
     @field_validator("run_ids")

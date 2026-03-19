@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+
+import structlog
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -195,6 +197,9 @@ def _forecast_alignment_score(
 
 def _clamp(value: float, lower: float, upper: float) -> float:
     if not math.isfinite(value):
+        structlog.get_logger("scans.ranking").warning(
+            "ranking.non_finite_value_clamped", value=str(value),
+        )
         return 0.0
     return max(lower, min(upper, value))
 

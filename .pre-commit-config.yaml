@@ -17,7 +17,7 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.14.1
+    rev: v1.19.1
     hooks:
       - id: mypy
         additional_dependencies:
@@ -52,3 +52,17 @@ repos:
         language: system
         pass_filenames: false
         files: '(models|schemas|db/base)\.py$'
+
+      - id: check-openapi-sync
+        name: OpenAPI types in sync with snapshot
+        entry: bash scripts/check_openapi_sync.sh
+        language: system
+        pass_filenames: false
+        files: '(openapi\.snapshot\.json|packages/api-client/src/schema\.d\.ts)$'
+
+      - id: check-migration-heads
+        name: Alembic single migration head
+        entry: bash scripts/check_migration_heads.sh
+        language: system
+        pass_filenames: false
+        files: 'alembic/versions/.*\.py$'

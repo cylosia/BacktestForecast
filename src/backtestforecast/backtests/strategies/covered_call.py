@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# FIXME(#99): Include dividends in P&L for stock-based strategies.
+# Covered call total return should add dividends received during the
+# holding period, which can be significant for high-yield underlyings.
 from backtestforecast.backtests.margin import covered_call_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (

@@ -21,6 +21,7 @@ from backtestforecast.schemas.scans import (
     ScannerRecommendationListResponse,
 )
 from backtestforecast.errors import FeatureLockedError
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.scans import ScanService
 
@@ -85,7 +86,7 @@ def create_scan(
         db.refresh(job)
         if job.status == "failed":
             from fastapi import HTTPException
-            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": job.error_message or "Unable to dispatch job."})
+            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(job.error_message) or "Unable to dispatch job."})
         return service.get_job(user, job.id)
 
 

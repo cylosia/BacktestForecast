@@ -8,7 +8,7 @@ import { createScannerJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import type { CreateScannerJobRequest, ScannerMode, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
-import { parseSymbols, validateScannerForm, type PlanTier } from "@/lib/scanner/validation";
+import { getScannerLimits, parseSymbols, validateScannerForm, type PlanTier } from "@/lib/scanner/validation";
 import { daysAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -105,7 +105,7 @@ const ADVANCED_STRATEGIES = ADVANCED_STRATEGY_GROUPS.flatMap((g) => g.strategies
 
 export function ScannerForm({
   scannerModes,
-  planTier = "pro",
+  planTier = "free",
 }: {
   scannerModes: Array<"basic" | "advanced">;
   planTier?: PlanTier;
@@ -289,6 +289,7 @@ export function ScannerForm({
       const job = await createScannerJob(token, payload, submitAbortRef.current.signal);
       setStatus("success");
       router.replace(`/app/scanner/${job.id}`);
+      router.refresh();
     } catch (error) {
       const msg = error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Scan could not be created.";
       const code = error instanceof ApiError ? error.code : undefined;
@@ -478,7 +479,7 @@ export function ScannerForm({
           <div className="space-y-2">
             <Label htmlFor="scanMaxRecs">Max recommendations</Label>
             <Input id="scanMaxRecs" inputMode="numeric" className="max-w-32" value={form.maxRecs} onChange={(e) => setField("maxRecs", e.target.value)} />
-            <p className="text-xs text-muted-foreground">1 to 30. Top-ranked combinations returned after evaluation.</p>
+            <p className="text-xs text-muted-foreground">1 to {getScannerLimits(planTier, form.mode).maxRecommendations}. Top-ranked combinations returned after evaluation.</p>
           </div>
         </CardContent>
       </Card>

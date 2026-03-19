@@ -42,7 +42,7 @@ logger = structlog.get_logger(__name__)
 class EntryRuleEvaluator:
     config: BacktestConfig
     bars: list[DailyBar]
-    earnings_dates: set
+    earnings_dates: set[date]
     option_gateway: OptionDataGateway
     closes: list[float] = field(init=False)
     volumes: list[float] = field(init=False)
