@@ -111,6 +111,8 @@ def build_summary(
 
 _MIN_TRADES_FOR_RATIOS = 5
 _MIN_TRADING_DAYS_FOR_CAGR = 10
+_MIN_EQUITY_POINTS_FOR_RATIOS = 20
+_MIN_CALENDAR_DAYS_FOR_RATIOS = 30
 
 
 def _compute_sharpe_sortino(
@@ -145,6 +147,12 @@ def _compute_sharpe_sortino(
     if trade_count < _MIN_TRADES_FOR_RATIOS or len(equity_curve) < 2:
         return None, None
 
+    if len(equity_curve) < _MIN_EQUITY_POINTS_FOR_RATIOS:
+        return None, None
+    calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
+    if calendar_days < _MIN_CALENDAR_DAYS_FOR_RATIOS:
+        return None, None
+
     equities = [point.equity for point in equity_curve]
     if any(eq <= 0 for eq in equities):
         return None, None
@@ -166,8 +174,8 @@ def _compute_sharpe_sortino(
     sharpe = (mean_excess / stddev * ann) if stddev > 0 else None
 
     downside_sq_sum = sum(x**2 for x in excess if x < 0)
-    if downside_sq_sum > 0 and n > 1:
-        down_dev = math.sqrt(downside_sq_sum / (n - 1))
+    if downside_sq_sum > 0 and n > 0:
+        down_dev = math.sqrt(downside_sq_sum / n)
         sortino = (mean_excess / down_dev * ann) if down_dev > 0 else None
     else:
         sortino = None

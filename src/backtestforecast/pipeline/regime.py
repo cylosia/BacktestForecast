@@ -171,16 +171,15 @@ def classify_regime(
 def _daily_returns(closes: list[float]) -> list[float]:
     """Compute daily returns as raw decimals (0.02 = 2% gain).
 
-    The first element is None (no prior close to compare against).
-    Note: forecasts/analog.py uses percentage format (2.0 = 2% gain).
-    These conventions are independent and should not be mixed.
+    Returns a list of length ``len(closes) - 1`` (no dummy element for
+    the first close).  Note: forecasts/analog.py uses percentage format
+    (2.0 = 2% gain).  These conventions are independent and should not
+    be mixed.
     """
-    if len(closes) < 2:
-        return [None] * len(closes)  # type: ignore[list-item]
-    returns: list[float | None] = [None]
+    returns: list[float] = []
     for i in range(1, len(closes)):
         if closes[i - 1] > 0:
             returns.append((closes[i] - closes[i - 1]) / closes[i - 1])
         else:
             returns.append(0.0)
-    return returns  # type: ignore[return-value]
+    return returns

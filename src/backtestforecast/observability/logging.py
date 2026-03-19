@@ -14,7 +14,7 @@ import structlog
 from starlette.datastructures import Headers, MutableHeaders, State
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from backtestforecast.config import Settings, get_settings
+from backtestforecast.config import Settings, get_settings, register_invalidation_callback
 
 REQUEST_ID_HEADER = "x-request-id"
 _SAFE_REQUEST_ID = re.compile(r"^[a-zA-Z0-9\-_.]{1,128}$")
@@ -159,12 +159,25 @@ def get_logger(name: str):
     return structlog.get_logger(name)
 
 
+_cached_ip_salt: bytes | None = None
+
+
+def _invalidate_ip_salt() -> None:
+    global _cached_ip_salt
+    _cached_ip_salt = None
+
+
+register_invalidation_callback(_invalidate_ip_salt)
+
+
 def hash_ip(value: str | None) -> str | None:
+    global _cached_ip_salt
     if not value:
         return None
-    settings = get_settings()
+    if _cached_ip_salt is None:
+        _cached_ip_salt = get_settings().ip_hash_salt.encode("utf-8")
     return hmac.new(
-        settings.ip_hash_salt.encode("utf-8"),
+        _cached_ip_salt,
         value.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()

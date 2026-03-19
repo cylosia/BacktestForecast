@@ -102,7 +102,7 @@ def create_backtest(
         db.refresh(run)
         if run.status == "failed":
             raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(run.error_message) or "Unable to dispatch job."})
-        return service.get_run(user, run.id)
+        return service.get_run_for_owner(user_id=user.id, run_id=run.id)
 
 
 @router.post("/compare", response_model=CompareBacktestsResponse)
@@ -160,7 +160,7 @@ def get_backtest(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:
-        result = service.get_run(user, run_id, trade_limit=trade_limit)
+        result = service.get_run_for_owner(user_id=user.id, run_id=run_id, trade_limit=trade_limit)
     response.headers["Cache-Control"] = "private, no-store"
     return result
 

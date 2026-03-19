@@ -1,23 +1,19 @@
-// TODO: Add client-side pagination for large history tables.
-//
-// Implementation notes:
-//   - Track `page` and `pageSize` (default 20) in component state.
-//   - Slice data.items by page boundaries before rendering TableBody rows.
-//   - Render prev/next buttons below the table, disabled at boundaries.
-//   - Consider using @tanstack/react-table for sortable columns and
-//     built-in pagination controls if the table grows more complex.
-//   - The PipelineHistoryResponse already supports offset/limit on the
-//     API side, so server-side pagination is also an option for very
-//     large datasets (>500 rows).
+"use client";
 
+import { useState } from "react";
 import type { PipelineHistoryResponse } from "@backtestforecast/api-client";
 import { formatDate, formatDateTime } from "@/lib/backtests/format";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
+const PAGE_SIZE = 25;
+
 export function PicksHistory({ data }: { data: PipelineHistoryResponse }) {
+  const [currentPage, setCurrentPage] = useState(0);
+
   if (data.items.length === 0) {
     return (
       <Card>
@@ -27,6 +23,9 @@ export function PicksHistory({ data }: { data: PipelineHistoryResponse }) {
       </Card>
     );
   }
+
+  const totalPages = Math.ceil(data.items.length / PAGE_SIZE);
+  const pageItems = data.items.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
 
   return (
     <Card>
@@ -45,7 +44,7 @@ export function PicksHistory({ data }: { data: PipelineHistoryResponse }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data.items.map((item) => (
+            {pageItems.map((item) => (
               <TableRow key={item.id}>
                 <TableCell className="font-medium">{formatDate(item.trade_date)}</TableCell>
                 <TableCell>
@@ -64,6 +63,31 @@ export function PicksHistory({ data }: { data: PipelineHistoryResponse }) {
             ))}
           </TableBody>
         </Table>
+        {totalPages > 1 && (
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Page {currentPage + 1} of {totalPages} ({data.items.length} items)
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage === 0}
+                onClick={() => setCurrentPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage >= totalPages - 1}
+                onClick={() => setCurrentPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -449,6 +449,77 @@ class BillingService:
             plan_tier=effective_tier,
             status=status,
         )
+
+    def reconcile_subscriptions(self, *, grace_hours: int = 48, dry_run: bool = False) -> list[dict[str, Any]]:
+        """Reconcile local subscription records with Stripe.
+
+        Finds users whose subscription is locally marked 'active' but whose
+        ``subscription_current_period_end`` is older than *grace_hours* ago,
+        then fetches the current subscription from Stripe and updates the
+        local record.  Designed to be called from a management command or
+        scheduled task.
+
+        Returns a list of reconciliation actions taken (or that would be
+        taken, if *dry_run* is True).
+        """
+        cutoff = datetime.now(UTC) - timedelta(hours=grace_hours)
+        stale_users: list[User] = list(self.session.scalars(
+            select(User).where(
+                User.subscription_status == "active",
+                User.subscription_current_period_end < cutoff,
+                User.stripe_subscription_id.isnot(None),
+            )
+        ))
+        actions: list[dict[str, Any]] = []
+        client = self._get_stripe_client() if stale_users else None
+
+        for user in stale_users:
+            sub_id = user.stripe_subscription_id
+            action: dict[str, Any] = {
+                "user_id": str(user.id),
+                "stripe_subscription_id": sub_id,
+                "local_status": user.subscription_status,
+                "local_period_end": user.subscription_current_period_end.isoformat()
+                if user.subscription_current_period_end
+                else None,
+            }
+            try:
+                assert client is not None
+                subscription = client.subscriptions.retrieve(sub_id)
+                stripe_status = str(subscription.get("status", ""))
+                action["stripe_status"] = stripe_status
+                if dry_run:
+                    action["action"] = "would_sync"
+                else:
+                    self._apply_subscription_to_user(user, subscription)
+                    self.session.commit()
+                    action["action"] = "synced"
+                logger.info(
+                    "billing.reconcile.synced",
+                    user_id=str(user.id),
+                    subscription_id=sub_id,
+                    stripe_status=stripe_status,
+                    dry_run=dry_run,
+                )
+            except Exception as exc:
+                action["action"] = "error"
+                action["error"] = str(exc)
+                logger.warning(
+                    "billing.reconcile.error",
+                    user_id=str(user.id),
+                    subscription_id=sub_id,
+                    error=str(exc),
+                )
+                self.session.rollback()
+            actions.append(action)
+
+        logger.info(
+            "billing.reconcile.complete",
+            total_checked=len(stale_users),
+            actions=len(actions),
+            dry_run=dry_run,
+        )
+        return actions
 
     _JOB_TYPE_FOR_MODEL: dict[str, str] = {
         "BacktestRun": "backtest",

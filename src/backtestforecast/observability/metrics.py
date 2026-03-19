@@ -107,6 +107,10 @@ DB_POOL_CHECKED_IN = Gauge("db_pool_checked_in", "Database connections available
 DB_POOL_CHECKED_OUT = Gauge("db_pool_checked_out", "Database connections currently in use")
 DB_POOL_OVERFLOW = Gauge("db_pool_overflow", "Database connections in overflow")
 DB_POOL_MAX_OVERFLOW = Gauge("db_pool_max_overflow", "Maximum pool overflow connections configured")
+DB_POOL_EXHAUSTION_WARNING = Gauge(
+    "db_pool_exhaustion_warning",
+    "Set to 1 when pool usage exceeds 80% capacity",
+)
 
 S3_STREAM_OPEN = Gauge("s3_stream_open", "Number of currently open S3 body streams")
 
@@ -417,11 +421,23 @@ def _refresh_pool_gauges() -> None:
         from backtestforecast.config import get_settings
         from backtestforecast.db.session import get_pool_stats
         stats = get_pool_stats()
-        DB_POOL_SIZE.set(stats["pool_size"])
+        pool_size = stats["pool_size"]
+        checked_out = stats["checked_out"]
+        overflow = stats["overflow"]
+        max_overflow = stats.get("max_overflow", get_settings().db_pool_max_overflow)
+
+        DB_POOL_SIZE.set(pool_size)
         DB_POOL_CHECKED_IN.set(stats["checked_in"])
-        DB_POOL_CHECKED_OUT.set(stats["checked_out"])
-        DB_POOL_OVERFLOW.set(stats["overflow"])
-        DB_POOL_MAX_OVERFLOW.set(stats.get("max_overflow", get_settings().db_pool_max_overflow))
+        DB_POOL_CHECKED_OUT.set(checked_out)
+        DB_POOL_OVERFLOW.set(overflow)
+        DB_POOL_MAX_OVERFLOW.set(max_overflow)
+
+        total_capacity = pool_size + max_overflow
+        if total_capacity > 0:
+            usage_ratio = (checked_out + overflow) / total_capacity
+            DB_POOL_EXHAUSTION_WARNING.set(1 if usage_ratio > 0.8 else 0)
+        else:
+            DB_POOL_EXHAUSTION_WARNING.set(0)
     except Exception:
         _logger.debug("pool_gauge_refresh_failed", exc_info=True)
 

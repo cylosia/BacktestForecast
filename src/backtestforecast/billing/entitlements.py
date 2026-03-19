@@ -6,6 +6,7 @@ from enum import Enum
 
 import structlog
 
+from backtestforecast.config import get_settings
 from backtestforecast.errors import FeatureLockedError, ValidationError
 from backtestforecast.schemas.common import PlanTier
 
@@ -29,8 +30,18 @@ class ScannerMode(str, Enum):
 
 PAID_STATUSES = {"active", "trialing"}
 PAST_DUE_GRACE_DAYS = 7
-ACTIVE_RENEWAL_GRACE = timedelta(hours=24)
+ACTIVE_RENEWAL_GRACE = timedelta(hours=72)
 INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete", "incomplete_expired", "paused"}
+
+
+def _active_renewal_grace() -> timedelta:
+    """Configurable grace period after subscription period end before downgrade."""
+    return timedelta(hours=get_settings().active_renewal_grace_hours)
+
+
+def _past_due_grace_days() -> int:
+    """Configurable grace days for past-due subscriptions before downgrade."""
+    return get_settings().past_due_grace_days
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +193,7 @@ def normalize_plan_tier(
     if subscription_status == "past_due":
         if subscription_current_period_end is None:
             return PlanTier.FREE
-        grace_deadline = subscription_current_period_end + timedelta(days=PAST_DUE_GRACE_DAYS)
+        grace_deadline = subscription_current_period_end + timedelta(days=_past_due_grace_days())
         if datetime.now(UTC) > grace_deadline:
             _logger.info(
                 "normalize_plan_tier.past_due_grace_expired",
@@ -215,7 +226,7 @@ def normalize_plan_tier(
         period_end = subscription_current_period_end
         if period_end.tzinfo is None:
             period_end = period_end.replace(tzinfo=UTC)
-        if period_end + ACTIVE_RENEWAL_GRACE < datetime.now(UTC):
+        if period_end + _active_renewal_grace() < datetime.now(UTC):
             return PlanTier.FREE
     tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
     if tier_lower == PlanTier.PREMIUM.value:

@@ -101,6 +101,7 @@ class OptionDataRedisCache:
 
     def close(self) -> None:
         self._pool.disconnect()
+        self._client = None
 
     def _conn(self) -> redis.Redis:
         if self._client is not None:

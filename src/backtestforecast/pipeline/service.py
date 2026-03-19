@@ -3,7 +3,7 @@
 Orchestrates the five-stage funnel:
   Stage 1: Universe screening (indicators only, all symbols)
   Stage 2: Strategy-symbol matching (regime → strategy lookup)
-  Stage 3: Quick backtest sampling (90-day, 3-5 configs per pair)
+  Stage 3: Quick backtest sampling (180-day, 3-5 configs per pair)
   Stage 4: Full backtest refinement (top candidates, full lookback)
   Stage 5: Forecast overlay and final ranking
 """
@@ -400,6 +400,11 @@ class NightlyPipelineService:
     # Stage 3: Quick Backtest Sampling
     # -------------------------------------------------------------------
 
+    # 180 days minimum: shorter windows suffer from survivorship bias and
+    # produce unreliable win-rate / drawdown estimates because they capture
+    # too few regime transitions and trade samples for statistical validity.
+    _QUICK_BACKTEST_DAYS = 180
+
     def _stage3_quick_backtest(
         self,
         pairs: list[SymbolStrategyPair],
@@ -408,7 +413,7 @@ class NightlyPipelineService:
         executor: ThreadPoolExecutor,
     ) -> list[QuickBacktestResult]:
         """Run short-lookback backtests with a small parameter grid."""
-        lookback_start = trade_date - timedelta(days=90)
+        lookback_start = trade_date - timedelta(days=self._QUICK_BACKTEST_DAYS)
 
         work_items = [
             (pair, param_config)
@@ -436,14 +441,14 @@ class NightlyPipelineService:
 
                 roi = summary.get("total_roi_pct", 0.0)
                 raw_win_rate = summary.get("win_rate", 0.0)
-                win_rate = raw_win_rate / 100.0 if raw_win_rate > 1.0 else raw_win_rate
+                win_rate = raw_win_rate / 100.0
                 win_rate = max(0.0, min(win_rate, 1.0))
                 drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
                 trade_count = summary.get("trade_count", 1)
                 sample_factor = min(trade_count / 10.0, 1.0)
                 score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
                 if drawdown >= 100.0:
-                    score = 0.0
+                    score = min(score, 0.0)
 
                 return QuickBacktestResult(
                     symbol=pair.symbol,
@@ -531,14 +536,14 @@ class NightlyPipelineService:
 
                 roi = full.get("total_roi_pct", 0.0)
                 raw_win_rate = full.get("win_rate", 0.0)
-                win_rate = raw_win_rate / 100.0 if raw_win_rate > 1.0 else raw_win_rate
+                win_rate = raw_win_rate / 100.0
                 win_rate = max(0.0, min(win_rate, 1.0))
                 drawdown = min(full.get("max_drawdown_pct", 50.0), 100.0)
                 trade_count = full.get("trade_count", 1)
                 sample_factor = min(trade_count / 10.0, 1.0)
                 score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
                 if drawdown >= 100.0:
-                    score = 0.0
+                    score = min(score, 0.0)
 
                 return FullBacktestResult(
                     symbol=candidate.symbol,

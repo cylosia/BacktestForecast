@@ -1,27 +1,22 @@
-// TODO: Add client-side pagination or virtual scrolling for large
-// recommendation lists.
-//
-// Implementation notes:
-//   - Use @tanstack/react-virtual for virtualised rendering. Wrap the
-//     recommendation cards in a virtualised container with an estimated
-//     row height of ~280px. This avoids mounting 100+ DOM nodes at once.
-//   - Alternatively, add cursor-based pagination (offset/limit) with
-//     "Load more" / infinite scroll using the existing API pagination
-//     params from ScannerRecommendationListResponse.
-//   - Benchmark: lists > 50 items cause noticeable jank on mid-range
-//     devices; virtual scrolling should reduce initial paint to <16ms.
+"use client";
 
+import { useState } from "react";
 import type { ScannerRecommendationResponse } from "@backtestforecast/api-client";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+const PAGE_SIZE = 25;
 
 export function RecommendationList({
   items,
 }: {
   items: ScannerRecommendationResponse[];
 }) {
+  const [currentPage, setCurrentPage] = useState(0);
+
   if (items.length === 0) {
     return (
       <Card>
@@ -39,6 +34,9 @@ export function RecommendationList({
   const allNegative = rawMax <= 0;
   const scoreRange = allNegative ? Math.abs(rawMin) || 1 : Math.max(rawMax, 1);
 
+  const totalPages = Math.ceil(items.length / PAGE_SIZE);
+  const pageItems = items.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+
   return (
     <Card>
       <CardHeader>
@@ -48,7 +46,7 @@ export function RecommendationList({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {items.map((rec) => (
+        {pageItems.map((rec) => (
           <div
             key={rec.id}
             className="rounded-xl border border-border/70 p-4 space-y-3"
@@ -163,6 +161,31 @@ export function RecommendationList({
             })()}
           </div>
         ))}
+        {totalPages > 1 && (
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Page {currentPage + 1} of {totalPages} ({items.length} items)
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage === 0}
+                onClick={() => setCurrentPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage >= totalPages - 1}
+                onClick={() => setCurrentPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

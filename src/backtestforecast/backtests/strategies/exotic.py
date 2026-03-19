@@ -89,6 +89,7 @@ class JadeLizardStrategy(StrategyDefinition):
             return None
         call_width = (call_long_strike - call_short_strike) * 100.0
         upside_risk = max(call_width - total_credit, 0.0)
+        max_loss_per_unit = put_strike * 100.0 - total_credit
         margin = jade_lizard_margin(
             bar.close_price,
             put_strike,
@@ -112,7 +113,7 @@ class JadeLizardStrategy(StrategyDefinition):
             ],
             scheduled_exit_date=expiration,
             capital_required_per_unit=margin,
-            max_loss_per_unit=None,
+            max_loss_per_unit=max_loss_per_unit,
             max_profit_per_unit=total_credit,
             detail_json={
                 "put_strike": put_strike,

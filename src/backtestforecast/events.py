@@ -95,13 +95,12 @@ def publish_job_status(
     from backtestforecast.observability.metrics import REDIS_CONNECTION_ERRORS_TOTAL
 
     safe_meta = {k: v for k, v in (metadata or {}).items() if k not in _RESERVED_PAYLOAD_KEYS}
-    meta_json = json.dumps(safe_meta, default=str)
-    if len(meta_json) > 10_000:
-        logger.warning("events.metadata_too_large", job_type=job_type, job_id=str(job_id))
-        safe_meta = {"_truncated": True}
 
     channel = f"job:{job_type}:{job_id}:status"
     payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), **safe_meta}, default=str)
+    if len(payload.encode("utf-8")) > 10_000:
+        logger.warning("events.metadata_too_large", job_type=job_type, job_id=str(job_id))
+        payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), "_truncated": True}, default=str)
 
     try:
         for attempt in range(2):

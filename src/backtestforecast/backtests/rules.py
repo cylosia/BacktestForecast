@@ -37,6 +37,10 @@ from backtestforecast.schemas.backtests import (
 
 logger = structlog.get_logger(__name__)
 
+# Calendar days for time-to-expiry in BSM pricing (365).
+# Trading days (252) are used separately for annualising Sharpe/Sortino.
+CALENDAR_DAYS_PER_YEAR = 365.0
+
 
 @dataclass(slots=True)
 class EntryRuleEvaluator:
@@ -357,7 +361,7 @@ def estimate_atm_iv_for_date(
             option_price=option_price,
             underlying_price=underlying_close,
             strike_price=contract.strike_price,
-            time_to_expiry_years=dte / 365.0,
+            time_to_expiry_years=dte / CALENDAR_DAYS_PER_YEAR,
             option_type=option_type,
             risk_free_rate=risk_free_rate,
         )
@@ -376,6 +380,7 @@ def implied_volatility_from_price(
     time_to_expiry_years: float,
     option_type: str,
     risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
 ) -> float | None:
     if option_price <= 0 or underlying_price <= 0 or strike_price <= 0 or time_to_expiry_years <= 0:
         return None
@@ -392,6 +397,7 @@ def implied_volatility_from_price(
             time_to_expiry_years=time_to_expiry_years,
             volatility=midpoint,
             risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
         )
         if abs(theoretical - option_price) < _CONVERGENCE_TOL:
             return midpoint
@@ -408,6 +414,7 @@ def implied_volatility_from_price(
         time_to_expiry_years=time_to_expiry_years,
         volatility=final,
         risk_free_rate=risk_free_rate,
+        dividend_yield=dividend_yield,
     )
     if abs(final_theoretical - option_price) > residual_threshold:
         return None
@@ -421,6 +428,7 @@ def black_scholes_price(
     time_to_expiry_years: float,
     volatility: float,
     risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
 ) -> float:
     if underlying_price <= 0 or strike_price <= 0:
         return 0.0
@@ -435,14 +443,15 @@ def black_scholes_price(
     sigma_sqrt_t = volatility * math.sqrt(time_to_expiry_years)
     d1 = (
         math.log(underlying_price / strike_price)
-        + (risk_free_rate + 0.5 * volatility * volatility) * time_to_expiry_years
+        + (risk_free_rate - dividend_yield + 0.5 * volatility * volatility) * time_to_expiry_years
     ) / sigma_sqrt_t
     d2 = d1 - sigma_sqrt_t
     discount = math.exp(-risk_free_rate * time_to_expiry_years)
+    dividend_discount = math.exp(-dividend_yield * time_to_expiry_years)
 
     if option_type == "call":
-        return (underlying_price * normal_cdf(d1)) - (strike_price * discount * normal_cdf(d2))
-    return (strike_price * discount * normal_cdf(-d2)) - (underlying_price * normal_cdf(-d1))
+        return (underlying_price * dividend_discount * normal_cdf(d1)) - (strike_price * discount * normal_cdf(d2))
+    return (strike_price * discount * normal_cdf(-d2)) - (underlying_price * dividend_discount * normal_cdf(-d1))
 
 
 def normal_cdf(value: float) -> float:

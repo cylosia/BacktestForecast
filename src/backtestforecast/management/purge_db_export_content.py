@@ -64,7 +64,7 @@ def purge_db_export_content(
             if not job.storage_key:
                 batch_skipped += 1
                 continue
-            if not storage.exists(job.storage_key):
+            if not storage.exists(job.storage_key, session=session):
                 logger.warning(
                     "purge.skip_missing_in_storage",
                     export_job_id=str(job.id),

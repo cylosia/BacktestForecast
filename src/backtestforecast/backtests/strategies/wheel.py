@@ -173,6 +173,12 @@ class WheelStrategyBacktestEngine:
                         option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
                         option_net_pnl = option_gross_pnl - entry_commission - entry_slippage
                         cash -= active_option.strike_price * 100.0 * active_option.quantity
+                        if cash < 0:
+                            self._add_warning_once(
+                                warnings, warning_codes, "implicit_margin",
+                                "Cash balance went negative during put assignment. Returns may be "
+                                "overstated because margin interest is not modeled.",
+                            )
                         held_shares = HeldShares(
                             quantity=active_option.quantity,
                             entry_date=bar.trade_date,

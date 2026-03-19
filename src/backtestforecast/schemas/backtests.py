@@ -470,8 +470,9 @@ class CreateBacktestRunRequest(BaseModel):
             raise ValueError("custom_legs should only be provided for custom_N_leg strategy types")
 
         if self.custom_legs:
-            sides = {leg.side for leg in self.custom_legs}
-            if len(sides) < 2:
+            long_count = sum(1 for leg in self.custom_legs if leg.side == "long")
+            short_count = sum(1 for leg in self.custom_legs if leg.side == "short")
+            if long_count == 0 or short_count == 0:
                 raise ValueError("custom_legs must contain at least one long and one short leg")
 
         return self

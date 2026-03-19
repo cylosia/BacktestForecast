@@ -53,7 +53,7 @@ DECIMAL_QUANT = Decimal("0.0001")
 EQUITY_CURVE_LIMIT = 10_000
 
 
-def to_decimal(value: float | Decimal, *, allow_infinite: bool = False) -> Decimal | None:
+def to_decimal(value: float | Decimal | None, *, allow_infinite: bool = False) -> Decimal | None:
     """Convert a float or Decimal to a quantized Decimal.
 
     NaN returns ``None`` so that scan/sweep serialization does not crash
@@ -63,6 +63,8 @@ def to_decimal(value: float | Decimal, *, allow_infinite: bool = False) -> Decim
     "no losses"), or raise ``ValueError`` when False (the default, for
     fields that must be finite).
     """
+    if value is None:
+        return None
     if isinstance(value, Decimal):
         if value.is_nan():
             return None
@@ -413,6 +415,7 @@ class BacktestService:
         )
 
     def get_run(self, user: User, run_id: UUID, *, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
+        """Deprecated: use ``get_run_for_owner`` directly. Kept for backward compatibility."""
         return self.get_run_for_owner(user_id=user.id, run_id=run_id, trade_limit=trade_limit)
 
     def get_run_for_owner(self, *, user_id: UUID, run_id: UUID, trade_limit: int = 10_000) -> BacktestRunDetailResponse:

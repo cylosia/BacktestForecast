@@ -65,6 +65,11 @@ class DatabaseStorage:
     def exists(self, storage_key: str, *, session: Any = None, **kwargs: Any) -> bool:
         if not storage_key:
             return False
+        if session is None:
+            raise RuntimeError(
+                "DatabaseStorage.exists() requires an explicit session. "
+                "Pass session=<sqlalchemy.orm.Session> from the caller."
+            )
         from sqlalchemy import select
 
         from backtestforecast.models import ExportJob
@@ -75,13 +80,8 @@ class DatabaseStorage:
                 ExportJob.id == key_uuid,
                 ExportJob.content_bytes.isnot(None),
             )
-            if session is not None:
-                row = session.execute(stmt).first()
-                return row is not None
-            from backtestforecast.db.session import create_session
-            with create_session() as fallback_session:
-                row = fallback_session.execute(stmt).first()
-                return row is not None
+            row = session.execute(stmt).first()
+            return row is not None
         except ValueError:
             return False
 

@@ -55,12 +55,13 @@ class OptionDataPrefetcher:
     writes are safe.
     """
 
-    def __init__(self, max_workers: int | None = None, api_concurrency: int = _DEFAULT_API_CONCURRENCY) -> None:
+    def __init__(self, max_workers: int | None = None, api_concurrency: int = _DEFAULT_API_CONCURRENCY, timeout_seconds: int = 300) -> None:
         if max_workers is None:
             from backtestforecast.config import get_settings
             max_workers = get_settings().prefetch_max_workers
         self._max_workers = max_workers
         self._api_concurrency = threading.Semaphore(api_concurrency)
+        self._timeout = timeout_seconds
 
     def prefetch_for_symbol(
         self,
@@ -139,7 +140,7 @@ class OptionDataPrefetcher:
                 pool.submit(_fetch_date, td): td for td in trade_dates
             }
             try:
-                for future in as_completed(futures, timeout=300):
+                for future in as_completed(futures, timeout=self._timeout):
                     td = futures[future]
                     try:
                         date_result = future.result()
@@ -169,7 +170,7 @@ class OptionDataPrefetcher:
                     dates_done=summary.dates_processed,
                     dates_total=len(trade_dates),
                 )
-                summary.errors.append(f"{symbol}: prefetch timed out after 300s")
+                summary.errors.append(f"{symbol}: prefetch timed out after {self._timeout}s")
                 for f in futures:
                     f.cancel()
 

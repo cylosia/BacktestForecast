@@ -235,6 +235,9 @@ class Settings(BaseSettings):
 
     forecast_max_analogs: int = Field(default=20, ge=1)
 
+    active_renewal_grace_hours: int = 72
+    past_due_grace_days: int = 7
+
     risk_free_rate: float = 0.045
 
     max_backtest_window_days: int = 1_825

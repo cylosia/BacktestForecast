@@ -23,6 +23,10 @@ from backtestforecast.backtests.types import (
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class IronCondorStrategy(StrategyDefinition):
@@ -126,12 +130,10 @@ class IronCondorStrategy(StrategyDefinition):
             max_loss_per_unit = max(wider_spread - credit, 0.0)
             max_profit_per_unit = credit
         else:
-            from backtestforecast.observability import get_logger
-            get_logger("strategies.iron_condor").warning(
-                "iron_condor.debit_entry_rejected",
-                symbol=config.symbol,
-                trade_date=str(bar.trade_date),
+            logger.debug(
+                "iron_condor.debit_entry_skipped",
                 entry_value=entry_value_per_unit,
+                bar_date=str(bar.trade_date),
             )
             return None
         margin = iron_condor_margin(
