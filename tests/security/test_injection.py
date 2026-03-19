@@ -86,6 +86,9 @@ class TestSymbolInjection:
         assert resp.status_code != 500, (
             f"Server error for payload {payload!r}: {resp.text}"
         )
+        if resp.status_code == 200:
+            body_text = resp.text
+            assert payload not in body_text, f"Injection payload reflected in response for POST /v1/backtests: {payload!r}"
 
     @pytest.mark.parametrize("payload", INJECTION_PAYLOADS, ids=lambda p: p[:30])
     def test_forecast_ticker_rejects_injection(self, authed_client: TestClient, payload: str):
@@ -93,6 +96,9 @@ class TestSymbolInjection:
         assert resp.status_code != 500, (
             f"Server error for ticker {payload!r}: {resp.text}"
         )
+        if resp.status_code == 200:
+            body_text = resp.text
+            assert payload not in body_text, f"Injection payload reflected in response for GET /v1/forecasts: {payload!r}"
 
 
 class TestNameInjection:
@@ -118,6 +124,9 @@ class TestNameInjection:
         assert resp.status_code != 500, (
             f"Server error for name {payload!r}: {resp.text}"
         )
+        if resp.status_code == 200:
+            body_text = resp.text
+            assert payload not in body_text, f"Injection payload reflected in response for POST /v1/templates: {payload!r}"
 
     @pytest.mark.parametrize("payload", INJECTION_PAYLOADS, ids=lambda p: p[:30])
     def test_scan_name_rejects_injection(self, authed_client: TestClient, payload: str):
@@ -144,6 +153,9 @@ class TestNameInjection:
         assert resp.status_code != 500, (
             f"Server error for scan name {payload!r}: {resp.text}"
         )
+        if resp.status_code == 200:
+            body_text = resp.text
+            assert payload not in body_text, f"Injection payload reflected in response for POST /v1/scans: {payload!r}"
 
 
 class TestPathTraversal:

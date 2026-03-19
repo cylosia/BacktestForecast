@@ -32,7 +32,7 @@ export function CompareEquityCurves({
 }) {
   const nonEmptyEntries = runs
     .map((r, i) => ({ run: r, originalIndex: i }))
-    .filter((entry) => entry.run.equity_curve.length > 0);
+    .filter((entry) => (entry.run.equity_curve ?? []).length > 0);
 
   if (nonEmptyEntries.length === 0) {
     return (

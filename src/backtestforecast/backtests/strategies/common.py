@@ -418,6 +418,15 @@ def resolve_wing_strike(
             else:
                 result = None
 
+    if result is None:
+        _logger.debug(
+            "resolve_wing_strike.no_valid_strike",
+            short_strike=short_strike,
+            direction=direction,
+            width_mode=width_config.mode if width_config else None,
+            num_strikes=len(strikes),
+        )
+
     return result
 
 

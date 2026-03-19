@@ -24,10 +24,11 @@ export function EquityCurveChart({ points }: { points: EquityCurvePointResponse[
   }
 
   const rawValues = points.map((point) => toNumber(point.equity));
-  const equityValues = rawValues.map(v => Number.isFinite(v) ? v : 0);
+  const equityValues = rawValues.map(v => Number.isFinite(v) ? v : null);
   let minEquity = Infinity;
   let maxEquity = -Infinity;
   for (const v of equityValues) {
+    if (v === null) continue;
     if (v < minEquity) minEquity = v;
     if (v > maxEquity) maxEquity = v;
   }

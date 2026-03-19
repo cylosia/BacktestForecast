@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import time
 from typing import Any, Protocol
 from uuid import UUID
@@ -101,14 +102,14 @@ def _retry(fn, max_attempts=3, base_delay=0.5):
             last_exc = exc
             if attempt == max_attempts - 1:
                 raise
-            time.sleep(base_delay * (2 ** attempt))
+            time.sleep(base_delay * (2 ** attempt) + random.uniform(0, base_delay))
         except ClientError as e:
             last_exc = e
             error_code = e.response.get("Error", {}).get("Code", "")
             if error_code in ("RequestTimeout", "RequestTimeoutException", "SlowDown", "InternalError", "ServiceUnavailable"):
                 if attempt == max_attempts - 1:
                     raise
-                time.sleep(base_delay * (2 ** attempt))
+                time.sleep(base_delay * (2 ** attempt) + random.uniform(0, base_delay))
             else:
                 raise
     raise ExternalServiceError("S3 upload failed after all retry attempts") from last_exc
@@ -144,7 +145,8 @@ class S3Storage:
         import re
         name = posixpath.basename(file_name.replace("\\", "/"))
         name = name.lstrip(".")
-        name = re.sub(r'[\x00-\x1f\x7f"\\]', '', name)
+        name = re.sub(r'[\x00-\x1f\x7f\\]', '', name)
+        name = name.replace('"', "'")
         return name or "export"
 
     def _object_key(self, export_job_id: UUID, file_name: str) -> str:
@@ -175,28 +177,30 @@ class S3Storage:
         logger.info("s3.put", bucket=self._bucket, key=key, size=len(content))
         return key
 
+    def _validate_prefix(self, key: str) -> None:
+        if not key.startswith(self._prefix):
+            raise ValueError(f"Storage key does not match expected prefix: {self._prefix}")
+
     def get_object(self, storage_key: str):
         """Return the raw S3 GetObject response (for streaming)."""
+        self._validate_prefix(storage_key)
         return _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
 
     def get(self, storage_key: str) -> bytes:
+        self._validate_prefix(storage_key)
         resp = _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
-        content_length = resp.get("ContentLength", 0)
-        if content_length > _MAX_DOWNLOAD_BYTES:
-            resp["Body"].close()
-            raise ValueError(
-                f"S3 object {storage_key} is {content_length} bytes, "
-                f"exceeding the {_MAX_DOWNLOAD_BYTES} byte safety limit."
-            )
         body = resp["Body"]
         try:
-            data: bytes = body.read()
+            data: bytes = body.read(_MAX_DOWNLOAD_BYTES + 1)
+            if len(data) > _MAX_DOWNLOAD_BYTES:
+                raise ValueError(f"Export content exceeds maximum download size ({_MAX_DOWNLOAD_BYTES} bytes).")
         finally:
             body.close()
         logger.info("s3.get", bucket=self._bucket, key=storage_key, size=len(data))
         return data
 
     def delete(self, storage_key: str) -> None:
+        self._validate_prefix(storage_key)
         try:
             _retry(lambda: self._client.delete_object(Bucket=self._bucket, Key=storage_key))
             logger.info("s3.delete", bucket=self._bucket, key=storage_key)
@@ -205,6 +209,7 @@ class S3Storage:
             raise
 
     def exists(self, storage_key: str) -> bool:
+        self._validate_prefix(storage_key)
         def _head():
             self._client.head_object(Bucket=self._bucket, Key=storage_key)
         try:

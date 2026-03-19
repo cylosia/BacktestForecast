@@ -132,12 +132,12 @@ class RequestContextMiddleware:
         except Exception:
             duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
             logger.exception("request.failed", duration_ms=duration_ms)
-            structlog.contextvars.clear_contextvars()
             raise
-
-        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
-        logger.info("request.completed", status_code=response_status_code, duration_ms=duration_ms)
-        structlog.contextvars.clear_contextvars()
+        else:
+            duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            logger.info("request.completed", status_code=response_status_code, duration_ms=duration_ms)
+        finally:
+            structlog.contextvars.clear_contextvars()
 
 
 def bind_request_context(request_id: str | None = None, user_id: str | None = None) -> None:

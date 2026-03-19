@@ -120,8 +120,9 @@ class OptionDataRedisCache:
         exp_gte: date,
         exp_lte: date,
     ) -> list[OptionContractRecord] | None:
+        key = _contract_key(symbol, as_of_date, contract_type, exp_gte, exp_lte)
         try:
-            raw = self._conn().get(_contract_key(symbol, as_of_date, contract_type, exp_gte, exp_lte))
+            raw = self._conn().get(key)
             if raw is None:
                 CACHE_MISSES_TOTAL.labels(cache="option_contracts").inc()
                 return None
@@ -130,6 +131,10 @@ class OptionDataRedisCache:
         except Exception:
             CACHE_MISSES_TOTAL.labels(cache="option_contracts").inc()
             logger.debug("redis_cache.get_contracts_failed", symbol=symbol, exc_info=True)
+            try:
+                self._conn().delete(key)
+            except Exception:
+                logger.debug("redis_cache.delete_corrupted_failed", key=key, exc_info=True)
             return None
 
     def set_contracts(
@@ -158,8 +163,9 @@ class OptionDataRedisCache:
         trade_date: date,
     ) -> OptionQuoteRecord | None | _CacheMiss:
         """Return the cached quote, ``None`` (cached negative), or ``CACHE_MISS``."""
+        key = _quote_key(option_ticker, trade_date)
         try:
-            raw = self._conn().get(_quote_key(option_ticker, trade_date))
+            raw = self._conn().get(key)
             if raw is None:
                 CACHE_MISSES_TOTAL.labels(cache="option_quotes").inc()
                 return CACHE_MISS
@@ -168,6 +174,10 @@ class OptionDataRedisCache:
         except Exception:
             CACHE_MISSES_TOTAL.labels(cache="option_quotes").inc()
             logger.debug("redis_cache.get_quote_failed", ticker=option_ticker, exc_info=True)
+            try:
+                self._conn().delete(key)
+            except Exception:
+                logger.debug("redis_cache.delete_corrupted_failed", key=key, exc_info=True)
             return CACHE_MISS
 
     def set_quote(

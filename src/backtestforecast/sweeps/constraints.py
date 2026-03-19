@@ -113,7 +113,17 @@ def repair(individual: Individual) -> Individual:
         idx = random.randrange(len(option_legs))
         option_legs[idx]["side"] = "long" if option_legs[idx]["side"] == "short" else "short"
 
+    max_repair_iterations = 200
+    _repair_iter = 0
     while _has_cancelling_legs(option_legs):
+        _repair_iter += 1
+        if _repair_iter > max_repair_iterations:
+            import structlog
+            structlog.get_logger("sweeps.constraints").warning(
+                "repair.iteration_limit_reached",
+                max_iterations=max_repair_iterations,
+            )
+            break
         for leg in option_legs:
             if leg["side"] == "long":
                 leg["strike_offset"] = leg.get("strike_offset", 0) + random.choice([-1, 1])

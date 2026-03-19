@@ -42,6 +42,7 @@ from backtestforecast.schemas.backtests import (
     UsageSummaryResponse,
 )
 from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
+from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 
 logger = structlog.get_logger("services.backtests")
@@ -87,6 +88,7 @@ class BacktestService:
     ) -> None:
         self.session = session
         self.run_repository = BacktestRunRepository(session)
+        self.audit = AuditService(session)
         self._execution_service = execution_service
 
     @property
@@ -171,6 +173,14 @@ class BacktestService:
                     return existing
             raise
         self.session.refresh(run)
+        self.audit.record(
+            event_type="backtest.created",
+            subject_type="backtest_run",
+            subject_id=run.id,
+            user_id=user.id,
+            metadata={"symbol": run.symbol, "strategy_type": run.strategy_type},
+        )
+        self.session.commit()
         return run
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:
@@ -210,29 +220,41 @@ class BacktestService:
         try:
             execution_result = self.execution_service.execute_request(request)
             self._apply_execution_result(run, execution_result)
-            run.status = "succeeded"
-            run.completed_at = datetime.now(UTC)
-            self.session.flush()
-            # Guard against concurrent reaper marking this run "failed" while
-            # execution was in progress.  The FOR UPDATE lock was released by
-            # the commit on the queued->running transition, so the reaper can
-            # legitimately set status="failed" if execution takes too long.
+            completed_at = datetime.now(UTC)
+            # CAS guard: only set status to "succeeded" if the reaper has not
+            # concurrently marked this run as "failed".  The FOR UPDATE lock
+            # was released by the commit on the queued→running transition, so
+            # the reaper can legitimately change status while execution is in
+            # progress.  We must NOT flush ORM changes before the CAS check
+            # because flush() would unconditionally overwrite the reaper's
+            # status change.
             success_rows = self.session.execute(
                 update(BacktestRun)
                 .where(BacktestRun.id == run.id, BacktestRun.status == "running")
                 .values(
                     status="succeeded",
-                    completed_at=run.completed_at,
+                    completed_at=completed_at,
                     updated_at=datetime.now(UTC),
                 )
             )
-            self.session.commit()
             if success_rows.rowcount == 0:
+                self.session.rollback()
                 logger.warning(
                     "backtest.success_overwrite_prevented",
                     run_id=str(run.id),
                     msg="Concurrent status change detected; success commit skipped.",
                 )
+            else:
+                run.status = "succeeded"
+                run.completed_at = completed_at
+                self.audit.record(
+                    event_type="backtest.completed",
+                    subject_type="backtest_run",
+                    subject_id=run.id,
+                    user_id=run.user_id,
+                    metadata={"symbol": run.symbol, "strategy_type": run.strategy_type},
+                )
+                self.session.commit()
         except AppError as exc:
             self.session.rollback()
             self.session.execute(
@@ -281,8 +303,9 @@ class BacktestService:
         dispatch layer and holds a DB connection for the entire execution.
         """
         settings = get_settings()
-        assert settings.app_env not in ("production", "staging"), (
-            "create_and_run is for tests only; use enqueue + Celery in production"
+        if settings.app_env in ("production", "staging"):
+            raise RuntimeError(
+                "create_and_run is for tests only; use enqueue + Celery in production"
         )
         if request.idempotency_key:
             existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
@@ -323,6 +346,7 @@ class BacktestService:
                     error_code=exc.code,
                     error_message="Backtest execution failed. Please try again.",
                     completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
             )
             self.session.commit()
@@ -338,6 +362,7 @@ class BacktestService:
                     error_code="internal_error",
                     error_message="An internal error occurred during backtest execution.",
                     completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
             )
             self.session.commit()
@@ -354,6 +379,8 @@ class BacktestService:
         """List backtest runs for the user. Returns BacktestRunHistoryItemResponse items
         without equity curve data; equity curves are only included in detail/compare responses.
         """
+        if offset < 0:
+            raise ValidationError("offset must be >= 0")
         feature_policy = resolve_feature_policy(
             user.plan_tier, user.subscription_status, user.subscription_current_period_end,
         )
@@ -405,7 +432,11 @@ class BacktestService:
                 "Cannot delete a job that is currently queued or running. Cancel it first."
             )
         self.session.delete(run)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
         feature_policy = resolve_feature_policy(
@@ -552,20 +583,20 @@ class BacktestService:
 
         run.warnings_json = execution_result.warnings
         run.trade_count = summary.trade_count
-        run.win_rate = to_decimal(summary.win_rate)
-        run.total_roi_pct = to_decimal(summary.total_roi_pct)
-        run.average_win_amount = to_decimal(summary.average_win_amount)
-        run.average_loss_amount = to_decimal(summary.average_loss_amount)
-        run.average_holding_period_days = to_decimal(summary.average_holding_period_days)
-        run.average_dte_at_open = to_decimal(summary.average_dte_at_open)
-        run.max_drawdown_pct = to_decimal(summary.max_drawdown_pct)
+        run.win_rate = to_decimal(summary.win_rate) or Decimal("0")
+        run.total_roi_pct = to_decimal(summary.total_roi_pct) or Decimal("0")
+        run.average_win_amount = to_decimal(summary.average_win_amount) or Decimal("0")
+        run.average_loss_amount = to_decimal(summary.average_loss_amount) or Decimal("0")
+        run.average_holding_period_days = to_decimal(summary.average_holding_period_days) or Decimal("0")
+        run.average_dte_at_open = to_decimal(summary.average_dte_at_open) or Decimal("0")
+        run.max_drawdown_pct = to_decimal(summary.max_drawdown_pct) or Decimal("0")
         run.total_commissions = to_decimal(summary.total_commissions) or Decimal("0")
         run.total_net_pnl = to_decimal(summary.total_net_pnl) or Decimal("0")
         run.starting_equity = to_decimal(summary.starting_equity) or Decimal("0")
         run.ending_equity = to_decimal(summary.ending_equity) or Decimal("0")
         run.profit_factor = to_decimal(summary.profit_factor, allow_infinite=True) if summary.profit_factor is not None else None
         run.payoff_ratio = to_decimal(summary.payoff_ratio, allow_infinite=True) if summary.payoff_ratio is not None else None
-        run.expectancy = to_decimal(summary.expectancy)
+        run.expectancy = to_decimal(summary.expectancy) or Decimal("0")
         run.sharpe_ratio = to_decimal(summary.sharpe_ratio, allow_infinite=True) if summary.sharpe_ratio is not None else None
         run.sortino_ratio = to_decimal(summary.sortino_ratio, allow_infinite=True) if summary.sortino_ratio is not None else None
         run.cagr_pct = to_decimal(summary.cagr_pct, allow_infinite=True) if summary.cagr_pct is not None else None

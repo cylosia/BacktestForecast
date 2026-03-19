@@ -173,7 +173,7 @@ def get_current_user(
     if not token:
         raise AuthenticationError()
 
-    if len(token) > 8192:
+    if len(token) > 4096:
         raise AuthenticationError("Token too large.")
 
     principal = get_token_verifier().verify_bearer_token(token)

@@ -48,6 +48,12 @@ export async function compareBacktests(
   runIds: string[],
   signal?: AbortSignal,
 ): Promise<CompareBacktestsResponse> {
+  if (runIds.length < 2 || runIds.length > 10) {
+    throw new Error("compareBacktests requires between 2 and 10 run IDs.");
+  }
+  if (new Set(runIds).size !== runIds.length) {
+    throw new Error("compareBacktests requires unique run IDs.");
+  }
   return apiRequest<CompareBacktestsResponse>("/v1/backtests/compare", token, {
     method: "POST",
     body: JSON.stringify({ run_ids: runIds }),

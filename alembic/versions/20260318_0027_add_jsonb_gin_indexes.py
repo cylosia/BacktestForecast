@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260318_0027"
-down_revision = "20260318_0026"
+down_revision = "20260319_0029"
 branch_labels = None
 depends_on = None
 
@@ -32,7 +32,7 @@ def upgrade() -> None:
     for idx_name, table, column in _INDEXES:
         if not _index_exists(idx_name):
             op.execute(sa.text(
-                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {idx_name} "
+                f"CREATE INDEX IF NOT EXISTS {idx_name} "
                 f"ON {table} USING gin ({column} jsonb_path_ops)"
             ))
 
@@ -40,4 +40,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     for idx_name, _, _ in reversed(_INDEXES):
         if _index_exists(idx_name):
-            op.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {idx_name}"))
+            op.execute(sa.text(f"DROP INDEX IF EXISTS {idx_name}"))

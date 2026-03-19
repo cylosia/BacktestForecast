@@ -329,6 +329,10 @@ def nightly_scan_pipeline(
                     logger.exception("pipeline.task_failed", trade_date=str(trade_date))
                     _retrying = True
                     try:
+                        lock.release()
+                    except Exception:
+                        pass
+                    try:
                         raise self.retry(exc=exc, countdown=300, kwargs={
                             "symbols": symbols,
                             "max_recommendations": max_recommendations,
@@ -524,6 +528,18 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         except AppError as exc:
             session.rollback()
             session.expire_all()
+            from datetime import UTC, datetime as _dt_app
+            run_obj = session.get(BacktestRun, UUID(run_id))
+            if run_obj is not None and run_obj.status in ("queued", "running"):
+                run_obj.status = "failed"
+                run_obj.error_code = exc.code
+                run_obj.error_message = str(exc.message)[:500] if exc.message else None
+                run_obj.completed_at = _dt_app.now(UTC)
+                try:
+                    session.commit()
+                except Exception:
+                    logger.exception("backtest.app_error.commit_failed")
+                    session.rollback()
             BACKTEST_RUNS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
             publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": exc.code})
@@ -589,6 +605,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             except Exception:
                 logger.exception("service.close_failed")
 
+        _update_heartbeat(session, BacktestRun, UUID(run_id))
         BACKTEST_RUNS_TOTAL.labels(status=run.status).inc()
         CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status=run.status).inc()
         publish_job_status("backtest", UUID(run_id), run.status)
@@ -709,6 +726,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                         logger.exception("max_retries.commit_failed")
                         session.rollback()
                 CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
+                EXPORT_JOBS_TOTAL.labels(status="failed").inc()
                 publish_job_status(
                     "export", UUID(export_job_id), "failed",
                     metadata={"error_code": "max_retries_exceeded"},
@@ -806,6 +824,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                         session.commit()
                     except Exception:
                         session.rollback()
+                ANALYSIS_JOBS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
                 publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": exc.code})
                 return {
@@ -828,6 +847,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     except Exception:
                         logger.exception("soft_time_limit.commit_failed")
                         session.rollback()
+                ANALYSIS_JOBS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
                 publish_job_status(
                     "analysis", UUID(analysis_id), "failed",
@@ -853,6 +873,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                         except Exception:
                             logger.exception("max_retries.commit_failed")
                             session.rollback()
+                    ANALYSIS_JOBS_TOTAL.labels(status="failed").inc()
                     CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
                     publish_job_status(
                         "analysis", UUID(analysis_id), "failed",
@@ -860,6 +881,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     )
                     raise
 
+            _update_heartbeat(session, SymbolAnalysis, UUID(analysis_id))
             effective_status = "succeeded" if result.status == "succeeded" else "failed"
             CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status=effective_status).inc()
             ANALYSIS_JOBS_TOTAL.labels(status=result.status).inc()
@@ -931,6 +953,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                     session.commit()
                 except Exception:
                     session.rollback()
+            SCAN_JOBS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
             publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": exc.code})
             return {
@@ -954,6 +977,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                 except Exception:
                     logger.exception("soft_time_limit.commit_failed")
                     session.rollback()
+            SCAN_JOBS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
             publish_job_status(
                 "scan", UUID(job_id), "failed",
@@ -981,6 +1005,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                     except Exception:
                         logger.exception("max_retries.commit_failed")
                         session.rollback()
+                SCAN_JOBS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
                 publish_job_status(
                     "scan", UUID(job_id), "failed",
@@ -993,6 +1018,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             except Exception:
                 logger.exception("service.close_failed")
 
+        _update_heartbeat(session, ScannerJobModel, UUID(job_id))
         effective_status = "succeeded" if job.status == "succeeded" else "failed"
         CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status=effective_status).inc()
         SCAN_JOBS_TOTAL.labels(status=job.status).inc()
@@ -1074,6 +1100,7 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                     session.commit()
                 except Exception:
                     session.rollback()
+            SWEEP_JOBS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
             publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": exc.code})
             return {"status": "failed", "job_id": job_id, "error_code": exc.code}
@@ -1093,6 +1120,7 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                 except Exception:
                     logger.exception("sweep.soft_time_limit.commit_failed")
                     session.rollback()
+            SWEEP_JOBS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
             publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "time_limit_exceeded"})
             raise
@@ -1116,6 +1144,7 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                     except Exception:
                         logger.exception("sweep.max_retries.commit_failed")
                         session.rollback()
+                SWEEP_JOBS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
                 publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "max_retries_exceeded"})
                 raise
@@ -1510,7 +1539,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 session.execute(
                     update(NightlyPipelineRun)
                     .where(NightlyPipelineRun.id.in_(stale_running_pipeline_ids), NightlyPipelineRun.status == "running")
-                    .values(status="failed", error_message="Pipeline was stuck in running state and was automatically failed.", completed_at=now, updated_at=now)
+                    .values(status="failed", error_message="Pipeline was stuck in running state and was automatically failed.", error_code="stale_running", completed_at=now, updated_at=now)
                 )
                 session.commit()
             counts["stale_running_pipelines"] = len(stale_running_pipeline_ids)
@@ -1765,27 +1794,26 @@ def cleanup_daily_recommendations(self, retention_days: int = 90) -> dict:  # ty
         if batches_run >= max_batches:
             limit_reached = True
 
-        if not limit_reached:
-            from sqlalchemy import outerjoin
-            orphan_stmt = (
-                select(NightlyPipelineRun.id)
-                .outerjoin(
-                    DailyRecommendation,
-                    NightlyPipelineRun.id == DailyRecommendation.pipeline_run_id,
-                )
-                .where(
-                    NightlyPipelineRun.created_at < cutoff,
-                    DailyRecommendation.id.is_(None),
-                )
-                .limit(BATCH_SIZE)
+        from sqlalchemy import outerjoin
+        orphan_stmt = (
+            select(NightlyPipelineRun.id)
+            .outerjoin(
+                DailyRecommendation,
+                NightlyPipelineRun.id == DailyRecommendation.pipeline_run_id,
             )
-            orphan_run_ids = list(session.scalars(orphan_stmt))
-            if orphan_run_ids:
-                result = session.execute(
-                    delete(NightlyPipelineRun).where(NightlyPipelineRun.id.in_(orphan_run_ids))
-                )
-                deleted_runs += result.rowcount
-                session.commit()
+            .where(
+                NightlyPipelineRun.created_at < cutoff,
+                DailyRecommendation.id.is_(None),
+            )
+            .limit(BATCH_SIZE)
+        )
+        orphan_run_ids = list(session.scalars(orphan_stmt))
+        if orphan_run_ids:
+            result = session.execute(
+                delete(NightlyPipelineRun).where(NightlyPipelineRun.id.in_(orphan_run_ids))
+            )
+            deleted_runs += result.rowcount
+            session.commit()
 
     logger.info(
         "daily_recommendations.cleanup_complete",

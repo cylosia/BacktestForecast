@@ -101,7 +101,6 @@ def get_analysis(
         limit=settings.analysis_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     with _analysis_service(db) as service:
         analysis = service.get_analysis(user, analysis_id)
 
@@ -131,7 +130,6 @@ def get_analysis_status(
         limit=settings.analysis_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     with _analysis_service(db) as service:
         analysis = service.get_analysis(user, analysis_id)
         return _to_summary(analysis)
@@ -151,7 +149,6 @@ def delete_analysis(
         limit=60,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     with _analysis_service(db) as service:
         service.delete_for_user(analysis_id, user.id)
 
@@ -171,7 +168,6 @@ def list_analyses(
         limit=settings.analysis_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     with _analysis_service(db) as service:
         analyses = service.list_for_user(user, limit=limit, offset=offset)
         total = service.count_for_user(user)

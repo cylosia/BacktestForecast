@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
     clerk_jwt_key: str | None = Field(default=None, repr=False)
     clerk_jwks_fetch_timeout: float = 10.0
+    jwt_leeway_seconds: int = 5
     clerk_authorized_parties_raw: str = Field(default="http://localhost:3000")
 
     stripe_secret_key: str | None = Field(default=None, repr=False)
@@ -248,6 +249,23 @@ class Settings(BaseSettings):
     # Runtime feature flags — toggle via env vars without code deployment.
     # FIXME(#100): Extend to support percentage-based rollouts and
     # user-segment targeting for gradual feature releases.
+    #
+    # Current boolean flags are all-or-nothing. For safe rollouts of risky
+    # changes, we need:
+    # 1. Percentage rollout: e.g., `feature_sweeps_rollout_pct: int = 100`
+    #    where 0-100 controls what fraction of users see the feature. Use
+    #    a deterministic hash of `user_id` so the same user always gets a
+    #    consistent experience: `hash(user_id) % 100 < rollout_pct`.
+    # 2. User-segment targeting: allow flags like
+    #    `feature_sweeps_segments: str = "pro,premium"` to restrict a
+    #    feature to specific plan tiers during beta.
+    # 3. Override list: `feature_sweeps_allow_user_ids: str = ""` for
+    #    individual opt-in during internal testing.
+    # 4. Store rollout config in Redis (not just env vars) so it can be
+    #    changed without redeployment. The Settings singleton would read
+    #    Redis overrides and merge them with env-var defaults.
+    # 5. Emit structured logs when a user hits a feature gate so we can
+    #    monitor adoption and error rates per cohort.
     feature_backtests_enabled: bool = True
     feature_scanner_enabled: bool = True
     feature_exports_enabled: bool = True
@@ -486,6 +504,20 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_sweep_score_weights(self) -> "Settings":
+        total = (
+            self.sweep_score_win_rate_weight
+            + self.sweep_score_roi_weight
+            + self.sweep_score_sharpe_weight
+            + self.sweep_score_drawdown_weight
+        )
+        if abs(total - 1.0) > 0.01:
+            raise ValueError(
+                f"sweep_score weights must sum to approximately 1.0 (within 0.01 tolerance), got {total}"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_aws_credentials_pair(self) -> "Settings":
         has_key = bool(self.aws_access_key_id)
         has_secret = bool(self.aws_secret_access_key)
@@ -523,6 +555,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments must use a custom IP_HASH_SALT.")
             if not self.metrics_token or not self.metrics_token.strip():
                 raise ValueError("Production-like environments require METRICS_TOKEN to be set and non-blank.")
+            if self.admin_token and len(self.admin_token) < 16:
+                raise ValueError("admin_token must be at least 16 characters")
             if not self.redis_password:
                 raise ValueError("Production-like environments require a non-empty REDIS_PASSWORD.")
             if not self.clerk_audience:
@@ -636,8 +670,18 @@ _settings_lock = threading.Lock()
 _invalidation_callbacks: list[Callable[[], None]] = []
 
 
+_MAX_INVALIDATION_CALLBACKS = 100
+
+
 def register_invalidation_callback(callback: Callable[[], None]) -> None:
     with _settings_lock:
+        if len(_invalidation_callbacks) >= _MAX_INVALIDATION_CALLBACKS:
+            logger.warning(
+                "config.invalidation_callback_limit_reached",
+                max=_MAX_INVALIDATION_CALLBACKS,
+                msg="Ignoring new callback registration; limit reached.",
+            )
+            return
         _invalidation_callbacks.append(callback)
 
 
@@ -663,13 +707,16 @@ def invalidate_settings() -> None:
 
     Called during graceful reload or secret rotation.  Currently invoked only
     via the /admin/reload endpoint (when enabled) or programmatically in tests.
+
+    Callbacks are invoked outside the lock to avoid deadlocks if a callback
+    calls ``get_settings()`` or ``register_invalidation_callback()``.
     """
     global _settings_cache
     with _settings_lock:
         _settings_cache = None
         callbacks = list(_invalidation_callbacks)
-        for cb in callbacks:
-            try:
-                cb()
-            except Exception:
-                logger.exception("settings_invalidation_callback_failed", callback=repr(cb))
+    for cb in callbacks:
+        try:
+            cb()
+        except Exception:
+            logger.exception("settings_invalidation_callback_failed", callback=repr(cb))

@@ -67,7 +67,7 @@ export function TimeframeControls({
             aria-describedby={errors.targetDte ? "targetDte-error" : undefined}
             onChange={(event) => onChange({ targetDte: event.target.value })}
           />
-          <p className="text-xs text-muted-foreground">7 to 365 calendar days.</p>
+          <p className="text-xs text-muted-foreground">1 to 365 calendar days.</p>
           {errors.targetDte ? <p id="targetDte-error" className="text-sm text-destructive">{errors.targetDte}</p> : null}
         </div>
 

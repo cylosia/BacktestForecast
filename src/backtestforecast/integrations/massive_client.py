@@ -2,6 +2,21 @@
 # identical logic. Refactor to a shared implementation — e.g., a sync base
 # with async wrappers using asyncio.to_thread, or generate both from a
 # common template.
+#
+# Approach notes:
+#   Option A (recommended): Extract a _MassiveClientCore class that holds all
+#   configuration, parsing, and response-handling logic. MassiveClient and
+#   AsyncMassiveClient become thin wrappers that only differ in HTTP transport
+#   (httpx.Client vs httpx.AsyncClient) and sleep (time.sleep vs asyncio.sleep).
+#   Each wrapper delegates _get_json/_get_paginated_json to the core, passing
+#   the transport as a callable.
+#
+#   Option B: Keep MassiveClient as the canonical implementation and have
+#   AsyncMassiveClient delegate via asyncio.to_thread for each public method.
+#   Simpler but adds thread-hop latency per call and loses true async I/O.
+#
+#   Either way, _parse_snapshot_result, _pick_quote_timestamp, and bar/contract
+#   parsing are already static and can be shared immediately.
 
 from __future__ import annotations
 
@@ -320,6 +335,9 @@ class MassiveClient:
                     self._sleep_before_retry(attempt, response.headers.get("Retry-After"))
                     continue
                 raise ExternalServiceError(retryable_message)
+            if response.status_code == 404:
+                logger.debug("massive_client.market_holidays_not_found", status=404)
+                return []
             if response.status_code >= 400:
                 self._circuit.record_failure(is_transient=False)
                 raise ExternalServiceError(
@@ -385,7 +403,11 @@ class MassiveClient:
                     continue
                 if event_type not in {"earnings_announcement_date", "earnings_conference_call"}:
                     continue
-                dates.add(date.fromisoformat(raw_date))
+                try:
+                    dates.add(date.fromisoformat(raw_date))
+                except ValueError:
+                    logger.debug("massive.earnings.invalid_date", raw_date=raw_date)
+                    continue
             return dates
 
         if last_error is not None:
@@ -432,8 +454,11 @@ class MassiveClient:
         if traceparent:
             headers["traceparent"] = traceparent
         retryable_message: str | None = None
+        deadline = time.monotonic() + self.timeout * (self.max_retries + 1)
 
         for attempt in range(self.max_retries + 1):
+            if time.monotonic() > deadline:
+                raise ExternalServiceError("Massive request exceeded aggregate retry deadline.")
             try:
                 response = self._http.get(
                     url,
@@ -789,8 +814,11 @@ class AsyncMassiveClient:
         if traceparent:
             headers["traceparent"] = traceparent
         retryable_message: str | None = None
+        deadline = time.monotonic() + self.timeout * (self.max_retries + 1)
 
         for attempt in range(self.max_retries + 1):
+            if time.monotonic() > deadline:
+                raise ExternalServiceError("Massive request exceeded aggregate retry deadline.")
             try:
                 response = await self._http.get(url, params=params, headers=headers)
             except httpx.HTTPError as exc:

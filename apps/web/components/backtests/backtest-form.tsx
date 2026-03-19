@@ -43,6 +43,7 @@ export function BacktestForm({
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
+  const [submittedCount, setSubmittedCount] = useState(0);
   const submitAbortRef = useRef<AbortController | null>(null);
   const submittingRef = useRef(false);
   const valuesRef = useRef(values);
@@ -65,7 +66,11 @@ export function BacktestForm({
     }
   }, [initialTemplateId, templates]);
 
-  const submitDisabled = useMemo(() => quota.reached || status === "submitting", [quota.reached, status]);
+  const effectiveUsed = quota.used + submittedCount;
+  const effectiveRemaining = quota.remaining !== null ? Math.max(quota.remaining - submittedCount, 0) : null;
+  const effectiveReached = quota.reached || (quota.limit !== null && effectiveUsed >= quota.limit);
+
+  const submitDisabled = useMemo(() => effectiveReached || status === "submitting", [effectiveReached, status]);
 
   const handleSubmit = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -110,6 +115,7 @@ export function BacktestForm({
       const run = await createBacktestRun(token, payloadWithKey, submitAbortRef.current.signal);
       setStatus("success");
       setServerMessage("Backtest queued. Opening run details...");
+      setSubmittedCount((prev) => prev + 1);
       router.push(`/app/backtests/${run.id}`);
       router.refresh();
     } catch (error) {
@@ -145,18 +151,18 @@ export function BacktestForm({
     <form className="space-y-6" noValidate onSubmit={handleSubmit} aria-label="Backtest configuration">
       <TemplatePicker templates={templates} onApply={updateValues} />
 
-      {quota.reached ? (
+      {effectiveReached ? (
         <UpgradePrompt
-          message={`This account has used ${quota.used}${quota.limit !== null ? ` of ${quota.limit}` : ""} backtests this month. Upgrade for unlimited backtests.`}
+          message={`This account has used ${effectiveUsed}${quota.limit !== null ? ` of ${quota.limit}` : ""} backtests this month. Upgrade for unlimited backtests.`}
         />
-      ) : quota.remaining !== null && quota.remaining <= 1 && quota.remaining > 0 ? (
+      ) : effectiveRemaining !== null && effectiveRemaining <= 1 && effectiveRemaining > 0 ? (
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
             <div>
               <p className="font-medium text-amber-700 dark:text-amber-400">Last backtest on this plan</p>
               <p className="mt-1 text-amber-700/80 dark:text-amber-400/80">
-                {quota.used} of {quota.limit} used. After this run you will need to upgrade or wait until next month.
+                {effectiveUsed} of {quota.limit} used. After this run you will need to upgrade or wait until next month.
               </p>
             </div>
           </div>
@@ -164,8 +170,8 @@ export function BacktestForm({
       ) : (
         <div className="rounded-xl border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground">
           <p>{quota.limit === null
-            ? `${quota.used} backtests used this month. This plan currently has no monthly cap.`
-            : `${quota.used} of ${quota.limit} monthly backtests used. ${quota.remaining ?? 0} remaining in the current month.`}</p>
+            ? `${effectiveUsed} backtests used this month. This plan currently has no monthly cap.`
+            : `${effectiveUsed} of ${quota.limit} monthly backtests used. ${effectiveRemaining ?? 0} remaining in the current month.`}</p>
           <p className="mt-1 text-xs opacity-70">Usage shown as of page load. Actual limits are enforced server-side.</p>
         </div>
       )}

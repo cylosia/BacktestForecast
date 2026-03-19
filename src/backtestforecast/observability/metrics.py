@@ -345,9 +345,12 @@ _KNOWN_PATH_PREFIXES = frozenset({
     "/health", "/admin", "/metrics", "/meta",
 })
 
+_unknown_path_counter: int = 0
+
 
 def _normalize_path(path: str) -> str:
     """Collapse path parameters to avoid high-cardinality labels."""
+    global _unknown_path_counter
     path = _RE_UUID.sub("/{id}", path)
     path = _RE_INT.sub("/{id}", path)
     for prefix in _DYNAMIC_SEGMENT_PREFIXES:
@@ -361,9 +364,13 @@ def _normalize_path(path: str) -> str:
                 path = path[:idx] + "{symbol}" + rest[slug_end:]
             break
     if not any(path.startswith(p) for p in _KNOWN_PATH_PREFIXES):
-        structlog.get_logger("observability.metrics").warning(
-            "metrics.unknown_path_prefix", original_path=path,
-        )
+        _unknown_path_counter += 1
+        if _unknown_path_counter % 100 == 1:
+            structlog.get_logger("observability.metrics").warning(
+                "metrics.unknown_path_prefix",
+                original_path=path,
+                occurrences=_unknown_path_counter,
+            )
         path = "/unknown"
     return path
 
@@ -401,6 +408,9 @@ class PrometheusMiddleware:
             HTTP_REQUEST_DURATION_SECONDS.labels(method=method, path=path).observe(duration)
 
 
+_logger = structlog.get_logger("observability.metrics")
+
+
 def _refresh_pool_gauges() -> None:
     """Update DB pool gauges from the engine's live pool statistics."""
     try:
@@ -413,7 +423,7 @@ def _refresh_pool_gauges() -> None:
         DB_POOL_OVERFLOW.set(stats["overflow"])
         DB_POOL_MAX_OVERFLOW.set(stats.get("max_overflow", get_settings().db_pool_max_overflow))
     except Exception:
-        pass
+        _logger.debug("pool_gauge_refresh_failed", exc_info=True)
 
 
 def metrics_response() -> Response:

@@ -6,6 +6,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 
+from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES, BULLISH_STRATEGIES
 from backtestforecast.indicators.calculations import ema, rolling_stddev, rsi, sma
 from backtestforecast.market_data.types import DailyBar
 from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
@@ -28,6 +29,8 @@ class HistoricalAnalogForecaster:
         strategy_type: str | None = None,
         max_analogs: int = 20,
     ) -> HistoricalAnalogForecastResponse:
+        if max_analogs <= 0:
+            raise ValueError("max_analogs must be positive")
         if horizon_days < 1:
             raise ValueError("horizon_days must be at least 1.")
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
@@ -216,6 +219,15 @@ class HistoricalAnalogForecaster:
         # Weights emphasise 20-day momentum (1.2) and volatility regime (1.1)
         # while down-weighting volume ratio (0.7) and single-day return (0.6).
         # TODO: Consider making these configurable via settings for A/B testing.
+        # Approach notes:
+        #   - Add `analog_distance_scales: list[float]` and
+        #     `analog_distance_weights: list[float]` to Settings with these
+        #     values as defaults. Validate len(scales) == len(weights) == 7
+        #     at startup.
+        #   - Pass them into the forecaster at construction time so different
+        #     worker pools or feature-flag cohorts can run alternative configs.
+        #   - Log the active scales/weights in forecast results so A/B
+        #     comparisons can attribute performance differences to tuning.
         scales = (8.0, 15.0, 20.0, 5.0, 1.5, 25.0, 4.0)
         weights = (1.0, 1.2, 0.8, 1.0, 0.7, 1.1, 0.6)
         return sum(
@@ -248,25 +260,9 @@ class HistoricalAnalogForecaster:
         horizon_days: int,
     ) -> str:
         direction_hint = "neutral"
-        if strategy_type in {
-            "long_call",
-            "covered_call",
-            "cash_secured_put",
-            "bull_call_debit_spread",
-            "bull_put_credit_spread",
-            "wheel_strategy",
-            "poor_mans_covered_call",
-            "collar",
-            "diagonal_spread",
-        }:
+        if strategy_type in BULLISH_STRATEGIES:
             direction_hint = "bullish"
-        elif strategy_type in {
-            "long_put",
-            "bear_put_debit_spread",
-            "bear_call_credit_spread",
-            "synthetic_put",
-            "ratio_put_backspread",
-        }:
+        elif strategy_type in BEARISH_STRATEGIES:
             direction_hint = "bearish"
 
         if direction_hint == "bullish":
@@ -286,10 +282,14 @@ class HistoricalAnalogForecaster:
             f"with a median of {median_return:.2f}% and {positive_rate:.1f}% positive analogs; this {alignment}."
         )
 
+    _SMALL_HORIZON_LOOKUP = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
+
     @staticmethod
     def _calendar_to_trading_days(calendar_days: int) -> int:
         if calendar_days <= 0:
             return 0
+        if calendar_days in HistoricalAnalogForecaster._SMALL_HORIZON_LOOKUP:
+            return HistoricalAnalogForecaster._SMALL_HORIZON_LOOKUP[calendar_days]
         weekday_days = round(calendar_days * 5 / 7)
         estimated_holidays = calendar_days * 9.0 / 365.0  # ~9 NYSE holidays per year
         return max(1, round(weekday_days - estimated_holidays))

@@ -21,7 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.sql import func
 
 from backtestforecast.db.base import Base
@@ -258,6 +258,7 @@ class BacktestTemplate(Base):
         Index("ix_backtest_templates_user_strategy", "user_id", "strategy_type"),
         Index("ix_backtest_templates_user_updated_at", "user_id", "updated_at"),
         UniqueConstraint("user_id", "name", name="uq_backtest_templates_user_name"),
+        CheckConstraint("length(name) > 0", name="ck_backtest_templates_name_not_empty"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -318,6 +319,10 @@ class ScannerJob(Base):
         CheckConstraint(
             "engine_version IN ('options-multileg-v1', 'options-multileg-v2')",
             name="ck_scanner_jobs_valid_engine_version",
+        ),
+        CheckConstraint(
+            "ranking_version IN ('scanner-ranking-v1', 'scanner-ranking-v2')",
+            name="ck_scanner_jobs_valid_ranking_version",
         ),
     )
 
@@ -498,7 +503,7 @@ class AuditEvent(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="audit_events")
+    user: Mapped["User"] = relationship(back_populates="audit_events", lazy="raise")
 
 
 class NightlyPipelineRun(Base):
@@ -561,6 +566,7 @@ class NightlyPipelineRun(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     stage_details_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -602,6 +608,14 @@ class DailyRecommendation(Base):
     )
 
     pipeline_run: Mapped["NightlyPipelineRun"] = relationship(back_populates="recommendations", lazy="raise")
+
+    @validates('regime_labels')
+    def _validate_regime_labels(self, key, value):
+        if value is not None and not isinstance(value, list):
+            raise ValueError("regime_labels must be a list")
+        if value is not None and not all(isinstance(v, str) for v in value):
+            raise ValueError("regime_labels must contain only strings")
+        return value
 
 
 class StripeEvent(Base):

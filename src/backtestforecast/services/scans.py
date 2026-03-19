@@ -21,7 +21,7 @@ from backtestforecast.billing.entitlements import (
     validate_strategy_access,
 )
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppError, ConflictError, NotFoundError, ValidationError
+from backtestforecast.errors import AppError, ConflictError, NotFoundError, QuotaExceededError, ValidationError
 from backtestforecast.schemas.json_shapes import _FORECAST_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.utils.dates import market_date_today
 from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
@@ -53,6 +53,7 @@ from backtestforecast.schemas.scans import (
     ScannerRecommendationListResponse,
     ScannerRecommendationResponse,
 )
+from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.backtests import to_decimal
 from backtestforecast.services.serialization import (
@@ -109,12 +110,24 @@ def _safe_validate_summary(data: dict) -> BacktestSummaryResponse:
 
 # TODO: Make configurable via Settings.fallback_entry_rules_json once
 # the config surface is agreed upon with product.
+#
+# Approach notes:
+#   1. Add `fallback_entry_rules_json: str | None = None` to Settings
+#      (pydantic-settings), defaulting to None (use current hardcoded list).
+#   2. On startup, parse the JSON string into a list[RsiRule] via
+#      pydantic's TypeAdapter and cache the result.
+#   3. Accept a broader EntryRule union (not just RsiRule) so admins can
+#      configure MACD or moving-average fallbacks via environment variable.
+#   4. Validate at startup (fail-fast) to avoid runtime surprises in scans.
+#   5. Document the env var in .env.example and the ops runbook.
 _FALLBACK_ENTRY_RULES: list[RsiRule] = [
     RsiRule(type="rsi", operator="lte", threshold=Decimal("40"), period=14),
 ]
 
 
 class ScanService:
+    _MAX_CONCURRENT_SCANS = 5
+
     def __init__(
         self,
         session: Session,
@@ -125,6 +138,7 @@ class ScanService:
         self._execution_service = execution_service
         self._forecaster = forecaster
         self.repository = ScannerJobRepository(session)
+        self.audit = AuditService(session)
 
     @property
     def execution_service(self) -> BacktestExecutionService:
@@ -149,6 +163,10 @@ class ScanService:
         return self._forecaster
 
     def create_job(self, user: User, payload: CreateScannerJobRequest) -> ScannerJob:
+        from sqlalchemy import select
+        self.session.execute(
+            select(User).where(User.id == user.id).with_for_update()
+        )
         policy = resolve_scanner_policy(
             user.plan_tier, payload.mode.value, user.subscription_status,
             user.subscription_current_period_end,
@@ -158,6 +176,7 @@ class ScanService:
         if policy.max_recommendations:
             effective_max_recommendations = min(payload.max_recommendations, policy.max_recommendations)
         self._validate_limits(policy, payload)
+        self._enforce_concurrent_scan_limit(user)
 
         candidate_count, compatibility_warnings = self._count_compatible_candidates(payload)
         if candidate_count <= 0:
@@ -219,6 +238,14 @@ class ScanService:
                 return recent
             raise
         self.session.refresh(job)
+        self.audit.record(
+            event_type="scan.created",
+            subject_type="scanner_job",
+            subject_id=job.id,
+            user_id=user.id,
+            metadata={"mode": job.mode, "candidate_count": job.candidate_count},
+        )
+        self.session.commit()
         return job
 
     def run_job(self, job_id: UUID) -> ScannerJob:
@@ -376,6 +403,7 @@ class ScanService:
                         bundle = bundle_cache.get(symbol)
                         if bundle is None:
                             continue
+                        job.evaluated_candidate_count += 1
                         execution_result = self.execution_service.execute_request(request, bundle=bundle)
                         forecast = forecast_cache.get((symbol, strategy.value))
                         if forecast is None:
@@ -429,7 +457,6 @@ class ScanService:
                                 "ranking": ranking.model_dump(mode="json"),
                             }
                         )
-                        job.evaluated_candidate_count += 1
                     except AppError as exc:
                         SCAN_CANDIDATE_FAILURES_TOTAL.labels(reason=exc.code if hasattr(exc, 'code') else "internal").inc()
                         warnings.append(
@@ -490,46 +517,58 @@ class ScanService:
         }
         selected = sorted_candidates[: payload.max_recommendations]
 
-        for candidate in selected:
-            validate_json_shape(candidate["summary"], "ScannerRecommendation.summary_json", required_keys=frozenset({"trade_count"}))
-            validate_json_shape(candidate["forecast"], "ScannerRecommendation.forecast_json", required_keys=_FORECAST_REQUIRED_KEYS)
-            rank = rank_lookup[(candidate["symbol"], candidate["strategy_type"], candidate["rule_set_name"])]
-            job.recommendations.append(
-                ScannerRecommendation(
-                    rank=rank,
-                    score=to_decimal(float(candidate["ranking"]["final_score"])),
-                    symbol=candidate["symbol"],
-                    strategy_type=candidate["strategy_type"],
-                    rule_set_name=candidate["rule_set_name"],
-                    rule_set_hash=candidate["rule_set_hash"],
-                    request_snapshot_json=candidate["request_snapshot"],
-                    summary_json=candidate["summary"],
-                    warnings_json=candidate["warnings"],
-                    trades_json=candidate["trades"],
-                    equity_curve_json=candidate["equity_curve"],
-                    historical_performance_json=candidate["historical"],
-                    forecast_json=candidate["forecast"],
-                    ranking_features_json=candidate["ranking"],
-                )
-            )
-
         from sqlalchemy import update as sa_update
         SCAN_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - scan_start)
-        success_rows = self.session.execute(
-            sa_update(ScannerJob)
-            .where(ScannerJob.id == job.id, ScannerJob.status == "running")
-            .values(
-                status="succeeded",
-                recommendation_count=len(selected),
-                completed_at=datetime.now(UTC),
-                warnings_json=warnings,
-                updated_at=datetime.now(UTC),
+
+        with self.session.no_autoflush:
+            for candidate in selected:
+                validate_json_shape(candidate["summary"], "ScannerRecommendation.summary_json", required_keys=frozenset({"trade_count"}))
+                validate_json_shape(candidate["forecast"], "ScannerRecommendation.forecast_json", required_keys=_FORECAST_REQUIRED_KEYS)
+                rank = rank_lookup[(candidate["symbol"], candidate["strategy_type"], candidate["rule_set_name"])]
+                job.recommendations.append(
+                    ScannerRecommendation(
+                        rank=rank,
+                        score=to_decimal(float(candidate["ranking"]["final_score"])),
+                        symbol=candidate["symbol"],
+                        strategy_type=candidate["strategy_type"],
+                        rule_set_name=candidate["rule_set_name"],
+                        rule_set_hash=candidate["rule_set_hash"],
+                        request_snapshot_json=candidate["request_snapshot"],
+                        summary_json=candidate["summary"],
+                        warnings_json=candidate["warnings"],
+                        trades_json=candidate["trades"],
+                        equity_curve_json=candidate["equity_curve"],
+                        historical_performance_json=candidate["historical"],
+                        forecast_json=candidate["forecast"],
+                        ranking_features_json=candidate["ranking"],
+                    )
+                )
+
+            success_rows = self.session.execute(
+                sa_update(ScannerJob)
+                .where(ScannerJob.id == job.id, ScannerJob.status == "running")
+                .values(
+                    status="succeeded",
+                    recommendation_count=len(selected),
+                    completed_at=datetime.now(UTC),
+                    warnings_json=warnings,
+                    updated_at=datetime.now(UTC),
+                )
             )
-        )
         self.session.commit()
         if success_rows.rowcount == 0:
+            self.session.rollback()
             logger.warning("scan.success_overwrite_prevented", job_id=str(job.id))
         self.session.refresh(job)
+        if job.status == "succeeded":
+            self.audit.record(
+                event_type="scan.completed",
+                subject_type="scanner_job",
+                subject_id=job.id,
+                user_id=job.user_id,
+                metadata={"mode": job.mode, "recommendation_count": job.recommendation_count},
+            )
+            self.session.commit()
         return job
 
     def list_jobs(self, user: User, limit: int = 50, offset: int = 0) -> ScannerJobListResponse:
@@ -723,6 +762,21 @@ class ScanService:
                 "and is not financial advice or a certainty of future results."
             ),
         )
+
+    def _enforce_concurrent_scan_limit(self, user: User) -> None:
+        from sqlalchemy import select, func
+        concurrent = self.session.scalar(
+            select(func.count()).select_from(ScannerJob).where(
+                ScannerJob.user_id == user.id,
+                ScannerJob.status.in_(["queued", "running"]),
+            )
+        ) or 0
+        if concurrent >= self._MAX_CONCURRENT_SCANS:
+            raise QuotaExceededError(
+                f"Maximum concurrent scans ({self._MAX_CONCURRENT_SCANS}) reached. "
+                "Wait for existing scans to complete.",
+                current_tier=user.plan_tier or "free",
+            )
 
     def _validate_limits(
         self,

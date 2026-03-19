@@ -45,7 +45,7 @@ export function useSSE<T>({
   pollingFallback,
 }: UseSSEOptions<T>): UseSSEReturn {
   const MAX_RETRIES = 3;
-  const HEARTBEAT_TIMEOUT_MS = 90_000;
+  const HEARTBEAT_TIMEOUT_MS = 45_000;
   const [status, setStatus] = useState<SSEStatus>(autoStart ? "connecting" : "done");
   const [useFallback, setUseFallback] = useState(false);
   const esRef = useRef<EventSource | null>(null);
@@ -53,6 +53,7 @@ export function useSSE<T>({
   const completedRef = useRef(false);
   const retryCountRef = useRef(0);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastEventIdRef = useRef<string | null>(null);
   const onProgressRef = useRef(onProgress);
   const onCompleteRef = useRef(onComplete);
   const isTerminalRef = useRef(isTerminal);
@@ -114,6 +115,9 @@ export function useSSE<T>({
         if (!mountedRef.current) return;
         retryCountRef.current = 0;
         resetHeartbeat(target);
+        if (event.lastEventId) {
+          lastEventIdRef.current = event.lastEventId;
+        }
         try {
           const data = JSON.parse(event.data) as Record<string, unknown>;
           onProgressRef.current?.(data);
@@ -165,7 +169,10 @@ export function useSSE<T>({
             if (esRef.current) {
               esRef.current.close();
             }
-            const retryUrl = `/api/events/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`;
+            let retryUrl = `/api/events/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`;
+            if (lastEventIdRef.current) {
+              retryUrl += `?lastEventId=${encodeURIComponent(lastEventIdRef.current)}`;
+            }
             const newEs = new EventSource(retryUrl);
             esRef.current = newEs;
             attachEventHandlers(newEs);

@@ -39,12 +39,13 @@ def create_checkout_session(
         limit=settings.billing_create_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    return BillingService(db).create_checkout_session(
-        user,
-        payload,
-        request_id=metadata.request_id,
-        ip_address=metadata.ip_address,
-    )
+    with BillingService(db) as service:
+        return service.create_checkout_session(
+            user,
+            payload,
+            request_id=metadata.request_id,
+            ip_address=metadata.ip_address,
+        )
 
 
 @router.post("/portal-session", response_model=PortalSessionResponse)
@@ -64,12 +65,13 @@ def create_portal_session(
         limit=settings.billing_create_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    return BillingService(db).create_portal_session(
-        user,
-        payload,
-        request_id=metadata.request_id,
-        ip_address=metadata.ip_address,
-    )
+    with BillingService(db) as service:
+        return service.create_portal_session(
+            user,
+            payload,
+            request_id=metadata.request_id,
+            ip_address=metadata.ip_address,
+        )
 
 
 @router.post("/webhook", status_code=status.HTTP_200_OK, response_model=WebhookResponse)
@@ -86,6 +88,12 @@ def stripe_webhook(
     meta = get_request_metadata(request)
     ip_address = meta.ip_address
     settings = get_settings()
+    get_rate_limiter().check(
+        bucket="billing:webhook",
+        actor_key=f"billing:webhook:{ip_address or 'unknown'}",
+        limit=30,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     get_rate_limiter().check(
         bucket="billing:webhook",
         actor_key="stripe_webhook_global",
@@ -111,12 +119,13 @@ def stripe_webhook(
             pass
 
     try:
-        return BillingService(db).handle_webhook(
-            payload,
-            signature,
-            request_id=request_id,
-            ip_address=ip_address,
-        )
+        with BillingService(db) as service:
+            return service.handle_webhook(
+                payload,
+                signature,
+                request_id=request_id,
+                ip_address=ip_address,
+            )
     except Exception as exc:
         from backtestforecast.errors import (
             AuthenticationError as _AuthErr,
@@ -136,7 +145,7 @@ def stripe_webhook(
             _webhook_logger.warning(
                 "webhook.user_not_found", code=exc.code, ip=ip_address, request_id=request_id,
             )
-            return WebhookResponse(received=True, reason="User not found; event skipped.")
+            return WebhookResponse(received=True, reason="Event processed.")
 
         if isinstance(exc, _ExtErr):
             _webhook_logger.exception(

@@ -75,6 +75,11 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
                 "CLERK_ISSUER must be set to a non-empty value in production/staging. "
                 "JWT issuer verification will not work without it."
             )
+        if not settings.admin_token or not settings.admin_token.strip():
+            raise RuntimeError(
+                "ADMIN_TOKEN must be set to a non-empty value in production/staging. "
+                "The /admin/dlq endpoint will fall back to metrics_token without it."
+            )
     elif not settings.clerk_audience:
         logger.warning(
             "startup.clerk_audience_missing",
@@ -89,6 +94,8 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 
     from backtestforecast.events import _reset_redis as _reset_events_redis
     register_invalidation_callback(_reset_events_redis)
+
+    register_invalidation_callback(_invalidate_dlq_redis)
 
     logger.info("lifespan.startup_complete")
     yield
@@ -454,6 +461,12 @@ def _get_dlq_redis():
     return _dlq_redis
 
 
+def _invalidate_dlq_redis() -> None:
+    global _dlq_redis
+    with _dlq_redis_lock:
+        _dlq_redis = None
+
+
 @app.get("/admin/dlq", include_in_schema=False)
 def dlq_status(request: Request) -> Response:
     """Inspect the dead-letter queue depth and recent items.
@@ -490,8 +503,13 @@ def dlq_status(request: Request) -> Response:
                 for k, v in d.items()
             }
 
+        _DLQ_ITEM_MAX_BYTES = 65_536
+
         recent = []
         for raw in recent_raw:
+            if len(raw) > _DLQ_ITEM_MAX_BYTES:
+                logger.warning("admin.dlq_item_too_large", size=len(raw))
+                continue
             try:
                 item = json.loads(raw)
                 if isinstance(item, dict):
@@ -504,7 +522,7 @@ def dlq_status(request: Request) -> Response:
         return JSONResponse(content={"depth": depth, "recent": recent})
     except Exception:
         logger.exception("admin.dlq_unavailable")
-        return JSONResponse(status_code=503, content={"error": "dlq_unavailable"})
+        return JSONResponse(status_code=503, content={"error": {"code": "dlq_unavailable", "message": "Dead-letter queue is currently unavailable."}})
 
 
 @app.get("/")

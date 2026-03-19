@@ -18,7 +18,17 @@ if TYPE_CHECKING:
 def _safe_state(state: dict | None) -> dict | None:
     if not state:
         return None
-    return {k: v for k, v in state.items() if k.lower() not in _BILLING_REDACT_KEYS}
+    result: dict = {}
+    for k, v in state.items():
+        if k.lower() in _BILLING_REDACT_KEYS:
+            continue
+        if isinstance(v, dict):
+            result[k] = _safe_state(v)
+        elif isinstance(v, list):
+            result[k] = [_safe_state(item) if isinstance(item, dict) else item for item in v]
+        else:
+            result[k] = v
+    return result
 
 
 def log_billing_event(

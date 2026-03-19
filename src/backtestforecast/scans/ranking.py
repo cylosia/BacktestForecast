@@ -23,6 +23,23 @@ from backtestforecast.schemas.scans import (
     RankingBreakdownResponse,
 )
 
+# Current-backtest scoring weights — how much each metric contributes to the
+# composite score.  Must sum to 1.0 (sign on drawdown is applied in code).
+CURRENT_ROI_WEIGHT = 0.35
+CURRENT_WIN_RATE_WEIGHT = 0.15
+CURRENT_NET_PNL_WEIGHT = 0.20
+CURRENT_TRADE_COUNT_WEIGHT = 0.10
+CURRENT_DRAWDOWN_WEIGHT = 0.20
+
+# Scaling denominators — normalise each metric into roughly [-1, 1] before
+# weighting.  Chosen empirically so that "typical" backtest values map to the
+# middle of the range.
+CURRENT_ROI_SCALE = 30.0          # ±30% ROI → ±1
+CURRENT_WIN_RATE_SCALE = 50.0     # Win rate deviation from 50% → ±1
+CURRENT_NET_PNL_SCALE = 0.20      # Net PnL as fraction of account → ±1
+CURRENT_TRADE_COUNT_SCALE = 12.0  # 12 trades → 1 (capped)
+CURRENT_DRAWDOWN_SCALE = 30.0     # 30% drawdown → 1 (capped)
+
 
 @dataclass(frozen=True, slots=True)
 class HistoricalObservation:
@@ -59,7 +76,12 @@ def is_strategy_rule_set_compatible(strategy_type: str, entry_rules: Sequence[En
     if strategy_type in BEARISH_STRATEGIES:
         return bias == "bearish"
     if strategy_type in NEUTRAL_STRATEGIES:
-        return False
+        structlog.get_logger("scans.ranking").debug(
+            "ranking.neutral_with_directional_rules",
+            strategy_type=strategy_type,
+            rule_set_bias=bias,
+        )
+        return True
     return True
 
 
@@ -116,11 +138,11 @@ def build_ranking_breakdown(
     reasons: list[str] = []
 
     current_score = (
-        (_clamp(summary.total_roi_pct / 30.0, -1.0, 1.0) * 0.35)
-        + (_clamp((summary.win_rate - 50.0) / 50.0, -1.0, 1.0) * 0.15)
-        + (_clamp((summary.total_net_pnl / max(account_size, 1.0)) / 0.20, -1.0, 1.0) * 0.20)
-        + (_clamp(summary.trade_count / 12.0, 0.0, 1.0) * 0.10)
-        - (_clamp(summary.max_drawdown_pct / 30.0, 0.0, 1.0) * 0.20)
+        (_clamp(summary.total_roi_pct / CURRENT_ROI_SCALE, -1.0, 1.0) * CURRENT_ROI_WEIGHT)
+        + (_clamp((summary.win_rate - 50.0) / CURRENT_WIN_RATE_SCALE, -1.0, 1.0) * CURRENT_WIN_RATE_WEIGHT)
+        + (_clamp((summary.total_net_pnl / max(account_size, 1.0)) / CURRENT_NET_PNL_SCALE, -1.0, 1.0) * CURRENT_NET_PNL_WEIGHT)
+        + (_clamp(summary.trade_count / CURRENT_TRADE_COUNT_SCALE, 0.0, 1.0) * CURRENT_TRADE_COUNT_WEIGHT)
+        - (_clamp(summary.max_drawdown_pct / CURRENT_DRAWDOWN_SCALE, 0.0, 1.0) * CURRENT_DRAWDOWN_WEIGHT)
     )
     if summary.trade_count >= 3:
         reasons.append("Current backtest generated multiple trades rather than a single isolated outcome.")

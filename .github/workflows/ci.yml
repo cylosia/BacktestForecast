@@ -68,7 +68,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --constraint constraints.txt -e '.[dev]'
 
-      # TODO: Execute load tests (locust) in CI to catch performance regressions.
+      # Load tests (tests/load/) are intended for manual execution against
+      # staging infrastructure. They require a running API server and database.
+      # Run manually via: locust -f tests/load/locustfile.py --headless
+      # See tests/load/README.md for setup instructions.
 
       - name: Lint Python (ruff)
         run: python -m ruff check .

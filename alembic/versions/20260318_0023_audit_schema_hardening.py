@@ -58,15 +58,12 @@ def _index_exists(name: str) -> bool:
 
 
 def upgrade() -> None:
-    # --- Status CHECK constraints (idempotent) ---
+    # --- Status CHECK constraints (NOT VALID only — validation is deferred to post-deploy) ---
     for table, name, expr in _STATUS_CONSTRAINTS:
         if not _constraint_exists(table, name):
             op.execute(sa.text(
                 f"ALTER TABLE {table} "
                 f"ADD CONSTRAINT {name} CHECK ({expr}) NOT VALID"
-            ))
-            op.execute(sa.text(
-                f"ALTER TABLE {table} VALIDATE CONSTRAINT {name}"
             ))
 
     # --- Unique constraints on (job_id, rank) ---
@@ -81,12 +78,6 @@ def upgrade() -> None:
         server_default=sa.text("'{}'::jsonb"),
     )
 
-    # --- Validate sweep mode constraint from 0022 ---
-    if _constraint_exists("sweep_jobs", "ck_sweep_jobs_valid_mode"):
-        op.execute(sa.text(
-            "ALTER TABLE sweep_jobs VALIDATE CONSTRAINT ck_sweep_jobs_valid_mode"
-        ))
-
     # --- Outbox correlation_id index ---
     if not _index_exists("ix_outbox_messages_correlation_id"):
         op.create_index(
@@ -96,13 +87,38 @@ def upgrade() -> None:
             unique=False,
         )
 
-    # --- Email non-empty CHECK ---
+    # --- Email non-empty CHECK (NOT VALID only — validation is deferred to post-deploy) ---
     if not _constraint_exists("users", "ck_users_email_not_empty"):
         op.execute(sa.text(
             "ALTER TABLE users "
             "ADD CONSTRAINT ck_users_email_not_empty "
             "CHECK (email IS NULL OR length(email) > 0) NOT VALID"
         ))
+
+
+def validate_constraints_post_deploy() -> None:
+    """Validate NOT VALID constraints added by upgrade().
+
+    Run manually after the deploy is stable and traffic is confirmed healthy:
+        python -c "from alembic.versions.20260318_0023_audit_schema_hardening import validate_constraints_post_deploy; validate_constraints_post_deploy()"
+
+    Each VALIDATE CONSTRAINT acquires a SHARE UPDATE EXCLUSIVE lock, which
+    blocks only other schema changes but NOT reads or writes. However, on
+    very large tables validation may take minutes, so prefer running during
+    low-traffic windows.
+    """
+    for table, name, _expr in _STATUS_CONSTRAINTS:
+        if _constraint_exists(table, name):
+            op.execute(sa.text(
+                f"ALTER TABLE {table} VALIDATE CONSTRAINT {name}"
+            ))
+
+    if _constraint_exists("sweep_jobs", "ck_sweep_jobs_valid_mode"):
+        op.execute(sa.text(
+            "ALTER TABLE sweep_jobs VALIDATE CONSTRAINT ck_sweep_jobs_valid_mode"
+        ))
+
+    if _constraint_exists("users", "ck_users_email_not_empty"):
         op.execute(sa.text(
             "ALTER TABLE users VALIDATE CONSTRAINT ck_users_email_not_empty"
         ))

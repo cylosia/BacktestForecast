@@ -2,9 +2,10 @@ import { env } from "@/lib/env";
 
 export interface ApiErrorPayload {
   error?: {
-    code?: string;
-    message?: string;
+    code: string;
+    message: string;
     request_id?: string;
+    details?: Record<string, string[]>;
   };
 }
 
@@ -164,9 +165,7 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
     }
 
     if (response.status === 204) {
-      // 204 No Content — callers expecting void/undefined are safe;
-      // callers expecting a structured response should not hit this path.
-      return undefined as unknown as T;
+      return undefined as T & (void extends T ? undefined : never);
     }
 
     try {

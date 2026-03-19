@@ -2,6 +2,12 @@
 
 Exit 0 if identical, exit 1 with a diff if drifted.
 
+This script is executed in the CI pipeline (.github/workflows/ci.yml) as part
+of the "backend-and-web" job under the "Check OpenAPI schema drift" step.
+Any changes to FastAPI route signatures or Pydantic response models will cause
+this check to fail until the snapshot is regenerated with:
+    python scripts/export_openapi.py > openapi.snapshot.json
+
 Usage:
     python scripts/check_openapi_drift.py
 """

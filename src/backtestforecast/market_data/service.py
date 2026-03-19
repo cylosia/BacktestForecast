@@ -73,13 +73,15 @@ class MassiveOptionGateway:
         global _global_cache_entries
         with _global_cache_lock:
             _global_cache_entries = max(0, _global_cache_entries + count)
-        self._tracked_entries = max(0, self._tracked_entries + count)
+        with self._lock:
+            self._tracked_entries = max(0, self._tracked_entries + count)
 
     def _track_remove(self, count: int = 1) -> None:
         global _global_cache_entries
         with _global_cache_lock:
             _global_cache_entries = max(0, _global_cache_entries - count)
-        self._tracked_entries = max(0, self._tracked_entries - count)
+        with self._lock:
+            self._tracked_entries = max(0, self._tracked_entries - count)
 
     def _is_over_budget(self) -> bool:
         return _global_cache_entries > _GLOBAL_CACHE_BUDGET
@@ -299,19 +301,23 @@ class MassiveOptionGateway:
         assignment when multiple expirations share the same strike.
         """
         with self._lock:
-            if not self._chain_snapshot_loaded:
-                chain = self.client.get_option_chain_snapshot(self.symbol)
-                added = 0
-                for snap in chain:
-                    if snap.ticker not in self._snapshot_cache:
-                        self._snapshot_cache[snap.ticker] = snap
-                        added += 1
-                evicted = 0
-                while len(self._snapshot_cache) > _GATEWAY_SNAPSHOT_CACHE_MAX:
-                    self._snapshot_cache.popitem(last=False)
-                    evicted += 1
-                self._chain_snapshot_loaded = True
-                self._track_add(max(0, added - evicted))
+            needs_fetch = not self._chain_snapshot_loaded
+
+        if needs_fetch:
+            chain = self.client.get_option_chain_snapshot(self.symbol)
+            with self._lock:
+                if not self._chain_snapshot_loaded:
+                    added = 0
+                    for snap in chain:
+                        if snap.ticker not in self._snapshot_cache:
+                            self._snapshot_cache[snap.ticker] = snap
+                            added += 1
+                    evicted = 0
+                    while len(self._snapshot_cache) > _GATEWAY_SNAPSHOT_CACHE_MAX:
+                        self._snapshot_cache.popitem(last=False)
+                        evicted += 1
+                    self._chain_snapshot_loaded = True
+                    self._track_add(max(0, added - evicted))
 
         lookup: dict[tuple[float, date], float] = {}
         for contract in contracts:

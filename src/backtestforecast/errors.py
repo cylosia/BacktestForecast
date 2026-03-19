@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -59,7 +60,7 @@ class ValidationError(AppError):
 
 class DataUnavailableError(AppError):
     def __init__(self, message: str) -> None:
-        super().__init__(code="data_unavailable", message=message, status_code=422)
+        super().__init__(code="data_unavailable", message=message, status_code=503)
 
 
 class ExternalServiceError(AppError):
@@ -73,7 +74,7 @@ class NotFoundError(AppError):
 
 
 class RateLimitError(AppError):
-    rate_limit_info: dict[str, str] | None
+    rate_limit_info: Any
 
     def __init__(self, message: str = "Rate limit exceeded. Please retry later.") -> None:
         super().__init__(code="rate_limited", message=message, status_code=429)

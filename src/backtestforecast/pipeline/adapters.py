@@ -129,13 +129,22 @@ class PipelineBacktestExecutor:
 
         with self._bundle_fetch_locks_lock:
             fetch_lock = self._bundle_fetch_locks.setdefault(key, threading.Lock())
-            if len(self._bundle_fetch_locks) > self._MAX_BUNDLE_CACHE_SIZE * 2:
-                keys_to_remove = [
-                    k for k in list(self._bundle_fetch_locks.keys())
-                    if k != key and not self._bundle_fetch_locks[k].locked()
-                ][:len(self._bundle_fetch_locks) - self._MAX_BUNDLE_CACHE_SIZE]
-                for k in keys_to_remove:
-                    self._bundle_fetch_locks.pop(k, None)
+            if len(self._bundle_fetch_locks) > self._MAX_BUNDLE_CACHE_SIZE * 4:
+                target = len(self._bundle_fetch_locks) - self._MAX_BUNDLE_CACHE_SIZE
+                removed = 0
+                for k in list(self._bundle_fetch_locks.keys()):
+                    if removed >= target:
+                        break
+                    if k == key:
+                        continue
+                    lock = self._bundle_fetch_locks.get(k)
+                    if lock is None:
+                        continue
+                    acquired = lock.acquire(blocking=False)
+                    if acquired:
+                        lock.release()
+                        self._bundle_fetch_locks.pop(k, None)
+                        removed += 1
 
         with fetch_lock:
             with self._bundle_cache_lock:

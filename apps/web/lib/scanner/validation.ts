@@ -1,7 +1,5 @@
-import type { ScannerMode } from "@backtestforecast/api-client";
-import { TICKER_RE } from "@/lib/validation-constants";
-
-export type PlanTier = "free" | "pro" | "premium";
+import type { PlanTier, ScannerMode } from "@backtestforecast/api-client";
+import { ACCOUNT_SIZE_MIN, TICKER_RE } from "@/lib/validation-constants";
 
 export interface ScannerFormInput {
   mode: ScannerMode;
@@ -93,10 +91,21 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
       errors.push("End date cannot be in the future.");
     }
   }
+  if (input.startDate) {
+    const startDate = new Date(input.startDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (startDate > today) {
+      errors.push("Start date cannot be in the future.");
+    }
+  }
   if (input.startDate && input.endDate && errors.length === 0) {
     const start = new Date(input.startDate);
     const end = new Date(input.endDate);
     const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDays < 30) {
+      errors.push("Date range must be at least 30 days for scans.");
+    }
     if (diffDays > 365 * 20) {
       errors.push("Date range cannot exceed 20 years.");
     }
@@ -113,7 +122,7 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
     { label: "Target DTE", value: Number(input.targetDte), min: 1, max: 365, integer: true },
     { label: "DTE tolerance", value: Number(input.dteTolerance), min: 0, max: 60, integer: true },
     { label: "Max holding days", value: Number(input.maxHolding), min: 1, max: 120, integer: true },
-    { label: "Account size", value: Number(input.accountSize), min: 100, max: 100_000_000 },
+    { label: "Account size", value: Number(input.accountSize), min: ACCOUNT_SIZE_MIN, max: 100_000_000 },
     { label: "Risk %", value: Number(input.riskPct), min: 0, max: 100, exclusiveMin: true },
     { label: "Commission", value: Number(input.commission), min: 0, max: 100 },
     { label: "Max recommendations", value: Number(input.maxRecs), min: 1, max: limits.maxRecommendations, integer: true },

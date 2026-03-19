@@ -285,8 +285,8 @@ def market_date_today() -> date:
         if today.weekday() < 5 and today not in holidays:
             return today
         today -= timedelta(days=1)
-    logger.error("market_date_today.loop_guard_exceeded", date=str(today))
-    return today
+    else:
+        raise RuntimeError("Could not find a valid market date within 30 days")
 
 
 _check_holiday_list_freshness()

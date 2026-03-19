@@ -71,21 +71,22 @@ class StripeEventRepository:
         Stale claims older than 15 minutes are automatically recovered to
         allow reprocessing of events that may have been lost.
         """
-        self._recover_stale_claim(stripe_event_id)
-
-        event = StripeEvent(
-            stripe_event_id=stripe_event_id,
-            event_type=event_type,
-            livemode=livemode,
-            idempotency_status="processing",
-            user_id=user_id,
-            request_id=request_id,
-            ip_hash=ip_hash,
-            payload_summary=payload_summary or {},
-        )
         nested = self.session.begin_nested()
-        self.session.add(event)
         try:
+            self._recover_stale_claim(stripe_event_id)
+
+            event = StripeEvent(
+                stripe_event_id=stripe_event_id,
+                event_type=event_type,
+                livemode=livemode,
+                idempotency_status="processing",
+                user_id=user_id,
+                request_id=request_id,
+                ip_hash=ip_hash,
+                payload_summary=payload_summary or {},
+            )
+            self.session.add(event)
+            self.session.flush()
             nested.commit()
             return event
         except IntegrityError:

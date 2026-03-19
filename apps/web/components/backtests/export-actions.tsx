@@ -137,7 +137,7 @@ export function ExportActions({
           return;
         }
 
-        if (result.status === "failed") {
+        if (result.status === "failed" || result.status === "cancelled" || result.status === "expired") {
           throw new Error(result.error_message || "Export generation failed on the server.");
         }
       }
@@ -164,7 +164,7 @@ export function ExportActions({
       const exportJob = await createExport(token, {
         run_id: runId,
         format,
-        idempotency_key: `${runId}:${format}:${Date.now()}`,
+        idempotency_key: `${runId}:${format}`,
       }, controller.signal);
 
       if (controller.signal.aborted) return;

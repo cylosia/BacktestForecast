@@ -146,11 +146,11 @@ def _compute_sharpe_sortino(
         return None, None
 
     equities = [point.equity for point in equity_curve]
+    if any(eq <= 0 for eq in equities):
+        return None, None
     daily_rf = risk_free_rate / 252.0
     excess: list[float] = []
     for i in range(1, len(equities)):
-        if equities[i - 1] <= 0:
-            continue
         daily_return = (equities[i] - equities[i - 1]) / equities[i - 1]
         excess.append(daily_return - daily_rf)
 

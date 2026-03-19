@@ -5,6 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function DashboardError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  // TODO: Integrate Sentry error reporting here. Call Sentry.captureException(error)
+  // with additional context (digest, component: "DashboardError"). Gate behind
+  // a NEXT_PUBLIC_SENTRY_DSN env check so local dev still uses console.error.
+  // See also: apps/web/app/global-error.tsx for the root-level error boundary.
   useEffect(() => { if (process.env.NODE_ENV === "development") console.error(error); }, [error]);
 
   const rawMessage = error instanceof Error

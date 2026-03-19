@@ -98,6 +98,10 @@ def classify_regime(
 
     if any(v is None for v in [rsi_14, ema_8, ema_21, sma_50, sma_200]):
         return None
+    if not all(math.isfinite(v) for v in [rsi_14, ema_8, ema_21, sma_50, sma_200]):  # type: ignore[arg-type]
+        return None
+    if vol_20 is not None and not math.isfinite(vol_20):
+        vol_20 = None
 
     # IV rank proxy: where current 20-day realized vol sits in its 252-day range
     vol_values = [v for v in vol_20_values[-252:] if v is not None]
@@ -167,13 +171,16 @@ def classify_regime(
 def _daily_returns(closes: list[float]) -> list[float]:
     """Compute daily returns as raw decimals (0.02 = 2% gain).
 
+    The first element is None (no prior close to compare against).
     Note: forecasts/analog.py uses percentage format (2.0 = 2% gain).
     These conventions are independent and should not be mixed.
     """
-    returns = [0.0]
+    if len(closes) < 2:
+        return [None] * len(closes)  # type: ignore[list-item]
+    returns: list[float | None] = [None]
     for i in range(1, len(closes)):
         if closes[i - 1] > 0:
             returns.append((closes[i] - closes[i - 1]) / closes[i - 1])
         else:
             returns.append(0.0)
-    return returns
+    return returns  # type: ignore[return-value]

@@ -133,12 +133,19 @@ def export_account_data(
     from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
     from backtestforecast.repositories.templates import BacktestTemplateRepository
 
-    runs = BacktestRunRepository(db).list_for_user(user.id, limit=limit, offset=offset)
-    user_templates = BacktestTemplateRepository(db).list_for_user(user.id, limit=limit, offset=offset)
-    scan_jobs = ScannerJobRepository(db).list_for_user(user.id, limit=limit, offset=offset)
-    sweep_jobs = SweepJobRepository(db).list_for_user(user.id, limit=limit, offset=offset)
-    export_jobs = ExportJobRepository(db).list_for_user(user.id, limit=limit, offset=offset)
-    analyses = SymbolAnalysisRepository(db).list_for_user(user.id, limit=limit, offset=offset)
+    backtest_repo = BacktestRunRepository(db)
+    template_repo = BacktestTemplateRepository(db)
+    scanner_repo = ScannerJobRepository(db)
+    sweep_repo = SweepJobRepository(db)
+    export_repo = ExportJobRepository(db)
+    analysis_repo = SymbolAnalysisRepository(db)
+
+    runs = backtest_repo.list_for_user(user.id, limit=limit, offset=offset)
+    user_templates = template_repo.list_for_user(user.id, limit=limit, offset=offset)
+    scan_jobs = scanner_repo.list_for_user(user.id, limit=limit, offset=offset)
+    sweep_jobs = sweep_repo.list_for_user(user.id, limit=limit, offset=offset)
+    export_jobs = export_repo.list_for_user(user.id, limit=limit, offset=offset)
+    analyses = analysis_repo.list_for_user(user.id, limit=limit, offset=offset)
 
     return {
         "user": {
@@ -149,6 +156,14 @@ def export_account_data(
             "created_at": user.created_at.isoformat() if user.created_at else None,
         },
         "pagination": {"limit": limit, "offset": offset},
+        "totals": {
+            "backtests": backtest_repo.count_for_user(user.id),
+            "templates": template_repo.count_for_user(user.id),
+            "scanner_jobs": scanner_repo.count_for_user(user.id),
+            "sweep_jobs": sweep_repo.count_for_user(user.id),
+            "export_jobs": export_repo.count_for_user(user.id),
+            "symbol_analyses": analysis_repo.count_for_user(user.id),
+        },
         "backtests": [
             {
                 "id": str(r.id),

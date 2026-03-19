@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { BacktestTradeResponse } from "@backtestforecast/api-client";
 import {
   formatCurrency,
@@ -19,6 +19,7 @@ const PAGE_SIZE = 100;
 
 export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) {
   const [currentPage, setCurrentPage] = useState(1);
+  useEffect(() => { setCurrentPage(1); }, [trades]);
   const totalPages = Math.max(1, Math.ceil(trades.length / PAGE_SIZE));
   const startIdx = (currentPage - 1) * PAGE_SIZE;
   const endIdx = Math.min(startIdx + PAGE_SIZE, trades.length);

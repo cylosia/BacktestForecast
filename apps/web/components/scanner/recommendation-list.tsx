@@ -1,5 +1,15 @@
 // TODO: Add client-side pagination or virtual scrolling for large
 // recommendation lists.
+//
+// Implementation notes:
+//   - Use @tanstack/react-virtual for virtualised rendering. Wrap the
+//     recommendation cards in a virtualised container with an estimated
+//     row height of ~280px. This avoids mounting 100+ DOM nodes at once.
+//   - Alternatively, add cursor-based pagination (offset/limit) with
+//     "Load more" / infinite scroll using the existing API pagination
+//     params from ScannerRecommendationListResponse.
+//   - Benchmark: lists > 50 items cause noticeable jank on mid-range
+//     devices; virtual scrolling should reduce initial paint to <16ms.
 
 import type { ScannerRecommendationResponse } from "@backtestforecast/api-client";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";

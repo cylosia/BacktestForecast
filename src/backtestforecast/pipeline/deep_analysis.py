@@ -263,12 +263,18 @@ class SymbolDeepAnalysisService:
                 SymbolAnalysis.id != analysis.id,
             )
         ) or 0
-        _MAX_CONCURRENT_ANALYSES = 2
-        if concurrent >= _MAX_CONCURRENT_ANALYSES:
+        from backtestforecast.config import get_settings as _get_settings
+        _settings = _get_settings()
+        _max_concurrent = (
+            _settings.max_concurrent_analyses_premium
+            if policy.tier.value == "premium"
+            else _settings.max_concurrent_analyses_default
+        )
+        if concurrent >= _max_concurrent:
             analysis.status = "failed"
             analysis.error_code = "concurrent_limit"
             analysis.error_message = (
-                f"Too many analyses running concurrently ({concurrent}). "
+                f"Too many analyses running concurrently ({concurrent}, limit: {_max_concurrent}). "
                 "Wait for existing analyses to complete."
             )
             self.session.commit()

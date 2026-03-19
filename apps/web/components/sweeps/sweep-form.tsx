@@ -29,9 +29,7 @@ const STRATEGY_OPTIONS = [
   { value: "short_strangle", label: "Short Strangle" },
 ] as const;
 
-const LEG_COUNT_OPTIONS = [2, 3, 4, 5, 6, 8] as const;
-
-type SweepMode = "grid" | "genetic";
+const LEG_COUNT_OPTIONS = [2, 3, 4, 5, 6, 7, 8] as const;
 
 interface FormState {
   mode: SweepMode;
@@ -130,9 +128,21 @@ export function SweepForm() {
     {
       const diffMs = new Date(form.endDate).getTime() - new Date(form.startDate).getTime();
       const diffDays = diffMs / (1000 * 60 * 60 * 24);
+      if (diffDays < 30) {
+        setStatus("error");
+        setErrorMessage("Date range must be at least 30 days for sweeps.");
+        return;
+      }
       if (diffDays > 365 * 20) {
         setStatus("error");
         setErrorMessage("Date range cannot exceed 20 years.");
+        return;
+      }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (new Date(form.endDate) > today) {
+        setStatus("error");
+        setErrorMessage("End date cannot be in the future.");
         return;
       }
     }
@@ -141,7 +151,7 @@ export function SweepForm() {
     const commission = Number(form.commission);
     if (!Number.isFinite(accountSize) || accountSize <= 0 || accountSize > 100_000_000) {
       setStatus("error");
-      setErrorMessage("Account size must be between 1 and 100,000,000.");
+      setErrorMessage("Account size must be greater than 0 and at most 100,000,000.");
       return;
     }
     if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > 100) {
@@ -163,7 +173,12 @@ export function SweepForm() {
     const dteTolerance = Number(form.dteTolerance);
     if (!Number.isFinite(dteTolerance) || dteTolerance < 0 || dteTolerance > 60) {
       setStatus("error");
-      setErrorMessage("DTE tolerance must be between 0 and 60.");
+      setErrorMessage("DTE tolerance must be a whole number between 0 and 60.");
+      return;
+    }
+    if (!Number.isInteger(dteTolerance)) {
+      setStatus("error");
+      setErrorMessage("DTE tolerance must be a whole number (no decimals).");
       return;
     }
     if (Number.isFinite(dteTolerance) && Number.isFinite(targetDte) && dteTolerance >= targetDte) {
@@ -257,9 +272,10 @@ export function SweepForm() {
       if (form.mode === "grid") {
         const deltaParts = form.deltas.split(",").map((s) => s.trim()).filter(Boolean);
         for (const part of deltaParts) {
-          if (!Number.isFinite(Number(part))) {
+          const num = Number(part);
+          if (!Number.isFinite(num) || !Number.isInteger(num) || num < 1 || num > 99) {
             setStatus("error");
-            setErrorMessage(`Invalid delta grid entry: "${part}". All entries must be valid numbers.`);
+            setErrorMessage(`Invalid delta grid entry: "${part}". Each entry must be an integer between 1 and 99.`);
             submittingRef.current = false;
             return;
           }

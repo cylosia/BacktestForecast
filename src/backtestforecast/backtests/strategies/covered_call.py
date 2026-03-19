@@ -5,6 +5,21 @@ from dataclasses import dataclass
 # FIXME(#99): Include dividends in P&L for stock-based strategies.
 # Covered call total return should add dividends received during the
 # holding period, which can be significant for high-yield underlyings.
+#
+# Missing dividend adjustment understates total return for strategies
+# that hold shares (covered call, protective put, collar). For a stock
+# yielding 3% annually, a 45-day holding period omits ~0.37% of return
+# per trade — this compounds across many trades in a backtest.
+#
+# Recommended approach:
+# 1. Accept a `dividend_schedule` (list of ex-date + amount pairs) in
+#    the OptionDataGateway or a separate DividendGateway.
+# 2. In `_mark_position` / `_close_position`, accumulate dividends for
+#    any ex-dates that fall within [entry_date, exit_date).
+# 3. Add `dividends_received` to `TradeResult.detail_json` and include
+#    it in `net_pnl` calculation.
+# 4. Update `build_summary` to report total dividends as a separate
+#    line item so users can see income vs. capital gain breakdown.
 from backtestforecast.backtests.margin import covered_call_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
@@ -62,7 +77,7 @@ class CoveredCallStrategy(StrategyDefinition):
         entry_value_per_unit = stock_value - call_credit
         max_loss_per_unit = max(entry_value_per_unit, 0.0)
         margin = covered_call_margin(bar.close_price)
-        max_profit_per_unit = max(((short_call.strike_price - bar.close_price) * 100.0) + call_credit, 0.0)
+        max_profit_per_unit = ((short_call.strike_price - bar.close_price) * 100.0) + call_credit
         detail_json = {
             "legs": [
                 {

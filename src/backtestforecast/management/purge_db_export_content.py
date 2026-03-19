@@ -59,8 +59,10 @@ def purge_db_export_content(
             break
 
         batch_purged = 0
+        batch_skipped = 0
         for job in jobs:
             if not job.storage_key:
+                batch_skipped += 1
                 continue
             if not storage.exists(job.storage_key):
                 logger.warning(
@@ -68,6 +70,7 @@ def purge_db_export_content(
                     export_job_id=str(job.id),
                     storage_key=job.storage_key,
                 )
+                batch_skipped += 1
                 continue
 
             if dry_run:
@@ -91,6 +94,10 @@ def purge_db_export_content(
             logger.info("purge.batch_committed", batch_size=len(jobs), purged_so_far=purged)
 
         if dry_run or len(jobs) < batch_size:
+            break
+
+        if not dry_run and batch_purged == 0 and batch_skipped == len(jobs):
+            logger.info("purge.all_skipped_in_batch", batch_size=len(jobs))
             break
 
     return purged

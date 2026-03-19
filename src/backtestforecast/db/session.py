@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import structlog
 from collections.abc import Generator
 from functools import lru_cache
 
@@ -98,6 +99,13 @@ def get_db() -> Generator[Session, None, None]:
     db = create_session()
     try:
         yield db
+        if db.new or db.dirty or db.deleted:
+            structlog.get_logger("db.session").warning(
+                "session.pending_changes_on_close",
+                new=len(db.new),
+                dirty=len(db.dirty),
+                deleted=len(db.deleted),
+            )
     except Exception:
         db.rollback()
         raise

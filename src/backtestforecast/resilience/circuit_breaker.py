@@ -90,7 +90,7 @@ class CircuitBreaker:
         if self._redis is None:
             return None
         try:
-            pipe = self._redis.pipeline(transaction=False)
+            pipe = self._redis.pipeline(transaction=True)
             pipe.incr(self._redis_key)
             pipe.expire(self._redis_key, int(self.recovery_timeout) + 10)
             result = pipe.execute()

@@ -55,6 +55,8 @@ class GAResult:
     top_individuals: list[tuple[Individual, float]] = field(default_factory=list)
 
 
+# fitness_fn must be thread-safe: it is called from multiple threads
+# concurrently via ThreadPoolExecutor in _evaluate_population.
 FitnessFunc = Callable[[Individual], float]
 
 
@@ -188,10 +190,21 @@ class GeneticOptimizer:
                 population.append(ind)
             attempts += 1
         if not population:
-            fallback = random_individual(num_legs)
-            if not is_valid(fallback):
-                logger.warning("genetic.fallback_individual_invalid", num_legs=num_legs)
-            population.append(fallback)
+            for _ in range(50):
+                fallback = random_individual(num_legs)
+                if is_valid(fallback):
+                    population.append(fallback)
+                    break
+            else:
+                logger.warning("genetic.fallback_exhausted", num_legs=num_legs)
+                population.append(random_individual(num_legs))
+        if len(population) < size:
+            logger.warning(
+                "genetic.seed_population_undersized",
+                requested=size,
+                actual=len(population),
+                num_legs=num_legs,
+            )
         return population
 
     @staticmethod
@@ -215,6 +228,13 @@ class GeneticOptimizer:
         if not to_evaluate:
             return results
 
+        # TODO: ThreadPoolExecutor is suboptimal for CPU-bound fitness evaluation
+        # due to the GIL. ProcessPoolExecutor would be preferable but requires
+        # fitness_fn to be pickle-serializable. Since fitness_fn is typically a
+        # closure constructed in the sweep service (capturing the DB session,
+        # backtest engine, and config), it cannot be pickled without major
+        # refactoring to extract it into a top-level function with explicit
+        # serializable arguments. Revisit if sweep latency becomes a bottleneck.
         workers = min(max_workers, len(to_evaluate))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
@@ -227,7 +247,7 @@ class GeneticOptimizer:
                     fit_val = future.result()
                 except Exception:
                     logger.debug("ga.fitness_error", exc_info=True)
-                    fit_val = 0.0
+                    fit_val = float("-inf")
                 results.append((ind, fit_val))
 
         return results

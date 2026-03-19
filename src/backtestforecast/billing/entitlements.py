@@ -271,9 +271,15 @@ def ensure_sweep_access(
 ) -> None:
     """Sweeps require at least Pro tier.
 
-    NOTE: Currently gates on ``forecasting_access`` from the feature policy.
-    If sweeps are ever offered as a standalone feature or add-on, this should
-    check a dedicated ``sweep_access`` flag instead.
+    NOTE: Currently gates on ``forecasting_access`` from the feature policy
+    as a proxy for sweep entitlement.  This works today because every tier
+    that grants sweep access also grants forecasting access, but the coupling
+    is fragile.
+
+    TODO: Add a dedicated ``sweep_access: bool`` field to ``FeaturePolicy``
+    and check it here instead of ``forecasting_access``.  This will allow
+    sweeps to be offered as a standalone feature or add-on without affecting
+    forecasting entitlements.
     """
     feature_policy = resolve_feature_policy(plan_tier, subscription_status, subscription_current_period_end)
     if not feature_policy.forecasting_access:

@@ -182,7 +182,18 @@ async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGen
                     timeout=SSE_HEARTBEAT_SECONDS,
                 )
                 if message and message["type"] == "message":
-                    yield message["data"]
+                    raw = message["data"]
+                    if isinstance(raw, str) and len(raw) > 65_536:
+                        logger.warning("sse.message_too_large", channel=channel, size=len(raw))
+                        continue
+                    if isinstance(raw, str):
+                        import json as _json
+                        try:
+                            _json.loads(raw)
+                        except (ValueError, TypeError):
+                            logger.warning("sse.invalid_json", channel=channel)
+                            continue
+                    yield raw
                 else:
                     yield None
         except (RedisError, OSError):

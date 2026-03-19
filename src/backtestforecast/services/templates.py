@@ -11,6 +11,7 @@ from backtestforecast.billing.entitlements import PlanTier, normalize_plan_tier
 from backtestforecast.errors import ConfigurationError, ConflictError, NotFoundError, QuotaExceededError, ValidationError
 from backtestforecast.models import BacktestTemplate, User
 from backtestforecast.repositories.templates import BacktestTemplateRepository
+from backtestforecast.services.audit import AuditService
 from backtestforecast.schemas.templates import (
     TEMPLATE_SCHEMA_VERSION,
     UNSET,
@@ -45,6 +46,7 @@ class BacktestTemplateService:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.repository = BacktestTemplateRepository(session)
+        self.audit = AuditService(session)
 
     def create(self, user: User, request: CreateTemplateRequest) -> TemplateResponse:
         from sqlalchemy.exc import IntegrityError
@@ -70,6 +72,14 @@ class BacktestTemplateService:
                 raise ValidationError(f"A template named '{request.name}' already exists.")
             raise
         self.session.refresh(template)
+        self.audit.record(
+            event_type="template.created",
+            subject_type="backtest_template",
+            subject_id=template.id,
+            user_id=user.id,
+            metadata={"name": template.name, "strategy_type": template.strategy_type},
+        )
+        self.session.commit()
         return self._to_response(template)
 
     def list_templates(self, user: User, *, limit: int = 100, offset: int = 0) -> TemplateListResponse:
@@ -112,7 +122,7 @@ class BacktestTemplateService:
                 expected = expected.replace(tzinfo=timezone.utc)
             if actual is not None and actual.tzinfo is None:
                 actual = actual.replace(tzinfo=timezone.utc)
-            if actual is not None and abs((actual - expected).total_seconds()) > 1.0:
+            if actual is not None and abs((actual - expected).total_seconds()) > 0.001:
                 raise ConflictError(
                     "Template was modified by another request. Please refresh and try again."
                 )
@@ -143,12 +153,30 @@ class BacktestTemplateService:
                 raise ValidationError(f"A template named '{request.name or template.name}' already exists.")
             raise
         self.session.refresh(template)
+        if changed:
+            self.audit.record(
+                event_type="template.updated",
+                subject_type="backtest_template",
+                subject_id=template.id,
+                user_id=user.id,
+                metadata={"name": template.name, "strategy_type": template.strategy_type},
+            )
+            self.session.commit()
         return self._to_response(template)
 
     def delete(self, user: User, template_id: UUID) -> None:
         template = self.repository.get_for_user(template_id, user.id, for_update=True)
         if template is None:
             raise NotFoundError("Template not found.")
+        template_name = template.name
+        template_strategy = template.strategy_type
+        self.audit.record(
+            event_type="template.deleted",
+            subject_type="backtest_template",
+            subject_id=template_id,
+            user_id=user.id,
+            metadata={"name": template_name, "strategy_type": template_strategy},
+        )
         self.repository.delete(template)
         self.session.commit()
 
@@ -159,13 +187,18 @@ class BacktestTemplateService:
         if locked_user is None:
             raise NotFoundError("User not found.")
 
-        # PostgreSQL-specific: advisory locks are not supported by SQLite.
-        # Tests using SQLite will skip this lock and rely on serialised test execution.
         from sqlalchemy import text
-        self.session.execute(
-            text("SELECT pg_advisory_xact_lock(('x' || left(md5(:key), 16))::bit(64)::bigint)"),
-            {"key": f"template_limit:{user.id}"},
-        )
+        from sqlalchemy.exc import OperationalError, ProgrammingError
+        try:
+            self.session.execute(
+                text("SELECT pg_advisory_xact_lock(('x' || left(md5(:key), 16))::bit(64)::bigint)"),
+                {"key": f"template_limit:{user.id}"},
+            )
+        except (OperationalError, ProgrammingError):
+            logger.debug(
+                "templates.advisory_lock_skipped",
+                reason="pg_advisory_xact_lock not supported (likely SQLite)",
+            )
 
         limit = _resolve_template_limit(
             locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,

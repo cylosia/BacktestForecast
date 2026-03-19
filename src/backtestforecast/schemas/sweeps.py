@@ -70,8 +70,8 @@ class GeneticSweepConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "GeneticSweepConfig":
-        if self.num_legs not in (2, 3, 4, 5, 6, 8):
-            raise ValueError("num_legs must be one of 2, 3, 4, 5, 6, or 8")
+        if self.num_legs not in (2, 3, 4, 5, 6, 7, 8):
+            raise ValueError("num_legs must be one of 2, 3, 4, 5, 6, 7, or 8")
         if self.elitism_count >= self.population_size:
             raise ValueError("elitism_count must be less than population_size")
         return self

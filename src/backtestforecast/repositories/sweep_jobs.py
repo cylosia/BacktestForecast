@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from uuid import UUID
 
@@ -9,6 +11,11 @@ from sqlalchemy.orm import Session, noload, selectinload
 from backtestforecast.models import SweepJob, SweepResult
 
 _MAX_PAGE_SIZE = 200
+
+
+def _request_hash(snapshot: dict) -> str:
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 class SweepJobRepository:
@@ -121,8 +128,9 @@ class SweepJobRepository:
             .order_by(desc(SweepJob.created_at))
             .limit(5)
         )
+        needle_hash = _request_hash(request_snapshot)
         for job in self.session.scalars(stmt):
-            if job.request_snapshot_json == request_snapshot:
+            if _request_hash(job.request_snapshot_json) == needle_hash:
                 return job
         return None
 
@@ -130,8 +138,9 @@ class SweepJobRepository:
         """Remove all results for a sweep job (for re-run cleanup).
 
         When *user_id* is provided, the method first verifies that the job
-        belongs to the given user.  Worker code may omit *user_id* because
-        the task already validated ownership at dispatch time.
+        belongs to the given user and raises ``NotFoundError`` if not.
+        Worker code may omit *user_id* because the task already validated
+        ownership at dispatch time.
         """
         from sqlalchemy import delete as sa_delete, exists as sa_exists
 
@@ -140,7 +149,8 @@ class SweepJobRepository:
                 select(sa_exists().where(SweepJob.id == job_id, SweepJob.user_id == user_id))
             )
             if not owns:
-                return
+                from backtestforecast.errors import NotFoundError
+                raise NotFoundError("Sweep job not found.")
 
         self.session.execute(
             sa_delete(SweepResult)

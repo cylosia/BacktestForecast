@@ -127,8 +127,7 @@ class DailyPicksService:
                 for rec in recommendations
             ],
         }
-        DailyPicksResponse.model_validate(result)
-        return result
+        return DailyPicksResponse.model_validate(result)
 
     @staticmethod
     def _run_to_dict(r: NightlyPipelineRun) -> dict[str, Any]:

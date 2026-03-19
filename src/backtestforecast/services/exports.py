@@ -191,7 +191,7 @@ class ExportService:
         run = self.backtests.get_lightweight_for_user(export_job.backtest_run_id, export_job.user_id)
         if run is not None:
             trade_count = run.trade_count if hasattr(run, "trade_count") else 0
-            estimated_size = trade_count * 500
+            estimated_size = trade_count * 2000
             if estimated_size > _MAX_EXPORT_BYTES:
                 self.session.execute(
                     sa_update(ExportJob)
@@ -313,6 +313,19 @@ class ExportService:
             EXPORT_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - _exec_start)
 
         self.session.refresh(export_job)
+        if export_job.status == "succeeded":
+            self.audit.record(
+                event_type="export.created",
+                subject_type="export_job",
+                subject_id=export_job.id,
+                user_id=export_job.user_id,
+                metadata={
+                    "run_id": str(export_job.backtest_run_id),
+                    "format": export_job.export_format,
+                    "size_bytes": export_job.size_bytes,
+                },
+            )
+            self.session.commit()
         return export_job
 
     def cleanup_expired_exports(self, *, batch_size: int = 100, max_batches: int = 100) -> int:
@@ -354,19 +367,21 @@ class ExportService:
 
             try:
                 self.session.commit()
-                cleaned += len(jobs)
             except Exception:
                 self.session.rollback()
                 logger.warning("cleanup.batch_commit_failed", batch=batch_count, count=len(jobs), exc_info=True)
                 continue
 
+            storage_failures = 0
             for key in storage_keys_to_delete:
                 try:
                     self._storage.delete(key)
                 except Exception:
+                    storage_failures += 1
                     logger.warning("cleanup.storage_delete_failed", storage_key=key, exc_info=True)
 
-            logger.info("cleanup.batch_completed", batch=batch_count, cleaned=len(jobs), storage_deleted=len(storage_keys_to_delete))
+            cleaned += len(jobs) - storage_failures
+            logger.info("cleanup.batch_completed", batch=batch_count, cleaned=len(jobs) - storage_failures, storage_deleted=len(storage_keys_to_delete) - storage_failures)
 
             if len(jobs) < batch_size:
                 break
@@ -389,8 +404,6 @@ class ExportService:
                 "Cannot delete a job that is currently queued or running. Cancel it first."
             )
         storage_key = export_job.storage_key
-        self.session.delete(export_job)
-        self.session.commit()
         if storage_key and not isinstance(self._storage, DatabaseStorage):
             try:
                 self._storage.delete(storage_key)
@@ -401,6 +414,9 @@ class ExportService:
                     storage_key=storage_key,
                     exc_info=True,
                 )
+                raise
+        self.session.delete(export_job)
+        self.session.commit()
 
     def create_export(
         self,
@@ -415,6 +431,10 @@ class ExportService:
         WARNING: Do not call from production code paths. Use
         ``enqueue_export`` followed by the Celery task instead.
         """
+        settings = get_settings()
+        assert settings.app_env not in ("production", "staging"), (
+            "create_export is for tests only; use enqueue_export + Celery in production"
+        )
         enqueued = self.enqueue_export(user, payload, request_id=request_id, ip_address=ip_address)
         export_job = self.execute_export_by_id(enqueued.id)
         if export_job.status == "succeeded":

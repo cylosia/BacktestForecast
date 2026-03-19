@@ -1,3 +1,11 @@
+# TODO: Implement cross-strategy caching for scan workloads. During scans,
+# the same symbol's market data (daily bars, option contracts, quotes) is
+# re-fetched for each strategy combination. A shared per-symbol cache keyed
+# by (symbol, date_range, dte_params) would deduplicate these calls, cutting
+# Massive API usage roughly proportional to the number of strategy types per
+# symbol. The cache should be scoped to a single scan execution lifetime to
+# avoid stale data across runs.
+
 from __future__ import annotations
 
 import threading
@@ -106,7 +114,16 @@ class OptionDataPrefetcher:
                             option_gateway.get_quote(contract.ticker, trade_date)
                         result.quotes_fetched += 1
                 except Exception as exc:
-                    msg = f"{symbol} {trade_date} {contract_type}: {exc}"
+                    import re
+                    sanitized = re.sub(
+                        r"(api[_-]?key|token|password|secret|auth)[=:\s]\S+",
+                        r"\1=<REDACTED>",
+                        str(exc),
+                        flags=re.IGNORECASE,
+                    )
+                    if len(sanitized) > 200:
+                        sanitized = sanitized[:200] + "..."
+                    msg = f"{symbol} {trade_date} {contract_type}: {sanitized}"
                     result.errors.append(msg)
                     logger.debug(
                         "prefetch.date_failed",

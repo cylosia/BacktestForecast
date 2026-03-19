@@ -324,7 +324,7 @@ def seed_export_job(session, user: User, run: BacktestRun) -> ExportJob:
         file_name=f"{run.symbol.lower()}-{run.strategy_type}-seed.csv",
         mime_type="text/csv; charset=utf-8",
         size_bytes=128,
-        sha256_hex="seeded",
+        sha256_hex="0" * 64,
         content_bytes=b"section,field,value\nrun,symbol,AAPL\n",
         created_at=datetime.now(UTC) - timedelta(hours=2),
         completed_at=datetime.now(UTC) - timedelta(hours=2) + timedelta(seconds=3),

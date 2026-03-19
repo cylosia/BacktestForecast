@@ -97,7 +97,8 @@ class TestBullPutCreditSpreadPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (1.00 - 2.50) * 100
         exit_vpu = 0.0
@@ -107,6 +108,30 @@ class TestBullPutCreditSpreadPnl:
         assert abs(t.gross_pnl - expected_gross) < 0.01
         assert abs(t.total_commissions - expected_comm) < 0.01
         assert abs(t.net_pnl - expected_net) < 0.01
+
+    def test_losing_trade(self):
+        """Underlying drops to 88 — both puts are deep ITM, max loss on spread."""
+        bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 94), _bar(_EXP, 88)]
+        contracts = {
+            (_ENTRY, "put"): [
+                OptionContractRecord("P95", "put", _EXP, 95, 100),
+                OptionContractRecord("P100", "put", _EXP, 100, 100),
+            ],
+        }
+        quotes = {
+            ("P95", _ENTRY): _quote(_ENTRY, 1.00), ("P100", _ENTRY): _quote(_ENTRY, 2.50),
+            ("P95", _MID): _quote(_MID, 3.00), ("P100", _MID): _quote(_MID, 6.00),
+            ("P95", _EXP): _quote(_EXP, 7.00), ("P100", _EXP): _quote(_EXP, 12.00),
+        }
+        result = OptionsBacktestEngine().run(
+            _cfg("bull_put_credit_spread"), bars, set(),
+            SimpleGateway(contracts=contracts, quotes=quotes),
+        )
+        assert result.summary.trade_count == 1
+        t = result.trades[0]
+        assert t.net_pnl < 0, f"Expected losing trade, got net_pnl={t.net_pnl}"
+        max_loss_per_unit = (5 - 1.50) * 100 + _COMM * 2 * 2
+        assert t.net_pnl >= -(max_loss_per_unit * t.quantity) - 1, "Loss exceeds theoretical max"
 
 
 class TestBearCallCreditSpreadPnl:
@@ -139,7 +164,8 @@ class TestBearCallCreditSpreadPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (1.00 - 3.00) * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -147,6 +173,30 @@ class TestBearCallCreditSpreadPnl:
         assert abs(t.gross_pnl - expected_gross) < 0.01
         assert abs(t.total_commissions - expected_comm) < 0.01
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
+
+    def test_losing_trade(self):
+        """Underlying rises to 112 — both calls deep ITM, max loss on spread."""
+        bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 108), _bar(_EXP, 112)]
+        contracts = {
+            (_ENTRY, "call"): [
+                OptionContractRecord("C100", "call", _EXP, 100, 100),
+                OptionContractRecord("C105", "call", _EXP, 105, 100),
+            ],
+        }
+        quotes = {
+            ("C100", _ENTRY): _quote(_ENTRY, 3.00), ("C105", _ENTRY): _quote(_ENTRY, 1.00),
+            ("C100", _MID): _quote(_MID, 8.50), ("C105", _MID): _quote(_MID, 5.00),
+            ("C100", _EXP): _quote(_EXP, 12.00), ("C105", _EXP): _quote(_EXP, 7.00),
+        }
+        result = OptionsBacktestEngine().run(
+            _cfg("bear_call_credit_spread"), bars, set(),
+            SimpleGateway(contracts=contracts, quotes=quotes),
+        )
+        assert result.summary.trade_count == 1
+        t = result.trades[0]
+        assert t.net_pnl < 0, f"Expected losing trade, got net_pnl={t.net_pnl}"
+        max_loss_per_unit = (5 - 2.00) * 100 + _COMM * 2 * 2
+        assert t.net_pnl >= -(max_loss_per_unit * t.quantity) - 1, "Loss exceeds theoretical max"
 
 
 # =====================================================================
@@ -184,7 +234,8 @@ class TestBullCallDebitSpreadPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (3.00 - 1.00) * 100
         exit_vpu = (10.0 - 5.0) * 100
@@ -225,7 +276,8 @@ class TestBearPutDebitSpreadPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (4.00 - 1.50) * 100
         exit_vpu = (15.0 - 10.0) * 100
@@ -279,7 +331,8 @@ class TestIronCondorPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (0.30 + 0.30 - 1.00 - 1.00) * 100  # long_put + long_call - short_put - short_call
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -287,6 +340,38 @@ class TestIronCondorPnl:
         assert abs(t.gross_pnl - expected_gross) < 0.01
         assert abs(t.total_commissions - expected_comm) < 0.01
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
+
+    def test_losing_trade(self):
+        """Underlying breaks through the call wing to 112 — short call spread loses."""
+        bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 108), _bar(_EXP, 112)]
+        contracts = {
+            (_ENTRY, "put"): [
+                OptionContractRecord("P90", "put", _EXP, 90, 100),
+                OptionContractRecord("P95", "put", _EXP, 95, 100),
+            ],
+            (_ENTRY, "call"): [
+                OptionContractRecord("C105", "call", _EXP, 105, 100),
+                OptionContractRecord("C110", "call", _EXP, 110, 100),
+            ],
+        }
+        quotes = {
+            ("P90", _ENTRY): _quote(_ENTRY, 0.30), ("P95", _ENTRY): _quote(_ENTRY, 1.00),
+            ("C105", _ENTRY): _quote(_ENTRY, 1.00), ("C110", _ENTRY): _quote(_ENTRY, 0.30),
+            ("P90", _MID): _quote(_MID, 0.00), ("P95", _MID): _quote(_MID, 0.00),
+            ("C105", _MID): _quote(_MID, 4.00), ("C110", _MID): _quote(_MID, 1.50),
+            ("P90", _EXP): _quote(_EXP, 0.0), ("P95", _EXP): _quote(_EXP, 0.0),
+            ("C105", _EXP): _quote(_EXP, 7.0), ("C110", _EXP): _quote(_EXP, 2.0),
+        }
+        result = OptionsBacktestEngine().run(
+            _cfg("iron_condor"), bars, set(),
+            SimpleGateway(contracts=contracts, quotes=quotes),
+        )
+        assert result.summary.trade_count == 1
+        t = result.trades[0]
+        assert t.net_pnl < 0, f"Expected losing trade, got net_pnl={t.net_pnl}"
+        wing_width = 5
+        max_loss_per_unit = (wing_width - 1.40) * 100 + _COMM * 4 * 2
+        assert t.net_pnl >= -(max_loss_per_unit * t.quantity) - 1, "Loss exceeds theoretical max"
 
 
 class TestButterflyPnl:
@@ -327,7 +412,8 @@ class TestButterflyPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (1 * 6.00 + 1 * 1.50 - 2 * 3.50) * 100  # 50
         exit_vpu = (1 * 5.0 + 1 * 0.0 - 2 * 0.0) * 100  # 500
@@ -376,7 +462,8 @@ class TestIronButterflyPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (0.50 + 0.50 - 3.00 - 3.00) * 100  # -500
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -418,7 +505,8 @@ class TestCoveredCallPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 5_000, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (-1 * 2.00 * 100) + (1 * 100 * 100)  # 9800
         exit_vpu = (-1 * 0.0 * 100) + (1 * 100 * 105)  # 10500
@@ -427,6 +515,30 @@ class TestCoveredCallPnl:
         assert abs(t.gross_pnl - expected_gross) < 0.01
         assert abs(t.total_commissions - expected_comm) < 0.01
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
+
+    def test_losing_trade(self):
+        """Stock drops from 100 to 85 — long stock loss overwhelms call premium."""
+        bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 92), _bar(_EXP, 85)]
+        contracts = {
+            (_ENTRY, "call"): [OptionContractRecord("C105", "call", _EXP, 105, 100)],
+        }
+        quotes = {
+            ("C105", _ENTRY): _quote(_ENTRY, 2.00),
+            ("C105", _MID): _quote(_MID, 0.50),
+            ("C105", _EXP): _quote(_EXP, 0.0),
+        }
+        result = OptionsBacktestEngine().run(
+            _cfg("covered_call"), bars, set(),
+            SimpleGateway(contracts=contracts, quotes=quotes),
+        )
+        assert result.summary.trade_count == 1
+        t = result.trades[0]
+        assert t.net_pnl < 0, f"Expected losing trade, got net_pnl={t.net_pnl}"
+        expected_stock_loss_per_unit = (85 - 100) * 100
+        expected_call_gain_per_unit = 2.00 * 100
+        expected_gross_per_unit = expected_stock_loss_per_unit + expected_call_gain_per_unit
+        assert expected_gross_per_unit < 0, "Sanity: gross should be negative"
+        assert t.net_pnl < expected_gross_per_unit * t.quantity, "Net loss includes commissions"
 
 
 class TestCashSecuredPutPnl:
@@ -456,7 +568,8 @@ class TestCashSecuredPutPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = -1 * 3.00 * 100  # -300
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -464,6 +577,27 @@ class TestCashSecuredPutPnl:
         assert abs(t.gross_pnl - expected_gross) < 0.01
         assert abs(t.total_commissions - expected_comm) < 0.01
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
+
+    def test_losing_trade(self):
+        """Stock drops to 85 — short put goes deep ITM, large loss."""
+        bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 92), _bar(_EXP, 85)]
+        contracts = {
+            (_ENTRY, "put"): [OptionContractRecord("P100", "put", _EXP, 100, 100)],
+        }
+        quotes = {
+            ("P100", _ENTRY): _quote(_ENTRY, 3.00),
+            ("P100", _MID): _quote(_MID, 9.00),
+            ("P100", _EXP): _quote(_EXP, 15.00),
+        }
+        result = OptionsBacktestEngine().run(
+            _cfg("cash_secured_put"), bars, set(),
+            SimpleGateway(contracts=contracts, quotes=quotes),
+        )
+        assert result.summary.trade_count == 1
+        t = result.trades[0]
+        assert t.net_pnl < 0, f"Expected losing trade, got net_pnl={t.net_pnl}"
+        loss_per_unit = (15.00 - 3.00) * 100
+        assert t.net_pnl >= -(loss_per_unit * t.quantity + _COMM * t.quantity * 2) - 1
 
 
 class TestCollarPnl:
@@ -495,7 +629,8 @@ class TestCollarPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (-1 * 2.00 * 100) + (1 * 1.50 * 100) + (1 * 100 * 100)  # 9950
         exit_vpu = 0.0 + 0.0 + (1 * 100 * 100)  # 10000
@@ -535,7 +670,8 @@ class TestCoveredStranglePnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (-1 * 2.00 * 100) + (-1 * 1.50 * 100) + (1 * 100 * 100)  # 9650
         exit_vpu = 0.0 + 0.0 + (1 * 100 * 100)  # 10000
@@ -578,7 +714,8 @@ class TestNakedCallPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = -1 * 2.00 * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -615,7 +752,8 @@ class TestNakedPutPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = -1 * 2.00 * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -658,7 +796,8 @@ class TestShortStraddlePnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (-1 * 3.00 + -1 * 3.00) * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -696,7 +835,8 @@ class TestShortStranglePnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (-1 * 2.00 + -1 * 2.00) * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -734,7 +874,8 @@ class TestLongStraddlePnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (3.00 + 3.00) * 100  # 600
         exit_vpu = (10.0 + 0.0) * 100  # 1000
@@ -773,7 +914,8 @@ class TestLongStranglePnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (1.50 + 1.50) * 100
         exit_vpu = (0.0 + 10.0) * 100
@@ -823,7 +965,8 @@ class TestCalendarSpreadPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (5.00 - 2.00) * 100  # 300
         exit_vpu = (3.50 - 0.0) * 100  # 350
@@ -832,6 +975,34 @@ class TestCalendarSpreadPnl:
         assert abs(t.gross_pnl - expected_gross) < 0.01
         assert abs(t.total_commissions - expected_comm) < 0.01
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
+
+    def test_losing_trade(self):
+        """Underlying moves sharply to 115 — near and far legs both deep ITM,
+        time-value differential collapses, net debit position loses."""
+        bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 110), _bar(_EXP, 115)]
+        contracts = {
+            (_ENTRY, "call"): [
+                OptionContractRecord("C100_NEAR", "call", _EXP, 100, 100),
+                OptionContractRecord("C100_FAR", "call", _FAR_EXP, 100, 100),
+            ],
+        }
+        quotes = {
+            ("C100_FAR", _ENTRY): _quote(_ENTRY, 5.00),
+            ("C100_NEAR", _ENTRY): _quote(_ENTRY, 2.00),
+            ("C100_FAR", _MID): _quote(_MID, 11.00),
+            ("C100_NEAR", _MID): _quote(_MID, 10.50),
+            ("C100_FAR", _EXP): _quote(_EXP, 15.50),
+            ("C100_NEAR", _EXP): _quote(_EXP, 15.00),
+        }
+        result = OptionsBacktestEngine().run(
+            _cfg("calendar_spread", target_dte=3), bars, set(),
+            SimpleGateway(contracts=contracts, quotes=quotes),
+        )
+        assert result.summary.trade_count == 1
+        t = result.trades[0]
+        assert t.net_pnl < 0, f"Expected losing trade, got net_pnl={t.net_pnl}"
+        entry_debit = (5.00 - 2.00) * 100
+        assert t.net_pnl >= -(entry_debit * t.quantity + _COMM * 2 * t.quantity * 2) - 1
 
 
 class TestPoorMansCoveredCallPnl:
@@ -870,7 +1041,8 @@ class TestPoorMansCoveredCallPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (12.00 - 1.50) * 100  # 1050
         exit_vpu = (13.00 - 0.0) * 100  # 1300
@@ -916,7 +1088,8 @@ class TestRatioCallBackspreadPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (-1 * 1 * 3.50 + 1 * 2 * 2.00) * 100  # 50
         exit_vpu = (-1 * 1 * 15.0 + 1 * 2 * 10.0) * 100  # 500
@@ -957,7 +1130,8 @@ class TestRatioPutBackspreadPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (-1 * 1 * 3.50 + 1 * 2 * 2.00) * 100  # 50
         exit_vpu = (-1 * 1 * 20.0 + 1 * 2 * 15.0) * 100  # 1000
@@ -1008,7 +1182,8 @@ class TestJadeLizardPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (-1 * 2.00 + -1 * 2.50 + 1 * 1.00) * 100  # -350
         expected_gross = (0.0 - entry_vpu) * t.quantity
@@ -1045,7 +1220,8 @@ class TestSyntheticPutPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (1 * 3.00 * 100) + (-1 * 100 * 100)  # -9700
         exit_vpu = (1 * 0.0 * 100) + (-1 * 100 * 90)  # -9000
@@ -1085,7 +1261,8 @@ class TestReverseConversionPnl:
         )
         assert result.summary.trade_count == 1
         t = result.trades[0]
-        assert t.quantity >= 1
+        risk_budget = 100_000 * 50 / 100
+        assert 1 <= t.quantity <= risk_budget / 100, f"Unreasonable quantity {t.quantity}"
 
         entry_vpu = (1 * 2.50 * 100) + (-1 * 3.00 * 100) + (-1 * 100 * 100)  # -10050
         exit_vpu = (1 * 0.0 * 100) + (-1 * 0.0 * 100) + (-1 * 100 * 100)  # -10000

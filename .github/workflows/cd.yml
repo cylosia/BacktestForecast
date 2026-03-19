@@ -20,7 +20,7 @@ jobs:
           running-workflow-name: cd
           check-regexp: "backend-and-web|postgres-integration|migration-check|container-smoke|trivy-scan|secret-scanning|dependency-audit|codeql-sast|e2e-tests"
           wait-interval: 15
-          allowed-conclusions: success,skipped
+          allowed-conclusions: success
 
   build-api:
     needs: ci-gate
@@ -165,7 +165,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Deploying images..."
-          eval "${DEPLOY_COMMAND}"
+          ${DEPLOY_COMMAND}
 
       - name: Staging smoke test
         env:

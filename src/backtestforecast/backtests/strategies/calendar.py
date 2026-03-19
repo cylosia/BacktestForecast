@@ -31,6 +31,18 @@ class CalendarSpreadStrategy(StrategyDefinition):
     # TODO: Add support for put calendar spreads. Currently only call calendars
     # are supported. A `contract_type` parameter would enable put calendars for
     # bearish/neutral market views.
+    #
+    # Implementation notes:
+    #   1. Add a `contract_type: Literal["call", "put"]` field (default "call")
+    #      to preserve backward compatibility.
+    #   2. In build_position(), branch on contract_type to call
+    #      option_gateway.list_contracts with "put" and use put margin rules.
+    #   3. Put calendars use the same ATM strike selection but require
+    #      put-specific margin (naked_put_margin) for the short leg.
+    #   4. Update detail_json "contract_type" fields and the assumptions text
+    #      to reflect "put calendar" when applicable.
+    #   5. Add unit tests covering put calendar entry, margin calculation,
+    #      and edge cases (no common strikes, missing quotes).
 
     def build_position(
         self,
@@ -74,6 +86,10 @@ class CalendarSpreadStrategy(StrategyDefinition):
             max_loss: float | None = max(entry_value_per_unit, _MIN_DEBIT_FLOOR)
         else:
             capital = reduced_margin
+            # Approximation: credit calendars can theoretically lose more than
+            # reduced_margin if the underlying moves sharply, but exact max
+            # loss requires modeling both expirations' decay. Using
+            # reduced_margin as a practical upper-bound estimate.
             max_loss = reduced_margin
 
         detail_json = {

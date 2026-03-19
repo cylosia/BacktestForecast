@@ -36,6 +36,22 @@ class BacktestConfig:
     entry_rules: Sequence[EntryRule]
     # FIXME(#97): Use a time-varying risk-free rate based on the backtest
     # date range (e.g., average 3-month T-bill rate over the period).
+    #
+    # A static 4.5% rate is inaccurate for backtests spanning periods with
+    # very different rate environments (e.g., 2009-2021 near-zero rates vs.
+    # 2022-2024 elevated rates). This distorts Sharpe ratio, Sortino ratio,
+    # and any other risk-adjusted metric that subtracts the risk-free rate.
+    #
+    # Recommended approach:
+    # 1. Add a `RiskFreeRateProvider` protocol with a method
+    #    `get_rate(trade_date: date) -> float` that looks up the 3-month
+    #    T-bill rate (or Fed Funds rate) for a given date.
+    # 2. Implement a concrete provider backed by a static CSV or an API
+    #    (e.g., FRED DGS3MO series cached in Redis with daily refresh).
+    # 3. In `build_summary`, compute the average risk-free rate across
+    #    the equity curve dates rather than using a single constant.
+    # 4. For per-trade Sharpe contribution, use the rate on the entry date.
+    # 5. Keep the static default as a fallback when no provider is configured.
     risk_free_rate: float = 0.045
     slippage_pct: float = 0.0
     strategy_overrides: StrategyOverrides | None = None

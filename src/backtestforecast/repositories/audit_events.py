@@ -30,8 +30,10 @@ class AuditEventRepository:
         try:
             nested.commit()
             return event, True
-        except IntegrityError:
+        except IntegrityError as exc:
             nested.rollback()
+            if hasattr(exc, 'orig') and 'unique' not in str(exc.orig).lower() and 'duplicate' not in str(exc.orig).lower():
+                raise
             AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
             return event, False
 
@@ -47,22 +49,34 @@ class AuditEventRepository:
             suffix = f":{uuid4()}"
             max_base = 255 - len(suffix)
             base = str(event.subject_id)[:max_base]
-            event.subject_id = f"{base}{suffix}"
+            deduped_subject_id = f"{base}{suffix}"
+        else:
+            deduped_subject_id = None
+        insert_event = AuditEvent(
+            event_type=event.event_type,
+            subject_type=event.subject_type,
+            subject_id=deduped_subject_id,
+            user_id=event.user_id,
+            request_id=event.request_id,
+            metadata_json=event.metadata_json,
+        )
         nested = self.session.begin_nested()
-        self.session.add(event)
+        self.session.add(insert_event)
         try:
             nested.commit()
-            return event, True
-        except IntegrityError:
+            return insert_event, True
+        except IntegrityError as exc:
             nested.rollback()
+            if hasattr(exc, 'orig') and 'unique' not in str(exc.orig).lower() and 'duplicate' not in str(exc.orig).lower():
+                raise
             AUDIT_DEDUPE_CONFLICTS_TOTAL.inc()
             logger.warning(
                 "audit.add_always_conflict",
-                event_type=event.event_type,
-                subject_type=event.subject_type,
-                subject_id=event.subject_id,
+                event_type=insert_event.event_type,
+                subject_type=insert_event.subject_type,
+                subject_id=insert_event.subject_id,
             )
-            return event, False
+            return insert_event, False
 
     def list_recent(self, *, user_id: UUID | None = None, limit: int = 50) -> list[AuditEvent]:
         """Return the most recent audit events, newest first.
@@ -70,9 +84,10 @@ class AuditEventRepository:
         When *user_id* is provided the results are scoped to that user.
         """
         limit = min(limit, _MAX_PAGE_SIZE)
-        stmt = select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(limit)
+        stmt = select(AuditEvent)
         if user_id is not None:
             stmt = stmt.where(AuditEvent.user_id == user_id)
+        stmt = stmt.order_by(AuditEvent.created_at.desc()).limit(limit)
         return list(self.session.scalars(stmt))
 
     def list_for_user(self, user_id: UUID, *, limit: int = 50) -> list[AuditEvent]:

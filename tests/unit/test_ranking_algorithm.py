@@ -134,22 +134,41 @@ class TestAggregateHistoricalPerformance:
         assert abs(float(result.weighted_total_roi_pct) - 2.5) < 0.01
 
     def test_half_life_parameter(self):
+        """Shorter half-life should weight the recent observation more heavily,
+        producing a weighted_win_rate closer to the recent observation's 90%."""
         ref = datetime(2025, 6, 1, tzinfo=UTC)
-        obs = HistoricalObservation(
-            completed_at=ref - timedelta(days=180),
-            win_rate=70.0,
-            total_roi_pct=15.0,
-            total_net_pnl=3000.0,
-            max_drawdown_pct=8.0,
+        obs_recent = HistoricalObservation(
+            completed_at=ref - timedelta(days=30),
+            win_rate=90.0,
+            total_roi_pct=25.0,
+            total_net_pnl=5000.0,
+            max_drawdown_pct=3.0,
         )
-        result_180 = aggregate_historical_performance(
-            [obs], reference_time=ref, recency_half_life_days=180
+        obs_old = HistoricalObservation(
+            completed_at=ref - timedelta(days=365),
+            win_rate=50.0,
+            total_roi_pct=5.0,
+            total_net_pnl=500.0,
+            max_drawdown_pct=15.0,
         )
-        result_30 = aggregate_historical_performance(
-            [obs], reference_time=ref, recency_half_life_days=30
+        observations = [obs_recent, obs_old]
+
+        result_long = aggregate_historical_performance(
+            observations, reference_time=ref, recency_half_life_days=365
         )
-        assert abs(float(result_180.weighted_win_rate) - 70.0) < 0.01
-        assert abs(float(result_30.weighted_win_rate) - 70.0) < 0.01
+        result_short = aggregate_historical_performance(
+            observations, reference_time=ref, recency_half_life_days=30
+        )
+
+        long_wr = float(result_long.weighted_win_rate)
+        short_wr = float(result_short.weighted_win_rate)
+
+        assert short_wr > long_wr, (
+            f"Shorter half-life should weight the recent high-win-rate observation more: "
+            f"short_hl={short_wr:.2f}, long_hl={long_wr:.2f}"
+        )
+        assert short_wr > 70.0, f"Short half-life should pull win rate toward 90%: got {short_wr:.2f}"
+        assert long_wr < short_wr, "Long half-life gives more equal weighting"
 
 
 class TestBuildRankingBreakdown:

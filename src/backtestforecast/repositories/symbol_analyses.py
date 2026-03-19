@@ -51,4 +51,4 @@ class SymbolAnalysisRepository:
         """Return the total number of analyses for a user."""
         from sqlalchemy import func
         stmt = select(func.count()).select_from(SymbolAnalysis).where(SymbolAnalysis.user_id == user_id)
-        return self.session.scalar(stmt) or 0
+        return int(self.session.scalar(stmt) or 0)

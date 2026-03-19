@@ -92,6 +92,9 @@ class ScannerJobRepository:
         )
 
     def list_refresh_sources(self, limit: int = 100) -> list[ScannerJob]:
+        # NOTE: .distinct() with column arguments compiles to PostgreSQL's
+        # DISTINCT ON (col, …) syntax, which is not supported by SQLite.
+        # Running this query against SQLite will raise an OperationalError.
         deduped = (
             select(ScannerJob.id)
             .where(
@@ -159,6 +162,10 @@ class ScannerJobRepository:
         """
         if not keys:
             return {}
+        if len(keys) > 500:
+            raise ValueError(
+                f"batch_list_historical_recommendations: keys size {len(keys)} exceeds maximum of 500"
+            )
         col_triple = tuple_(
             ScannerRecommendation.symbol,
             ScannerRecommendation.strategy_type,

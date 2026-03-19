@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
 
+TEMPLATE_SCHEMA_VERSION = 1
 
 # NOTE: Consider migrating to Pydantic's model_fields_set for distinguishing
 # "not provided" from "explicitly null" in PATCH operations. The _Unset
@@ -29,7 +30,7 @@ class TemplateConfig(BaseModel):
     target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120)
-    account_size: Decimal = Field(gt=0, le=Decimal("100000000"))
+    account_size: Decimal = Field(ge=Decimal("100"), le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
     # No min_length: empty entry_rules are intentional for template drafts

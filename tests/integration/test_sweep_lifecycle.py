@@ -136,5 +136,6 @@ class TestSweepLifecycle:
         first = client.post("/v1/sweeps", json=payload, headers=auth_headers)
         second = client.post("/v1/sweeps", json=payload, headers=auth_headers)
 
-        if first.status_code in (200, 202) and second.status_code in (200, 202):
-            assert first.json()["id"] == second.json()["id"]
+        assert first.status_code in (200, 202), f"First request failed: {first.status_code} {first.text[:200]}"
+        assert second.status_code in (200, 202), f"Second request failed: {second.status_code} {second.text[:200]}"
+        assert first.json()["id"] == second.json()["id"], "Idempotency key should return the same job"

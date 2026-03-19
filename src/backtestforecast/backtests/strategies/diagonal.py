@@ -25,6 +25,8 @@ from backtestforecast.backtests.types import (
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar
 
+DOUBLE_DIAGONAL_MARGIN_FACTOR = 0.50  # fraction of naked margin used for double diagonals
+
 
 def _deep_itm_call_strike(strikes: list[float], underlying_close: float) -> float:
     """Select a deep ITM call strike — 2 increments below spot, or the lowest available.
@@ -158,7 +160,8 @@ class DiagonalSpreadStrategy(StrategyDefinition):
             contracts=near_cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
         )
         far_strikes = sorted_unique_strikes(far_cc)
-        far_strike = offset_strike(far_strikes, near_strike, -1)
+        spread_offset = -(overrides.spread_width if overrides and overrides.spread_width else 1)
+        far_strike = offset_strike(far_strikes, near_strike, spread_offset)
         if far_strike is None:
             raise DataUnavailableError(
                 "No lower strike available in far-dated chain for diagonal spread."
@@ -280,8 +283,9 @@ class DoubleDiagonalStrategy(StrategyDefinition):
             [c.strike_price for c in near_pc], bar.close_price, "put", overrides.short_put_strike, dte,
             contracts=near_pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
         )
-        far_call_strike = offset_strike(sorted_unique_strikes(far_cc), near_call_strike, -1)
-        far_put_strike = offset_strike(sorted_unique_strikes(far_pc), near_put_strike, 1)
+        dd_offset = overrides.spread_width if overrides and overrides.spread_width else 1
+        far_call_strike = offset_strike(sorted_unique_strikes(far_cc), near_call_strike, -dd_offset)
+        far_put_strike = offset_strike(sorted_unique_strikes(far_pc), near_put_strike, dd_offset)
         if far_call_strike is None or far_put_strike is None:
             raise DataUnavailableError("No adjacent strike available in far-dated chain for double diagonal spread.")
 
@@ -312,10 +316,10 @@ class DoubleDiagonalStrategy(StrategyDefinition):
                 spq.mid_price,  # type: ignore[union-attr]
             )
             # The long far-dated legs reduce risk vs a naked short straddle.
-            # Apply a 50% reduction to approximate the margin benefit of the
+            # Apply a margin reduction factor to approximate the benefit of the
             # protective long legs. A precise calculation would require
             # modeling the long legs' delta/gamma offset.
-            capital = round(capital * 0.50, 2)
+            capital = round(capital * DOUBLE_DIAGONAL_MARGIN_FACTOR, 2)
             max_loss = None
 
         return OpenMultiLegPosition(

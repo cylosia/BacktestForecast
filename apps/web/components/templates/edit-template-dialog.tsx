@@ -121,15 +121,6 @@ export function EditTemplateDialog({
     }
   }, [name, description, saving, templateId, getToken, onClose, router]);
 
-  useEffect(() => {
-    if (open) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => { document.body.style.overflow = ""; };
-  }, [open]);
-
   if (!open) return null;
 
   return (

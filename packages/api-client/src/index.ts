@@ -160,21 +160,34 @@ export type SymbolAnalysisFullResponse = AnalysisDetailResponse;
 // ---------------------------------------------------------------------------
 // Sweep types
 //
-// TODO: These types are manually defined. Sweep endpoints are not yet in the
-// OpenAPI export. Add sweep endpoints to OpenAPI (Fix #35) and regenerate
-// via `npx openapi-typescript openapi.snapshot.json -o src/schema.d.ts` to
-// derive these from the schema. Until then, any backend schema change must be
-// mirrored here. Run `python scripts/check_contract_drift.py` to verify alignment.
+// ⚠️  WARNING — MANUALLY DEFINED TYPES ⚠️
+// These types are NOT generated from the OpenAPI schema. Every field must be
+// kept in sync with `src/backtestforecast/schemas/sweeps.py` BY HAND.
+// Run `python scripts/check_contract_drift.py` after any backend change.
+//
+// To migrate to generated types:
+//   1. Expose sweep endpoints in the OpenAPI spec (Fix #35): add type hints
+//      on all router functions in apps/api/app/routers/sweeps.py.
+//   2. Run `python scripts/export_openapi.py > openapi.snapshot.json`.
+//   3. Run `npx openapi-typescript openapi.snapshot.json -o src/schema.d.ts`.
+//   4. Replace the manual interfaces below with `components["schemas"]["..."]`
+//      references (same pattern as the backtest/scanner types above).
+//   5. Run `python scripts/check_contract_drift.py` and
+//      `python scripts/check_openapi_drift.py` to verify alignment.
+//   6. Delete the manual interfaces once the generated types are confirmed.
+//
 // NOTE: SweepJobResponse fields `prefetch_summary` and `warnings` match the
 // Pydantic *field* names (not the aliases `prefetch_summary_json` /
 // `warnings_json`), because FastAPI serializes by field name when
 // `populate_by_name=True`.
+//
+// Last cross-checked against backend: 2026-03-19
 // ---------------------------------------------------------------------------
 
 /** Sweep mode: grid (exhaustive) or genetic (evolutionary optimization). */
-export type SweepMode = "grid" | "genetic";
+export type SweepMode = "grid" | "genetic"; // MANUAL: sync with backend schemas/sweeps.py
 
-export interface ParameterSnapshotJson {
+export interface ParameterSnapshotJson { // MANUAL: sync with backend schemas/sweeps.py
   strategy_type?: string;
   mode?: "grid" | "genetic";
   delta?: number | null;
@@ -197,7 +210,7 @@ export interface ParameterSnapshotJson {
   total_evaluations?: number;
 }
 
-export interface SweepResultResponse {
+export interface SweepResultResponse { // MANUAL: sync with backend schemas/sweeps.py
   id: string;
   rank: number;
   score: string;
@@ -214,23 +227,25 @@ export interface SweepResultResponse {
   warnings: Record<string, unknown>[];
   trades_json: Record<string, unknown>[];
   equity_curve: EquityCurvePointResponse[];
+  /** True when the trade list was truncated (>50 trades per result). */
   trades_truncated: boolean;
 }
 
-export interface SweepResultListResponse {
+
+export interface SweepResultListResponse { // MANUAL: sync with backend schemas/sweeps.py
   items: SweepResultResponse[];
   total: number;
   offset: number;
   limit: number;
 }
 
-export interface SweepJobResponse {
+export interface SweepJobResponse { // MANUAL: sync with backend schemas/sweeps.py
   id: string;
   status: RunStatus;
   mode: "grid" | "genetic";
   symbol: string;
-  engine_version: string | null;
-  plan_tier_snapshot: string;
+  engine_version: string;
+  plan_tier_snapshot: PlanTier;
   candidate_count: number;
   evaluated_candidate_count: number;
   result_count: number;
@@ -244,14 +259,14 @@ export interface SweepJobResponse {
   completed_at: string | null;
 }
 
-export interface SweepJobListResponse {
+export interface SweepJobListResponse { // MANUAL: sync with backend schemas/sweeps.py
   items: SweepJobResponse[];
   total: number;
   offset: number;
   limit: number;
 }
 
-export interface GeneticSweepConfig {
+export interface GeneticSweepConfig { // MANUAL: sync with backend schemas/sweeps.py
   num_legs: number;
   population_size?: number;
   max_generations?: number;
@@ -263,7 +278,7 @@ export interface GeneticSweepConfig {
   max_stale_generations?: number;
 }
 
-export interface CreateSweepRequest {
+export interface CreateSweepRequest { // MANUAL: sync with backend schemas/sweeps.py
   mode?: "grid" | "genetic";
   symbol: string;
   strategy_types: string[];

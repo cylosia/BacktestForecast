@@ -1,4 +1,14 @@
 // TODO: Add client-side pagination for large history tables.
+//
+// Implementation notes:
+//   - Track `page` and `pageSize` (default 20) in component state.
+//   - Slice data.items by page boundaries before rendering TableBody rows.
+//   - Render prev/next buttons below the table, disabled at boundaries.
+//   - Consider using @tanstack/react-table for sortable columns and
+//     built-in pagination controls if the table grows more complex.
+//   - The PipelineHistoryResponse already supports offset/limit on the
+//     API side, so server-side pagination is also an option for very
+//     large datasets (>500 rows).
 
 import type { PipelineHistoryResponse } from "@backtestforecast/api-client";
 import { formatDate, formatDateTime } from "@/lib/backtests/format";

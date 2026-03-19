@@ -191,7 +191,7 @@ def _start_worker_metrics_server() -> None:
     if not metrics_token:
         _shutdown_logger.warning("worker.metrics_server_no_auth", msg="Metrics server started without authentication token")
 
-    bind_host = os.environ.get("WORKER_METRICS_BIND", "0.0.0.0")
+    bind_host = os.environ.get("WORKER_METRICS_BIND", "127.0.0.1")
     server = HTTPServer((bind_host, port), _MetricsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

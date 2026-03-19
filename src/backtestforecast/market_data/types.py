@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
 
@@ -40,7 +41,10 @@ class OptionQuoteRecord:
 
     @property
     def mid_price(self) -> float:
-        return (self.bid_price + self.ask_price) / 2.0
+        result = (self.bid_price + self.ask_price) / 2.0
+        if not math.isfinite(result):
+            return 0.0
+        return result
 
 
 @dataclass(frozen=True, slots=True)

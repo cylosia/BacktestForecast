@@ -9,8 +9,11 @@ quality issues — that responsibility belongs to the caller.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections import deque
+
+_logger = logging.getLogger(__name__)
 
 
 def sma(values: list[float], period: int) -> list[float | None]:
@@ -171,6 +174,19 @@ def macd(
     )
     macd_valid_indices = [first_valid + i for i, v in enumerate(macd_line[first_valid:]) if v is not None]
     macd_seed = [macd_line[i] for i in macd_valid_indices]
+
+    if macd_seed and len(macd_valid_indices) >= 2:
+        expected_span = macd_valid_indices[-1] - macd_valid_indices[0] + 1
+        if len(macd_valid_indices) < expected_span:
+            gap_count = expected_span - len(macd_valid_indices)
+            _logger.warning(
+                "MACD line contains %d None gap(s) within valid range [%d..%d]; "
+                "signal line may be inaccurate",
+                gap_count,
+                macd_valid_indices[0],
+                macd_valid_indices[-1],
+            )
+
     raw_signal = ema(macd_seed, signal_period)
     signal_line: list[float | None] = [None] * len(values)
     for idx, sig_val in zip(macd_valid_indices, raw_signal):
@@ -189,6 +205,8 @@ def bollinger_bands(
     period: int,
     standard_deviations: float,
 ) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    if standard_deviations <= 0:
+        raise ValueError(f"standard_deviations must be positive, got {standard_deviations}")
     middle = sma(values, period)
     stddev = rolling_stddev(values, period)
     upper: list[float | None] = [None] * len(values)

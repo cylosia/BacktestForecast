@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from backtestforecast.config import get_settings
 from backtestforecast.schemas.common import JobStatus, PlanTier, sanitize_error_message
 
-SYMBOL_ALLOWED_CHARS = re.compile(r"^[A-Z][A-Z0-9./^-]{0,15}$")
+SYMBOL_ALLOWED_CHARS = re.compile(r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
 
 
 class StrategyType(str, Enum):
@@ -49,6 +49,7 @@ class StrategyType(str, Enum):
     CUSTOM_4_LEG = "custom_4_leg"
     CUSTOM_5_LEG = "custom_5_leg"
     CUSTOM_6_LEG = "custom_6_leg"
+    CUSTOM_7_LEG = "custom_7_leg"
     CUSTOM_8_LEG = "custom_8_leg"
     NAKED_CALL = "naked_call"
     NAKED_PUT = "naked_put"
@@ -254,6 +255,7 @@ CUSTOM_STRATEGY_TYPES = {
     StrategyType.CUSTOM_4_LEG,
     StrategyType.CUSTOM_5_LEG,
     StrategyType.CUSTOM_6_LEG,
+    StrategyType.CUSTOM_7_LEG,
     StrategyType.CUSTOM_8_LEG,
 }
 
@@ -263,6 +265,7 @@ CUSTOM_LEG_COUNT = {
     StrategyType.CUSTOM_4_LEG: 4,
     StrategyType.CUSTOM_5_LEG: 5,
     StrategyType.CUSTOM_6_LEG: 6,
+    StrategyType.CUSTOM_7_LEG: 7,
     StrategyType.CUSTOM_8_LEG: 8,
 }
 
@@ -467,10 +470,9 @@ class CreateBacktestRunRequest(BaseModel):
             raise ValueError("custom_legs should only be provided for custom_N_leg strategy types")
 
         if self.custom_legs:
-            long_count = sum(1 for leg in self.custom_legs if leg.side == "long")
-            short_count = sum(1 for leg in self.custom_legs if leg.side == "short")
-            if long_count == 0 and short_count == 0:
-                raise ValueError("custom_legs must contain at least one leg with a defined side")
+            sides = {leg.side for leg in self.custom_legs}
+            if len(sides) < 2:
+                raise ValueError("custom_legs must contain at least one long and one short leg")
 
         return self
 

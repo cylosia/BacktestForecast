@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+import structlog
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, defer, noload, selectinload
 
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade
+
+logger = structlog.get_logger("repositories.backtest_runs")
 
 _MAX_PAGE_SIZE = 200
 
@@ -40,7 +43,7 @@ class BacktestRunRepository:
                 BacktestRun.idempotency_key == idempotency_key,
                 BacktestRun.status.notin_(["failed", "cancelled"]),
             )
-            .with_for_update(skip_locked=True)
+            .with_for_update(skip_locked=False)
         )
         return self.session.scalar(stmt)
 
@@ -124,6 +127,13 @@ class BacktestRunRepository:
     def get_many_for_user(self, run_ids: list[UUID], user_id: UUID) -> list[BacktestRun]:
         if not run_ids:
             return []
+        if len(run_ids) > 50:
+            logger.warning(
+                "backtest_runs.get_many_truncated",
+                requested=len(run_ids),
+                limit=50,
+                user_id=str(user_id),
+            )
         run_ids = run_ids[:50]
         stmt = (
             select(BacktestRun)

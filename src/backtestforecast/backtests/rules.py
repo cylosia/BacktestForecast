@@ -179,7 +179,7 @@ class EntryRuleEvaluator:
             window_min = min(lookback_values)
             window_max = max(lookback_values)
             if math.isclose(window_min, window_max):
-                metric = 50.0
+                return False
             else:
                 metric = ((current_value - window_min) / (window_max - window_min)) * 100.0
         else:
@@ -381,7 +381,7 @@ def implied_volatility_from_price(
         return None
 
     low = 0.01
-    high = 5.0
+    high = 10.0
     _CONVERGENCE_TOL = 1e-4
     for _ in range(60):
         midpoint = (low + high) / 2.0

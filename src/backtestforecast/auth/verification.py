@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -84,7 +85,7 @@ class ClerkTokenVerifier:
                 algorithms=["RS256"],
                 audience=audience,
                 issuer=issuer,
-                leeway=5,
+                leeway=self.settings.jwt_leeway_seconds,
                 options=decode_options,
             )
         except InvalidTokenError as exc:
@@ -104,7 +105,7 @@ class ClerkTokenVerifier:
         email: str | None = None
         raw_email = claims.get("email") or claims.get("primary_email_address")
         if isinstance(raw_email, str) and raw_email:
-            if "@" in raw_email and len(raw_email) <= 320:
+            if re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', raw_email) and len(raw_email) <= 320:
                 email = raw_email
 
         session_id = claims.get("sid") if isinstance(claims.get("sid"), str) else None
@@ -125,6 +126,10 @@ class ClerkTokenVerifier:
                         "CLERK_JWT_KEY appears to be a truncated PEM key. "
                         "Ensure the full key including the END marker is provided."
                     )
+            elif isinstance(key, str) and not key.strip().startswith("-----BEGIN"):
+                raise ConfigurationError(
+                    "CLERK_JWT_KEY must be a PEM-encoded RSA public key for RS256 verification."
+                )
             return key
 
         jwks_client = self._get_jwks_client()

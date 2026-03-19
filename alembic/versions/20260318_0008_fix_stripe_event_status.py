@@ -28,6 +28,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # WARNING: This downgrade converts 'processing' events to 'error', losing the distinction.
     op.execute(
         "UPDATE stripe_events SET idempotency_status = 'error' "
         "WHERE idempotency_status = 'processing'"

@@ -5,6 +5,25 @@ the DB record first, then sends the Celery task. A proper outbox would:
 1. Write an OutboxMessage row in the same transaction as the job record
 2. A separate poller would read pending OutboxMessages and send tasks
 3. This eliminates the window where commit succeeds but task send fails
+
+Recommended implementation approach:
+- The OutboxMessage model already exists (see backtestforecast.models).
+  The `poll_outbox` Celery beat task already re-sends stuck messages.
+- To complete the pattern:
+  a. In `dispatch_celery_task`, instead of commit → send_task, do:
+     1) Create an OutboxMessage(task_name, task_kwargs, queue, status="pending")
+        in the same transaction as the job record.
+     2) Commit once (both job + outbox row are atomically persisted).
+     3) Attempt `send_task` optimistically. On success, mark the outbox
+        row as "sent". On failure, leave it as "pending" — the poller
+        will pick it up within 60 seconds.
+  b. This eliminates the current failure window: if the process crashes
+     between commit and send_task, the outbox row survives and the
+     poller retries delivery.
+  c. Add a unique constraint on (correlation_id, task_name) to prevent
+     duplicate sends if both the optimistic path and poller fire.
+  d. The `poll_outbox` task already handles step (2) above; it just
+     needs the outbox rows to be written transactionally.
 """
 from __future__ import annotations
 
@@ -122,6 +141,9 @@ def dispatch_celery_task(
                 **task_kwargs,
             )
             if attempt < _SEND_MAX_ATTEMPTS:
+                # Safe to use time.sleep here: this sync function runs in
+                # FastAPI's default threadpool, so blocking does not stall
+                # the async event loop.
                 time.sleep(_SEND_RETRY_DELAY * attempt)
 
     logger.exception(

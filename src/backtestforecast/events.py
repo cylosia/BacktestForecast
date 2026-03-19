@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import json
 import threading
+import time
 from typing import Any
 from uuid import UUID
 
@@ -17,31 +18,39 @@ _RESERVED_PAYLOAD_KEYS = frozenset({"v", "status", "job_id"})
 _redis_client = None
 _redis_lock = threading.Lock()
 _atexit_registered = False
+_redis_retry_after: float = 0.0
 
 
 def _get_redis():
     """Return a lazily-initialised, reusable sync Redis client."""
-    global _redis_client, _atexit_registered
+    global _redis_client, _atexit_registered, _redis_retry_after
     if _redis_client is not None:
         return _redis_client
+    if time.monotonic() < _redis_retry_after:
+        return None
 
     from redis import Redis
 
     with _redis_lock:
         if _redis_client is not None:
             return _redis_client
+        if time.monotonic() < _redis_retry_after:
+            return None
         settings = get_settings()
-        # Use the dedicated cache/SSE Redis URL to isolate pub/sub traffic
-        # from the Celery broker. The model validator guarantees
-        # redis_cache_url is always populated (defaults to redis_url).
-        _redis_client = Redis.from_url(
-            settings.redis_cache_url,
-            decode_responses=True,
-            socket_timeout=settings.sse_redis_socket_timeout,
-            socket_connect_timeout=settings.sse_redis_connect_timeout,
-            retry_on_timeout=True,
-            max_connections=settings.sse_redis_max_connections,
-        )
+        try:
+            _redis_client = Redis.from_url(
+                settings.redis_cache_url,
+                decode_responses=True,
+                socket_timeout=settings.sse_redis_socket_timeout,
+                socket_connect_timeout=settings.sse_redis_connect_timeout,
+                retry_on_timeout=True,
+                max_connections=settings.sse_redis_max_connections,
+            )
+        except Exception:
+            _redis_client = None
+            _redis_retry_after = time.monotonic() + 30.0
+            logger.warning("events.redis_connect_failed", exc_info=True)
+            return None
         if not _atexit_registered:
             atexit.register(_shutdown_redis)
             _atexit_registered = True
@@ -50,10 +59,11 @@ def _get_redis():
 
 def _reset_redis() -> None:
     """Close the current Redis client and clear the reference so next call reconnects."""
-    global _redis_client
+    global _redis_client, _redis_retry_after
     with _redis_lock:
         client = _redis_client
         _redis_client = None
+        _redis_retry_after = 0.0
     if client is not None:
         try:
             client.close()
@@ -97,6 +107,9 @@ def publish_job_status(
         for attempt in range(2):
             try:
                 client = _get_redis()
+                if client is None:
+                    _fallback_persist_status(job_type, job_id, status)
+                    return
                 client.publish(channel, payload)
                 return
             except RedisError:

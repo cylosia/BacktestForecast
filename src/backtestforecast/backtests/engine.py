@@ -56,12 +56,51 @@ class OptionsBacktestEngine:
 
         # FIXME(#98): Model early assignment risk for American-style options.
         # Deep ITM short legs near ex-dividend dates should be flagged.
+        #
+        # Scenarios where early assignment is likely:
+        # 1. Short call is deep ITM (intrinsic >> extrinsic) the day before
+        #    an ex-dividend date — the holder exercises to capture the dividend.
+        # 2. Short put is deep ITM near expiration with minimal time value.
+        # 3. Any short American-style option whose extrinsic value drops below
+        #    the cost of carry.
+        #
+        # Recommended approach:
+        # - Accept an `ex_dividend_dates` set alongside `earnings_dates`.
+        # - During `_mark_position`, check whether any short leg is deep ITM
+        #   (e.g., delta > 0.90) and the next trading day is an ex-div date.
+        # - If so, force-close the position with `exit_reason="early_assignment"`
+        #   and add a warning to the trade result.
+        # - For P&L accuracy, the assignment should use intrinsic value (not
+        #   mid-price) since assigned options settle at intrinsic.
+        # FIXME(#96): Convert all financial arithmetic to Decimal.
+        #
+        # Currently, position values, P&L, slippage, and commission calculations
+        # use Python `float`, which introduces IEEE 754 rounding errors that
+        # compound over hundreds of trades. The `cash` variable already uses
+        # Decimal, but intermediate values (`position_value`, `entry_cost`,
+        # `gross_pnl`, `net_pnl`, etc.) are float, causing Decimal ↔ float
+        # conversions via `Decimal(str(...))` that mask precision loss.
+        #
+        # Migration approach:
+        # 1. Change `OpenOptionLeg.entry_mid`, `last_mid`, `strike_price` and
+        #    `OpenStockLeg.entry_price`, `last_price` to Decimal.
+        # 2. Update `_entry_value_per_unit`, `_current_position_value`,
+        #    `_mark_position`, and `_close_position` to use Decimal throughout.
+        # 3. Change `TradeResult` P&L fields to Decimal.
+        # 4. Update `build_summary` and equity curve to accept Decimal.
+        # 5. Serialize Decimal → str in JSON responses (Pydantic v2 handles
+        #    this natively).
+        # 6. Add regression tests comparing float vs Decimal results on a
+        #    multi-year backtest to quantify the drift.
+
         if config.start_date > config.end_date:
             raise ValueError("start_date must not be after end_date")
         if config.account_size <= 0:
             raise ValueError("account_size must be positive")
 
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
+        _pre_filter_len = len(sorted_bars)
+        sorted_bars = [b for b in sorted_bars if b.close_price > 0]
         if not sorted_bars:
             return BacktestExecutionResult(
                 summary=build_summary(float(config.account_size), float(config.account_size), [], [], risk_free_rate=config.risk_free_rate),
@@ -70,6 +109,11 @@ class OptionsBacktestEngine:
 
         warnings: list[dict[str, Any]] = []
         warning_codes: set[str] = set()
+        if len(sorted_bars) < _pre_filter_len:
+            self._add_warning_once(
+                warnings, warning_codes, "non_positive_close_filtered",
+                f"{_pre_filter_len - len(sorted_bars)} bar(s) with non-positive close price were excluded.",
+            )
         cash = Decimal(str(config.account_size))
         peak_equity = cash
         position: OpenMultiLegPosition | None = None
@@ -500,13 +544,21 @@ class OptionsBacktestEngine:
                     leg["exit_price"] = exit_prices[identifier]
         detail["legs"] = legs
         detail["actual_units"] = position.quantity
-        detail["capital_required_total"] = position.capital_required_per_unit * position.quantity
-        detail["max_loss_total"] = (
-            None if position.max_loss_per_unit is None else position.max_loss_per_unit * position.quantity
-        )
-        detail["max_profit_total"] = (
-            None if position.max_profit_per_unit is None else position.max_profit_per_unit * position.quantity
-        )
+
+        cap_req = position.capital_required_per_unit * position.quantity
+        detail["capital_required_total"] = None if (isinstance(cap_req, float) and not math.isfinite(cap_req)) else cap_req
+
+        if position.max_loss_per_unit is None:
+            detail["max_loss_total"] = None
+        else:
+            ml = position.max_loss_per_unit * position.quantity
+            detail["max_loss_total"] = None if (isinstance(ml, float) and not math.isfinite(ml)) else ml
+
+        if position.max_profit_per_unit is None:
+            detail["max_profit_total"] = None
+        else:
+            mp = position.max_profit_per_unit * position.quantity
+            detail["max_profit_total"] = None if (isinstance(mp, float) and not math.isfinite(mp)) else mp
         detail["exit_package_market_value"] = exit_value_per_unit
         return detail
 
@@ -525,6 +577,9 @@ class OptionsBacktestEngine:
         stop_loss_pct: float | None = None,
         current_bar_index: int | None = None,
     ) -> tuple[bool, str]:
+        if max_holding_days < 1:
+            logger.warning("engine.max_holding_days_clamped", original=max_holding_days)
+            max_holding_days = 1
         # NOTE: The wheel strategy has its own exit logic (assignment-based
         # rolling) that does not go through this method. See
         # backtests/strategies/wheel.py for that path.

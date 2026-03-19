@@ -6,8 +6,8 @@
 - commission_per_contract: 1000 -> 100
 - account_size: 1000000000 -> 100000000
 
-Revision ID: 20260319_0028
-Revises: 20260319_0027
+Revision ID: 20260319_0029
+Revises: 20260319_0028
 Create Date: 2026-03-19
 """
 from __future__ import annotations
@@ -15,8 +15,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "20260319_0028"
-down_revision = "20260319_0027"
+revision = "20260319_0029"
+down_revision = "20260319_0028"
 branch_labels = None
 depends_on = None
 
@@ -38,6 +38,26 @@ _OLD = [
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    row = bind.execute(sa.text(
+        "SELECT count(*) FROM backtest_runs "
+        "WHERE target_dte > 365 OR dte_tolerance_days > 60 "
+        "OR max_holding_days > 120 OR commission_per_contract > 100 "
+        "OR account_size > 100000000"
+    )).scalar()
+    if row and row > 0:
+        bind.execute(sa.text(
+            "UPDATE backtest_runs SET "
+            "target_dte = LEAST(target_dte, 365), "
+            "dte_tolerance_days = LEAST(dte_tolerance_days, 60), "
+            "max_holding_days = LEAST(max_holding_days, 120), "
+            "commission_per_contract = LEAST(commission_per_contract, 100), "
+            "account_size = LEAST(account_size, 100000000) "
+            "WHERE target_dte > 365 OR dte_tolerance_days > 60 "
+            "OR max_holding_days > 120 OR commission_per_contract > 100 "
+            "OR account_size > 100000000"
+        ))
+
     for table, name, expr in _NEW:
         op.execute(sa.text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}"))
         op.execute(sa.text(

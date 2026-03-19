@@ -101,7 +101,7 @@ export function SweepResultList({ items }: { items: SweepResultResponse[] }) {
                   <p className="text-2xl font-semibold tracking-tight">{formatNumber(toNumber(result.score))}</p>
                   <p className="text-xs text-muted-foreground">Score</p>
                   <div className="mt-1 w-24">
-                    <ScoreBar score={allNegative ? 0 : Math.max(toNumber(result.score), 0)} max={maxScore} />
+                    <ScoreBar score={allNegative ? Math.abs(toNumber(result.score)) : Math.max(toNumber(result.score), 0)} max={maxScore} />
                   </div>
                 </div>
               </div>

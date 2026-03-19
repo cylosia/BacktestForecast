@@ -103,10 +103,11 @@ export function validateBacktestForm(values: BacktestFormValues): {
   }
 
   if (!errors.endDate) {
-    const endDate = new Date(values.endDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (endDate > today) {
+    const [ey, em, ed] = values.endDate.split("-").map(Number);
+    const endDateUtc = Date.UTC(ey, em - 1, ed);
+    const now = new Date();
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    if (endDateUtc > todayUtc) {
       errors.endDate = "End date cannot be in the future.";
     }
   }
@@ -115,6 +116,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     const start = new Date(values.startDate);
     const end = new Date(values.endDate);
     const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+    // Ideally fetched from /v1/meta; keep in sync with backend max_backtest_window_days
     if (diffDays > 365 * 20) {
       errors.endDate = "Date range cannot exceed 20 years.";
     }
@@ -234,8 +236,8 @@ export function validateBacktestForm(values: BacktestFormValues): {
     }
   }
 
-  if (entryRules.length === 0 && !values.rsiEnabled && !values.movingAverageEnabled) {
-    errors.form = "At least one entry rule (RSI or moving average) must be enabled.";
+  if (entryRules.length === 0) {
+    errors.form = "At least one valid entry rule must be configured.";
   }
 
   if (Object.keys(errors).length > 0) {

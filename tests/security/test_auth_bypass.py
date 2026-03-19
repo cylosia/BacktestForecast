@@ -100,7 +100,10 @@ def test_endpoint_rejects_unauthenticated(
     else:
         pytest.fail(f"Unsupported method: {method}")
 
-    assert resp.status_code in (401, 403, 422), (
+    # 422 is NOT acceptable — it means the request bypassed auth and reached
+    # input validation.  Only 401 (unauthenticated) or 403 (forbidden) prove
+    # the auth layer rejected the request before any business logic ran.
+    assert resp.status_code in (401, 403), (
         f"{method} {path} returned {resp.status_code} instead of 401/403. "
         f"Body: {resp.text[:200]}"
     )
