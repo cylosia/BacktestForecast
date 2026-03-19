@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 60
 
     audit_cleanup_enabled: bool = True
+    audit_cleanup_retention_days: int = Field(default=90, ge=7, le=730)
 
     clerk_secret_key: str | None = Field(default=None, repr=False)
     clerk_issuer: str | None = None
@@ -53,7 +54,13 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
     clerk_jwt_key: str | None = Field(default=None, repr=False)
     clerk_jwks_fetch_timeout: float = 10.0
-    jwt_leeway_seconds: int = 5
+    jwt_leeway_seconds: int = Field(
+        default=10,
+        ge=0,
+        le=120,
+        description="Clock skew tolerance for JWT exp/nbf claims. "
+                    "Cloud VMs can drift 5-15s during suspend/resume. Default 10s.",
+    )
     clerk_authorized_parties_raw: str = Field(default="http://localhost:3000")
 
     stripe_secret_key: str | None = Field(default=None, repr=False)
@@ -72,10 +79,11 @@ class Settings(BaseSettings):
     earnings_api_key: str | None = Field(default=None, repr=False)
 
     option_cache_enabled: bool = True
-    # 7 days. There is currently no staleness visibility: cached data is
-    # served until TTL expires with no mechanism to detect or report when
-    # the upstream source has fresher data available.
-    option_cache_ttl_seconds: int = 604_800
+    option_cache_ttl_seconds: int = 604_800  # 7 days
+    option_cache_warn_age_seconds: int = Field(
+        default=259_200, ge=3600,
+        description="Log a warning when cached option data is older than this (default 3 days).",
+    )
     prefetch_max_workers: int = Field(default=10, ge=1, le=32)
 
     # Nightly pipeline — override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
@@ -228,7 +236,12 @@ class Settings(BaseSettings):
 
     pipeline_max_workers: int = Field(default=20, ge=1, le=64)
 
-    scan_timeout_seconds: int = 540
+    scan_timeout_seconds: int = Field(
+        default=480,
+        ge=120,
+        description="Scan-internal timeout. Must be at least 120s below the Celery "
+                    "soft_time_limit (600s) to allow cleanup on timeout.",
+    )
     sweep_timeout_seconds: int = Field(default=3600, ge=1)
     sweep_genetic_timeout_seconds: int = Field(default=3600, ge=1)
     max_concurrent_sweeps: int = Field(default=10, ge=1, le=100)
@@ -250,6 +263,7 @@ class Settings(BaseSettings):
 
     active_renewal_grace_hours: int = 72
     past_due_grace_days: int = 7
+    max_reconciliation_users: int = Field(default=100, ge=1, le=500)
 
     risk_free_rate: float = 0.045
     fallback_entry_rule_rsi_threshold: int = Field(default=40, ge=1, le=100)
@@ -657,7 +671,12 @@ class Settings(BaseSettings):
                 raise ValueError("Production-like environments must use a custom IP_HASH_SALT.")
             if not self.metrics_token or not self.metrics_token.strip():
                 raise ValueError("Production-like environments require METRICS_TOKEN to be set and non-blank.")
-            if self.admin_token and len(self.admin_token) < 16:
+            if not self.admin_token or not self.admin_token.strip():
+                raise ValueError(
+                    "Production-like environments require ADMIN_TOKEN for /admin endpoints. "
+                    "Without it, the DLQ endpoint falls back to METRICS_TOKEN."
+                )
+            if len(self.admin_token) < 16:
                 raise ValueError("admin_token must be at least 16 characters")
             if not self.redis_password:
                 raise ValueError("Production-like environments require a non-empty REDIS_PASSWORD.")
@@ -830,6 +849,11 @@ def invalidate_settings() -> None:
     calls ``get_settings()`` or ``register_invalidation_callback()``.
     """
     global _settings_cache
+    try:
+        from backtestforecast.observability.metrics import SETTINGS_INVALIDATION_TOTAL
+        SETTINGS_INVALIDATION_TOTAL.inc()
+    except Exception:
+        pass
     with _settings_lock:
         _settings_cache = None
         callbacks = list(_invalidation_callbacks)

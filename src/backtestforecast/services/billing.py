@@ -225,6 +225,22 @@ class BillingService:
             self._mark_stripe_event_error(event_id, str(nfe), event_type=event_type, livemode=bool(event.get("livemode")))
             STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
             raise
+        except (KeyError, TypeError, ValueError, AttributeError) as programming_exc:
+            self.session.rollback()
+            self._mark_stripe_event_error(
+                event_id,
+                f"Processing error ({type(programming_exc).__name__}): {programming_exc}",
+                event_type=event_type,
+                livemode=bool(event.get("livemode")),
+            )
+            logger.exception(
+                "billing.webhook.likely_programming_error",
+                event_id=event_id,
+                event_type=event_type,
+                error_type=type(programming_exc).__name__,
+            )
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
+            raise
         except Exception:
             self.session.rollback()
             self._mark_stripe_event_error(event_id, "Unhandled processing error", event_type=event_type, livemode=bool(event.get("livemode")))
@@ -468,7 +484,7 @@ class BillingService:
                 User.subscription_status == "active",
                 User.subscription_current_period_end < cutoff,
                 User.stripe_subscription_id.isnot(None),
-            )
+            ).with_for_update(skip_locked=True).limit(100)
         ))
         actions: list[dict[str, Any]] = []
         client = self._get_stripe_client() if stale_users else None
@@ -776,8 +792,20 @@ class BillingService:
         SQLite-backed test sessions may return timezone-naive datetimes even
         when the column is declared with ``timezone=True``.  PostgreSQL always
         returns timezone-aware values, so this is a no-op in production.
+
+        WARNING: This assumes naive datetimes are UTC.  If the runtime
+        environment's local time differs from UTC, naive datetimes from
+        SQLite will be misinterpreted. Production (Postgres) is unaffected.
         """
         if dt.tzinfo is None:
+            import os
+            if os.environ.get("TZ") and os.environ["TZ"] not in ("UTC", "Etc/UTC"):
+                logger.warning(
+                    "billing.naive_datetime_non_utc_tz",
+                    tz=os.environ.get("TZ"),
+                    value=dt.isoformat(),
+                    msg="Naive datetime interpreted as UTC but TZ is set to a non-UTC value.",
+                )
             return dt.replace(tzinfo=UTC)
         return dt
 
@@ -788,6 +816,9 @@ class BillingService:
         if isinstance(value, dict):
             identifier = value.get("id")
             return identifier if isinstance(identifier, str) else None
+        identifier = getattr(value, "id", None)
+        if isinstance(identifier, str):
+            return identifier
         return None
 
     @staticmethod

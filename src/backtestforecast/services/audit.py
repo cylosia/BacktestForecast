@@ -11,6 +11,14 @@ from backtestforecast.repositories.audit_events import AuditEventRepository
 
 logger = get_logger("audit")
 
+_REPEATABLE_EVENT_TYPES: frozenset[str] = frozenset({
+    "export.downloaded",
+    "backtest.viewed",
+    "scan.viewed",
+    "analysis.viewed",
+    "job.cancelled_by_billing",
+})
+
 
 class AuditService:
     def __init__(self, session: Session) -> None:
@@ -55,7 +63,18 @@ class AuditService:
         user_agent: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AuditEvent | None:
-        """Record an audit event. Returns ``None`` when the event was deduplicated."""
+        """Record an audit event. Returns ``None`` when the event was deduplicated.
+
+        Raises a warning if called for a known-repeatable event type. Repeatable
+        events should use ``record_always()`` to avoid silent dedup drops.
+        """
+        if event_type in _REPEATABLE_EVENT_TYPES:
+            logger.warning(
+                "audit.record_called_for_repeatable_event",
+                event_type=event_type,
+                hint=f"'{event_type}' is a repeatable event type. Use record_always() "
+                     f"instead of record() to avoid silent dedup drops.",
+            )
         event = self._build_event(
             event_type=event_type, subject_type=subject_type,
             subject_id=subject_id, user_id=user_id, request_id=request_id,

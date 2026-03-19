@@ -372,6 +372,19 @@ class ScannerJob(Base):
     @validates('evaluated_candidate_count')
     def _validate_evaluated_count(self, key, value):
         if value is not None and hasattr(self, 'candidate_count') and self.candidate_count is not None:
+            _MAX_EVAL_MULTIPLIER = 5
+            if value > self.candidate_count * _MAX_EVAL_MULTIPLIER:
+                import structlog
+                structlog.get_logger("models").error(
+                    "evaluated_candidate_count_vastly_exceeds_candidate_count",
+                    evaluated=value,
+                    candidate=self.candidate_count,
+                    max_multiplier=_MAX_EVAL_MULTIPLIER,
+                )
+                raise ValueError(
+                    f"evaluated_candidate_count ({value}) exceeds candidate_count "
+                    f"({self.candidate_count}) by more than {_MAX_EVAL_MULTIPLIER}x"
+                )
             if value > self.candidate_count * 2:
                 import structlog
                 structlog.get_logger("models").warning(

@@ -44,9 +44,16 @@ from backtestforecast.observability.logging import RequestContextMiddleware
 from backtestforecast.observability.metrics import API_ERRORS_TOTAL, PrometheusMiddleware, metrics_response
 from backtestforecast.security.http import ApiSecurityHeadersMiddleware, RequestBodyLimitMiddleware
 
-settings = get_settings()
-configure_logging(settings)
+_startup_settings = get_settings()
+configure_logging(_startup_settings)
 logger = get_logger("api")
+
+# WARNING: _startup_settings captures configuration at import time.  Values
+# used in middleware constructor args (CORS origins, allowed hosts, body
+# limits) are fixed for the process lifetime.  Per-request code paths
+# (e.g., /metrics auth, /admin/dlq auth) must call get_settings() to pick
+# up post-invalidation changes.
+settings = _startup_settings
 
 if settings.sentry_dsn:
     try:
@@ -96,6 +103,27 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning(
                 "startup.clerk_authorized_parties_missing",
                 hint="CLERK_AUTHORIZED_PARTIES is empty; the azp claim will not be checked.",
+            )
+
+    _cors_hosts = set()
+    for origin in settings.web_cors_origins:
+        if origin != "*":
+            from urllib.parse import urlparse as _parse_origin
+            parsed = _parse_origin(origin)
+            if parsed.hostname:
+                _cors_hosts.add(parsed.hostname)
+    _allowed_set = set(settings.api_allowed_hosts)
+    if "*" not in _allowed_set:
+        _missing_hosts = _cors_hosts - _allowed_set
+        if _missing_hosts:
+            logger.warning(
+                "startup.cors_trustedhost_mismatch",
+                cors_hosts_not_in_allowed=sorted(_missing_hosts),
+                allowed_hosts=sorted(_allowed_set),
+                hint="CORS origins reference hostnames not in API_ALLOWED_HOSTS. "
+                     "Browser preflight requests to these origins will be rejected "
+                     "with 400 by TrustedHostMiddleware before CORS headers are attached, "
+                     "causing opaque CORS errors. Add them to API_ALLOWED_HOSTS_RAW.",
             )
 
     register_invalidation_callback(reset_trusted_networks)
@@ -254,10 +282,9 @@ class _CancelledErrorMiddleware:
         try:
             await self.app(scope, receive, tracked_send)
         except asyncio.CancelledError:
-            # If response headers were already sent, we must not attempt to
-            # send a new HTTP response — the ASGI contract forbids a second
-            # http.response.start message.  Silently swallow the error so the
-            # connection simply closes.
+            from backtestforecast.observability.metrics import HTTP_REQUESTS_TOTAL
+            path = scope.get("path", "/unknown")
+            HTTP_REQUESTS_TOTAL.labels(method=scope.get("method", "?"), path=path, status="499").inc()
             if not response_started:
                 try:
                     response = JSONResponse(
@@ -291,6 +318,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.web_cors_origins,
     allow_credentials=True,
+    # PUT intentionally excluded: no API endpoints use PUT. All updates use PATCH.
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With", "Accept"],
     expose_headers=["X-Request-ID", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
@@ -335,7 +363,7 @@ class _RequestTimeoutMiddleware:
                 from starlette.responses import JSONResponse as _JR
 
                 headers = {}
-                if settings.app_env not in ("production", "staging"):
+                if get_settings().app_env not in ("production", "staging"):
                     headers["X-Debug-Timeout"] = str(self.timeout_seconds)
                 resp = _JR(status_code=504, content={"error": {"code": "request_timeout", "message": "Request timed out."}}, headers=headers)
                 await resp(scope, receive, send)
@@ -473,12 +501,13 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
 def prometheus_metrics(request: Request) -> Response:
     ip_address = _extract_client_ip(request)
     get_rate_limiter().check(bucket="admin", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
-    if settings.app_env in ("production", "staging"):
+    _settings = get_settings()
+    if _settings.app_env in ("production", "staging"):
         import hmac as _hmac
 
         auth = request.headers.get("Authorization", "")
         token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-        if not settings.metrics_token or not token or not _hmac.compare_digest(token, settings.metrics_token):
+        if not _settings.metrics_token or not token or not _hmac.compare_digest(token, _settings.metrics_token):
             get_rate_limiter().check(bucket="admin_auth_fail", actor_key=ip_address or "unknown", limit=5, window_seconds=60)
             return JSONResponse(status_code=403, content={"error": {"code": "forbidden", "message": "Forbidden"}})
     return metrics_response()
@@ -520,7 +549,8 @@ def dlq_status(request: Request) -> Response:
 
     auth = request.headers.get("Authorization", "")
     token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-    expected_token = settings.admin_token or settings.metrics_token
+    _dlq_settings = get_settings()
+    expected_token = _dlq_settings.admin_token or _dlq_settings.metrics_token
     if not expected_token or not token or not _hmac.compare_digest(token, expected_token):
         logger.warning("admin.dlq_auth_failed", ip=ip_address)
         return JSONResponse(status_code=403, content={"error": {"code": "forbidden", "message": "Forbidden"}})

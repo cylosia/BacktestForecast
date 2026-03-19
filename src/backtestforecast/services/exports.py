@@ -29,7 +29,19 @@ from backtestforecast.services.backtests import BacktestService
 
 logger = structlog.get_logger("services.exports")
 
-_LOOKS_NUMERIC = re.compile(r"^-?(\d[\d,]*\.?\d*|\.\d+)([eE][+-]?\d+)?$")
+_LOOKS_NUMERIC = re.compile(
+    r"^-?"
+    r"("
+    r"0"                          # standalone zero
+    r"|[1-9]\d{0,17}"            # integer (no leading zeros)
+    r"|[1-9]\d{0,17}\.\d+"      # decimal with integer part
+    r"|0\.\d+"                   # 0.xxx
+    r"|\.\d+"                    # .xxx
+    r"|[1-9][\d,]*\d"           # thousands-separated integer
+    r"|[1-9][\d,]*\d\.\d+"     # thousands-separated decimal
+    r")"
+    r"([eE][+-]?\d{1,4})?$"      # optional scientific notation
+)
 
 _MAX_CSV_TRADES = 10_000
 _MAX_CSV_EQUITY_POINTS = 50_000
@@ -192,7 +204,7 @@ class ExportService:
 
         run = self.backtests.get_lightweight_for_user(export_job.backtest_run_id, export_job.user_id)
         if run is not None:
-            trade_count = run.trade_count if hasattr(run, "trade_count") else 0
+            trade_count = run.trade_count or 0
             estimated_size = trade_count * 2000
             if estimated_size > _MAX_EXPORT_BYTES:
                 self.session.execute(
@@ -380,12 +392,23 @@ class ExportService:
                 continue
 
             storage_failures = 0
+            orphan_keys: list[str] = []
             for key in storage_keys_to_delete:
                 try:
                     self._storage.delete(key)
                 except Exception:
                     storage_failures += 1
+                    orphan_keys.append(key)
                     logger.warning("cleanup.storage_delete_failed", storage_key=key, exc_info=True)
+            if orphan_keys:
+                logger.error(
+                    "cleanup.orphan_storage_objects",
+                    orphan_count=len(orphan_keys),
+                    orphan_keys=orphan_keys[:10],
+                    hint="These storage keys have been cleared from the DB but "
+                         "not from external storage. The maintenance.reconcile_s3_orphans "
+                         "task will remove them on the next run.",
+                )
 
             db_cleaned = len(jobs)
             storage_cleaned = len(storage_keys_to_delete) - storage_failures
@@ -594,8 +617,20 @@ class ExportService:
                 )
             )
         if len(detail.trades) > _MAX_CSV_TRADES:
+            omitted_count = len(detail.trades) - _MAX_CSV_TRADES
             writer.writerow(
-                safe_row(["trade", f"... {len(detail.trades) - _MAX_CSV_TRADES} additional trades omitted ..."])
+                safe_row([
+                    "trade",
+                    f"WARNING: {omitted_count} additional trades omitted. "
+                    f"This export contains {_MAX_CSV_TRADES} of {len(detail.trades)} total trades. "
+                    f"The full dataset is available via the API.",
+                ])
+            )
+            logger.info(
+                "export.csv_trades_truncated",
+                total_trades=len(detail.trades),
+                exported_trades=_MAX_CSV_TRADES,
+                omitted=omitted_count,
             )
         _check_size()
 
@@ -616,9 +651,15 @@ class ExportService:
                 )
             )
         if len(detail.equity_curve) > _MAX_CSV_EQUITY_POINTS:
+            eq_omitted = len(detail.equity_curve) - _MAX_CSV_EQUITY_POINTS
             writer.writerow(
                 safe_row(
-                    ["equity_point", f"... {len(detail.equity_curve) - _MAX_CSV_EQUITY_POINTS} additional points omitted ..."]
+                    [
+                        "equity_point",
+                        f"WARNING: {eq_omitted} additional equity points omitted. "
+                        f"This export contains {_MAX_CSV_EQUITY_POINTS} of "
+                        f"{len(detail.equity_curve)} total points.",
+                    ]
                 )
             )
 
@@ -655,12 +696,14 @@ class ExportService:
             pdf.setFont(_BASE_FONT, 8)
             pdf.drawRightString(width - 0.75 * inch, 0.5 * inch, f"Page {_page_number}")
 
-        def line(text: str, *, bold: bool = False, step: float = 16.0) -> None:
-            nonlocal y, _page_number
+        _truncated_at_page_limit = False
+
+        def line(text: str, *, bold: bool = False, step: float = 16.0) -> bool:
+            """Write a line to the PDF. Returns False if page limit was reached."""
+            nonlocal y, _page_number, _truncated_at_page_limit
             if _page_number > _MAX_PDF_PAGES:
-                raise ValueError(
-                    f"PDF export exceeded the maximum of {_MAX_PDF_PAGES} pages."
-                )
+                _truncated_at_page_limit = True
+                return False
             pdf.setFont(_BOLD_FONT if bold else _BASE_FONT, 10 if not bold else 12)
             pdf.drawString(0.75 * inch, y, text)
             y -= step
@@ -669,6 +712,7 @@ class ExportService:
                 pdf.showPage()
                 _page_number += 1
                 y = height - 0.75 * inch
+            return True
 
         def _fmt(val: object) -> str:
             if val is None:
@@ -711,14 +755,19 @@ class ExportService:
         line("")
         line("Trades", bold=True, step=20.0)
         max_pdf_trades = get_settings().max_pdf_trades
+        trades_written = 0
         for trade in detail.trades[:max_pdf_trades]:
-            line(
+            ok = line(
                 f"{trade.entry_date.isoformat()} -> {trade.exit_date.isoformat()} | "
                 f"{trade.option_ticker} | qty {trade.quantity} | net {_fmt_usd(trade.net_pnl)}",
                 step=14.0,
             )
-        if len(detail.trades) > max_pdf_trades:
-            line(f"... {len(detail.trades) - max_pdf_trades} additional trades omitted from PDF view ...")
+            if not ok:
+                break
+            trades_written += 1
+        omitted = len(detail.trades) - trades_written
+        if omitted > 0:
+            line(f"... {omitted} additional trades omitted (page or count limit reached) ...")
 
         if detail.equity_curve:
             line("")
@@ -732,6 +781,20 @@ class ExportService:
             line(f"Trough equity: {_fmt_usd(trough)}")
             line(f"Max drawdown: {_fmt_pct(detail.summary.max_drawdown_pct)}")
             line(f"Data points: {len(detail.equity_curve)}")
+
+        if _truncated_at_page_limit:
+            line(
+                f"[PDF truncated at {_MAX_PDF_PAGES} pages. "
+                f"Use CSV export for the full dataset.]",
+                bold=True,
+            )
+            logger.info(
+                "export.pdf_truncated",
+                trade_count=len(detail.trades),
+                trades_written=trades_written,
+                pages=_page_number,
+                max_pages=_MAX_PDF_PAGES,
+            )
 
         _draw_page_footer()
         pdf.showPage()

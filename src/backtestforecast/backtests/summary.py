@@ -55,8 +55,21 @@ def build_summary(
     payoff_ratio = (abs(avg_win / avg_loss)) if (win_pnls and loss_pnls and avg_loss != 0) else None
     expectancy = (total_net_pnl / trade_count) if trade_count else 0.0
 
+    break_even_count = trade_count - decided
+    if break_even_count > 0 and decided > 0 and warnings is not None:
+        be_pct = break_even_count / trade_count * 100
+        if be_pct >= 20:
+            warnings.append({
+                "code": "high_break_even_rate",
+                "message": (
+                    f"{break_even_count} of {trade_count} trades ({be_pct:.0f}%) "
+                    f"broke even (net P&L = $0). Win rate ({win_rate:.1f}%) is calculated "
+                    f"from the {decided} trades with non-zero P&L only."
+                ),
+            })
+
     sharpe_ratio, sortino_ratio = _compute_sharpe_sortino(equity_curve, risk_free_rate, trade_count)
-    cagr_pct = _compute_cagr(starting_equity, ending_equity, equity_curve)
+    cagr_pct = _compute_cagr(starting_equity, ending_equity, equity_curve, warnings=warnings)
 
     if cagr_pct is None and warnings is not None and equity_curve:
         calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
@@ -191,6 +204,7 @@ def _compute_cagr(
     starting_equity: float,
     ending_equity: float,
     equity_curve: list[EquityPointResult],
+    warnings: list[dict[str, str]] | None = None,
 ) -> float | None:
     if not equity_curve or len(equity_curve) < _MIN_TRADING_DAYS_FOR_CAGR:
         return None
@@ -211,6 +225,19 @@ def _compute_cagr(
     result = (ratio**exponent - 1.0) * 100.0
     if not math.isfinite(result):
         return None
+    _CAGR_CAP = 10_000.0  # 10,000% annualized
+    if abs(result) > _CAGR_CAP:
+        if warnings is not None:
+            warnings.append({
+                "code": "cagr_capped",
+                "message": (
+                    f"CAGR was capped at {'+' if result > 0 else '-'}{_CAGR_CAP:.0f}% "
+                    f"(raw: {result:,.1f}%). Short observation windows "
+                    f"({calendar_days} days) produce extreme annualized returns "
+                    f"that are not statistically meaningful."
+                ),
+            })
+        result = _CAGR_CAP if result > 0 else -_CAGR_CAP
     return result
 
 

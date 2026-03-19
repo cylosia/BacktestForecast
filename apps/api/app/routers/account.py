@@ -63,6 +63,54 @@ def _count_all_for_user(db: Session, user_id: uuid.UUID) -> dict[str, int]:
     }
 
 
+def _cleanup_export_storage(db: Session, user_id: uuid.UUID) -> None:
+    """Delete S3/external storage objects for a user's exports before cascade delete.
+
+    When ``db.delete(user)`` triggers ``ON DELETE CASCADE``, the export_jobs
+    rows are removed at the database level without going through
+    ``ExportService.delete_for_user()``, which normally handles storage
+    cleanup.  This function pre-collects storage keys and deletes them
+    so the cascade doesn't orphan S3 objects.
+
+    Storage deletion failures are logged but do not block account deletion.
+    The ``reconcile_s3_orphans`` periodic task serves as a safety net.
+    """
+    from sqlalchemy import select
+    from backtestforecast.exports.storage import get_storage, DatabaseStorage
+    from backtestforecast.models import ExportJob
+    from backtestforecast.config import get_settings
+
+    try:
+        storage = get_storage(get_settings())
+        if isinstance(storage, DatabaseStorage):
+            return
+
+        keys = list(db.scalars(
+            select(ExportJob.storage_key)
+            .where(ExportJob.user_id == user_id, ExportJob.storage_key.isnot(None))
+        ))
+        if not keys:
+            return
+
+        deleted = 0
+        for key in keys:
+            try:
+                storage.delete(key)
+                deleted += 1
+            except Exception:
+                logger.warning("account.export_storage_cleanup_failed", storage_key=key, exc_info=True)
+
+        logger.info(
+            "account.export_storage_cleaned",
+            user_id=str(user_id),
+            total_keys=len(keys),
+            deleted=deleted,
+            failed=len(keys) - deleted,
+        )
+    except Exception:
+        logger.warning("account.export_storage_cleanup_error", user_id=str(user_id), exc_info=True)
+
+
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(
     user: User = Depends(get_current_user),
@@ -104,12 +152,9 @@ def delete_account(
         stripe_sub_id = user.stripe_subscription_id
         stripe_cust_id = user.stripe_customer_id
 
+        _cleanup_export_storage(db, user.id)
+
         try:
-            # user_id is set to None because the CASCADE from db.delete(user)
-            # will SET NULL the FK on audit_events anyway. Passing None makes
-            # the intent explicit and avoids a misleading non-null user_id
-            # that gets nullified milliseconds later. The user reference is
-            # preserved in metadata.deleted_user_id for audit trail queries.
             AuditService(db).record_always(
                 event_type="account.deleted",
                 subject_type="user",

@@ -23,6 +23,18 @@ const primaryCards: Array<{
   { key: "total_commissions", label: "Commissions", formatter: (value) => (value != null ? formatCurrency(value) : "—") },
 ];
 
+function WinRateContext({ summary }: { summary: BacktestSummaryResponse }) {
+  const decided = (summary as any).decided_trades;
+  const total = summary.trade_count;
+  if (decided == null || decided === total || total === 0) return null;
+  const breakEven = total - decided;
+  return (
+    <p className="mt-1 text-xs text-muted-foreground">
+      Based on {decided} of {total} trades (excludes {breakEven} break-even)
+    </p>
+  );
+}
+
 const advancedCards: Array<{
   key: keyof BacktestSummaryResponse;
   label: string;
@@ -50,6 +62,7 @@ function CardGrid({ cards, summary }: { cards: typeof primaryCards; summary: Bac
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-semibold tracking-tight">{item.formatter(summary[item.key])}</p>
+            {item.key === "win_rate" && <WinRateContext summary={summary} />}
           </CardContent>
         </Card>
       ))}

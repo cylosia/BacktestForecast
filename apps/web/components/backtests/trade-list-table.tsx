@@ -43,7 +43,7 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
                 <TableHead>Option</TableHead>
                 <TableHead>Dates</TableHead>
                 <TableHead>Details</TableHead>
-                <TableHead>Pricing</TableHead>
+                <TableHead>Per-share price</TableHead>
                 <TableHead>P&amp;L</TableHead>
                 <TableHead>Exit</TableHead>
               </TableRow>
@@ -71,13 +71,16 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
                       <div className="space-y-1">
                         <p>{trade.quantity} contract(s)</p>
                         <p className="text-xs text-muted-foreground">
-                          {formatNumber(trade.dte_at_open)} DTE · {formatNumber(trade.holding_period_days)} day hold
+                          {formatNumber(trade.dte_at_open)} DTE · {formatNumber(trade.holding_period_days)}d hold
+                          {(trade as any).holding_period_trading_days != null && (
+                            <> ({formatNumber((trade as any).holding_period_trading_days)} trading)</>
+                          )}
                         </p>
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        <p>
+                        <p title="Per-share position value (net premium / 100). Multiply by 100 × quantity for total cost.">
                           {formatCurrency(trade.entry_mid)} → {formatCurrency(trade.exit_mid)}
                         </p>
                         <p className="text-xs text-muted-foreground">

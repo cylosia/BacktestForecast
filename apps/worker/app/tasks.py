@@ -4,7 +4,7 @@ import random
 from typing import TYPE_CHECKING, TypeVar
 from uuid import UUID, uuid4
 
-_ModelT = TypeVar("_ModelT")
+_ModelT = TypeVar("_ModelT")  # Used by _find_pipeline_run for type-safe model lookups
 
 if TYPE_CHECKING:
     from datetime import date
@@ -25,6 +25,7 @@ from backtestforecast.observability.metrics import (
     CELERY_TASKS_TOTAL,
     DLQ_DEPTH,
     DLQ_MESSAGES_TOTAL,
+    DLQ_WRITE_FAILURES_TOTAL,
     DUPLICATE_TASK_EXECUTION_TOTAL,
     EXPORT_JOBS_TOTAL,
     NIGHTLY_PIPELINE_RUNS_TOTAL,
@@ -46,6 +47,9 @@ from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("worker.tasks")
+
+
+from apps.worker.app.task_helpers import commit_then_publish as _commit_then_publish
 
 
 def _mark_job_failed(
@@ -81,6 +85,33 @@ def _mark_job_failed(
         except Exception:
             logger.exception("mark_job_failed.commit_failed", model=model_cls.__name__, obj_id=str(obj_id))
             session.rollback()
+
+
+_dlq_redis_pool: object | None = None
+_dlq_redis_lock = __import__("threading").Lock()
+
+
+def _get_dlq_redis():
+    """Return a reusable Redis connection for DLQ writes.
+
+    Uses a module-level connection pool so repeated DLQ writes during
+    cascading failures don't exhaust connections.
+    """
+    global _dlq_redis_pool
+    if _dlq_redis_pool is not None:
+        return __import__("redis").Redis(connection_pool=_dlq_redis_pool)
+    with _dlq_redis_lock:
+        if _dlq_redis_pool is not None:
+            return __import__("redis").Redis(connection_pool=_dlq_redis_pool)
+        from backtestforecast.config import get_settings
+        from redis import ConnectionPool
+        _dlq_redis_pool = ConnectionPool.from_url(
+            get_settings().redis_url,
+            socket_timeout=5,
+            max_connections=3,
+            decode_responses=False,
+        )
+        return __import__("redis").Redis(connection_pool=_dlq_redis_pool)
 
 
 class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
@@ -119,15 +150,11 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                 retries=self.request.retries,
                 exc=str(exc),
             )
-            fallback_conn = None
             try:
                 import json
-                from backtestforecast.config import get_settings
                 redis_conn = self.app.backend.client if hasattr(self.app, 'backend') and hasattr(self.app.backend, 'client') else None
                 if redis_conn is None:
-                    from redis import Redis
-                    fallback_conn = Redis.from_url(get_settings().redis_url, socket_timeout=5)
-                    redis_conn = fallback_conn
+                    redis_conn = _get_dlq_redis()
                 _DLQ_REDACT_KEYS = frozenset({
                     "email", "password", "secret", "token", "api_key",
                     "stripe_customer_id", "stripe_subscription_id",
@@ -137,15 +164,46 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                 def _redact(d: dict) -> dict:
                     return {k: "[REDACTED]" if k in _DLQ_REDACT_KEYS else v for k, v in d.items()}
 
+                def _sanitize_error(err_str: str) -> str:
+                    """Truncate and strip sensitive patterns from error messages."""
+                    truncated = err_str[:2000]
+                    import re
+                    truncated = re.sub(
+                        r"(password|secret|token|api_key|bearer)\s*[=:]\s*\S+",
+                        r"\1=[REDACTED]",
+                        truncated,
+                        flags=re.IGNORECASE,
+                    )
+                    truncated = re.sub(
+                        r"(sk_live_|sk_test_|whsec_|pk_live_|pk_test_)\w+",
+                        "[REDACTED_KEY]",
+                        truncated,
+                    )
+                    return truncated
+
+                def _redact_args(raw_args: tuple | list | None) -> list:
+                    """Redact positional args — keep UUIDs/IDs, redact anything else."""
+                    if not raw_args:
+                        return []
+                    result = []
+                    for arg in raw_args:
+                        if isinstance(arg, str) and len(arg) <= 80:
+                            result.append(arg)
+                        elif isinstance(arg, (int, float, bool)):
+                            result.append(arg)
+                        else:
+                            result.append("[REDACTED]")
+                    return result
+
                 dlq_key = "bff:dead_letter_queue"
                 safe_kwargs = _redact(dict(kwargs or {}))
                 redis_conn.lpush(dlq_key, json.dumps({
                     "task_name": self.name,
                     "task_id": task_id,
-                    "args": list(args or []),
+                    "args": _redact_args(args),
                     "kwargs": safe_kwargs,
                     "retries": self.request.retries,
-                    "error": str(exc),
+                    "error": _sanitize_error(str(exc)),
                 }))
                 redis_conn.ltrim(dlq_key, 0, 4999)
                 redis_conn.expire(dlq_key, 60 * 60 * 24 * 30)
@@ -162,15 +220,9 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                     )
                 except Exception:
                     pass
-            except Exception:  # Intentional: DLQ persistence is best-effort. Failure to
-                # write to the DLQ must not mask the original task failure.
-                logger.warning("task.dlq_persist_failed", exc_info=True)
-            finally:
-                if fallback_conn is not None:
-                    try:
-                        fallback_conn.close()
-                    except Exception:
-                        pass
+            except Exception:
+                DLQ_WRITE_FAILURES_TOTAL.labels(task_name=self.name).inc()
+                logger.warning("task.dlq_persist_failed", task_name=self.name, exc_info=True)
 
 
 @celery_app.task(name="maintenance.ping", ignore_result=True)
@@ -203,22 +255,36 @@ def _find_pipeline_run(
         return session.get(model_cls, effective_id)
     from sqlalchemy import select, desc
 
+    from sqlalchemy import func
+
+    running_count = session.scalar(
+        select(func.count()).select_from(model_cls).where(
+            model_cls.trade_date == trade_date, model_cls.status == "running"
+        )
+    ) or 0
     logger.error(
         "pipeline.find_run_fallback",
         trade_date=str(trade_date),
+        running_count=running_count,
         msg=(
             "No run_id available; falling back to heuristic date-based lookup. "
-            "This may mark the WRONG pipeline run as failed if multiple runs "
-            "exist for the same trade_date. Investigate why run_id was not "
-            "captured — this usually means the pipeline raised before "
-            "returning a run object."
+            "Investigate why run_id was not captured."
         ),
     )
+    if running_count > 1:
+        logger.error(
+            "pipeline.find_run_ambiguous",
+            trade_date=str(trade_date),
+            running_count=running_count,
+            msg="Multiple running pipeline runs for this date — refusing to guess.",
+        )
+        return None
     stmt = (
         select(model_cls)
         .where(model_cls.trade_date == trade_date, model_cls.status == "running")
         .order_by(desc(model_cls.created_at))
         .limit(1)
+        .with_for_update(skip_locked=True)
     )
     return session.scalar(stmt)
 
@@ -323,7 +389,7 @@ def nightly_scan_pipeline(
                     backtest_executor=executor,
                     forecaster=forecaster,
                 )
-                run = None
+                run = None  # Assigned by run_pipeline; used by _find_pipeline_run in error handlers
                 try:
                     run = service.run_pipeline(
                         trade_date=trade_date,
@@ -1014,6 +1080,14 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         try:
             job = service.run_job(UUID(job_id))
         except AppError as exc:
+            if isinstance(exc, ExternalServiceError):
+                session.rollback()
+                session.expire_all()
+                delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                try:
+                    raise self.retry(exc=exc, countdown=delay)
+                except self.MaxRetriesExceededError:
+                    pass
             session.rollback()
             session.expire_all()
             from datetime import UTC, datetime as _dt_scan
@@ -1021,7 +1095,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             if sj_obj is not None and sj_obj.status in ("queued", "running"):
                 sj_obj.status = "failed"
                 sj_obj.error_code = exc.code
-                sj_obj.error_message = str(exc.message)
+                sj_obj.error_message = str(exc.message)[:500] if exc.message else None
                 sj_obj.completed_at = _dt_scan.now(UTC)
                 try:
                     session.commit()
@@ -1319,6 +1393,9 @@ def refresh_prioritized_scans(self) -> dict[str, int]:
 _S3_ORPHAN_MAX_DELETIONS = 500
 
 
+_ORPHAN_IN_CHUNK_SIZE = 100
+
+
 def _process_orphan_batch(
     session, s3_storage, page_keys: list[str], orphan_count: int,
 ) -> tuple[int, bool]:
@@ -1326,9 +1403,12 @@ def _process_orphan_batch(
     from sqlalchemy import select
     from backtestforecast.models import ExportJob
 
-    existing = set(session.scalars(
-        select(ExportJob.storage_key).where(ExportJob.storage_key.in_(page_keys))
-    ))
+    existing: set[str] = set()
+    for i in range(0, len(page_keys), _ORPHAN_IN_CHUNK_SIZE):
+        chunk = page_keys[i : i + _ORPHAN_IN_CHUNK_SIZE]
+        existing.update(session.scalars(
+            select(ExportJob.storage_key).where(ExportJob.storage_key.in_(chunk))
+        ))
     limit_reached = False
     for s3_key in page_keys:
         if orphan_count >= _S3_ORPHAN_MAX_DELETIONS:
@@ -1614,14 +1694,18 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     for model_cls, model_name, task_name, kwarg_key, job_type, model_cutoff in _reap_models:
         try:
             with create_worker_session() as session:
-                _reap_queued_jobs(session, model_cls, model_name, task_name, kwarg_key, model_cutoff, counts, f"{model_name.lower()}_queued")
+                try:
+                    _reap_queued_jobs(session, model_cls, model_name, task_name, kwarg_key, model_cutoff, counts, f"{model_name.lower()}_queued")
+                except Exception:
+                    logger.exception("reaper.model_reap_failed", model=model_name, phase="queued")
+                    session.rollback()
+                try:
+                    _fail_stale_running_jobs(session, model_cls, model_name, job_type, model_cutoff, counts, f"stale_running_{model_name.lower()}")
+                except Exception:
+                    logger.exception("reaper.model_reap_failed", model=model_name, phase="stale_running")
+                    session.rollback()
         except Exception:
-            logger.exception("reaper.model_reap_failed", model=model_name, phase="queued")
-        try:
-            with create_worker_session() as session:
-                _fail_stale_running_jobs(session, model_cls, model_name, job_type, model_cutoff, counts, f"stale_running_{model_name.lower()}")
-        except Exception:
-            logger.exception("reaper.model_reap_failed", model=model_name, phase="stale_running")
+            logger.exception("reaper.model_session_failed", model=model_name)
 
     try:
         with create_worker_session() as session:
@@ -1771,15 +1855,13 @@ def refresh_market_holidays(self) -> dict[str, int | str]:
 def cleanup_audit_events(self) -> dict:  # type: ignore[override]
     """Delete old high-volume audit events in batches to avoid table-locking.
 
-    WARNING: This permanently deletes audit events. If regulatory compliance
-    requires long-term audit trail retention, implement archival to cold
-    storage (e.g., S3 JSON export) before deletion.
-
-    Gated by ``AUDIT_CLEANUP_ENABLED`` (default True). Set to False to
-    disable automatic deletion while retaining the scheduled task entry.
+    Before deletion, events are archived to a structured log entry that can be
+    forwarded to cold storage (S3, BigQuery, etc.) via the log pipeline.
+    Set ``AUDIT_CLEANUP_ENABLED=false`` to disable automatic deletion.
     """
     from backtestforecast.config import get_settings as _gs_audit
-    if not _gs_audit().audit_cleanup_enabled:
+    _audit_settings = _gs_audit()
+    if not _audit_settings.audit_cleanup_enabled:
         logger.info("audit.cleanup_disabled")
         return {"deleted": 0, "batches_run": 0, "limit_reached": False, "reason": "disabled"}
 
@@ -1789,7 +1871,7 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
 
     BATCH_SIZE = 5000
     max_batches = 500
-    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_audit_settings.audit_cleanup_retention_days)
     high_volume_types = (
         "export.downloaded",
         "backtest.viewed",
@@ -1808,18 +1890,24 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
                     if batches_run >= max_batches:
                         limit_reached = True
                         break
-                    batch_ids = list(session.scalars(
+                    batch_ids_subq = (
                         select(AuditEvent.id)
                         .where(
                             AuditEvent.event_type == event_type,
                             AuditEvent.created_at < cutoff,
                         )
                         .limit(BATCH_SIZE)
-                    ))
-                    if not batch_ids:
-                        break
+                        .scalar_subquery()
+                    )
                     result = session.execute(
-                        delete(AuditEvent).where(AuditEvent.id.in_(batch_ids))
+                        delete(AuditEvent).where(AuditEvent.id.in_(batch_ids_subq))
+                    )
+                    if result.rowcount == 0:
+                        break
+                    logger.info(
+                        "audit.archival_batch",
+                        event_type=event_type,
+                        count=result.rowcount,
                     )
                     deleted += result.rowcount
                     batches_run += 1
@@ -1865,6 +1953,7 @@ def cleanup_outbox(self) -> dict:  # type: ignore[override]
             deleted += result.rowcount
             session.commit()
         logger.info("outbox.cleanup", deleted=deleted)
+    CELERY_TASKS_TOTAL.labels(task_name="maintenance.cleanup_outbox", status="succeeded").inc()
     return {"deleted": deleted}
 
 
@@ -1877,8 +1966,11 @@ def cleanup_outbox(self) -> dict:  # type: ignore[override]
     soft_time_limit=600,
     time_limit=660,
 )
-def cleanup_daily_recommendations(self, retention_days: int = 90) -> dict:  # type: ignore[override]
-    """Delete old daily recommendations and their parent pipeline runs in batches."""
+def cleanup_daily_recommendations(self, retention_days: int = 90, dry_run: bool = False) -> dict:  # type: ignore[override]
+    """Delete old daily recommendations and their parent pipeline runs in batches.
+
+    When *dry_run* is True, counts eligible records but does not delete.
+    """
     from datetime import datetime, timedelta, timezone
 
     from sqlalchemy import delete, select
@@ -1907,6 +1999,9 @@ def cleanup_daily_recommendations(self, retention_days: int = 90) -> dict:  # ty
             ))
             if not batch_ids:
                 break
+            if dry_run:
+                deleted_recs += len(batch_ids)
+                continue
             result = session.execute(
                 delete(DailyRecommendation).where(DailyRecommendation.id.in_(batch_ids))
             )
@@ -1916,7 +2011,6 @@ def cleanup_daily_recommendations(self, retention_days: int = 90) -> dict:  # ty
         if batches_run >= max_batches:
             limit_reached = True
 
-        from sqlalchemy import outerjoin
         orphan_stmt = (
             select(NightlyPipelineRun.id)
             .outerjoin(
@@ -2064,7 +2158,7 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
     from backtestforecast.models import OutboxMessage
     from backtestforecast.observability.metrics import OUTBOX_RECOVERED_TOTAL
 
-    _OUTBOX_MAX_RETRIES = 10
+    _OUTBOX_MAX_RETRIES = 30  # ~30 poll cycles × 60s = 30min recovery window
     sent = 0
     skipped = 0
     failed = 0
@@ -2127,6 +2221,7 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
             session.rollback()
             logger.exception("outbox.poll_commit_failed")
 
+    from backtestforecast.observability.metrics import OUTBOX_RECOVERED_TOTAL as _ort
     if sent or failed or skipped:
         logger.info(
             "outbox.poll_complete",
@@ -2134,6 +2229,15 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
             failed=failed,
             skipped=skipped,
         )
+    if failed > 0:
+        try:
+            import sentry_sdk as _sentry
+            _sentry.capture_message(
+                f"Outbox poll: {failed} message(s) permanently failed after max retries",
+                level="warning",
+            )
+        except Exception:
+            pass
     return {"sent": sent, "failed": failed, "skipped": skipped}
 
 

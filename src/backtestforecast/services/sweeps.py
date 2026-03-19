@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError, ConflictError, NotFoundError, ValidationError
+from backtestforecast.schemas.json_shapes import _SUMMARY_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.market_data.prefetch import OptionDataPrefetcher
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import SweepJob, SweepResult, User
@@ -578,6 +579,11 @@ class SweepService:
             for idx, candidate in enumerate(selected, 1):
                 params = dict(candidate["parameters"])
                 params["trades_truncated"] = candidate.get("trades_truncated", False)
+                validate_json_shape(
+                    candidate["summary"],
+                    f"SweepResult[{idx}].summary_json",
+                    required_keys=_SUMMARY_REQUIRED_KEYS,
+                )
                 job.results.append(
                     SweepResult(
                         rank=idx,
@@ -808,6 +814,11 @@ class SweepService:
                 parameters["profit_target_pct"] = exit_set.profit_target_pct
                 parameters["stop_loss_pct"] = exit_set.stop_loss_pct
 
+            validate_json_shape(
+                summary,
+                f"GeneticSweepResult[{actual_rank}].summary_json",
+                required_keys=_SUMMARY_REQUIRED_KEYS,
+            )
             job.results.append(
                 SweepResult(
                     rank=actual_rank,

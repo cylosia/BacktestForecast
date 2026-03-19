@@ -12,6 +12,7 @@ from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
 from backtestforecast.backtests.strategies.wheel import WheelStrategyBacktestEngine
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import (
+    DEFAULT_CONTRACT_MULTIPLIER,
     BacktestConfig,
     BacktestExecutionResult,
     EquityPointResult,
@@ -25,14 +26,29 @@ from backtestforecast.market_data.types import DailyBar
 
 logger = structlog.get_logger(__name__)
 
-CONTRACT_MULTIPLIER: float = 100.0  # Default; prefer leg.contract_multiplier
+CONTRACT_MULTIPLIER = DEFAULT_CONTRACT_MULTIPLIER
+
+
+def _leg_multiplier(leg: object) -> float:
+    """Return the contract multiplier for a leg, defaulting to 100."""
+    return getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)
+
 
 _D0 = Decimal("0")
 _D100 = Decimal("100")
 
 
+_D_CACHE: dict[int | float, Decimal] = {
+    0: _D0, 1: Decimal("1"), -1: Decimal("-1"), 100: Decimal("100"),
+    0.0: _D0, 1.0: Decimal("1"), -1.0: Decimal("-1"),
+}
+
+
 def _D(v: float | int) -> Decimal:
     """Convert a float/int to Decimal via string to avoid IEEE 754 artefacts."""
+    cached = _D_CACHE.get(v)
+    if cached is not None:
+        return cached
     return Decimal(str(v))
 
 
@@ -175,6 +191,7 @@ class OptionsBacktestEngine:
                     trade, cash_delta = self._close_position(
                         position, config, snapshot.position_value, bar.trade_date, bar.close_price,
                         exit_prices, exit_reason, warnings, warning_codes,
+                        current_bar_index=index,
                     )
                     cash += cash_delta
                     trades.append(trade)
@@ -182,8 +199,24 @@ class OptionsBacktestEngine:
                     position_value = _D0
 
             entry_allowed = False
-            just_closed = len(trades) > 0 and trades[-1].exit_date == bar.trade_date
-            if position is None and not just_closed and bar.trade_date <= config.end_date:
+            # Prevent re-entry on the same bar where a position was just closed
+            # during *this* iteration. This avoids infinite open/close loops when
+            # entry rules remain satisfied after a stop-loss or expiration exit.
+            # Note: this blocks all same-day re-entry, which may suppress
+            # legitimate signals on high-frequency strategies.
+            just_closed_this_bar = (
+                position is None
+                and len(trades) > 0
+                and trades[-1].exit_date == bar.trade_date
+            )
+            if just_closed_this_bar:
+                self._add_warning_once(
+                    warnings, warning_codes, "same_day_reentry_blocked",
+                    "One or more entry signals were suppressed because a position was "
+                    "closed on the same trading day. The engine does not re-enter on "
+                    "the same bar to avoid infinite open/close loops.",
+                )
+            if position is None and not just_closed_this_bar and bar.trade_date <= config.end_date:
                 try:
                     entry_allowed = evaluator.is_entry_allowed(index)
                 except Exception:
@@ -225,7 +258,7 @@ class OptionsBacktestEngine:
                         contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
                         commission_per_unit = float(config.commission_per_contract) * contracts_per_unit
                         gross_notional_per_unit = (
-                            sum(abs(leg.entry_mid * getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)) * leg.quantity_per_unit for leg in candidate.option_legs)
+                            sum(abs(leg.entry_mid * _leg_multiplier(leg)) * leg.quantity_per_unit for leg in candidate.option_legs)
                             + sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in candidate.stock_legs)
                         )
                         quantity = self._resolve_position_size(
@@ -277,8 +310,15 @@ class OptionsBacktestEngine:
                     position_value = _D0
 
             equity = cash + position_value
+            if equity < _D0:
+                self._add_warning_once(
+                    warnings, warning_codes, "negative_equity",
+                    "Account equity went negative. This indicates a margin call scenario "
+                    "where losses exceeded the account balance. Drawdown percentages above "
+                    "100% may occur.",
+                )
             peak_equity = max(peak_equity, equity)
-            drawdown_pct = (peak_equity - equity) / peak_equity * _D100 if peak_equity else _D0
+            drawdown_pct = (peak_equity - equity) / peak_equity * _D100 if peak_equity > _D0 else _D0
             equity_curve.append(
                 EquityPointResult(
                     trade_date=bar.trade_date,
@@ -301,6 +341,7 @@ class OptionsBacktestEngine:
                 position, config, snapshot.position_value, sorted_bars[-1].trade_date,
                 sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
                 warnings, warning_codes,
+                current_bar_index=len(sorted_bars) - 1,
             )
             cash += cash_delta
             trades.append(trade)
@@ -343,23 +384,23 @@ class OptionsBacktestEngine:
         warnings: list[dict[str, Any]],
         warning_codes: set[str],
     ) -> PositionSnapshot:
+        """Re-price all legs at the current bar and return a value snapshot.
+
+        IMPORTANT: This method intentionally mutates ``leg.last_mid`` and
+        ``leg.last_price`` in-place.  The engine loop relies on these updated
+        values for carry-forward pricing when a quote is missing on a
+        subsequent day.  Do not replace with a copy-on-write pattern unless
+        you also update the carry-forward logic in ``get_quote is None``
+        branches above and in ``_close_position``.
+        """
         option_value = _D0
         missing_quote_tickers: list[str] = []
         for leg in position.option_legs:
-            quote = option_gateway.get_quote(leg.ticker, bar.trade_date)
-            if quote is None:
-                if bar.trade_date >= leg.expiration_date:
-                    current_mid = float(self._intrinsic_value(leg.contract_type, leg.strike_price, bar.close_price))
-                else:
-                    current_mid = leg.last_mid
-                    missing_quote_tickers.append(leg.ticker)
-            else:
-                current_mid = quote.mid_price
-                if not math.isfinite(current_mid) or current_mid < 0:
-                    current_mid = leg.last_mid
-                    missing_quote_tickers.append(leg.ticker)
+            current_mid = self._resolve_option_mid(
+                leg, bar, option_gateway, missing_quote_tickers,
+            )
             leg.last_mid = current_mid
-            multiplier = getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)
+            multiplier = _leg_multiplier(leg)
             option_value += _D(leg.side) * _D(leg.quantity_per_unit) * _D(current_mid) * _D(multiplier) * _D(position.quantity)
 
         if missing_quote_tickers:
@@ -381,11 +422,37 @@ class OptionsBacktestEngine:
             missing_quote_tickers=tuple(missing_quote_tickers),
         )
 
+    def _resolve_option_mid(
+        self,
+        leg: Any,
+        bar: DailyBar,
+        option_gateway: OptionDataGateway,
+        missing_quote_tickers: list[str],
+    ) -> float:
+        """Determine the current mid-price for a single option leg.
+
+        Returns the best available price: live quote > intrinsic value (if
+        expired) > carry-forward from last known mid.  Appends the ticker to
+        *missing_quote_tickers* when a live quote was unavailable.
+        """
+        quote = option_gateway.get_quote(leg.ticker, bar.trade_date)
+        if quote is None:
+            if bar.trade_date >= leg.expiration_date:
+                return float(self._intrinsic_value(
+                    leg.contract_type, leg.strike_price, bar.close_price,
+                ))
+            missing_quote_tickers.append(leg.ticker)
+            return leg.last_mid
+        if not math.isfinite(quote.mid_price) or quote.mid_price < 0:
+            missing_quote_tickers.append(leg.ticker)
+            return leg.last_mid
+        return quote.mid_price
+
     @staticmethod
     def _current_position_value(position: OpenMultiLegPosition, underlying_close: float) -> Decimal:
         option_value = sum(
             (_D(leg.side) * _D(leg.quantity_per_unit) * _D(leg.last_mid)
-             * _D(getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)) * _D(position.quantity))
+             * _D(_leg_multiplier(leg)) * _D(position.quantity))
             for leg in position.option_legs
         ) or _D0
         stock_value = sum(
@@ -399,7 +466,7 @@ class OptionsBacktestEngine:
 
     @staticmethod
     def _resolve_position_size(
-        available_cash: float,
+        available_cash: Decimal | float,
         account_size: float,
         risk_per_trade_pct: float,
         capital_required_per_unit: float,
@@ -409,23 +476,29 @@ class OptionsBacktestEngine:
         slippage_pct: float = 0.0,
         gross_notional_per_unit: float = 0.0,
     ) -> int:
-        available_cash = float(available_cash)
-        if capital_required_per_unit < 0:
+        d_cash = _D(available_cash) if not isinstance(available_cash, Decimal) else available_cash
+        d_account = _D(account_size)
+        d_risk_pct = _D(risk_per_trade_pct)
+        d_cap_req = _D(capital_required_per_unit)
+        if d_cap_req < _D0:
             return 0
-        _MIN_CAPITAL_PER_UNIT = 50.0
-        if capital_required_per_unit < _MIN_CAPITAL_PER_UNIT:
-            capital_required_per_unit = _MIN_CAPITAL_PER_UNIT
-        risk_budget = account_size * (risk_per_trade_pct / 100.0)
-        effective_risk = (
-            max_loss_per_unit if max_loss_per_unit is not None and max_loss_per_unit > 0 else capital_required_per_unit
-        )
-        effective_risk = max(effective_risk, 1.0)
+        _MIN_CAPITAL_PER_UNIT = _D("50")
+        if d_cap_req < _MIN_CAPITAL_PER_UNIT:
+            d_cap_req = _MIN_CAPITAL_PER_UNIT
+        risk_budget = d_account * (d_risk_pct / _D100)
+        d_max_loss = _D(max_loss_per_unit) if max_loss_per_unit is not None and max_loss_per_unit > 0 else d_cap_req
+        effective_risk = max(d_max_loss, _D("1"))
         by_risk = int(risk_budget // effective_risk)
-        slippage_per_unit = (gross_notional_per_unit if gross_notional_per_unit > 0 else entry_cost_per_unit) * (slippage_pct / 100.0)
-        cash_per_unit = max(capital_required_per_unit, entry_cost_per_unit) + commission_per_unit + slippage_per_unit
-        if cash_per_unit <= 0:
+        d_gross_notional = _D(gross_notional_per_unit)
+        d_entry_cost = _D(entry_cost_per_unit)
+        d_slip_pct = _D(slippage_pct) / _D100
+        slippage_base = d_gross_notional if d_gross_notional > _D0 else d_entry_cost
+        slippage_per_unit = slippage_base * d_slip_pct
+        d_commission = _D(commission_per_unit)
+        cash_per_unit = max(d_cap_req, d_entry_cost) + d_commission + slippage_per_unit
+        if cash_per_unit <= _D0:
             return 0
-        by_cash = int(available_cash // cash_per_unit)
+        by_cash = int(d_cash // cash_per_unit)
         return max(0, min(by_risk, by_cash))
 
     def _close_position(
@@ -439,11 +512,12 @@ class OptionsBacktestEngine:
         exit_reason: str,
         warnings: list[dict[str, Any]] | None = None,
         warning_codes: set[str] | None = None,
+        current_bar_index: int | None = None,
     ) -> tuple[TradeResult, Decimal]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
         exit_commission = self._option_commission_total(position, config.commission_per_contract)
         option_exit_notional: Decimal = sum(
-            (abs(_D(leg.last_mid) * _D(getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)))
+            (abs(_D(leg.last_mid) * _D(_leg_multiplier(leg)))
              * _D(leg.quantity_per_unit))
             for leg in position.option_legs
         ) or _D0
@@ -457,7 +531,7 @@ class OptionsBacktestEngine:
         exit_slippage = exit_gross_notional * slippage_pct_d
         entry_value_per_unit = self._entry_value_per_unit(position)
         option_entry_notional: Decimal = sum(
-            (abs(_D(leg.entry_mid) * _D(getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)))
+            (abs(_D(leg.entry_mid) * _D(_leg_multiplier(leg)))
              * _D(leg.quantity_per_unit))
             for leg in position.option_legs
         ) or _D0
@@ -509,6 +583,9 @@ class OptionsBacktestEngine:
             if position.option_legs
             else exit_date
         )
+        trading_days_held = (
+            (current_bar_index - position.entry_index) if current_bar_index is not None else None
+        )
         trade = TradeResult(
             option_ticker=position.display_ticker,
             strategy_type=config.strategy_type,
@@ -519,6 +596,7 @@ class OptionsBacktestEngine:
             quantity=position.quantity,
             dte_at_open=position.dte_at_open,
             holding_period_days=(exit_date - position.entry_date).days,
+            holding_period_trading_days=trading_days_held,
             entry_underlying_close=_D(self._entry_underlying_close(position)),
             exit_underlying_close=_D(exit_underlying_close),
             entry_mid=entry_value_per_unit / _D100,
@@ -542,7 +620,7 @@ class OptionsBacktestEngine:
     def _entry_value_per_unit(position: OpenMultiLegPosition) -> Decimal:
         option_value = sum(
             (_D(leg.side) * _D(leg.quantity_per_unit) * _D(leg.entry_mid)
-             * _D(getattr(leg, "contract_multiplier", CONTRACT_MULTIPLIER)))
+             * _D(_leg_multiplier(leg)))
             for leg in position.option_legs
         ) or _D0
         stock_value = sum(
@@ -555,8 +633,15 @@ class OptionsBacktestEngine:
     def _entry_underlying_close(position: OpenMultiLegPosition) -> float:
         if position.stock_legs:
             return position.stock_legs[0].entry_price
-        # `or 0.0` handles the case where the stored value is explicitly None.
-        return position.detail_json.get("entry_underlying_close", 0.0) or 0.0
+        value = position.detail_json.get("entry_underlying_close")
+        if value is not None and value != 0.0:
+            return float(value)
+        if position.option_legs:
+            logger.warning(
+                "engine.missing_entry_underlying_close",
+                ticker=position.display_ticker,
+            )
+        return 0.0
 
     @staticmethod
     def _option_commission_total(position: OpenMultiLegPosition, commission_per_contract: Decimal) -> Decimal:

@@ -608,6 +608,8 @@ class ScanService:
     def get_recommendations(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
     ) -> ScannerRecommendationListResponse:
+        import time as _time
+        _query_start = _time.monotonic()
         job = self.repository.get_for_user(job_id, user.id, include_recommendations=False)
         if job is None:
             raise NotFoundError("Scanner job not found.")
@@ -625,6 +627,18 @@ class ScanService:
             .limit(limit)
         )
         recs = list(self.session.scalars(stmt))
+        _query_elapsed = _time.monotonic() - _query_start
+        _SLOW_QUERY_THRESHOLD = 5.0
+        if _query_elapsed > _SLOW_QUERY_THRESHOLD:
+            from backtestforecast.observability.metrics import API_SLOW_QUERIES_TOTAL
+            API_SLOW_QUERIES_TOTAL.labels(endpoint="scan_recommendations").inc()
+            logger.warning(
+                "scan.slow_recommendation_query",
+                job_id=str(job_id),
+                elapsed_seconds=round(_query_elapsed, 2),
+                total_recs=total,
+                threshold=_SLOW_QUERY_THRESHOLD,
+            )
         return ScannerRecommendationListResponse(
             items=[self._to_recommendation_response(r) for r in recs],
             total=total,

@@ -170,6 +170,17 @@ def _fallback_persist_status(
     target_statuses = _EXPORT_VALID_TARGET_STATUSES if job_type == "export" else _VALID_TARGET_STATUSES
     if status not in target_statuses:
         return
+
+    from backtestforecast.job_states import is_terminal as _is_terminal
+    if not _is_terminal(status) and status != "expired":
+        logger.warning(
+            "events.fallback_non_terminal_status",
+            job_type=job_type,
+            job_id=str(job_id),
+            status=status,
+        )
+        return
+
     try:
         from sqlalchemy import update
 

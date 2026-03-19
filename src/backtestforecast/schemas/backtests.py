@@ -402,10 +402,10 @@ class StrategyOverrides(BaseModel):
 class CreateBacktestRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    symbol: str = Field(min_length=1, max_length=16)
+    symbol: str = Field(min_length=1, max_length=16, description="Ticker symbol (e.g., AAPL, SPY). Uppercase letters, dots, and slashes allowed.")
     strategy_type: StrategyType
-    start_date: date
-    end_date: date
+    start_date: date = Field(description="Backtest start date. Maximum window is 1825 days (5 years) from end_date.")
+    end_date: date = Field(description="Backtest end date. Must be after start_date.")
     target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
     max_holding_days: int = Field(ge=1, le=120, description="Maximum holding period in trading days (weekdays only). 30 trading days ≈ 6 calendar weeks.")
@@ -520,6 +520,11 @@ class BacktestSummaryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     trade_count: int
+    decided_trades: int | None = Field(
+        default=None,
+        description="Trades with non-zero net P&L. Win rate denominator. "
+                    "Equals trade_count minus break-even trades.",
+    )
     win_rate: Decimal | None = None
     total_roi_pct: Decimal | None = None
     average_win_amount: Decimal = Decimal("0")
@@ -553,11 +558,12 @@ class BacktestTradeResponse(BaseModel):
     expiration_date: date
     quantity: int
     dte_at_open: int
-    holding_period_days: int
+    holding_period_days: int = Field(description="Calendar days between entry and exit dates.")
+    holding_period_trading_days: int | None = Field(default=None, description="Trading days (market-open days) held. None for wheel strategy.")
     entry_underlying_close: Decimal
     exit_underlying_close: Decimal
-    entry_mid: Decimal
-    exit_mid: Decimal
+    entry_mid: Decimal = Field(description="Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value × 100 × quantity.")
+    exit_mid: Decimal = Field(description="Per-unit position value at exit divided by 100. Same convention as entry_mid.")
     gross_pnl: Decimal
     net_pnl: Decimal
     total_commissions: Decimal
@@ -583,11 +589,12 @@ class TradeJsonResponse(BaseModel):
     expiration_date: date
     quantity: int
     dte_at_open: int
-    holding_period_days: int
+    holding_period_days: int = Field(description="Calendar days between entry and exit dates.")
+    holding_period_trading_days: int | None = Field(default=None, description="Trading days (market-open days) held.")
     entry_underlying_close: Decimal
     exit_underlying_close: Decimal
-    entry_mid: Decimal
-    exit_mid: Decimal
+    entry_mid: Decimal = Field(description="Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price.")
+    exit_mid: Decimal = Field(description="Per-unit position value at exit divided by 100. Same convention as entry_mid.")
     gross_pnl: Decimal
     net_pnl: Decimal
     total_commissions: Decimal

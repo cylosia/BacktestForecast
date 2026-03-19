@@ -96,6 +96,12 @@ DLQ_DEPTH = Gauge(
     "Current number of messages in the Redis dead-letter queue (bff:dead_letter_queue)",
 )
 
+DLQ_WRITE_FAILURES_TOTAL = Counter(
+    "dlq_write_failures_total",
+    "Times a failed task could not be written to the DLQ (Redis unavailable)",
+    ["task_name"],
+)
+
 JOBS_STUCK_RUNNING = Gauge(
     "jobs_stuck_running",
     "Jobs in 'running' status longer than the staleness threshold",
@@ -236,6 +242,16 @@ OPTION_CACHE_ENTRIES = Gauge(
     "Number of entries across all in-memory option gateway caches",
 )
 
+OPTION_CACHE_AGE_SECONDS = Gauge(
+    "option_cache_max_age_seconds",
+    "Age in seconds of the oldest entry in the option cache (0 if empty or unknown)",
+)
+
+SETTINGS_INVALIDATION_TOTAL = Counter(
+    "settings_invalidation_total",
+    "Number of times application settings have been invalidated/reloaded",
+)
+
 NIGHTLY_PIPELINE_RUNS_TOTAL = Counter(
     "nightly_pipeline_runs_total",
     "Total nightly pipeline runs by status",
@@ -303,6 +319,12 @@ SCAN_EXECUTION_DURATION_SECONDS = Histogram(
     "backtestforecast_scan_execution_duration_seconds",
     "Time to execute a scanner job end-to-end",
     buckets=[10, 30, 60, 120, 300, 600],
+)
+
+API_SLOW_QUERIES_TOTAL = Counter(
+    "api_slow_queries_total",
+    "API queries exceeding the slow-query threshold (default 5s)",
+    ["endpoint"],
 )
 
 SWEEP_EXECUTION_DURATION_SECONDS = Histogram(

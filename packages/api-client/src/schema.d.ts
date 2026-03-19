@@ -1125,6 +1125,8 @@ export interface components {
             total_roi_pct?: string | null;
             /** Trade Count */
             trade_count: number;
+            /** Decided Trades - Trades with non-zero net P&L. Win rate denominator. Equals trade_count minus break-even trades. */
+            decided_trades?: number | null;
             /** Win Rate */
             win_rate?: string | null;
         };
@@ -1141,7 +1143,7 @@ export interface components {
              * Format: date
              */
             entry_date: string;
-            /** Entry Mid */
+            /** Entry Mid - Per-share position value (net premium / contract multiplier). NOT the raw exchange mid-price. Multiply by 100 × quantity for total cost. */
             entry_mid: string;
             /** Entry Reason */
             entry_reason: string;
@@ -1152,7 +1154,7 @@ export interface components {
              * Format: date
              */
             exit_date: string;
-            /** Exit Mid */
+            /** Exit Mid - Per-share position value at exit. Same convention as entry_mid. */
             exit_mid: string;
             /** Exit Reason */
             exit_reason: string;
@@ -1165,8 +1167,10 @@ export interface components {
             expiration_date: string;
             /** Gross Pnl */
             gross_pnl: string;
-            /** Holding Period Days */
+            /** Holding Period Days - Calendar days between entry and exit dates. */
             holding_period_days: number;
+            /** Holding Period Trading Days - Trading days (market-open days) held. Null for wheel strategy. */
+            holding_period_trading_days?: number | null;
             /**
              * Id
              * Format: uuid
@@ -2865,7 +2869,7 @@ export interface components {
              * Format: date
              */
             entry_date: string;
-            /** Entry Mid */
+            /** Entry Mid - Per-share position value (net premium / contract multiplier). NOT the raw exchange mid-price. */
             entry_mid: string;
             /** Entry Reason */
             entry_reason: string;
@@ -2876,7 +2880,7 @@ export interface components {
              * Format: date
              */
             exit_date: string;
-            /** Exit Mid */
+            /** Exit Mid - Per-share position value at exit. Same convention as entry_mid. */
             exit_mid: string;
             /** Exit Reason */
             exit_reason: string;
@@ -2889,8 +2893,10 @@ export interface components {
             expiration_date: string;
             /** Gross Pnl */
             gross_pnl: string;
-            /** Holding Period Days */
+            /** Holding Period Days - Calendar days between entry and exit dates. */
             holding_period_days: number;
+            /** Holding Period Trading Days - Trading days (market-open days) held. */
+            holding_period_trading_days?: number | null;
             /** Net Pnl */
             net_pnl: string;
             /** Option Ticker */

@@ -8,8 +8,17 @@ from typing import Any, Protocol, Sequence
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
 from backtestforecast.schemas.backtests import CustomLegDefinition, EntryRule, StrategyOverrides
 
+DEFAULT_CONTRACT_MULTIPLIER: float = 100.0
+
 
 class OptionDataGateway(Protocol):
+    """Gateway for option chain and quote data for a single underlying.
+
+    Current implementation assumes a single underlying symbol per backtest.
+    For multi-underlying strategies (e.g., pairs trading, inter-market
+    spreads), use ``MultiUnderlyingGateway`` which wraps per-symbol gateways.
+    """
+
     def list_contracts(
         self,
         entry_date: date,
@@ -19,6 +28,54 @@ class OptionDataGateway(Protocol):
     ) -> Sequence[OptionContractRecord]: ...
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None: ...
+
+
+class MultiUnderlyingGateway:
+    """Gateway wrapper for strategies that trade options on multiple underlyings.
+
+    Delegates to per-symbol ``OptionDataGateway`` instances. Not yet used by
+    any strategy — this is the extension point for future multi-underlying
+    support (e.g., pairs trading, correlation strategies).
+
+    Usage::
+
+        gateways = {
+            "AAPL": aapl_gateway,
+            "MSFT": msft_gateway,
+        }
+        multi = MultiUnderlyingGateway(gateways)
+        contracts = multi.list_contracts("AAPL", entry_date, "call", 30, 5)
+    """
+
+    def __init__(self, gateways: dict[str, OptionDataGateway]) -> None:
+        self._gateways = gateways
+
+    @property
+    def symbols(self) -> list[str]:
+        return list(self._gateways.keys())
+
+    def get_gateway(self, symbol: str) -> OptionDataGateway:
+        gw = self._gateways.get(symbol)
+        if gw is None:
+            raise KeyError(f"No gateway registered for symbol: {symbol}")
+        return gw
+
+    def list_contracts(
+        self,
+        symbol: str,
+        entry_date: date,
+        contract_type: str,
+        target_dte: int,
+        dte_tolerance_days: int,
+    ) -> Sequence[OptionContractRecord]:
+        return self.get_gateway(symbol).list_contracts(
+            entry_date, contract_type, target_dte, dte_tolerance_days,
+        )
+
+    def get_quote(
+        self, symbol: str, option_ticker: str, trade_date: date,
+    ) -> OptionQuoteRecord | None:
+        return self.get_gateway(symbol).get_quote(option_ticker, trade_date)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +127,7 @@ class TradeResult:
     expiration_date: date
     quantity: int
     dte_at_open: int
-    holding_period_days: int
+    holding_period_days: int  # Calendar days between entry_date and exit_date
     entry_underlying_close: Decimal
     exit_underlying_close: Decimal
     entry_mid: Decimal  # Per-unit value / 100 (e.g., $2.50 mid → 0.025). NOT the raw option mid-price.
@@ -81,6 +138,7 @@ class TradeResult:
     entry_reason: str
     exit_reason: str
     detail_json: dict[str, Any] = field(default_factory=dict)
+    holding_period_trading_days: int | None = None  # Trading days (bars) held; None for wheel strategy
 
 
 @dataclass(frozen=True, slots=True)

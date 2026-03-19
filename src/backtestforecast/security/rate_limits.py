@@ -102,8 +102,18 @@ class RateLimiter:
             REDIS_RATE_LIMIT_FALLBACK_TOTAL.labels(bucket=bucket).inc()
             logger.warning("rate_limiter.redis_fallback", key=bucket, exc_info=True)
             if self._fail_closed:
-                logger.error("rate_limiter.fail_closed", bucket=bucket)
-                raise ServiceUnavailableError()
+                mem_count, _ = self._check_memory(namespaced, window_seconds)
+                if mem_count > limit:
+                    logger.error("rate_limiter.fail_closed_enforced", bucket=bucket, mem_count=mem_count)
+                    raise ServiceUnavailableError()
+                logger.warning(
+                    "rate_limiter.fail_closed_memory_fallback",
+                    bucket=bucket,
+                    mem_count=mem_count,
+                    msg="Redis unavailable; using in-memory rate limiting as fallback. "
+                        "Limits are per-process only (not shared across workers).",
+                )
+                count = mem_count
         if count is None:
             mem_count, current_bucket = self._check_memory(namespaced, window_seconds)
             count = mem_count

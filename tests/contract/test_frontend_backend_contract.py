@@ -1,0 +1,155 @@
+"""Contract tests verifying frontend TypeScript types match backend Pydantic schemas.
+
+These tests ensure that fields added to the backend are reflected in the
+TypeScript API client types, preventing silent frontend-backend drift.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TS_SCHEMA_PATH = PROJECT_ROOT / "packages" / "api-client" / "src" / "schema.d.ts"
+
+
+def _read_ts_schema() -> str:
+    assert TS_SCHEMA_PATH.exists(), f"TypeScript schema not found: {TS_SCHEMA_PATH}"
+    return TS_SCHEMA_PATH.read_text(encoding="utf-8")
+
+
+def test_ts_schema_has_decided_trades():
+    """BacktestSummaryResponse must include decided_trades for win rate context."""
+    ts = _read_ts_schema()
+    assert "decided_trades" in ts, (
+        "TypeScript schema missing 'decided_trades' field. "
+        "Regenerate with: pnpm --filter @backtestforecast/api-client generate"
+    )
+
+
+def test_ts_schema_has_holding_period_trading_days_on_trade():
+    """BacktestTradeResponse must include holding_period_trading_days."""
+    ts = _read_ts_schema()
+    assert "holding_period_trading_days" in ts, (
+        "TypeScript schema missing 'holding_period_trading_days' field. "
+        "Regenerate with: pnpm --filter @backtestforecast/api-client generate"
+    )
+
+
+def test_ts_schema_entry_mid_has_description():
+    """entry_mid field must have a description explaining the /100 convention."""
+    ts = _read_ts_schema()
+    assert "Per-share position value" in ts, (
+        "TypeScript schema entry_mid missing per-share description"
+    )
+
+
+def test_ts_schema_exit_mid_has_description():
+    """exit_mid field must have a description matching entry_mid convention."""
+    ts = _read_ts_schema()
+    assert "Same convention as entry_mid" in ts
+
+
+def test_backend_decided_trades_field_exists():
+    """Backend BacktestSummaryResponse must have decided_trades."""
+    from backtestforecast.schemas.backtests import BacktestSummaryResponse
+    assert "decided_trades" in BacktestSummaryResponse.model_fields
+
+
+def test_backend_holding_period_trading_days_exists():
+    """Backend BacktestTradeResponse must have holding_period_trading_days."""
+    from backtestforecast.schemas.backtests import BacktestTradeResponse
+    assert "holding_period_trading_days" in BacktestTradeResponse.model_fields
+
+
+def test_backend_entry_mid_description():
+    """Backend entry_mid must have a description explaining the convention."""
+    from backtestforecast.schemas.backtests import BacktestTradeResponse
+    desc = BacktestTradeResponse.model_fields["entry_mid"].description
+    assert desc is not None and "100" in desc
+
+
+def test_export_format_enum_matches_db_constraint():
+    """ExportFormat enum values must match the DB CHECK constraint."""
+    from backtestforecast.billing.entitlements import ExportFormat
+    enum_values = {e.value for e in ExportFormat}
+    assert enum_values == {"csv", "pdf"}, (
+        f"ExportFormat enum {enum_values} does not match DB CHECK constraint"
+    )
+
+
+def test_trade_json_response_has_trading_days():
+    """TradeJsonResponse (scanner/sweep) must also have the trading days field."""
+    from backtestforecast.schemas.backtests import TradeJsonResponse
+    assert "holding_period_trading_days" in TradeJsonResponse.model_fields
+
+
+# ---- Expanded schema coverage ----
+
+def test_backtest_run_detail_response_fields():
+    """BacktestRunDetailResponse must have core fields."""
+    from backtestforecast.schemas.backtests import BacktestRunDetailResponse
+    fields = BacktestRunDetailResponse.model_fields
+    for f in ("id", "symbol", "strategy_type", "status", "summary", "trades", "equity_curve"):
+        assert f in fields, f"BacktestRunDetailResponse missing field: {f}"
+
+
+def test_scanner_recommendation_response_fields():
+    """ScannerRecommendationResponse must have core fields."""
+    from backtestforecast.schemas.scans import ScannerRecommendationResponse
+    fields = ScannerRecommendationResponse.model_fields
+    for f in ("rank", "score", "symbol", "strategy_type", "summary"):
+        assert f in fields, f"ScannerRecommendationResponse missing field: {f}"
+
+
+def test_sweep_result_response_fields():
+    """SweepResultResponse must have core fields."""
+    from backtestforecast.schemas.sweeps import SweepResultResponse
+    fields = SweepResultResponse.model_fields
+    for f in ("rank", "score", "strategy_type", "summary"):
+        assert f in fields, f"SweepResultResponse missing field: {f}"
+
+
+def test_current_user_response_fields():
+    """CurrentUserResponse must have user + features + usage."""
+    from backtestforecast.schemas.backtests import CurrentUserResponse
+    fields = CurrentUserResponse.model_fields
+    for f in ("id", "plan_tier", "features", "usage"):
+        assert f in fields, f"CurrentUserResponse missing field: {f}"
+
+
+def test_strategy_type_enum_completeness():
+    """StrategyType enum must have at least 25 strategies."""
+    from backtestforecast.schemas.backtests import StrategyType
+    assert len(StrategyType) >= 25
+
+
+def test_job_status_enum_values():
+    """JobStatus must include all standard values."""
+    from backtestforecast.schemas.common import JobStatus
+    values = {s.value for s in JobStatus}
+    for v in ("queued", "running", "succeeded", "failed", "cancelled", "expired"):
+        assert v in values, f"JobStatus missing value: {v}"
+
+
+def test_plan_tier_enum_values():
+    """PlanTier must include free, pro, premium."""
+    from backtestforecast.schemas.common import PlanTier
+    values = {t.value for t in PlanTier}
+    assert values == {"free", "pro", "premium"}
+
+
+def test_error_response_structure():
+    """ErrorResponse must wrap an ErrorDetail."""
+    from backtestforecast.schemas.common import ErrorResponse, ErrorDetail
+    fields = ErrorResponse.model_fields
+    assert "error" in fields
+
+
+def test_state_machine_covers_all_statuses():
+    """The job state machine must have transitions for all known statuses."""
+    from backtestforecast.job_states import ALLOWED_TRANSITIONS
+    from backtestforecast.schemas.common import JobStatus
+    for status in JobStatus:
+        assert status.value in ALLOWED_TRANSITIONS, (
+            f"Status '{status.value}' missing from ALLOWED_TRANSITIONS"
+        )

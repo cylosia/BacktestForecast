@@ -273,3 +273,51 @@ class OptionDataRedisCache:
         except Exception:
             logger.debug("redis_cache.freshness_check_failed", symbol=symbol, exc_info=True)
         return info
+
+    def invalidate_symbol(self, symbol: str) -> int:
+        """Delete all cached data for *symbol*. Returns count of keys deleted.
+
+        Uses the per-symbol metadata to find cached keys efficiently.
+        Falls back to SCAN if metadata is unavailable.
+        """
+        deleted = 0
+        try:
+            r = self._conn()
+            meta_key = self._symbol_meta_key(symbol)
+            pattern = f"{_KEY_PREFIX}:*{symbol}*"
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor, match=pattern, count=200)
+                if keys:
+                    r.delete(*keys)
+                    deleted += len(keys)
+                if cursor == 0:
+                    break
+            r.delete(meta_key)
+            logger.info("redis_cache.symbol_invalidated", symbol=symbol, keys_deleted=deleted)
+        except Exception:
+            logger.warning("redis_cache.invalidate_failed", symbol=symbol, exc_info=True)
+        return deleted
+
+    def invalidate_all(self) -> int:
+        """Delete ALL cached option data. Returns count of keys deleted.
+
+        WARNING: This clears the entire cache. All subsequent requests will
+        hit the upstream API until the cache is repopulated.
+        """
+        deleted = 0
+        try:
+            r = self._conn()
+            pattern = f"{_KEY_PREFIX}:*"
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor, match=pattern, count=500)
+                if keys:
+                    r.delete(*keys)
+                    deleted += len(keys)
+                if cursor == 0:
+                    break
+            logger.warning("redis_cache.all_invalidated", keys_deleted=deleted)
+        except Exception:
+            logger.warning("redis_cache.invalidate_all_failed", exc_info=True)
+        return deleted

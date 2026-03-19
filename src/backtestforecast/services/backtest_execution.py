@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import structlog
 from typing import Self
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
@@ -8,6 +9,8 @@ from backtestforecast.config import get_settings
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+
+_logger = structlog.get_logger("services.backtest_execution")
 
 
 class BacktestExecutionService:
@@ -42,6 +45,7 @@ class BacktestExecutionService:
         request: CreateBacktestRunRequest,
         bundle: HistoricalDataBundle | None = None,
     ) -> BacktestExecutionResult:
+        settings = get_settings()
         resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
         config = BacktestConfig(
             symbol=request.symbol,
@@ -55,16 +59,53 @@ class BacktestExecutionService:
             risk_per_trade_pct=request.risk_per_trade_pct,
             commission_per_contract=request.commission_per_contract,
             entry_rules=request.entry_rules,
-            risk_free_rate=get_settings().risk_free_rate,
+            risk_free_rate=settings.risk_free_rate,
             slippage_pct=request.slippage_pct,
             strategy_overrides=request.strategy_overrides,
             custom_legs=request.custom_legs,
             profit_target_pct=request.profit_target_pct,
             stop_loss_pct=request.stop_loss_pct,
         )
-        return self.engine.run(
+        result = self.engine.run(
             config=config,
             bars=resolved_bundle.bars,
             earnings_dates=resolved_bundle.earnings_dates,
             option_gateway=resolved_bundle.option_gateway,
         )
+        self._check_data_staleness(request.symbol, result, settings)
+        return result
+
+    def _check_data_staleness(
+        self,
+        symbol: str,
+        result: BacktestExecutionResult,
+        settings: object,
+    ) -> None:
+        """Add a warning to backtest results if cached option data is stale."""
+        try:
+            cache = getattr(self.market_data_service, '_redis_cache', None)
+            if cache is None:
+                return
+            warn_age = getattr(settings, 'option_cache_warn_age_seconds', 259_200)
+            age = cache.get_oldest_cache_age_seconds(symbol)
+            if age is not None and age > warn_age:
+                days = int(age / 86400)
+                warning = {
+                    "code": "stale_option_cache",
+                    "message": (
+                        f"Option data for {symbol} was cached {days} day(s) ago. "
+                        f"Results may not reflect the most recent market conditions."
+                    ),
+                }
+                if result.warnings is None:
+                    result.warnings = [warning]
+                else:
+                    result.warnings.append(warning)
+                _logger.warning(
+                    "backtest.stale_cache",
+                    symbol=symbol,
+                    cache_age_seconds=round(age),
+                    warn_threshold=warn_age,
+                )
+        except Exception:
+            _logger.debug("backtest.staleness_check_failed", symbol=symbol, exc_info=True)

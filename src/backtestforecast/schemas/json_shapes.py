@@ -71,6 +71,31 @@ _FORECAST_REQUIRED_KEYS: frozenset[str] = frozenset({"horizon_days"})
 
 
 # ---------------------------------------------------------------------------
+# Backtest summary_json (ScannerRecommendation, SweepResult, DailyRecommendation)
+# ---------------------------------------------------------------------------
+
+class SummaryShape(TypedDict, total=False):
+    trade_count: int
+    win_rate: float
+    total_roi_pct: float
+    max_drawdown_pct: float
+    total_net_pnl: float
+    starting_equity: float
+    ending_equity: float
+    sharpe_ratio: float | None
+    sortino_ratio: float | None
+    profit_factor: float | None
+    expectancy: float
+    cagr_pct: float | None
+
+
+_SUMMARY_REQUIRED_KEYS: frozenset[str] = frozenset({
+    "trade_count", "win_rate", "total_roi_pct", "max_drawdown_pct",
+    "total_net_pnl", "starting_equity", "ending_equity",
+})
+
+
+# ---------------------------------------------------------------------------
 # Validator
 # ---------------------------------------------------------------------------
 

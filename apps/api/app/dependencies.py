@@ -153,11 +153,12 @@ def get_current_user(
             fetch_site = request.headers.get("sec-fetch-site")
             if fetch_site and fetch_site not in ("same-origin", "same-site", "none"):
                 structlog.get_logger("security").warning(
-                    "auth.cookie_cross_site_detected",
+                    "auth.cookie_cross_site_rejected",
                     sec_fetch_site=fetch_site,
                     method=request.method,
-                    hint="A cookie-auth request arrived with a cross-site Sec-Fetch-Site header. "
-                         "This may indicate SameSite=None on the __session cookie or a misconfigured proxy.",
+                )
+                raise AuthenticationError(
+                    "Cookie-based authentication is not allowed from cross-site contexts."
                 )
         if token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             xrw = request.headers.get("x-requested-with")
