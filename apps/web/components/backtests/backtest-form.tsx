@@ -11,6 +11,7 @@ import type { BacktestQuota } from "@/lib/backtests/quota";
 import type { StrategyCatalogGroup, TemplateResponse } from "@backtestforecast/api-client";
 import {
   getDefaultBacktestFormValues,
+  mapBacktestFieldErrors,
   type BacktestFormErrors,
   type BacktestFormValues,
   validateBacktestForm,
@@ -135,11 +136,15 @@ export function BacktestForm({
             : "The backtest could not be created.";
       const code = error instanceof ApiError ? error.code : undefined;
       const reqTier = error instanceof ApiError ? error.requiredTier : undefined;
+      const fieldErrors = error instanceof ApiError ? mapBacktestFieldErrors(error.fieldErrors) : {};
 
       setStatus("error");
       setServerMessage(message);
       setErrorCode(code);
       setRequiredTier(reqTier);
+      if (Object.keys(fieldErrors).length > 0) {
+        setErrors((current) => ({ ...current, ...fieldErrors }));
+      }
     } finally {
       submittingRef.current = false;
     }
@@ -202,6 +207,15 @@ export function BacktestForm({
           }`}
         >
           {serverMessage}
+        </div>
+      ) : null}
+
+      {errors.form && !serverMessage ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
+        >
+          {errors.form}
         </div>
       ) : null}
 
