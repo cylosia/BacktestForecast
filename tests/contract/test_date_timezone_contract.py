@@ -82,3 +82,13 @@ def test_frontend_max_window_matches_backend() -> None:
     )
     from backtestforecast.config import get_settings
     assert get_settings().max_backtest_window_days == 1825
+
+
+def test_current_user_response_exposes_market_date_today() -> None:
+    """Shared API contract should expose backend market_date_today to the web app."""
+    from backtestforecast.schemas.backtests import CurrentUserResponse
+
+    assert "market_date_today" in CurrentUserResponse.model_fields, (
+        "CurrentUserResponse must expose market_date_today so the web client can "
+        "validate scanner dates against the backend-authoritative market day."
+    )

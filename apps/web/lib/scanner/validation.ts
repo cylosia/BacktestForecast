@@ -23,16 +23,29 @@ interface ScannerLimits {
 }
 
 const SCANNER_LIMITS: Record<string, ScannerLimits> = {
-  "free:basic":       { maxSymbols: 3,  maxStrategies: 2,  maxRecommendations: 5  },
-  "free:advanced":    { maxSymbols: 3,  maxStrategies: 2,  maxRecommendations: 5  },
-  "pro:basic":        { maxSymbols: 5,  maxStrategies: 4,  maxRecommendations: 10 },
-  "pro:advanced":     { maxSymbols: 10, maxStrategies: 8,  maxRecommendations: 20 },
-  "premium:basic":    { maxSymbols: 10, maxStrategies: 6,  maxRecommendations: 15 },
-  "premium:advanced": { maxSymbols: 25, maxStrategies: 14, maxRecommendations: 30 },
+  "free:basic": { maxSymbols: 3, maxStrategies: 2, maxRecommendations: 5 },
+  "free:advanced": { maxSymbols: 3, maxStrategies: 2, maxRecommendations: 5 },
+  "pro:basic": { maxSymbols: 5, maxStrategies: 4, maxRecommendations: 10 },
+  "pro:advanced": { maxSymbols: 10, maxStrategies: 8, maxRecommendations: 20 },
+  "premium:basic": { maxSymbols: 10, maxStrategies: 6, maxRecommendations: 15 },
+  "premium:advanced": {
+    maxSymbols: 25,
+    maxStrategies: 14,
+    maxRecommendations: 30,
+  },
 };
 
-export function getScannerLimits(planTier: PlanTier, mode: ScannerMode): ScannerLimits {
-  return SCANNER_LIMITS[`${planTier}:${mode}`] ?? { maxSymbols: 5, maxStrategies: 4, maxRecommendations: 10 };
+export function getScannerLimits(
+  planTier: PlanTier,
+  mode: ScannerMode,
+): ScannerLimits {
+  return (
+    SCANNER_LIMITS[`${planTier}:${mode}`] ?? {
+      maxSymbols: 5,
+      maxStrategies: 4,
+      maxRecommendations: 10,
+    }
+  );
 }
 
 export function parseSymbols(text: string): string[] {
@@ -43,7 +56,15 @@ export function parseSymbols(text: string): string[] {
   return [...new Set(raw)];
 }
 
-export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier = "pro"): string[] {
+export interface ScannerValidationOptions {
+  maxMarketDate?: string;
+}
+
+export function validateScannerForm(
+  input: ScannerFormInput,
+  planTier: PlanTier = "pro",
+  options: ScannerValidationOptions = {},
+): string[] {
   const symbols = parseSymbols(input.symbolsText);
   const errors: string[] = [];
 
@@ -52,7 +73,9 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
   }
   const invalid = symbols.filter((s) => !TICKER_RE.test(s));
   if (invalid.length > 0) {
-    errors.push(`Invalid ticker format: ${invalid.slice(0, 3).join(", ")}${invalid.length > 3 ? "…" : ""}`);
+    errors.push(
+      `Invalid ticker format: ${invalid.slice(0, 3).join(", ")}${invalid.length > 3 ? "…" : ""}`,
+    );
   }
   if (input.selectedStrategies.size === 0) {
     errors.push("At least one strategy type is required.");
@@ -83,22 +106,17 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
   ) {
     errors.push("Start date must be before end date.");
   }
-  if (input.endDate) {
-    const [ey, em, ed] = input.endDate.split("-").map(Number);
-    const endDateUtc = Date.UTC(ey, em - 1, ed);
-    const now = new Date();
-    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    if (endDateUtc > todayUtc) {
-      errors.push("End date cannot be in the future.");
+  const maxMarketDate = options.maxMarketDate?.trim();
+  if (maxMarketDate) {
+    if (input.endDate && input.endDate > maxMarketDate) {
+      errors.push(
+        `End date cannot be after the latest market date (${maxMarketDate}).`,
+      );
     }
-  }
-  if (input.startDate) {
-    const [sy, sm, sd] = input.startDate.split("-").map(Number);
-    const startDateUtc = Date.UTC(sy, sm - 1, sd);
-    const now = new Date();
-    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    if (startDateUtc > todayUtc) {
-      errors.push("Start date cannot be in the future.");
+    if (input.startDate && input.startDate > maxMarketDate) {
+      errors.push(
+        `Start date cannot be after the latest market date (${maxMarketDate}).`,
+      );
     }
   }
   if (input.startDate && input.endDate && errors.length === 0) {
@@ -121,16 +139,53 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
     exclusiveMin?: boolean;
     integer?: boolean;
   }> = [
-    { label: "Target DTE", value: Number(input.targetDte), min: 1, max: 365, integer: true },
-    { label: "DTE tolerance", value: Number(input.dteTolerance), min: 0, max: 60, integer: true },
-    { label: "Max holding days", value: Number(input.maxHolding), min: 1, max: 120, integer: true },
-    { label: "Account size", value: Number(input.accountSize), min: ACCOUNT_SIZE_MIN, max: 100_000_000 },
-    { label: "Risk %", value: Number(input.riskPct), min: 0, max: 100, exclusiveMin: true },
+    {
+      label: "Target DTE",
+      value: Number(input.targetDte),
+      min: 1,
+      max: 365,
+      integer: true,
+    },
+    {
+      label: "DTE tolerance",
+      value: Number(input.dteTolerance),
+      min: 0,
+      max: 60,
+      integer: true,
+    },
+    {
+      label: "Max holding days",
+      value: Number(input.maxHolding),
+      min: 1,
+      max: 120,
+      integer: true,
+    },
+    {
+      label: "Account size",
+      value: Number(input.accountSize),
+      min: ACCOUNT_SIZE_MIN,
+      max: 100_000_000,
+    },
+    {
+      label: "Risk %",
+      value: Number(input.riskPct),
+      min: 0,
+      max: 100,
+      exclusiveMin: true,
+    },
     { label: "Commission", value: Number(input.commission), min: 0, max: 100 },
-    { label: "Max recommendations", value: Number(input.maxRecs), min: 1, max: limits.maxRecommendations, integer: true },
+    {
+      label: "Max recommendations",
+      value: Number(input.maxRecs),
+      min: 1,
+      max: limits.maxRecommendations,
+      integer: true,
+    },
   ];
   for (const check of numericChecks) {
-    const tooLow = check.exclusiveMin ? check.value <= check.min : check.value < check.min;
+    const tooLow = check.exclusiveMin
+      ? check.value <= check.min
+      : check.value < check.min;
     if (
       !Number.isFinite(check.value) ||
       tooLow ||

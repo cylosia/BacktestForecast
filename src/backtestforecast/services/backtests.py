@@ -533,6 +533,8 @@ class BacktestService:
             scanner_modes.append("basic")
         if feature_policy.advanced_scanner_access:
             scanner_modes.append("advanced")
+        from backtestforecast.utils.dates import market_date_today
+
         return CurrentUserResponse(
             id=user.id,
             clerk_user_id=user.clerk_user_id,
@@ -543,6 +545,7 @@ class BacktestService:
             subscription_current_period_end=user.subscription_current_period_end,
             cancel_at_period_end=user.cancel_at_period_end,
             created_at=user.created_at,
+            market_date_today=market_date_today(),
             features=FeatureAccessResponse(
                 plan_tier=feature_policy.tier.value,
                 monthly_backtest_quota=feature_policy.monthly_backtest_quota,
