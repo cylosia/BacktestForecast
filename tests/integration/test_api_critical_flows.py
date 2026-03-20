@@ -582,6 +582,30 @@ def test_scanner_blocked_free(client, auth_headers):
     assert resp.json()["error"]["code"] == "feature_locked"
 
 
+def test_scanner_rejects_window_longer_than_backend_max(client, auth_headers, db_session):
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    payload = {
+        "mode": "basic",
+        "symbols": ["AAPL"],
+        "strategy_types": ["long_call"],
+        "rule_sets": [
+            {"name": "t", "entry_rules": [{"type": "rsi", "operator": "lt", "threshold": "30", "period": 14}]}
+        ],
+        "start_date": "2023-01-01",
+        "end_date": "2025-01-01",
+        "target_dte": 30,
+        "max_holding_days": 10,
+        "account_size": "10000",
+        "risk_per_trade_pct": "5",
+        "commission_per_contract": "1",
+    }
+    resp = client.post("/v1/scans", json=payload, headers=auth_headers)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "validation_error"
+    assert resp.json()["error"]["message"] == "scanner window exceeds the configured maximum of 730 days"
+
+
 # ===========================================================================
 # 9. Stripe webhook
 # ===========================================================================

@@ -6,6 +6,7 @@ TypeScript API client types, preventing silent frontend-backend drift.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -179,3 +180,47 @@ def test_backtest_window_max_days():
         "max_backtest_window_days exceeds 1825 (5 years). "
         "If this is intentional, update frontend validation.ts to match."
     )
+
+
+def test_scanner_window_limit_and_error_semantics_match_backend() -> None:
+    """Frontend scanner limit constant and message should stay aligned with backend validation semantics."""
+    from datetime import date
+    from decimal import Decimal
+
+    import pytest
+    from pydantic import ValidationError as PydanticValidationError
+
+    from backtestforecast.config import get_settings
+    from backtestforecast.schemas.scans import CreateScannerJobRequest
+
+    constants_ts = (PROJECT_ROOT / "apps" / "web" / "lib" / "scanner" / "constants.ts").read_text(encoding="utf-8")
+    match = re.search(r"export const MAX_SCANNER_WINDOW_DAYS = (\d+);", constants_ts)
+    assert match is not None, "Frontend scanner constants must export MAX_SCANNER_WINDOW_DAYS"
+
+    max_days = get_settings().max_scanner_window_days
+    assert int(match.group(1)) == max_days
+
+    with pytest.raises(PydanticValidationError, match=re.escape(
+        f"scanner window exceeds the configured maximum of {max_days} days"
+    )):
+        CreateScannerJobRequest(
+            mode="basic",
+            symbols=["AAPL"],
+            strategy_types=["long_call"],
+            rule_sets=[
+                {
+                    "name": "Default",
+                    "entry_rules": [
+                        {"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14},
+                    ],
+                }
+            ],
+            start_date=date(2023, 1, 1),
+            end_date=date(2025, 1, 1),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=20,
+            account_size=Decimal("10000"),
+            risk_per_trade_pct=Decimal("5"),
+            commission_per_contract=Decimal("1"),
+        )
