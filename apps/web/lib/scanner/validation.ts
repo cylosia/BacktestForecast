@@ -29,15 +29,15 @@ interface ScannerLimits {
 
 const SCANNER_LIMITS: Record<string, ScannerLimits> = {
   "free:basic":       { maxSymbols: 3,  maxStrategies: 2,  maxRecommendations: 5  },
-  "free:advanced":    { maxSymbols: 3,  maxStrategies: 2,  maxRecommendations: 5  },
   "pro:basic":        { maxSymbols: 5,  maxStrategies: 4,  maxRecommendations: 10 },
-  "pro:advanced":     { maxSymbols: 10, maxStrategies: 8,  maxRecommendations: 20 },
   "premium:basic":    { maxSymbols: 10, maxStrategies: 6,  maxRecommendations: 15 },
   "premium:advanced": { maxSymbols: 25, maxStrategies: 14, maxRecommendations: 30 },
 };
 
 export function getScannerLimits(planTier: PlanTier, mode: ScannerMode): ScannerLimits {
-  return SCANNER_LIMITS[`${planTier}:${mode}`] ?? { maxSymbols: 5, maxStrategies: 4, maxRecommendations: 10 };
+  const direct = SCANNER_LIMITS[`${planTier}:${mode}`];
+  if (direct) return direct;
+  return SCANNER_LIMITS[`${planTier}:basic`] ?? { maxSymbols: 3, maxStrategies: 2, maxRecommendations: 5 };
 }
 
 export function parseSymbols(text: string): string[] {
