@@ -135,6 +135,8 @@ def _get_allowed_origins() -> list[str]:
     global _normalized_origins
     if _normalized_origins is not None:
         return _normalized_origins
+    # Normalize the configured get_settings().web_cors_origins values once so
+    # cookie-auth Origin/Referer checks compare against the exact CORS allowlist.
     _normalized_origins = [_normalize_origin(o) for o in get_settings().web_cors_origins]
     return _normalized_origins
 
@@ -192,6 +194,8 @@ def get_current_user(
                     "Cookie-based authentication requires the X-Requested-With: XMLHttpRequest header for state-changing requests."
                 )
         if token:
+            # Compare against the configured get_settings().web_cors_origins
+            # allowlist so cookie auth inherits the same trusted web origins.
             _allowed = _get_allowed_origins()
             origin = request.headers.get("origin")
             if origin:

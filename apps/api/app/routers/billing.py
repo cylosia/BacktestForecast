@@ -108,7 +108,10 @@ def stripe_webhook(
     )
 
     if signature is None:
-        raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "missing_signature", "message": "Missing Stripe-Signature header."},
+        )
 
     try:
         with BillingService(db) as service:
@@ -130,7 +133,7 @@ def stripe_webhook(
                 "webhook.signature_verification_failed", ip=ip_address, request_id=request_id,
             )
             raise HTTPException(
-                status_code=400,
+                status_code=401,
                 detail={"code": "signature_verification_failed", "message": "Invalid webhook signature."},
             )
         if isinstance(exc, _NotFoundErr):

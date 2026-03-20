@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import time as _time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Self
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -18,6 +18,8 @@ from backtestforecast.market_data.prefetch import OptionDataPrefetcher
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import SweepJob, SweepResult, User
 from backtestforecast.repositories.sweep_jobs import SweepJobRepository
+
+UTC = timezone.utc
 from backtestforecast.schemas.backtests import (
     BacktestSummaryResponse,
     CreateBacktestRunRequest,
@@ -132,7 +134,7 @@ class SweepService:
         if self._execution_service is not None:
             self._execution_service.close()
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> "SweepService":
         return self
 
     def __exit__(self, *exc: object) -> None:

@@ -250,6 +250,17 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                 safe_kwargs_str = json.dumps(safe_kwargs, default=str)
                 if len(safe_kwargs_str) > 32_000:
                     safe_kwargs = {"_truncated": True, "original_size": len(safe_kwargs_str)}
+                # _redact_args preserves short identifiers and redacts everything
+                # else; the helper's contract intentionally includes:
+                #   len(arg) <= 80
+                # so UUIDs and compact IDs survive post-mortem inspection.
+                #
+                # _sanitize_error truncates before redaction using:
+                #   err_str[:2000]
+                # and strips live/test Stripe secrets such as:
+                #   sk_live_
+                # to the placeholder:
+                #   REDACTED_KEY
                 redis_conn.lpush(dlq_key, json.dumps({
                     "task_name": self.name,
                     "task_id": task_id,

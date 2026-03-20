@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import enum
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.schemas.common import RunJobStatus
 from backtestforecast.observability.metrics import DISPATCH_RESULTS_TOTAL
+
+UTC = timezone.utc
 
 class DispatchResult(enum.Enum):
     """Outcome of a dispatch attempt."""
@@ -142,7 +144,8 @@ def dispatch_celery_task(
         )
         if outbox_msg is not None:
             try:
-                from datetime import UTC, datetime
+                from datetime import datetime, timezone
+                UTC = timezone.utc
                 outbox_msg.status = "sent"
                 outbox_msg.completed_at = datetime.now(UTC)
                 db.commit()

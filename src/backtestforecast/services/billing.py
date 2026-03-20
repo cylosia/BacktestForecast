@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time as _time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -35,6 +35,7 @@ from backtestforecast.schemas.billing import (
 from backtestforecast.services.audit import AuditService
 
 logger = get_logger("billing")
+UTC = timezone.utc
 
 _KNOWN_STRIPE_EVENTS = frozenset({
     "checkout.session.completed",

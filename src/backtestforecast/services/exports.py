@@ -5,8 +5,7 @@ import hashlib
 import io
 import re
 import time as _time
-from datetime import UTC, datetime, timedelta
-from typing import Self
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import structlog
@@ -28,6 +27,7 @@ from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
 
 logger = structlog.get_logger("services.exports")
+UTC = timezone.utc
 
 _LOOKS_NUMERIC = re.compile(
     r"^-?"
@@ -70,7 +70,7 @@ class ExportService:
         except Exception:
             logger.debug("export_service.close_failed", exc_info=True)
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> "ExportService":
         return self
 
     def __exit__(self, *exc: object) -> None:
