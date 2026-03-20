@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from apps.api.app.dependencies import get_current_user
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import get_settings
-from backtestforecast.db.session import get_db
+from backtestforecast.db.session import get_readonly_db
 from backtestforecast.errors import AppValidationError
 from backtestforecast.models import User
 from backtestforecast.schemas.analysis import (
@@ -38,7 +38,7 @@ def _daily_picks_service(db: Session) -> Generator[DailyPicksService, None, None
 def get_latest_daily_picks(
     response: Response,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     trade_date: date | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=10000),
@@ -76,7 +76,7 @@ def get_latest_daily_picks(
 @router.get("/history", response_model=PipelineHistoryResponse)
 def get_pipeline_history(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     limit: int = Query(default=10, ge=1, le=30),
     cursor: str | None = Query(default=None, max_length=50, description="created_at ISO cursor from previous page"),
 ) -> PipelineHistoryResponse:
