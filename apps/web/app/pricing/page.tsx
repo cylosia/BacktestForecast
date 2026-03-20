@@ -4,10 +4,9 @@ import { CheckoutButton } from "@/components/billing/checkout-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-// IMPORTANT: Prices are hard-coded to match Stripe configuration.
-// If Stripe prices change, update these values manually.
-// A future improvement would fetch from a /api/pricing endpoint to guarantee parity.
-// Tests use data-testid="price-pro" and data-testid="price-premium" to detect drift.
+// TODO: Replace these display prices with backend-driven Stripe metadata.
+// The checkout flow itself is authoritative; these values are presentation-only
+// until the pricing page is wired to a server-sourced contract.
 const plans = [
   {
     title: "Free",
@@ -116,7 +115,7 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 text-center text-xs text-muted-foreground">
-        All amounts in USD. Prices shown match current Stripe configuration.
+        All amounts in USD. Checkout is authoritative if pricing changes before this page updates.
       </p>
     </main>
   );

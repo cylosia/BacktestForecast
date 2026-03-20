@@ -162,7 +162,7 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     volumeSpikeMultiplier: "2",
     volumeSpikePeriod: "20",
     supportResistanceEnabled: false,
-    supportResistanceMode: "support",
+    supportResistanceMode: "near_support",
     supportResistancePeriod: "20",
   };
 }

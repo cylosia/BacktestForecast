@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { MAX_SCANNER_WINDOW_DAYS, getScannerWindowTooLongError } from "@/lib/scanner/constants";
 import {
   parseSymbols,
   validateScannerForm,
@@ -90,11 +89,11 @@ describe("validateScannerForm", () => {
     expect(errors).toContain("Start date must be before end date.");
   });
 
-  it("rejects a scanner window longer than the backend maximum before submit", () => {
+  it("does not hard-code a backend-configurable maximum scanner window on the client", () => {
     const errors = validateScannerForm(
       validInput({ startDate: "2023-01-01", endDate: "2025-01-01" }),
     );
-    expect(errors).toContain(getScannerWindowTooLongError(MAX_SCANNER_WINDOW_DAYS));
+    expect(errors).toEqual([]);
   });
 
   it("rejects same start and end date", () => {

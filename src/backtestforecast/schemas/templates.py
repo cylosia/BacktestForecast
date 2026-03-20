@@ -60,7 +60,7 @@ class CreateTemplateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=120)
-    description: str | None = Field(default=None, max_length=500)
+    description: str | None = Field(default=None, max_length=2000)
     config: TemplateConfig
 
 
@@ -68,7 +68,7 @@ class UpdateTemplateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    description: str | None | _Unset = Field(default=UNSET, max_length=500)
+    description: str | None | _Unset = Field(default=UNSET, max_length=2000)
     config: TemplateConfig | None = None
     expected_updated_at: datetime | None = None
 

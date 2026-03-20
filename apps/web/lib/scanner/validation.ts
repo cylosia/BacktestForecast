@@ -2,9 +2,7 @@ import type { PlanTier, ScannerMode } from "@backtestforecast/api-client";
 import { currentEasternDate } from "@/lib/utils";
 import { ACCOUNT_SIZE_MIN, TICKER_RE } from "@/lib/validation-constants";
 import {
-  MAX_SCANNER_WINDOW_DAYS,
   MIN_SCANNER_WINDOW_DAYS,
-  getScannerWindowTooLongError,
   getScannerWindowTooShortError,
 } from "@/lib/scanner/constants";
 
@@ -107,9 +105,8 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
     if (diffDays < MIN_SCANNER_WINDOW_DAYS) {
       errors.push(getScannerWindowTooShortError());
     }
-    if (diffDays > MAX_SCANNER_WINDOW_DAYS) {
-      errors.push(getScannerWindowTooLongError());
-    }
+    // Do not hard-block on a duplicated client-side max window value here.
+    // The backend limit is configuration-driven and remains authoritative.
   }
 
   const numericChecks: Array<{

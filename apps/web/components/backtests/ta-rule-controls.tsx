@@ -538,8 +538,10 @@ export function TaRuleControls({
                 id="supportResistanceMode"
                 value={values.supportResistanceMode}
                 options={[
-                  { value: "support", label: "Near support" },
-                  { value: "resistance", label: "Near resistance" },
+                  { value: "near_support", label: "Near support" },
+                  { value: "near_resistance", label: "Near resistance" },
+                  { value: "breakout_above_resistance", label: "Breakout above resistance" },
+                  { value: "breakdown_below_support", label: "Breakdown below support" },
                 ]}
                 onChange={(event) => onChange({ supportResistanceMode: event.target.value })}
               />

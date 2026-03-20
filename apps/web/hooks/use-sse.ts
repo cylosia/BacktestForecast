@@ -53,7 +53,6 @@ export function useSSE<T>({
   const completedRef = useRef(false);
   const retryCountRef = useRef(0);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastEventIdRef = useRef<string | null>(null);
   const onProgressRef = useRef(onProgress);
   const onCompleteRef = useRef(onComplete);
   const isTerminalRef = useRef(isTerminal);
@@ -115,9 +114,6 @@ export function useSSE<T>({
         if (!mountedRef.current) return;
         retryCountRef.current = 0;
         resetHeartbeat(target);
-        if (event.lastEventId) {
-          lastEventIdRef.current = event.lastEventId;
-        }
         try {
           const data = JSON.parse(event.data) as Record<string, unknown>;
           onProgressRef.current?.(data);
@@ -169,11 +165,7 @@ export function useSSE<T>({
             if (esRef.current) {
               esRef.current.close();
             }
-            let retryUrl = `/api/events/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`;
-            if (lastEventIdRef.current) {
-              retryUrl += `?lastEventId=${encodeURIComponent(lastEventIdRef.current)}`;
-            }
-            const newEs = new EventSource(retryUrl);
+            const newEs = new EventSource(`/api/events/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`);
             esRef.current = newEs;
             attachEventHandlers(newEs);
             setupEventSource(newEs);

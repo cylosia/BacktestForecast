@@ -314,6 +314,13 @@ class TestAccountExport:
         assert resp.status_code == 200
         data = resp.json()
         assert "user" in data
+        assert data["pagination"]["limit"] == 200
+        assert data["pagination"]["templates_offset"] == 0
+        assert data["pagination"]["scans_offset"] == 0
+        assert data["pagination"]["sweeps_offset"] == 0
+        assert data["pagination"]["exports_offset"] == 0
+        assert data["pagination"]["analyses_offset"] == 0
+        assert data["pagination"]["audit_offset"] == 0
 
     def test_with_backtest_data(self, client: TestClient, auth_headers: dict, immediate_backtest_execution: None):
         _create_backtest(client, auth_headers)

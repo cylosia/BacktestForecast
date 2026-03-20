@@ -14,11 +14,11 @@ BODY_LIMIT_OVERRIDES: dict[str, int] = {
     # needs the complete raw body for HMAC signature verification, so a
     # truncated payload would surface as "Invalid Stripe webhook signature."
     "/v1/billing/webhook": 131_072,
-    "/v1/events/backtest": 0,
-    "/v1/events/scan": 0,
-    "/v1/events/sweep": 0,
-    "/v1/events/export": 0,
-    "/v1/events/analysis": 0,
+    "/v1/events/backtests": 0,
+    "/v1/events/scans": 0,
+    "/v1/events/sweeps": 0,
+    "/v1/events/exports": 0,
+    "/v1/events/analyses": 0,
 }
 
 

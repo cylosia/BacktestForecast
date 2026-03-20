@@ -12,7 +12,7 @@ const KNOWN_STRATEGY_TYPES = new Set([
   "short_straddle", "short_strangle", "covered_strangle",
   "synthetic_put", "reverse_conversion", "jade_lizard", "iron_butterfly",
   "custom_2_leg", "custom_3_leg", "custom_4_leg",
-  "custom_5_leg", "custom_6_leg", "custom_8_leg",
+  "custom_5_leg", "custom_6_leg", "custom_7_leg", "custom_8_leg",
   "naked_call", "naked_put",
 ]);
 
@@ -56,6 +56,13 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
     commissionPerContract: String(typed.commission_per_contract),
     rsiEnabled: false,
     movingAverageEnabled: false,
+    macdEnabled: false,
+    bollingerEnabled: false,
+    ivRankEnabled: false,
+    ivPercentileEnabled: false,
+    volumeSpikeEnabled: false,
+    supportResistanceEnabled: false,
+    avoidEarningsEnabled: false,
   };
 
   if (typed.default_symbol) {
@@ -91,6 +98,60 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
       if (validDirections.includes(rule.direction as typeof validDirections[number])) {
         patch.crossoverDirection = rule.direction as BacktestFormValues["crossoverDirection"];
       }
+    }
+    if (rule.type === "macd") {
+      patch.macdEnabled = true;
+      patch.macdFastPeriod = String(rule.fast_period);
+      patch.macdSlowPeriod = String(rule.slow_period);
+      patch.macdSignalPeriod = String(rule.signal_period);
+      const validDirections = ["bullish", "bearish"] as const;
+      if (validDirections.includes(rule.direction as typeof validDirections[number])) {
+        patch.macdDirection = rule.direction as BacktestFormValues["macdDirection"];
+      }
+    }
+    if (rule.type === "bollinger_bands") {
+      patch.bollingerEnabled = true;
+      patch.bollingerPeriod = String(rule.period);
+      patch.bollingerStdDev = String(rule.standard_deviations);
+      const validBands = ["lower", "middle", "upper"] as const;
+      if (validBands.includes(rule.band as typeof validBands[number])) {
+        patch.bollingerBand = rule.band as BacktestFormValues["bollingerBand"];
+      }
+      const validOperators = ["lt", "lte", "gt", "gte"] as const;
+      if (validOperators.includes(rule.operator as typeof validOperators[number])) {
+        patch.bollingerOperator = rule.operator as BacktestFormValues["bollingerOperator"];
+      }
+    }
+    if (rule.type === "iv_rank") {
+      patch.ivRankEnabled = true;
+      const validOperators = ["lt", "lte", "gt", "gte"] as const;
+      if (validOperators.includes(rule.operator as typeof validOperators[number])) {
+        patch.ivRankOperator = rule.operator as BacktestFormValues["ivRankOperator"];
+      }
+      patch.ivRankThreshold = String(rule.threshold);
+    }
+    if (rule.type === "iv_percentile") {
+      patch.ivPercentileEnabled = true;
+      const validOperators = ["lt", "lte", "gt", "gte"] as const;
+      if (validOperators.includes(rule.operator as typeof validOperators[number])) {
+        patch.ivPercentileOperator = rule.operator as BacktestFormValues["ivPercentileOperator"];
+      }
+      patch.ivPercentileThreshold = String(rule.threshold);
+    }
+    if (rule.type === "volume_spike") {
+      patch.volumeSpikeEnabled = true;
+      patch.volumeSpikeMultiplier = String(rule.multiplier);
+      patch.volumeSpikePeriod = String(rule.lookback_period);
+    }
+    if (rule.type === "support_resistance") {
+      patch.supportResistanceEnabled = true;
+      patch.supportResistanceMode = String(rule.mode);
+      patch.supportResistancePeriod = String(rule.lookback_period);
+    }
+    if (rule.type === "avoid_earnings") {
+      patch.avoidEarningsEnabled = true;
+      patch.avoidEarningsDaysBefore = String(rule.days_before);
+      patch.avoidEarningsDaysAfter = String(rule.days_after);
     }
   }
 
