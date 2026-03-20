@@ -18,10 +18,11 @@ const PAGE_SIZE = 20;
 export default async function SweepsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ offset?: string }>;
+  searchParams: Promise<{ offset?: string; cursor?: string }>;
 }) {
   const params = await searchParams;
   const offset = Math.max(0, parseInt(params.offset ?? "0", 10) || 0);
+  const cursor = params.cursor?.trim() || undefined;
   let user;
   try {
     user = await getCurrentUser();
@@ -34,7 +35,7 @@ export default async function SweepsPage({
   let jobsError: string | null = null;
   if (hasAccess) {
     try {
-      jobs = await getSweepJobs(PAGE_SIZE, offset);
+      jobs = await getSweepJobs(PAGE_SIZE, offset, cursor);
     } catch (err) {
       jobs = null;
       jobsError = err instanceof Error ? err.message : "Failed to load sweep history.";
@@ -151,6 +152,8 @@ export default async function SweepsPage({
                   offset={offset}
                   limit={PAGE_SIZE}
                   total={jobs.total}
+                  cursor={cursor}
+                  nextCursor={jobs.next_cursor}
                 />
               </>
             )}

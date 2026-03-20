@@ -2,11 +2,32 @@ import { getCurrentUser, getAnalysisHistory } from "@/lib/api/server";
 import { SymbolAnalysisLauncher } from "@/components/analysis/symbol-analysis-launcher";
 import { AnalysisHistory } from "@/components/analysis/analysis-history";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
+import { PaginationControls } from "@/components/shared/pagination-controls";
 
-async function AnalysisHistorySection() {
+const PAGE_SIZE = 10;
+
+async function AnalysisHistorySection({
+  cursor,
+  offset,
+}: {
+  cursor?: string;
+  offset: number;
+}) {
   try {
-    const history = await getAnalysisHistory();
-    return <AnalysisHistory data={history} />;
+    const history = await getAnalysisHistory(PAGE_SIZE, offset, cursor);
+    return (
+      <div className="space-y-4">
+        <AnalysisHistory data={history} />
+        <PaginationControls
+          basePath="/app/analysis"
+          offset={offset}
+          limit={PAGE_SIZE}
+          total={history.total}
+          cursor={cursor}
+          nextCursor={history.next_cursor}
+        />
+      </div>
+    );
   } catch {
     return (
       <div className="rounded-lg border p-4 text-sm text-muted-foreground">
@@ -18,7 +39,14 @@ async function AnalysisHistorySection() {
 
 export const dynamic = "force-dynamic";
 
-export default async function AnalysisPage() {
+export default async function AnalysisPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ offset?: string; cursor?: string }>;
+}) {
+  const params = await searchParams;
+  const offset = Math.max(0, parseInt(params.offset ?? "0", 10) || 0);
+  const cursor = params.cursor?.trim() || undefined;
   let user;
   try {
     user = await getCurrentUser();
@@ -44,7 +72,7 @@ export default async function AnalysisPage() {
       ) : (
         <>
           <SymbolAnalysisLauncher />
-          <AnalysisHistorySection />
+          <AnalysisHistorySection cursor={cursor} offset={offset} />
         </>
       )}
     </div>

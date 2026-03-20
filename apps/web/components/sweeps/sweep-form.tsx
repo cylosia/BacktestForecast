@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import type { CreateSweepRequest, StrategyType, SweepMode } from "@backtestforecast/api-client";
 import { createSweepJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
+import { getOrCreatePendingIdempotencyKey } from "@/lib/idempotency";
 import { TICKER_RE } from "@/lib/validation-constants";
 import { isPlanLimitError } from "@/lib/billing/errors";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
@@ -104,6 +105,7 @@ export function SweepForm() {
 
   const abortRef = useRef<AbortController | null>(null);
   const submittingRef = useRef(false);
+  const pendingIdempotencyKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -248,6 +250,8 @@ export function SweepForm() {
       const token = await getToken();
       if (!token) throw new Error("Authentication required.");
 
+      const idempotencyKey = getOrCreatePendingIdempotencyKey(pendingIdempotencyKeyRef.current, "sweep");
+      pendingIdempotencyKeyRef.current = idempotencyKey;
       const basePayload: Omit<CreateSweepRequest, "strategy_types" | "delta_grid" | "genetic_config"> = {
         mode: form.mode,
         symbol,
@@ -266,7 +270,7 @@ export function SweepForm() {
         // on every eligible date. This differs from backtests which require at
         // least one signal-based entry rule.
         entry_rule_sets: [{ name: "no_filter", entry_rules: [] }],
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: idempotencyKey,
       };
 
       let payload: CreateSweepRequest;
@@ -307,6 +311,7 @@ export function SweepForm() {
       }
 
       const job = await createSweepJob(token, payload, controller.signal);
+      pendingIdempotencyKeyRef.current = null;
       router.replace(`/app/sweeps/${job.id}`);
       router.refresh();
     } catch (err) {

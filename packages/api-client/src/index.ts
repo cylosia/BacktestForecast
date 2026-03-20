@@ -110,7 +110,9 @@ export type TemplateListResponse = components["schemas"]["TemplateListResponse"]
 export type RuleSetDefinition = components["schemas"]["RuleSetDefinition"];
 export type CreateScannerJobRequest = components["schemas"]["CreateScannerJobRequest"];
 export type ScannerJobResponse = components["schemas"]["ScannerJobResponse"];
-export type ScannerJobListResponse = components["schemas"]["ScannerJobListResponse"];
+export type ScannerJobListResponse = components["schemas"]["ScannerJobListResponse"] & {
+  next_cursor?: string | null;
+};
 export type HistoricalPerformanceResponse = components["schemas"]["HistoricalPerformanceResponse"];
 export type RankingBreakdownResponse = components["schemas"]["RankingBreakdownResponse"];
 export type ScannerRecommendationResponse = components["schemas"]["ScannerRecommendationResponse"];
@@ -152,7 +154,9 @@ export type PipelineHistoryResponse = components["schemas"]["PipelineHistoryResp
 
 export type SymbolAnalysisSummary = components["schemas"]["AnalysisSummaryResponse"];
 export type AnalysisDetailResponse = components["schemas"]["AnalysisDetailResponse"];
-export type AnalysisListResponse = components["schemas"]["AnalysisListResponse"];
+export type AnalysisListResponse = components["schemas"]["AnalysisListResponse"] & {
+  next_cursor?: string | null;
+};
 
 export type RegimeDetail = components["schemas"]["RegimeDetail"];
 export type LandscapeCell = components["schemas"]["LandscapeCell"];
@@ -166,7 +170,9 @@ export type SymbolAnalysisFullResponse = AnalysisDetailResponse;
 
 export type SweepMode = components["schemas"]["SweepMode"];
 export type SweepJobResponse = components["schemas"]["SweepJobResponse"];
-export type SweepJobListResponse = components["schemas"]["SweepJobListResponse"];
+export type SweepJobListResponse = components["schemas"]["SweepJobListResponse"] & {
+  next_cursor?: string | null;
+};
 export type SweepJobStatusResponse = components["schemas"]["SweepJobStatusResponse"];
 export type SweepResultResponse = components["schemas"]["SweepResultResponse"];
 export type SweepResultListResponse = components["schemas"]["SweepResultListResponse"];
