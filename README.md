@@ -44,7 +44,7 @@ The backend now supports:
 - Frontend upgrade prompts when plan limits are hit (replaces generic error messages)
 - Post-checkout success banner on the billing settings page
 - Dashboard quota-approaching warnings for free-tier users
-- `POST /v1/backtests/compare` for side-by-side comparison of 2–10 runs, enforced by `side_by_side_comparison_limit`
+- `POST /v1/backtests/compare` for side-by-side comparison of 2–8 runs, enforced by `side_by_side_comparison_limit`
 - Frontend compare page at `/app/backtests/compare?ids=a,b` with metrics table, overlaid equity curves, and trade counts
 - Selectable checkboxes on the history page for selecting runs to compare
 - Scanner frontend: dashboard with job history, new-scan form, job detail with polling, ranked recommendation display
@@ -124,7 +124,7 @@ These are implementation assumptions for the current slices:
 - Plan tier is synced from Stripe subscription events. The webhook handler is idempotent (duplicate events are detected via audit log).
 - Entitlements are backend-authoritative: the API raises `quota_exceeded` (403) for usage limits and `feature_locked` (403) for tier-gated features.
 - To configure Stripe locally, set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and the four price ID env vars. Without these, billing endpoints return `ConfigurationError`.
-- Side-by-side comparison limit is per-tier: Free = 1 (effectively disabled), Pro = 3, Premium = 8.
+- Side-by-side comparison limit is per-tier: Free = 2, Pro = 3, Premium = 8.
 - Export jobs are dispatched to the `exports` Celery queue. CSV and PDF generation runs in the worker, not the API process.
 - Health endpoints include `version` and `environment` fields for debugging in deployed environments.
 - Beat should use the same worker Docker image with a CMD override — must be a singleton.

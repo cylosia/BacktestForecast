@@ -95,6 +95,49 @@ describe("templateToFormValues", () => {
     expect(first!.targetDte).not.toBe(second!.targetDte);
   });
 
+  it("accepts custom_7_leg templates", () => {
+    const template: TemplateResponse = {
+      ...VALID_TEMPLATE,
+      strategy_type: "custom_7_leg",
+      config: {
+        ...VALID_TEMPLATE.config,
+        strategy_type: "custom_7_leg",
+      },
+    };
+    const patch = templateToFormValues(template);
+    expect(patch).not.toBeNull();
+    expect(patch!.strategyType).toBe("custom_7_leg");
+  });
+
+  it("rehydrates non-RSI indicator rules instead of silently dropping them", () => {
+    const template: TemplateResponse = {
+      ...VALID_TEMPLATE,
+      config: {
+        ...VALID_TEMPLATE.config,
+        entry_rules: [
+          { type: "macd", direction: "bullish", fast_period: 12, slow_period: 26, signal_period: 9 },
+          { type: "bollinger_bands", band: "lower", operator: "lt", period: 20, standard_deviations: "2" },
+          { type: "iv_rank", operator: "gt", threshold: "50", lookback_days: 252 },
+          { type: "iv_percentile", operator: "gt", threshold: "55", lookback_days: 252 },
+          { type: "volume_spike", operator: "gte", multiplier: "2", lookback_period: 20 },
+          { type: "support_resistance", mode: "near_support", lookback_period: 20, tolerance_pct: "1.0" },
+          { type: "avoid_earnings", days_before: 3, days_after: 1 },
+        ],
+      },
+    };
+    const patch = templateToFormValues(template);
+    expect(patch).not.toBeNull();
+    expect(patch!.macdEnabled).toBe(true);
+    expect(patch!.macdDirection).toBe("bullish");
+    expect(patch!.bollingerEnabled).toBe(true);
+    expect(patch!.ivRankEnabled).toBe(true);
+    expect(patch!.ivPercentileEnabled).toBe(true);
+    expect(patch!.volumeSpikeEnabled).toBe(true);
+    expect(patch!.supportResistanceEnabled).toBe(true);
+    expect(patch!.supportResistanceMode).toBe("near_support");
+    expect(patch!.avoidEarningsEnabled).toBe(true);
+  });
+
   it("returns null for a template with invalid config", () => {
     const bad = { ...VALID_TEMPLATE, config: {} as never };
     const patch = templateToFormValues(bad);

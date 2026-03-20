@@ -42,7 +42,12 @@ class _GdprUserSummary(BaseModel):
 class _GdprPagination(BaseModel):
     limit: int
     backtests_offset: int
-    hint: str
+    templates_offset: int
+    scans_offset: int
+    sweeps_offset: int
+    exports_offset: int
+    analyses_offset: int
+    audit_offset: int
 
 
 class _GdprTotals(BaseModel):

@@ -43,7 +43,7 @@ describe("scanner form status lifecycle", () => {
   });
 
   it("validates numeric bounds on target DTE", () => {
-    const values = { ...getDefaultBacktestFormValues(), targetDte: "3" };
+    const values = { ...getDefaultBacktestFormValues(), targetDte: "0" };
     const { errors } = validateBacktestForm(values);
     expect(errors.targetDte).toBeDefined();
   });
@@ -83,7 +83,7 @@ describe("backtest form submission edge cases", () => {
     expect(errors.endDate).toContain("later");
   });
 
-  it("rejects date range exceeding 20 years", () => {
+  it("rejects date range exceeding backend maximum window", () => {
     const values = {
       ...getDefaultBacktestFormValues(),
       startDate: "2000-01-01",
@@ -91,7 +91,7 @@ describe("backtest form submission edge cases", () => {
     };
     const { errors } = validateBacktestForm(values);
     expect(errors.endDate).toBeDefined();
-    expect(errors.endDate).toContain("20 years");
+    expect(errors.endDate).toContain("5 years");
   });
 
   it("rejects non-numeric account size", () => {
@@ -116,6 +116,23 @@ describe("backtest form submission edge cases", () => {
     expect(Object.keys(errors)).toHaveLength(0);
     expect(payload).toBeDefined();
     expect(payload!.symbol).toBe("AAPL");
+  });
+
+  it("uses backend-compatible support/resistance enum values", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: false,
+      supportResistanceEnabled: true,
+      supportResistanceMode: "near_support",
+    };
+    const { errors, payload } = validateBacktestForm(values);
+    expect(errors.supportResistancePeriod).toBeUndefined();
+    expect(payload).toBeDefined();
+    expect(payload!.entry_rules).toContainEqual({
+      type: "support_resistance",
+      mode: "near_support",
+      lookback_period: 20,
+    });
   });
 
   it("rejects DTE tolerance >= target DTE", () => {

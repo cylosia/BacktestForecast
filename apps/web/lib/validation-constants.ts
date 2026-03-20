@@ -1,7 +1,7 @@
 export const TICKER_RE = /^[\^A-Z][A-Z0-9./^-]{0,15}$/;
 
 export const TEMPLATE_NAME_MAX_LENGTH = 120;
-export const TEMPLATE_DESCRIPTION_MAX_LENGTH = 500;
+export const TEMPLATE_DESCRIPTION_MAX_LENGTH = 2000;
 export const COMMISSION_MAX = 100;
 export const ACCOUNT_SIZE_MIN = 100;
 export const ACCOUNT_SIZE_MAX = 100_000_000;
