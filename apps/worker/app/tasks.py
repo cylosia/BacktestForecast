@@ -126,7 +126,8 @@ def nightly_scan_pipeline(
     if symbols is not None and len(symbols) > 500:
         raise ValueError(f"symbols list too large ({len(symbols)}); maximum is 500")
 
-    from datetime import UTC, date, datetime
+    from datetime import date, datetime, timezone
+    UTC = timezone.utc
 
     from backtestforecast.config import get_settings
     from backtestforecast.models import NightlyPipelineRun
@@ -303,7 +304,8 @@ def _update_heartbeat(session: "Session", model_cls: type, obj_id: UUID) -> None
     Uses a savepoint to avoid committing unrelated dirty ORM state from
     the caller's transaction.
     """
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
+    UTC = timezone.utc
     from sqlalchemy import update
     nested = None
     try:
@@ -423,7 +425,8 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 run_obj.error_message = "Your plan no longer supports this operation."
                 _commit_then_publish(session, "backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
-            from datetime import UTC, datetime
+            from datetime import datetime, timezone
+            UTC = timezone.utc
             from backtestforecast.repositories.backtest_runs import BacktestRunRepository
             repo = BacktestRunRepository(session)
             now = datetime.now(UTC)
@@ -455,7 +458,8 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                     pass
             session.rollback()
             session.expire_all()
-            from datetime import UTC, datetime as _dt_app
+            from datetime import datetime as _dt_app, timezone
+            UTC = timezone.utc
             run_obj = session.get(BacktestRun, UUID(run_id))
             if run_obj is not None and run_obj.status in ("queued", "running"):
                 run_obj.status = "failed"
@@ -478,7 +482,8 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         except SoftTimeLimitExceeded:
             session.rollback()
             session.expire_all()
-            from datetime import UTC, datetime
+            from datetime import datetime, timezone
+            UTC = timezone.utc
 
             run_obj = session.get(BacktestRun, UUID(run_id))
             if run_obj is not None and run_obj.status in ("queued", "running"):
@@ -506,7 +511,8 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 delay = int(30 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
-                from datetime import UTC, datetime
+                from datetime import datetime, timezone
+                UTC = timezone.utc
 
                 run_obj = session.get(BacktestRun, UUID(run_id))
                 if run_obj is not None and run_obj.status in ("queued", "running"):
@@ -597,7 +603,8 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                     pass
             session.rollback()
             session.expire_all()
-            from datetime import UTC, datetime as _dt_app
+            from datetime import datetime as _dt_app, timezone
+            UTC = timezone.utc
             ej_obj = session.get(ExportJobModel, UUID(export_job_id))
             if ej_obj is not None and ej_obj.status in ("queued", "running"):
                 ej_obj.status = "failed"
@@ -619,7 +626,8 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
         except SoftTimeLimitExceeded:
             session.rollback()
             session.expire_all()
-            from datetime import UTC, datetime
+            from datetime import datetime, timezone
+            UTC = timezone.utc
 
             export_obj = session.get(ExportJobModel, UUID(export_job_id))
             if export_obj is not None and export_obj.status in ("queued", "running"):
@@ -647,7 +655,8 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                 delay = int(15 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
-                from datetime import UTC, datetime
+                from datetime import datetime, timezone
+                UTC = timezone.utc
 
                 export_obj = session.get(ExportJobModel, UUID(export_job_id))
                 if export_obj is not None and export_obj.status in ("queued", "running"):
@@ -777,7 +786,8 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 session.expire_all()
                 sa_fail = session.get(SymbolAnalysis, UUID(analysis_id))
                 if sa_fail is not None and sa_fail.status in ("queued", "running"):
-                    from datetime import UTC, datetime as _dt_analysis_app
+                    from datetime import datetime as _dt_analysis_app, timezone
+                    UTC = timezone.utc
                     sa_fail.status = "failed"
                     sa_fail.error_code = exc.code
                     sa_fail.error_message = str(exc.message)[:500] if exc.message else None
@@ -802,7 +812,8 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     analysis.status = "failed"
                     analysis.error_code = "time_limit_exceeded"
                     analysis.error_message = "Analysis exceeded the time limit."
-                    from datetime import UTC, datetime as _dt_stl
+                    from datetime import datetime as _dt_stl, timezone
+                    UTC = timezone.utc
                     analysis.completed_at = _dt_stl.now(UTC)
                     try:
                         session.commit()
@@ -829,7 +840,8 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                         analysis.status = "failed"
                         analysis.error_code = "max_retries_exceeded"
                         analysis.error_message = "Analysis failed after exhausting retries."
-                        from datetime import UTC, datetime as _dt_mr
+                        from datetime import datetime as _dt_mr, timezone
+                        UTC = timezone.utc
                         analysis.completed_at = _dt_mr.now(UTC)
                         try:
                             session.commit()
@@ -914,7 +926,8 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                     pass
             session.rollback()
             session.expire_all()
-            from datetime import UTC, datetime as _dt_scan
+            from datetime import datetime as _dt_scan, timezone
+            UTC = timezone.utc
             sj_obj = session.get(ScannerJobModel, UUID(job_id))
             if sj_obj is not None and sj_obj.status in ("queued", "running"):
                 sj_obj.status = "failed"
@@ -936,7 +949,8 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         except SoftTimeLimitExceeded:
             session.rollback()
             session.expire_all()
-            from datetime import UTC, datetime
+            from datetime import datetime, timezone
+            UTC = timezone.utc
 
             scan_obj = session.get(ScannerJobModel, UUID(job_id))
             if scan_obj is not None and scan_obj.status in ("queued", "running"):
@@ -964,7 +978,8 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                 delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
-                from datetime import UTC, datetime
+                from datetime import datetime, timezone
+                UTC = timezone.utc
 
                 scan_obj = session.get(ScannerJobModel, UUID(job_id))
                 if scan_obj is not None and scan_obj.status in ("queued", "running"):
@@ -1031,7 +1046,8 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
             _commit_then_publish(session, "sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         if policy.monthly_sweep_quota is not None:
-            from datetime import UTC, datetime as _dt_sweep_quota
+            from datetime import datetime as _dt_sweep_quota, timezone
+            UTC = timezone.utc
             from backtestforecast.repositories.sweep_jobs import SweepJobRepository
             sweep_repo = SweepJobRepository(session)
             now = _dt_sweep_quota.now(UTC)
@@ -1069,7 +1085,8 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                     pass
             session.rollback()
             session.expire_all()
-            from datetime import UTC, datetime as _dt_sweep_app
+            from datetime import datetime as _dt_sweep_app, timezone
+            UTC = timezone.utc
             sweep_obj = session.get(SweepJobModel, UUID(job_id))
             if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
                 sweep_obj.status = "failed"
@@ -1087,7 +1104,8 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
         except SoftTimeLimitExceeded:
             session.rollback()
             session.expire_all()
-            from datetime import UTC, datetime
+            from datetime import datetime, timezone
+            UTC = timezone.utc
 
             sweep_obj = session.get(SweepJobModel, UUID(job_id))
             if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
@@ -1111,7 +1129,8 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                 delay = int(120 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
-                from datetime import UTC, datetime
+                from datetime import datetime, timezone
+                UTC = timezone.utc
 
                 sweep_obj = session.get(SweepJobModel, UUID(job_id))
                 if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
@@ -1380,7 +1399,8 @@ def _reap_queued_jobs(
     for job_id in stale_ids:
         try:
             task_id = str(uuid4())
-            from datetime import UTC, datetime as _dt_reap
+            from datetime import datetime as _dt_reap, timezone
+            UTC = timezone.utc
             rows = session.execute(
                 update(model_cls)
                 .where(model_cls.id == job_id, model_cls.celery_task_id.is_(None))
@@ -1418,7 +1438,8 @@ def _fail_stale_running_jobs(
     counts_key: str,
 ) -> None:
     """Fail jobs stuck in 'running' state longer than *cutoff*."""
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
+    UTC = timezone.utc
 
     from sqlalchemy import or_, select, update
 
@@ -1466,7 +1487,8 @@ def _fail_stale_running_jobs(
 
 
 def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timedelta, timezone
+    UTC = timezone.utc
 
     from sqlalchemy import or_, select, update
 
@@ -1751,7 +1773,8 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
 )
 def cleanup_outbox(self) -> dict:  # type: ignore[override]
     """Remove outbox messages older than 7 days (batched)."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timedelta, timezone
+    UTC = timezone.utc
 
     from sqlalchemy import delete, select
 
@@ -1893,7 +1916,8 @@ def _fail_outbox_correlated_job(session: "Session", msg: "OutboxMessage") -> Non
     the job ID, then performs a CAS UPDATE to set the status to "failed"
     only if the job is still in a non-terminal state.
     """
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
+    UTC = timezone.utc
     from sqlalchemy import update
 
     from backtestforecast import models
@@ -1973,7 +1997,8 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
     message is marked "failed" and the correlated job (if any) is also
     marked failed so the user sees an error instead of a stuck job.
     """
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timedelta, timezone
+    UTC = timezone.utc
 
     from sqlalchemy import select, update
 
@@ -2005,7 +2030,8 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
                     kwargs=msg.task_kwargs_json,
                     queue=msg.queue,
                 )
-                from datetime import UTC, datetime as _dt_outbox
+                from datetime import datetime as _dt_outbox, timezone
+                UTC = timezone.utc
                 msg.status = "sent"
                 msg.completed_at = _dt_outbox.now(UTC)
                 sent += 1
@@ -2202,7 +2228,8 @@ def cleanup_stripe_orphan(
 @celery_app.task(name="maintenance.expire_old_exports", base=BaseTaskWithDLQ, max_retries=1)
 def expire_old_exports(self):
     """Transition succeeded exports past their expires_at to 'expired' status."""
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
+    UTC = timezone.utc
     from sqlalchemy import update as sa_update
 
     CELERY_TASKS_TOTAL.labels(task_name="maintenance.expire_old_exports", status="started").inc()

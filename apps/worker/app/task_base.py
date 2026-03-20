@@ -139,7 +139,8 @@ def _record_task_result(
     transaction.
     """
     try:
-        from datetime import UTC, datetime
+        from datetime import datetime, timezone
+        UTC = timezone.utc
         from uuid import UUID as _UUID
 
         from backtestforecast.db.session import create_worker_session
