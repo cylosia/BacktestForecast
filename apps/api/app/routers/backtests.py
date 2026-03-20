@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db
+from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import FeatureLockedError, NotFoundError
 from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.models import User
@@ -33,7 +33,7 @@ logger = structlog.get_logger("api.backtests")
 @router.get("", response_model=BacktestRunListResponse)
 def list_backtests(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
     cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,
@@ -92,7 +92,7 @@ def compare_backtests(
     payload: CompareBacktestsRequest,
     request: Request,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> CompareBacktestsResponse:
     if not settings.feature_backtests_enabled:
