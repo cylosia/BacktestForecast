@@ -6,6 +6,7 @@ import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
 import { createScannerJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
+import { getOrCreatePendingIdempotencyKey } from "@/lib/idempotency";
 import type { CreateScannerJobRequest, ScannerMode, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { getScannerLimits, parseSymbols, validateScannerForm, type PlanTier } from "@/lib/scanner/validation";
@@ -115,6 +116,7 @@ export function ScannerForm({
   const { getToken } = useAuth();
   const submitAbortRef = useRef<AbortController | null>(null);
   const submittingRef = useRef(false);
+  const pendingIdempotencyKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => { submitAbortRef.current?.abort(); };
@@ -257,6 +259,7 @@ export function ScannerForm({
       return;
     }
 
+    const idempotencyKey = getOrCreatePendingIdempotencyKey(pendingIdempotencyKeyRef.current, "scan");
     const payload: CreateScannerJobRequest = {
       name: form.name.trim() || null,
       mode: form.mode,
@@ -274,8 +277,9 @@ export function ScannerForm({
       max_recommendations: Number(form.maxRecs),
       refresh_daily: false,
       refresh_priority: 0,
-      idempotency_key: crypto.randomUUID(),
+      idempotency_key: idempotencyKey,
     };
+    pendingIdempotencyKeyRef.current = idempotencyKey;
 
     setStatus("submitting");
     setErrorMessage(null);
@@ -290,6 +294,7 @@ export function ScannerForm({
       submitAbortRef.current = new AbortController();
       const job = await createScannerJob(token, payload, submitAbortRef.current.signal);
       setStatus("success");
+      pendingIdempotencyKeyRef.current = null;
       router.replace(`/app/scanner/${job.id}`);
       router.refresh();
     } catch (error) {
