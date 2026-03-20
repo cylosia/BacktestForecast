@@ -120,7 +120,7 @@ These are implementation assumptions for the current slices:
 - Scanner jobs execute asynchronously through Celery.
 - Daily scan refresh creates a new child job instead of mutating the original snapshot.
 - Idempotent submission is supported via an optional `idempotency_key` field on the create request.
-- Stripe webhooks are received at `POST /v1/billing/webhook` — this path bypasses body-limit middleware and Clerk auth.
+- Stripe webhooks are received at `POST /v1/billing/webhook` — this path bypasses Clerk auth and uses a dedicated 512 KB body-limit override that must stay in sync with the route contract.
 - Plan tier is synced from Stripe subscription events. The webhook handler is idempotent (duplicate events are detected via audit log).
 - Entitlements are backend-authoritative: the API raises `quota_exceeded` (403) for usage limits and `feature_locked` (403) for tier-gated features.
 - To configure Stripe locally, set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and the four price ID env vars. Without these, billing endpoints return `ConfigurationError`.

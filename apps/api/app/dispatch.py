@@ -20,10 +20,6 @@ from sqlalchemy.orm import Session
 from backtestforecast.schemas.common import RunJobStatus
 from backtestforecast.observability.metrics import DISPATCH_RESULTS_TOTAL
 
-_SEND_MAX_ATTEMPTS = 1
-_SEND_RETRY_DELAY = 0.0
-
-
 class DispatchResult(enum.Enum):
     """Outcome of a dispatch attempt."""
     SENT = "sent"
@@ -56,8 +52,8 @@ def dispatch_celery_task(
     """Dispatch a Celery task for a newly created job.
 
     Writes both the ``celery_task_id`` and an ``OutboxMessage`` row in the
-    same transaction, then commits.  After commit, attempts inline delivery
-    to Celery with up to 2 retries.
+    same transaction, then commits.  After commit, makes one optimistic
+    inline delivery attempt to Celery.
 
     - On success: outbox row marked ``"sent"``, returns ``SENT``.
     - On failure with outbox committed: job stays ``"queued"``, outbox
@@ -194,7 +190,7 @@ def dispatch_celery_task(
         )
         job.status = RunJobStatus.FAILED
         job.error_code = "enqueue_failed"
-        job.error_message = "Unable to dispatch task to broker after retries."
+        job.error_message = "Unable to dispatch task to broker."
         job.completed_at = datetime.now(UTC)
         try:
             db.commit()

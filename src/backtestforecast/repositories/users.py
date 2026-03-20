@@ -20,6 +20,27 @@ class UserRepository:
         stmt = select(User).where(User.clerk_user_id == clerk_user_id)
         return self.session.scalar(stmt)
 
+    def sync_email_if_needed(self, user: User, email: str | None) -> bool:
+        """Update the stored email only when a non-empty new value differs.
+
+        Returns True when a mutation was applied to the session.
+        """
+        if not email or user.email == email:
+            return False
+        nested = self.session.begin_nested()
+        try:
+            self.session.execute(
+                update(User)
+                .where(User.id == user.id, User.email != email)
+                .values(email=email)
+            )
+            nested.commit()
+            self.session.refresh(user)
+            return True
+        except Exception:
+            nested.rollback()
+            raise
+
     def get_by_stripe_customer_id(self, stripe_customer_id: str) -> User | None:
         stmt = select(User).where(User.stripe_customer_id == stripe_customer_id)
         return self.session.scalar(stmt)
@@ -31,18 +52,7 @@ class UserRepository:
     def get_or_create(self, clerk_user_id: str, email: str | None) -> User:
         existing = self.get_by_clerk_user_id(clerk_user_id)
         if existing is not None:
-            if email and existing.email != email:
-                nested = self.session.begin_nested()
-                try:
-                    self.session.execute(
-                        update(User)
-                        .where(User.id == existing.id, User.email != email)
-                        .values(email=email)
-                    )
-                    nested.commit()
-                    self.session.refresh(existing)
-                except Exception:
-                    nested.rollback()
+            self.sync_email_if_needed(existing, email)
             return existing
 
         user = User(clerk_user_id=clerk_user_id, email=email)

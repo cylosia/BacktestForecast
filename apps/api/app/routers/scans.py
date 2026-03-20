@@ -21,6 +21,7 @@ from backtestforecast.schemas.scans import (
     ScannerRecommendationListResponse,
 )
 from backtestforecast.errors import FeatureLockedError
+from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.scans import ScanService
@@ -64,6 +65,8 @@ def create_scan(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> ScannerJobResponse:
+    if not is_feature_enabled("scanner", user_id=user.id, plan_tier=user.plan_tier):
+        raise FeatureLockedError("Scanner is temporarily disabled for this account.", required_tier="free")
     get_rate_limiter().check(
         bucket="scans:create",
         actor_key=str(user.id),

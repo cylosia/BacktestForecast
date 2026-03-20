@@ -72,13 +72,13 @@ describe("validateScannerForm", () => {
     );
   });
 
-  it("enforces advanced mode symbol limit for the current plan", () => {
+  it("fails closed for unsupported advanced mode combinations on the current plan", () => {
     const symbols = Array.from({ length: 11 }, (_, i) => `SYM${i}`).join(",");
     const errors = validateScannerForm(
       validInput({ mode: "advanced", symbolsText: symbols }),
     );
     expect(errors).toContain(
-      "Advanced mode allows at most 10 symbols for your plan.",
+      "Advanced mode allows at most 5 symbols for your plan.",
     );
   });
 
