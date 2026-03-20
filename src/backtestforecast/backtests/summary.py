@@ -41,6 +41,7 @@ def build_summary(
     loss_pnls: list[float] = []
     total_net_pnl = 0.0
     total_commissions = 0.0
+    total_dividends_received = 0.0
     sum_holding = 0.0
     sum_dte = 0.0
     for trade in trades:
@@ -51,6 +52,7 @@ def build_summary(
             loss_pnls.append(pnl_f)
         total_net_pnl += pnl_f
         total_commissions += float(trade.total_commissions)
+        total_dividends_received += float(trade.detail_json.get("dividends_received", 0.0) or 0.0)
         sum_holding += trade.holding_period_days
         sum_dte += trade.dte_at_open
 
@@ -144,6 +146,7 @@ def build_summary(
         max_drawdown_pct=max_drawdown_pct,
         total_commissions=total_commissions,
         total_net_pnl=total_net_pnl,
+        total_dividends_received=total_dividends_received,
         starting_equity=starting_equity,
         ending_equity=ending_equity,
         profit_factor=profit_factor,

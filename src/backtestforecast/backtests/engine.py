@@ -199,7 +199,7 @@ class OptionsBacktestEngine:
                 if should_exit:
                     trade, cash_delta = self._close_position(
                         position, config, snapshot.position_value, bar.trade_date, bar.close_price,
-                        exit_prices, exit_reason, warnings, warning_codes,
+                        exit_prices, exit_reason, option_gateway, warnings, warning_codes,
                         current_bar_index=index,
                     )
                     cash += cash_delta
@@ -350,7 +350,7 @@ class OptionsBacktestEngine:
                 exit_prices_fc[stock_leg.symbol] = stock_leg.last_price
             trade, cash_delta = self._close_position(
                 position, config, snapshot.position_value, sorted_bars[-1].trade_date,
-                sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
+                sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted", option_gateway,
                 warnings, warning_codes,
                 current_bar_index=len(sorted_bars) - 1,
             )
@@ -521,6 +521,7 @@ class OptionsBacktestEngine:
         exit_underlying_close: float,
         exit_prices: dict[str, float],
         exit_reason: str,
+        option_gateway: OptionDataGateway,
         warnings: list[dict[str, Any]] | None = None,
         warning_codes: set[str] | None = None,
         current_bar_index: int | None = None,
@@ -553,9 +554,10 @@ class OptionsBacktestEngine:
         )
         entry_gross_notional = option_entry_notional + stock_entry_notional
         entry_slippage = entry_gross_notional * slippage_pct_d
-        cash_delta = exit_value - exit_commission - exit_slippage
+        dividends_received = self._dividends_received(position, exit_date, option_gateway)
+        cash_delta = exit_value + dividends_received - exit_commission - exit_slippage
         exit_value_per_unit = exit_value / _D(position.quantity) if position.quantity else _D0
-        gross_pnl = (exit_value_per_unit - entry_value_per_unit) * _D(position.quantity)
+        gross_pnl = (exit_value_per_unit - entry_value_per_unit) * _D(position.quantity) + dividends_received
         total_commissions = position.entry_commission_total + exit_commission
         total_slippage = entry_slippage + exit_slippage
         net_pnl = gross_pnl - total_commissions - total_slippage
@@ -615,7 +617,7 @@ class OptionsBacktestEngine:
             entry_reason=position.entry_reason,
             exit_reason=exit_reason,
             detail_json={
-                **self._build_trade_detail_json(position, exit_prices, float(exit_value_per_unit)),
+                **self._build_trade_detail_json(position, exit_prices, float(exit_value_per_unit), dividends_received),
                 "unit_convention": "per_unit_divided_by_100",
                 "total_slippage": float(total_slippage),
                 "entry_slippage": float(entry_slippage),
@@ -666,6 +668,7 @@ class OptionsBacktestEngine:
         position: OpenMultiLegPosition,
         exit_prices: dict[str, float],
         exit_value_per_unit: float,
+        dividends_received: Decimal,
     ) -> dict[str, Any]:
         detail = dict(position.detail_json)
         legs = [dict(leg) for leg in detail.get("legs", [])]
@@ -696,7 +699,32 @@ class OptionsBacktestEngine:
             mp = position.max_profit_per_unit * position.quantity
             detail["max_profit_total"] = None if (isinstance(mp, float) and not math.isfinite(mp)) else mp
         detail["exit_package_market_value"] = exit_value_per_unit
+        detail["dividends_received"] = float(dividends_received)
         return detail
+
+
+    @staticmethod
+    def _dividends_received(
+        position: OpenMultiLegPosition,
+        exit_date: date,
+        option_gateway: OptionDataGateway,
+    ) -> Decimal:
+        if not position.stock_legs or position.quantity == 0:
+            return _D0
+
+        total = _D0
+        for stock_leg in position.stock_legs:
+            dividends = option_gateway.get_dividends(stock_leg.symbol, position.entry_date, exit_date)
+            for dividend in dividends:
+                if not (position.entry_date < dividend.ex_date <= exit_date):
+                    continue
+                total += (
+                    _D(stock_leg.side)
+                    * _D(stock_leg.share_quantity_per_unit)
+                    * _D(position.quantity)
+                    * _D(dividend.cash_amount)
+                )
+        return total
 
     @staticmethod
     def _resolve_exit(
