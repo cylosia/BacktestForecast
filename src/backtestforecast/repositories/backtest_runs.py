@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
@@ -12,6 +13,16 @@ from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTr
 logger = structlog.get_logger("repositories.backtest_runs")
 
 _MAX_PAGE_SIZE = 200
+
+
+@dataclass(slots=True)
+class BacktestRunTradeBatch:
+    trades: list[BacktestTrade]
+    total_count: int = 0
+
+    @property
+    def exceeded_limit(self) -> bool:
+        return self.total_count > len(self.trades)
 
 
 class BacktestRunRepository:
@@ -225,7 +236,7 @@ class BacktestRunRepository:
 
     def get_trades_for_runs(
         self, run_ids: list[UUID], *, limit_per_run: int = 10_000, user_id: UUID,
-    ) -> dict[UUID, list[BacktestTrade]]:
+    ) -> dict[UUID, BacktestRunTradeBatch]:
         if not run_ids:
             return {}
         run_ids = run_ids[:50]
@@ -234,21 +245,28 @@ class BacktestRunRepository:
             partition_by=BacktestTrade.run_id,
             order_by=BacktestTrade.entry_date,
         ).label("rn")
+        total_count = sa_func.count(BacktestTrade.id).over(
+            partition_by=BacktestTrade.run_id,
+        ).label("total_count")
         sub = (
-            select(BacktestTrade.id, row_num)
+            select(BacktestTrade.id, BacktestTrade.run_id, row_num, total_count)
             .join(BacktestRun, BacktestTrade.run_id == BacktestRun.id)
             .where(BacktestTrade.run_id.in_(run_ids), BacktestRun.user_id == user_id)
             .subquery()
         )
         stmt = (
-            select(BacktestTrade)
+            select(BacktestTrade, sub.c.total_count)
             .join(sub, BacktestTrade.id == sub.c.id)
             .where(sub.c.rn <= limit_per_run)
             .order_by(BacktestTrade.run_id, BacktestTrade.entry_date)
         )
-        result: dict[UUID, list[BacktestTrade]] = {rid: [] for rid in run_ids}
-        for trade in self.session.scalars(stmt):
-            result[trade.run_id].append(trade)
+        result: dict[UUID, BacktestRunTradeBatch] = {
+            rid: BacktestRunTradeBatch(trades=[], total_count=0) for rid in run_ids
+        }
+        for trade, total_count in self.session.execute(stmt):
+            batch = result[trade.run_id]
+            batch.trades.append(trade)
+            batch.total_count = int(total_count or 0)
         return result
 
     def get_equity_points_for_runs(

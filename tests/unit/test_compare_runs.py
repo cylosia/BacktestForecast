@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
 from backtestforecast.errors import AppValidationError
-from backtestforecast.models import BacktestRun, User
+from backtestforecast.models import BacktestRun, BacktestTrade, User
 from backtestforecast.schemas.backtests import CompareBacktestsRequest
 from backtestforecast.services.backtests import BacktestService
 
@@ -44,6 +44,33 @@ def _create_user(session: Session) -> User:
     session.commit()
     session.refresh(user)
     return user
+
+
+def _create_trade(session: Session, run: BacktestRun, idx: int) -> BacktestTrade:
+    trade = BacktestTrade(
+        run_id=run.id,
+        option_ticker=f"O:TEST{idx}",
+        strategy_type=run.strategy_type,
+        underlying_symbol=run.symbol,
+        entry_date=date(2024, 1, 1),
+        exit_date=date(2024, 1, 2),
+        expiration_date=date(2024, 2, 1),
+        quantity=1,
+        dte_at_open=30,
+        holding_period_days=1,
+        entry_underlying_close=Decimal("100"),
+        exit_underlying_close=Decimal("101"),
+        entry_mid=Decimal("2"),
+        exit_mid=Decimal("3"),
+        gross_pnl=Decimal("100"),
+        net_pnl=Decimal("99"),
+        total_commissions=Decimal("1"),
+        entry_reason="entry_rules_met",
+        exit_reason="profit_target",
+    )
+    session.add(trade)
+    session.flush()
+    return trade
 
 
 def _create_run(session: Session, user: User, status: str) -> BacktestRun:
@@ -144,3 +171,29 @@ def test_compare_runs_calls_get_trades_with_limit(db_session):
         assert "limit_per_run" in call_kwargs.kwargs or len(call_kwargs.args) >= 2, (
             "get_trades_for_runs must be called with an explicit limit_per_run argument"
         )
+
+
+def test_compare_runs_marks_truncated_when_any_run_exceeds_trade_limit(db_session):
+    """compare_runs should flag truncation from full pre-truncation totals."""
+    user = _create_user(db_session)
+    runs = [_create_run(db_session, user, "succeeded") for _ in range(5)]
+
+    for idx in range(1601):
+        _create_trade(db_session, runs[0], idx)
+    runs[0].trade_count = 1601
+    for run in runs[1:]:
+        for idx in range(10):
+            _create_trade(db_session, run, idx)
+        run.trade_count = 10
+    db_session.commit()
+
+    service = BacktestService(db_session)
+    request = CompareBacktestsRequest(run_ids=[run.id for run in runs])
+
+    result = service.compare_runs(user, request)
+
+    assert result.trade_limit_per_run == 1600
+    assert result.trades_truncated is True
+    assert len(result.items[0].trades) == result.trade_limit_per_run
+    assert result.items[0].summary.trade_count == 1601
+    assert all(len(item.trades) == 10 for item in result.items[1:])
