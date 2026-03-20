@@ -30,3 +30,15 @@ def test_daily_picks_router_uses_readonly_db_for_reads() -> None:
     source = _router_source("apps/api/app/routers/daily_picks.py")
     assert "get_readonly_db" in source
     assert source.count("db: Session = Depends(get_readonly_db)") >= 2
+
+
+def test_exports_router_uses_readonly_db_for_list_and_status() -> None:
+    source = _router_source("apps/api/app/routers/exports.py")
+    assert "get_readonly_db" in source
+    assert source.count("db: Session = Depends(get_readonly_db)") >= 2
+
+
+def test_templates_router_uses_readonly_db_for_list_and_get() -> None:
+    source = _router_source("apps/api/app/routers/templates.py")
+    assert "get_readonly_db" in source
+    assert source.count("db: Session = Depends(get_readonly_db)") >= 2

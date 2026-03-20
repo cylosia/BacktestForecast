@@ -79,9 +79,7 @@ export type EquityCurvePointResponse = components["schemas"]["EquityCurvePointRe
 export type BacktestRunHistoryItemResponse = components["schemas"]["BacktestRunHistoryItemResponse"];
 export type BacktestRunDetailResponse = components["schemas"]["BacktestRunDetailResponse"];
 export type BacktestRunStatusResponse = components["schemas"]["BacktestRunStatusResponse"];
-export type BacktestRunListResponse = components["schemas"]["BacktestRunListResponse"] & {
-  next_cursor?: string | null;
-};
+export type BacktestRunListResponse = components["schemas"]["BacktestRunListResponse"];
 export type CompareBacktestsRequest = components["schemas"]["CompareBacktestsRequest"];
 export type CompareBacktestsResponse = components["schemas"]["CompareBacktestsResponse"];
 
