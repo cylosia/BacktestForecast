@@ -9,6 +9,7 @@ import {
   fetchAnalysisStatus,
 } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
+import { getOrCreatePendingIdempotencyKey } from "@/lib/idempotency";
 import { TICKER_RE } from "@/lib/validation-constants";
 import { usePolling } from "@/hooks/use-polling";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
@@ -232,6 +233,7 @@ export function SymbolAnalysisLauncher() {
   const [requiredTier, setRequiredTier] = useState<string | undefined>();
   const [result, setResult] = useState<SymbolAnalysisFullResponse | null>(null);
   const analysisIdRef = useRef<string | null>(null);
+  const pendingIdempotencyKeyRef = useRef<string | null>(null);
   const getTokenRef = useRef(getToken);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
   const abortRef = useRef<AbortController | null>(null);
@@ -322,13 +324,19 @@ export function SymbolAnalysisLauncher() {
       const token = await getToken();
       if (!token) throw new Error("Session expired.");
 
-      const created = await createSymbolAnalysis(token, sym, `deep-${sym}-${crypto.randomUUID()}`, controller.signal);
+      const idempotencyKey = getOrCreatePendingIdempotencyKey(
+        pendingIdempotencyKeyRef.current,
+        `deep-${sym}`,
+      );
+      pendingIdempotencyKeyRef.current = idempotencyKey;
+      const created = await createSymbolAnalysis(token, sym, idempotencyKey, controller.signal);
 
       if (created.status === "succeeded") {
         const full = await fetchAnalysisFull(token, created.id, controller.signal);
         if (controller.signal.aborted) return;
         setResult(full);
         setPhase("done");
+        pendingIdempotencyKeyRef.current = null;
       } else {
         analysisIdRef.current = created.id;
         startPolling();
