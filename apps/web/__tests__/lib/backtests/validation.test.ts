@@ -1,8 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   getDefaultBacktestFormValues,
   validateBacktestForm,
 } from "@/lib/backtests/validation";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("getDefaultBacktestFormValues", () => {
   it("returns valid ISO date strings for startDate and endDate", () => {
@@ -13,11 +17,20 @@ describe("getDefaultBacktestFormValues", () => {
     expect(defaults.endDate).toMatch(isoDatePattern);
   });
 
-  it("endDate is today in UTC", () => {
+  it("endDate matches the latest New York market date in summer", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-07-14T03:30:00Z"));
+
     const defaults = getDefaultBacktestFormValues();
-    const now = new Date();
-    const todayUTC = now.toISOString().slice(0, 10);
-    expect(defaults.endDate).toBe(todayUTC);
+    expect(defaults.endDate).toBe("2025-07-11");
+  });
+
+  it("endDate matches the latest New York market date in winter", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-01-13T04:30:00Z"));
+
+    const defaults = getDefaultBacktestFormValues();
+    expect(defaults.endDate).toBe("2025-01-10");
   });
 
   it("startDate is approximately 365 days before endDate", () => {
@@ -38,10 +51,19 @@ describe("getDefaultBacktestFormValues", () => {
     expect(Number.isNaN(endDate.getTime())).toBe(false);
   });
 
-  it("endDate is not in the future (UTC)", () => {
-    const defaults = getDefaultBacktestFormValues();
-    const todayUTC = new Date().toISOString().slice(0, 10);
-    expect(defaults.endDate <= todayUTC).toBe(true);
+  it("rejects an endDate after the latest New York market date", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-07-14T03:30:00Z"));
+
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      startDate: "2025-07-01",
+      endDate: "2025-07-12",
+    };
+
+    const { errors } = validateBacktestForm(values);
+    expect(errors.endDate).toContain("latest market date");
+    expect(errors.endDate).toContain("America/New_York");
   });
 });
 

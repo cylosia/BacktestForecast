@@ -24,15 +24,12 @@ def _read_ts(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_frontend_validation_uses_et_offset() -> None:
-    """Frontend date validation must use an ET offset, not raw UTC."""
+def test_frontend_validation_uses_new_york_market_date() -> None:
+    """Frontend date validation must use America/New_York market date logic."""
     source = _read_ts(VALIDATION_TS)
-    assert "etOffsetMs" in source or "ET" in source, (
-        "validation.ts must use an ET-aware offset for date checking, "
-        "not raw UTC. Look for etOffsetMs or similar."
-    )
-    assert "todayEt" in source or "nowEt" in source, (
-        "validation.ts must compute today's date in ET, not UTC."
+    assert "marketDateTodayET" in source, (
+        "validation.ts must use marketDateTodayET() for date checking, "
+        "not raw UTC or a fixed offset."
     )
 
 
