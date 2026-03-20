@@ -21,7 +21,7 @@ from backtestforecast.billing.entitlements import (
     validate_strategy_access,
 )
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppError, ConflictError, NotFoundError, QuotaExceededError, ValidationError
+from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError, QuotaExceededError
 from backtestforecast.schemas.json_shapes import _FORECAST_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.utils.dates import market_date_today
 from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
@@ -55,7 +55,7 @@ from backtestforecast.schemas.scans import (
 )
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
-from backtestforecast.services.backtests import to_decimal
+from backtestforecast.utils import to_decimal
 from backtestforecast.services.serialization import (
     downsample_equity_curve,
     serialize_equity_point,
@@ -66,49 +66,24 @@ from backtestforecast.services.serialization import (
 logger = structlog.get_logger("services.scans")
 
 
-def _safe_validate_list(model_cls, items: list | None, field_name: str) -> list:
-    """Validate a list of JSON dicts against a Pydantic model, skipping malformed entries."""
-    if items is None:
-        return []
-    result = []
-    for item in items:
-        try:
-            result.append(model_cls.model_validate(item))
-        except Exception:
-            structlog.get_logger("services.scans").warning(
-                "scan.malformed_json_entry_skipped",
-                field=field_name,
-                item_keys=list(item.keys()) if isinstance(item, dict) else None,
-            )
-    return result
-
-
-def _safe_validate_json(data: Any, label: str, *, default: Any = None) -> Any:
-    """Return *data* if it's a dict or list, otherwise *default*."""
-    if data is None:
-        return default
-    if isinstance(data, (dict, list)):
-        return data
-    return default
-
-
-def _safe_validate_summary(data: dict) -> BacktestSummaryResponse:
-    """Validate summary JSON, returning a zeroed summary on failure."""
-    try:
-        return BacktestSummaryResponse.model_validate(data)
-    except Exception:
-        structlog.get_logger("services.scans").warning(
-            "scan.malformed_summary_json",
-            keys=list(data.keys()) if isinstance(data, dict) else None,
-        )
-        return BacktestSummaryResponse(
-            trade_count=0, total_commissions=Decimal("0"),
-            total_net_pnl=Decimal("0"), starting_equity=Decimal("0"),
-            ending_equity=Decimal("0"),
-        )
+from backtestforecast.services.serialization import (
+    safe_validate_json as _safe_validate_json,
+    safe_validate_list as _safe_validate_list,
+    safe_validate_summary as _safe_validate_summary,
+)
 
 
 def _get_fallback_entry_rules() -> list[RsiRule]:
+    """Return a default RSI entry rule for warmup-period calculation.
+
+    This fallback is used when no entry rules are provided by the user's
+    rule sets. It affects the indicator warmup window (RSI-14 needs ~14
+    bars) but does NOT affect which trades the engine takes — the engine
+    still requires the user's configured entry rules to fire.
+
+    If you change the default period here, update
+    ``fallback_entry_rule_rsi_threshold`` in config.py to keep docs in sync.
+    """
     threshold = get_settings().fallback_entry_rule_rsi_threshold
     return [RsiRule(type="rsi", operator="lte", threshold=Decimal(str(threshold)), period=14)]
 
@@ -168,7 +143,7 @@ class ScanService:
 
         candidate_count, compatibility_warnings = self._count_compatible_candidates(payload)
         if candidate_count <= 0:
-            raise ValidationError("No compatible symbol/strategy/rule-set combinations were left after validation.")
+            raise AppValidationError("No compatible symbol/strategy/rule-set combinations were left after validation.")
 
         request_hash = self._request_hash(payload)
         if payload.idempotency_key:
@@ -253,7 +228,7 @@ class ScanService:
             return job
 
         try:
-            resolve_scanner_policy(
+            policy = resolve_scanner_policy(
                 user.plan_tier, job.mode,
                 subscription_status=user.subscription_status,
                 subscription_current_period_end=user.subscription_current_period_end,
@@ -267,11 +242,6 @@ class ScanService:
             return job
 
         payload = CreateScannerJobRequest.model_validate(job.request_snapshot_json)
-        policy = resolve_scanner_policy(
-            user.plan_tier, job.mode,
-            subscription_status=user.subscription_status,
-            subscription_current_period_end=user.subscription_current_period_end,
-        )
         self._validate_limits(policy, payload)
 
         from sqlalchemy import update as sa_update
@@ -323,12 +293,10 @@ class ScanService:
     # If this value exceeds the statement_timeout, individual candidate backtests
     # will fail with StatementTimeout before the scan-level timeout fires.
     _CANDIDATE_TIMEOUT_SECONDS = 120
-    # WARNING: All candidates are accumulated in memory before being flushed
-    # to the DB. With 2000 candidates each containing trades and equity curves,
-    # peak memory usage can reach hundreds of MB. For production, consider
-    # flushing candidates to the DB in batches (e.g., every 100 candidates)
-    # to keep memory bounded.
-    _MAX_CANDIDATES_IN_MEMORY = 2000
+    # Candidates are accumulated in memory and periodically trimmed (every 200)
+    # to keep peak memory bounded. Low-ranked candidates have their heavy
+    # fields (trades, equity_curve) cleared during trimming.
+    _MAX_CANDIDATES_IN_MEMORY = 1000
 
     def _execute_scan(
         self,
@@ -424,6 +392,23 @@ class ScanService:
                             strategy_type=strategy.value,
                             account_size=float(payload.account_size),
                         )
+                        _TRIM_INTERVAL = 200
+                        if (
+                            len(candidates) > 0
+                            and len(candidates) % _TRIM_INTERVAL == 0
+                            and len(candidates) > payload.max_recommendations * 2
+                        ):
+                            candidates.sort(
+                                key=lambda c: recommendation_sort_key((
+                                    c["symbol"], c["strategy_type"], c["rule_set_name"],
+                                    self._ranking_response_model(c["ranking"]),
+                                )),
+                            )
+                            keep = max(payload.max_recommendations * 3, _TRIM_INTERVAL)
+                            for c in candidates[keep:]:
+                                c["trades"] = []
+                                c["equity_curve"] = []
+
                         if len(candidates) >= self._MAX_CANDIDATES_IN_MEMORY:
                             logger.warning("scan.candidate_cap_reached", max=self._MAX_CANDIDATES_IN_MEMORY)
                             warnings.append({"type": "candidate_cap", "message": f"Candidate cap of {self._MAX_CANDIDATES_IN_MEMORY} reached; remaining candidates were skipped."})
@@ -519,6 +504,8 @@ class ScanService:
                 validate_json_shape(candidate["summary"], "ScannerRecommendation.summary_json", required_keys=frozenset({"trade_count"}))
                 validate_json_shape(candidate["forecast"], "ScannerRecommendation.forecast_json", required_keys=_FORECAST_REQUIRED_KEYS)
                 rank = rank_lookup[(candidate["symbol"], candidate["strategy_type"], candidate["rule_set_name"])]
+                ranking_with_meta = dict(candidate["ranking"])
+                ranking_with_meta["trades_truncated"] = candidate.get("trades_truncated", False)
                 job.recommendations.append(
                     ScannerRecommendation(
                         rank=rank,
@@ -534,7 +521,7 @@ class ScanService:
                         equity_curve_json=candidate["equity_curve"],
                         historical_performance_json=candidate["historical"],
                         forecast_json=candidate["forecast"],
-                        ranking_features_json=candidate["ranking"],
+                        ranking_features_json=ranking_with_meta,
                     )
                 )
 
@@ -556,25 +543,55 @@ class ScanService:
             self.session.commit()
         self.session.refresh(job)
         if job.status == "succeeded":
-            self.audit.record(
-                event_type="scan.completed",
-                subject_type="scanner_job",
-                subject_id=job.id,
-                user_id=job.user_id,
-                metadata={"mode": job.mode, "recommendation_count": job.recommendation_count},
-            )
-            self.session.commit()
+            try:
+                self.audit.record_always(
+                    event_type="scan.completed",
+                    subject_type="scanner_job",
+                    subject_id=job.id,
+                    user_id=job.user_id,
+                    metadata={"mode": job.mode, "recommendation_count": job.recommendation_count},
+                )
+                self.session.commit()
+            except Exception:
+                self.session.rollback()
+                logger.warning(
+                    "scan.audit_commit_failed",
+                    job_id=str(job.id),
+                    exc_info=True,
+                )
         return job
 
-    def list_jobs(self, user: User, limit: int = 50, offset: int = 0) -> ScannerJobListResponse:
+    def list_jobs(
+        self,
+        user: User,
+        limit: int = 50,
+        offset: int = 0,
+        cursor: str | None = None,
+    ) -> ScannerJobListResponse:
+        from backtestforecast.utils import decode_cursor, encode_cursor
+
         effective_limit = min(limit, 200)
-        jobs = self.repository.list_for_user(user.id, limit=effective_limit, offset=offset)
+        cursor_before = None
+        if cursor:
+            cursor_before = decode_cursor(cursor)
+            if cursor_before is None:
+                from backtestforecast.errors import ValidationError
+                raise ValidationError("Invalid pagination cursor.")
+            offset = 0
+        jobs = self.repository.list_for_user(
+            user.id, limit=effective_limit + 1, offset=offset, cursor_before=cursor_before,
+        )
+        has_next = len(jobs) > effective_limit
+        if has_next:
+            jobs = jobs[:effective_limit]
         total = self.repository.count_for_user(user.id)
+        next_cursor = encode_cursor(jobs[-1].created_at) if has_next and jobs else None
         return ScannerJobListResponse(
             items=[self._to_job_response(job) for job in jobs],
             total=total,
             offset=offset,
             limit=effective_limit,
+            next_cursor=next_cursor,
         )
 
     def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
@@ -591,12 +608,14 @@ class ScanService:
             raise ConflictError(
                 "Cannot delete a job that is currently queued or running. Cancel it first."
             )
+        snapshot = job.request_snapshot_json or {}
+        symbols = snapshot.get("symbols", [])
         self.audit.record(
             event_type="scan.deleted",
             subject_type="scanner_job",
             subject_id=job.id,
             user_id=user_id,
-            metadata={"symbol": job.symbol, "mode": job.mode},
+            metadata={"symbols": symbols[:5], "mode": job.mode},
         )
         self.session.delete(job)
         try:
@@ -610,21 +629,18 @@ class ScanService:
     ) -> ScannerRecommendationListResponse:
         import time as _time
         _query_start = _time.monotonic()
+        effective_limit = min(limit, 200)
         job = self.repository.get_for_user(job_id, user.id, include_recommendations=False)
         if job is None:
             raise NotFoundError("Scanner job not found.")
-        from sqlalchemy import func, select
-        total = self.session.scalar(
-            select(func.count())
-            .select_from(ScannerRecommendation)
-            .where(ScannerRecommendation.scanner_job_id == job.id)
-        ) or 0
+        total = job.recommendation_count
+        from sqlalchemy import select
         stmt = (
             select(ScannerRecommendation)
             .where(ScannerRecommendation.scanner_job_id == job.id)
             .order_by(ScannerRecommendation.rank)
             .offset(offset)
-            .limit(limit)
+            .limit(effective_limit)
         )
         recs = list(self.session.scalars(stmt))
         _query_elapsed = _time.monotonic() - _query_start
@@ -643,7 +659,7 @@ class ScanService:
             items=[self._to_recommendation_response(r) for r in recs],
             total=total,
             offset=offset,
-            limit=limit,
+            limit=effective_limit,
         )
 
     def create_scheduled_refresh_jobs(self, limit: int = 25) -> list[ScannerJob]:
@@ -748,7 +764,7 @@ class ScanService:
         try:
             StrategyType(effective_strategy)
         except ValueError:
-            raise ValidationError(f"Unknown strategy_type: {effective_strategy}")
+            raise AppValidationError(f"Unknown strategy_type: {effective_strategy}")
         today = market_date_today()
         request = CreateBacktestRunRequest(
             symbol=symbol,
@@ -804,11 +820,11 @@ class ScanService:
         payload: CreateScannerJobRequest,
     ) -> None:
         if len(payload.symbols) > policy.max_symbols:
-            raise ValidationError(f"The selected scanner mode allows at most {policy.max_symbols} symbols.")
+            raise AppValidationError(f"The selected scanner mode allows at most {policy.max_symbols} symbols.")
         if len(payload.strategy_types) > policy.max_strategies:
-            raise ValidationError(f"The selected scanner mode allows at most {policy.max_strategies} strategies.")
+            raise AppValidationError(f"The selected scanner mode allows at most {policy.max_strategies} strategies.")
         if len(payload.rule_sets) > policy.max_rule_sets:
-            raise ValidationError(f"The selected scanner mode allows at most {policy.max_rule_sets} rule sets.")
+            raise AppValidationError(f"The selected scanner mode allows at most {policy.max_rule_sets} rule sets.")
 
     def _count_compatible_candidates(self, payload: CreateScannerJobRequest) -> tuple[int, list[dict[str, Any]]]:
         count = 0
@@ -836,12 +852,20 @@ class ScanService:
         warnings: list[dict[str, Any]],
     ) -> dict[str, HistoricalDataBundle]:
         if not payload.symbols:
-            raise ValidationError("At least one symbol is required.")
+            raise AppValidationError("At least one symbol is required.")
         if not payload.rule_sets:
-            raise ValidationError("At least one rule set is required.")
+            raise AppValidationError("At least one rule set is required.")
         all_rules = [rule for rule_set in payload.rule_sets for rule in rule_set.entry_rules]
         if not all_rules:
-            logger.warning("prepare_bundles_fallback_rules", msg="No entry rules aggregated from rule_sets; using fallback RSI rule for warmup calculation")
+            logger.warning(
+                "prepare_bundles_fallback_rules",
+                msg="No entry rules aggregated from rule_sets; using fallback RSI rule for warmup calculation",
+                fallback_threshold=get_settings().fallback_entry_rule_rsi_threshold,
+            )
+            warnings.append({
+                "code": "fallback_entry_rules",
+                "message": "No entry rules were provided in any rule set. A default RSI rule was used for indicator warmup only.",
+            })
         representative = CreateBacktestRunRequest(
             symbol=payload.symbols[0],
             strategy_type=payload.strategy_types[0],
@@ -903,7 +927,11 @@ class ScanService:
                     "message": f"Bundle prefetch timed out after {scan_timeout}s; some symbols may be missing.",
                 })
         finally:
-            pool.shutdown(wait=False, cancel_futures=True)
+            try:
+                pool.shutdown(wait=True, cancel_futures=True)
+            except Exception:
+                pool.shutdown(wait=False, cancel_futures=True)
+                logger.warning("scan.threadpool_graceful_shutdown_failed", exc_info=True)
         return bundles
 
     def _batch_historical_performance(
@@ -990,10 +1018,10 @@ class ScanService:
                 horizon_days=horizon_days,
                 strategy_type=strategy_type,
             )
-        except (ValueError, LookupError):
+        except (ValueError, LookupError) as exc:
             from backtestforecast.observability.metrics import FORECAST_FALLBACK_TOTAL
             FORECAST_FALLBACK_TOTAL.inc()
-            logger.info("forecast.zero_analog_fallback", symbol=symbol, horizon_days=horizon_days)
+            logger.warning("scan.forecast_fallback", symbol=symbol, error=str(exc)[:200], exc_info=True)
             fallback_date = bars[-1].trade_date if bars else market_date_today()
             return HistoricalAnalogForecastResponse(
                 symbol=symbol,
@@ -1077,7 +1105,12 @@ class ScanService:
             ranking_breakdown=_safe_validate_json(recommendation.ranking_features_json, "ranking_breakdown", default={}),
             trades=_safe_validate_list(TradeJsonResponse, recommendation.trades_json, "trades"),
             equity_curve=_safe_validate_list(EquityCurvePointResponse, recommendation.equity_curve_json, "equity_curve"),
-            trades_truncated=len(recommendation.trades_json or []) >= 50,
+            trades_truncated=bool(
+                (recommendation.ranking_features_json or {}).get(
+                    "trades_truncated",
+                    len(recommendation.trades_json or []) >= 50,
+                )
+            ),
         )
 
 

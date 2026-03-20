@@ -10,7 +10,7 @@ import { ApiError } from "@/lib/api/shared";
 import { TICKER_RE } from "@/lib/validation-constants";
 import { isPlanLimitError } from "@/lib/billing/errors";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
-import { daysAgo } from "@/lib/utils";
+import { daysAgoET } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -58,6 +58,7 @@ export function SweepForm() {
   const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [errorCode, setErrorCode] = useState<string | undefined>();
+  const [requiredTier, setRequiredTier] = useState<string | undefined>();
   const [selectedStrategies, setSelectedStrategies] = useState<Set<StrategyType>>(
     new Set<StrategyType>(["bull_put_credit_spread", "bear_call_credit_spread"]),
   );
@@ -65,8 +66,8 @@ export function SweepForm() {
   const [form, setForm] = useState<FormState>({
     mode: "grid",
     symbol: "TSLA",
-    startDate: daysAgo(365),
-    endDate: daysAgo(1),
+    startDate: daysAgoET(365),
+    endDate: daysAgoET(1),
     targetDte: "8",
     dteTolerance: "2",
     maxHoldingDays: "8",
@@ -310,6 +311,7 @@ export function SweepForm() {
       if (controller.signal.aborted) return;
       setStatus("error");
       setErrorCode(err instanceof ApiError ? err.code ?? undefined : undefined);
+      setRequiredTier(err instanceof ApiError ? err.requiredTier : undefined);
       if (err instanceof ApiError) {
         setErrorMessage(err.message);
       } else {
@@ -488,7 +490,7 @@ export function SweepForm() {
       ) : null}
 
       {isPlanLimitError(errorCode) ? (
-        <UpgradePrompt message="Sweep optimization requires a Pro or Premium plan." />
+        <UpgradePrompt message={errorMessage ?? "Sweep optimization requires a Pro or Premium plan."} requiredTier={requiredTier} />
       ) : null}
 
       <Button type="submit" disabled={status === "submitting"} className="w-full sm:w-auto">

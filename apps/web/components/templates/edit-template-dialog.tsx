@@ -10,12 +10,14 @@ export function EditTemplateDialog({
   templateId,
   initialName,
   initialDescription,
+  initialUpdatedAt,
   open,
   onClose,
 }: {
   templateId: string;
   initialName: string;
   initialDescription: string;
+  initialUpdatedAt?: string;
   open: boolean;
   onClose: () => void;
 }) {
@@ -105,7 +107,17 @@ export function EditTemplateDialog({
         setSaving(false);
         return;
       }
-      await updateTemplate(token, templateId, { name: name.trim(), description: description.trim() || undefined }, controller.signal);
+      const payload: Record<string, unknown> = { name: name.trim() };
+      const trimmed = description.trim();
+      if (trimmed) {
+        payload.description = trimmed;
+      } else if (initialDescription) {
+        payload.description = null;
+      }
+      if (initialUpdatedAt) {
+        payload.expected_updated_at = initialUpdatedAt;
+      }
+      await updateTemplate(token, templateId, payload as any, controller.signal);
       if (controller.signal.aborted) return;
       savingRef.current = false;
       setSaving(false);
@@ -159,6 +171,11 @@ export function EditTemplateDialog({
             />
           </div>
         </div>
+
+        <p className="mt-3 text-xs text-muted-foreground">
+          To change the backtest configuration, use Apply to load this template
+          into the backtest form, adjust parameters, and save as a new template.
+        </p>
 
         {error && <p role="alert" aria-live="polite" className="mt-3 text-sm text-destructive">{error}</p>}
 

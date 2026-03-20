@@ -35,28 +35,10 @@ def list_backtests(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
-    # Aligned with other list endpoints. For deeper pagination, use cursor-based
-    # pagination (TODO).
-    #
-    # TODO: Migrate to cursor-based (keyset) pagination for all list endpoints.
-    # Offset-based pagination degrades at high offsets because the DB must scan
-    # and discard `offset` rows before returning `limit` rows.
-    #
-    # Recommended approach:
-    # 1. Accept an optional `cursor` query param (opaque base64-encoded token
-    #    containing the last row's sort key, e.g., `created_at` + `id`).
-    # 2. Use `WHERE (created_at, id) < (:cursor_created_at, :cursor_id)` with
-    #    a composite index on `(user_id, created_at DESC, id DESC)`.
-    # 3. Return `next_cursor` in the response for the client to pass on the
-    #    next request. Omit `next_cursor` when fewer than `limit` rows are
-    #    returned (last page).
-    # 4. Keep offset support temporarily for backward compatibility, but
-    #    deprecate it in the API docs.
-    # 5. Apply the same pattern to exports, scans, sweeps, and analyses.
     offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
+    cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunListResponse:
-    # Feature flag not checked on read: users may view past results even when creation is disabled.
     get_rate_limiter().check(
         bucket="backtests:read",
         actor_key=str(user.id),
@@ -64,7 +46,7 @@ def list_backtests(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:
-        return service.list_runs(user, limit=limit, offset=offset)
+        return service.list_runs(user, limit=limit, offset=offset, cursor=cursor)
 
 
 @router.post("", response_model=BacktestRunDetailResponse, status_code=status.HTTP_202_ACCEPTED)

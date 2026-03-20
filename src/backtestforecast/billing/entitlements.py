@@ -7,7 +7,7 @@ from enum import Enum
 import structlog
 
 from backtestforecast.config import get_settings
-from backtestforecast.errors import FeatureLockedError, ValidationError
+from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.schemas.common import PlanTier
 
 _logger = structlog.get_logger("billing.entitlements")
@@ -29,8 +29,6 @@ class ScannerMode(str, Enum):
 
 
 PAID_STATUSES = {"active", "trialing"}
-PAST_DUE_GRACE_DAYS = 7
-ACTIVE_RENEWAL_GRACE = timedelta(hours=72)
 INACTIVE_STATUSES = {"canceled", "unpaid", "incomplete", "incomplete_expired", "paused"}
 
 
@@ -197,6 +195,18 @@ def _resolve_tier(plan_tier: str | None) -> PlanTier:
     return PlanTier.FREE
 
 
+def _warn_unknown_tier(plan_tier: str | None, subscription_status: str | None) -> None:
+    """Log a warning when plan_tier is not a recognized value."""
+    tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
+    if tier_lower and tier_lower not in ("free", ""):
+        _logger.warning(
+            "normalize_plan_tier.unknown_tier_value",
+            plan_tier=plan_tier,
+            subscription_status=subscription_status,
+            hint="Unrecognized plan_tier defaults to FREE. User may lose features.",
+        )
+
+
 def normalize_plan_tier(
     plan_tier: str | None,
     subscription_status: str | None = None,
@@ -207,7 +217,9 @@ def normalize_plan_tier(
     if subscription_status == "past_due":
         if subscription_current_period_end is None:
             return PlanTier.FREE
-        grace_deadline = subscription_current_period_end + timedelta(days=_past_due_grace_days())
+        grace_deadline = subscription_current_period_end + timedelta(
+            days=_past_due_grace_days(), minutes=5,
+        )
         if datetime.now(UTC) > grace_deadline:
             _logger.info(
                 "normalize_plan_tier.past_due_grace_expired",
@@ -218,21 +230,43 @@ def normalize_plan_tier(
         resolved = _resolve_tier(plan_tier)
         if resolved != PlanTier.FREE:
             return resolved
-        tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
-        if tier_lower and tier_lower not in ("free", ""):
-            _logger.warning(
-                "normalize_plan_tier.unknown_tier_value",
-                plan_tier=plan_tier,
-                subscription_status=subscription_status,
-                hint="Unrecognized plan_tier defaults to FREE. User may lose features.",
-            )
+        _warn_unknown_tier(plan_tier, subscription_status)
         return PlanTier.FREE
     elif subscription_status is not None and subscription_status not in PAID_STATUSES:
-        _logger.warning(
+        _logger.error(
             "normalize_plan_tier.unknown_subscription_status",
             subscription_status=subscription_status,
             plan_tier=plan_tier,
-            hint="Unrecognized status defaults to FREE for safety. If this is a new Stripe status, add it to PAID_STATUSES or INACTIVE_STATUSES.",
+            hint="Unrecognized Stripe status. Granting 72-hour grace period from "
+                 "current_period_end, then downgrading to FREE. Add this status to "
+                 "PAID_STATUSES or INACTIVE_STATUSES in billing/entitlements.py ASAP.",
+        )
+        try:
+            from backtestforecast.observability.metrics import BILLING_UNKNOWN_STATUS_TOTAL
+            BILLING_UNKNOWN_STATUS_TOTAL.labels(status=subscription_status).inc()
+        except Exception:
+            pass
+        _UNKNOWN_STATUS_GRACE_HOURS = 72
+        if subscription_current_period_end is not None:
+            period_end = subscription_current_period_end
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=UTC)
+            if period_end + timedelta(hours=_UNKNOWN_STATUS_GRACE_HOURS) < datetime.now(UTC):
+                _logger.warning(
+                    "normalize_plan_tier.unknown_status_grace_expired",
+                    subscription_status=subscription_status,
+                    plan_tier=plan_tier,
+                    period_end=str(subscription_current_period_end),
+                    grace_hours=_UNKNOWN_STATUS_GRACE_HOURS,
+                )
+                return PlanTier.FREE
+            return _resolve_tier(plan_tier)
+        _logger.warning(
+            "normalize_plan_tier.unknown_status_no_period_end",
+            subscription_status=subscription_status,
+            plan_tier=plan_tier,
+            hint="Cannot compute grace deadline without current_period_end. "
+                 "Downgrading to FREE as a safety measure.",
         )
         return PlanTier.FREE
     elif subscription_status is None:
@@ -246,14 +280,7 @@ def normalize_plan_tier(
     resolved = _resolve_tier(plan_tier)
     if resolved != PlanTier.FREE:
         return resolved
-    tier_lower = plan_tier.lower() if isinstance(plan_tier, str) else ""
-    if tier_lower and tier_lower not in ("free", ""):
-        _logger.warning(
-            "normalize_plan_tier.unknown_tier_value",
-            plan_tier=plan_tier,
-            subscription_status=subscription_status,
-            hint="Unrecognized plan_tier defaults to FREE. User may lose features.",
-        )
+    _warn_unknown_tier(plan_tier, subscription_status)
     return PlanTier.FREE
 
 
@@ -320,7 +347,7 @@ def resolve_scanner_policy(
     try:
         mode = ScannerMode(requested_mode)
     except ValueError as exc:
-        raise ValidationError(f"Invalid scanner mode: {requested_mode}") from exc
+        raise AppValidationError(f"Invalid scanner mode: {requested_mode}") from exc
     policy = POLICIES.get((tier, mode))
     if policy is None:
         if tier == PlanTier.FREE:
@@ -338,5 +365,5 @@ def validate_strategy_access(policy: ScannerAccessPolicy, strategy_types: list[s
     if not disallowed:
         return
     if policy.mode == ScannerMode.BASIC:
-        raise ValidationError("The basic scanner does not support: " + ", ".join(disallowed))
-    raise ValidationError("Unsupported strategies requested: " + ", ".join(disallowed))
+        raise AppValidationError("The basic scanner does not support: " + ", ".join(disallowed))
+    raise AppValidationError("Unsupported strategies requested: " + ", ".join(disallowed))

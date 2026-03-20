@@ -21,6 +21,17 @@ _COLUMN_RE = re.compile(
 )
 
 
+def _is_inside_create_table(content: str, pos: int) -> bool:
+    """Check if a position in the source is inside an op.create_table() call."""
+    preceding = content[:pos]
+    last_create = preceding.rfind("op.create_table(")
+    if last_create == -1:
+        return False
+    between = preceding[last_create:]
+    open_parens = between.count("(") - between.count(")")
+    return open_parens > 0
+
+
 def _check_file(path: Path) -> list[str]:
     content = path.read_text(encoding="utf-8")
     warnings: list[str] = []
@@ -36,6 +47,9 @@ def _check_file(path: Path) -> list[str]:
         if "nullable=False" not in args_text:
             continue
         if "server_default=" in args_text:
+            continue
+
+        if _is_inside_create_table(content, match.start()):
             continue
 
         name_match = re.match(r"""["']([^"']+)["']""", args_text.strip())

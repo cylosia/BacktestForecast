@@ -71,17 +71,17 @@ class MassiveOptionGateway:
 
     def _track_add(self, count: int = 1) -> None:
         global _global_cache_entries
-        with _global_cache_lock:
-            _global_cache_entries = max(0, _global_cache_entries + count)
         with self._lock:
             self._tracked_entries = max(0, self._tracked_entries + count)
+        with _global_cache_lock:
+            _global_cache_entries = max(0, _global_cache_entries + count)
 
     def _track_remove(self, count: int = 1) -> None:
         global _global_cache_entries
-        with _global_cache_lock:
-            _global_cache_entries = max(0, _global_cache_entries - count)
         with self._lock:
             self._tracked_entries = max(0, self._tracked_entries - count)
+        with _global_cache_lock:
+            _global_cache_entries = max(0, _global_cache_entries - count)
 
     def _is_over_budget(self) -> bool:
         return _global_cache_entries > _GLOBAL_CACHE_BUDGET
@@ -89,8 +89,9 @@ class MassiveOptionGateway:
     def clear_caches(self) -> None:
         """Release all in-memory cache entries for this gateway."""
         with self._lock:
+            contract_items = sum(max(len(v), 1) for v in self._contract_cache.values())
             total = (
-                len(self._contract_cache) + len(self._quote_cache)
+                contract_items + len(self._quote_cache)
                 + len(self._snapshot_cache) + len(self._iv_cache)
             )
             self._contract_cache.clear()
@@ -174,60 +175,16 @@ class MassiveOptionGateway:
         cache_key: tuple[date, str, int, int],
         contracts: list[OptionContractRecord],
     ) -> None:
+        item_count = max(len(contracts), 1)
         with self._lock:
             if len(self._contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX or self._is_over_budget():
-                evicted = 0
+                evicted_items = 0
                 for _ in range(len(self._contract_cache) // 4):
-                    self._contract_cache.popitem(last=False)
-                    evicted += 1
-                self._track_remove(evicted)
+                    _, evicted_list = self._contract_cache.popitem(last=False)
+                    evicted_items += max(len(evicted_list), 1)
+                self._track_remove(evicted_items)
             self._contract_cache[cache_key] = contracts
-            self._track_add(1)
-
-    def select_contract(
-        self,
-        entry_date: date,
-        strategy_type: str,
-        underlying_close: float,
-        target_dte: int,
-        dte_tolerance_days: int,
-    ) -> OptionContractRecord:
-        _CALL_STRATEGIES = {
-            "long_call", "covered_call", "naked_call",
-            "bull_call_debit_spread", "bear_call_credit_spread",
-            "poor_mans_covered_call",
-        }
-        contract_type = "call" if strategy_type in _CALL_STRATEGIES else "put"
-        contracts = self.list_contracts(
-            entry_date=entry_date,
-            contract_type=contract_type,
-            target_dte=target_dte,
-            dte_tolerance_days=dte_tolerance_days,
-        )
-
-        if not contracts:
-            raise DataUnavailableError(
-                f"No eligible {contract_type} contracts were found for {self.symbol} on {entry_date.isoformat()}."
-            )
-
-        chosen_expiration = min(
-            {contract.expiration_date for contract in contracts},
-            key=lambda expiration: self._expiration_sort_key(
-                expiration=expiration,
-                entry_date=entry_date,
-                target_dte=target_dte,
-            ),
-        )
-
-        expiration_candidates = [contract for contract in contracts if contract.expiration_date == chosen_expiration]
-        return min(
-            expiration_candidates,
-            key=lambda contract: self._strike_sort_key(
-                strategy_type=strategy_type,
-                strike_price=contract.strike_price,
-                underlying_close=underlying_close,
-            ),
-        )
+            self._track_add(item_count)
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         cache_key = (option_ticker, trade_date)
@@ -329,20 +286,6 @@ class MassiveOptionGateway:
                 lookup[(contract.strike_price, contract.expiration_date)] = snap.greeks.delta
         return lookup
 
-    @staticmethod
-    def _expiration_sort_key(expiration: date, entry_date: date, target_dte: int) -> tuple[int, int, int]:
-        dte = (expiration - entry_date).days
-        return (abs(dte - target_dte), 0 if dte >= target_dte else 1, dte)
-
-    @staticmethod
-    def _strike_sort_key(strategy_type: str, strike_price: float, underlying_close: float) -> tuple[float, int, float]:
-        distance = abs(strike_price - underlying_close)
-        if strategy_type in {"long_call", "covered_call"}:
-            tie_bias = 0 if strike_price >= underlying_close else 1
-        else:
-            tie_bias = 0 if strike_price <= underlying_close else 1
-        return (distance, tie_bias, strike_price)
-
 
 class MarketDataService:
     _MAX_BARS_CACHE_SIZE = 500
@@ -402,7 +345,10 @@ class MarketDataService:
 
         try:
             if not am_fetcher:
-                inflight_event.wait(timeout=120)
+                from backtestforecast.config import get_settings as _get_settings
+                _s = _get_settings()
+                coalesce_timeout = _s.massive_timeout_seconds * (_s.massive_max_retries + 1) + 30
+                inflight_event.wait(timeout=coalesce_timeout)
                 with self._bars_cache_lock:
                     cached = self._bars_cache.get(cache_key)
                     if cached is not None:
@@ -546,6 +492,15 @@ class MarketDataService:
                 continue
             if bar.trade_date in seen_dates:
                 duplicate_count += 1
+                existing = seen_dates[bar.trade_date]
+                if existing.close_price != bar.close_price:
+                    logger.warning(
+                        "market_data.duplicate_date_price_discrepancy",
+                        symbol=symbol,
+                        trade_date=str(bar.trade_date),
+                        existing_close=existing.close_price,
+                        new_close=bar.close_price,
+                    )
             seen_dates[bar.trade_date] = bar
         if dropped:
             logger.warning("market_data.bars_filtered", symbol=symbol, dropped=dropped)

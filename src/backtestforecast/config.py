@@ -28,6 +28,10 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://backtestforecast:backtestforecast@localhost:5432/backtestforecast",
         repr=False,
     )
+    # Optional read-replica URL for read-heavy API endpoints (list, compare,
+    # recommendations).  When set, get_readonly_db() returns a session bound
+    # to this URL.  When unset, read-only endpoints use the primary.
+    database_read_replica_url: str | None = Field(default=None, repr=False)
     redis_url: str = Field(default="redis://localhost:6379/0", repr=False)
     redis_password: str | None = Field(default=None, repr=False)
     # Separate Redis URL for non-broker usage (rate limiting, SSE pub/sub, caching).
@@ -339,7 +343,7 @@ class Settings(BaseSettings):
         "analysis_create_rate_limit", "analysis_read_rate_limit",
         "forecast_rate_limit", "daily_picks_rate_limit",
         "rate_limit_memory_max_keys",
-        "sse_rate_limit", "sse_redis_max_connections",
+        "sse_rate_limit", "sse_redis_max_connections", "sse_max_payload_bytes",
         "scan_timeout_seconds",
         "forecast_max_analogs",
         "option_cache_ttl_seconds",
@@ -366,6 +370,14 @@ class Settings(BaseSettings):
             raise ValueError(f"Sweep score weight must be between 0.0 and 1.0, got {v}")
         return v
 
+    @field_validator("sweep_score_sharpe_multiplier")
+    @classmethod
+    def validate_non_negative_float(cls, value: float) -> float:
+        v = float(value)
+        if v < 0.0:
+            raise ValueError(f"Value must be >= 0, got {v}")
+        return v
+
     @field_validator("massive_timeout_seconds", "sse_redis_socket_timeout", "sse_redis_connect_timeout", "clerk_jwks_fetch_timeout")
     @classmethod
     def validate_positive_floats(cls, value: float) -> float:
@@ -390,12 +402,12 @@ class Settings(BaseSettings):
             raise ValueError(f"massive_max_retries must be >= 0, got {v}")
         return v
 
-    @field_validator("massive_retry_backoff_seconds")
+    @field_validator("massive_retry_backoff_seconds", "redis_reconnect_backoff_seconds")
     @classmethod
-    def validate_retry_backoff(cls, value: float) -> float:
+    def validate_positive_backoff(cls, value: float) -> float:
         v = float(value)
         if v <= 0.0:
-            raise ValueError(f"massive_retry_backoff_seconds must be > 0, got {v}")
+            raise ValueError(f"Value must be > 0, got {v}")
         return v
 
     @field_validator("risk_free_rate")
@@ -505,10 +517,10 @@ class Settings(BaseSettings):
     def apply_env_overrides(self) -> "Settings":
         if self.pipeline_default_symbols_csv:
             import re
-            parsed = [s.strip() for s in self.pipeline_default_symbols_csv.split(",") if s.strip()]
+            parsed = [s.strip().upper() for s in self.pipeline_default_symbols_csv.split(",") if s.strip()]
             validated: list[str] = []
             for s in parsed:
-                if re.match(r'^[A-Z][A-Z0-9./^-]{0,15}$', s):
+                if re.match(r'^[\^A-Z][A-Z0-9./^-]{0,15}$', s):
                     validated.append(s)
                 else:
                     logger.warning("config.invalid_symbol_skipped", symbol=s)
@@ -676,10 +688,34 @@ class Settings(BaseSettings):
                     "Production-like environments require ADMIN_TOKEN for /admin endpoints. "
                     "Without it, the DLQ endpoint falls back to METRICS_TOKEN."
                 )
+            redis_urls = [self.redis_url]
+            if self.redis_cache_url:
+                redis_urls.append(self.redis_cache_url)
+            for _url in redis_urls:
+                if _url.startswith("redis://") and "localhost" not in _url and "127.0.0.1" not in _url:
+                    logger.warning(
+                        "config.redis_unencrypted_production",
+                        url=_url.split("@")[-1] if "@" in _url else _url.split("//")[-1],
+                        msg="Redis URL uses unencrypted redis:// scheme in production. "
+                            "Consider using rediss:// (TLS) for encrypted connections.",
+                    )
             if len(self.admin_token) < 16:
                 raise ValueError("admin_token must be at least 16 characters")
             if not self.redis_password:
                 raise ValueError("Production-like environments require a non-empty REDIS_PASSWORD.")
+            _redis_urls = [self.redis_url, self.redis_cache_url or self.redis_url]
+            if any(u.startswith("redis://") for u in _redis_urls):
+                logger.warning(
+                    "config.redis_tls_not_configured",
+                    msg="One or more Redis URLs use unencrypted redis:// scheme. "
+                        "Consider using rediss:// for TLS encryption in production.",
+                )
+            if "sslmode" not in self.database_url and "localhost" not in self.database_url and "127.0.0.1" not in self.database_url:
+                logger.warning(
+                    "config.postgres_ssl_not_configured",
+                    msg="DATABASE_URL does not include sslmode parameter. "
+                        "Production databases should use ?sslmode=require or ?sslmode=verify-full.",
+                )
             if not self.clerk_audience:
                 raise ValueError("Production-like environments require CLERK_AUDIENCE for JWT audience verification.")
             if not self.clerk_authorized_parties:
@@ -803,7 +839,7 @@ class Settings(BaseSettings):
 
 
 _settings_cache: Settings | None = None
-_settings_lock = threading.Lock()
+_settings_lock = threading.RLock()
 _invalidation_callbacks: list[Callable[[], None]] = []
 
 

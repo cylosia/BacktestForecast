@@ -133,7 +133,8 @@ def credit_spread_margin(
 
     Returns margin per contract (× 100).
     """
-    _require_non_negative(spread_width_per_share=abs(spread_width_per_share))
+    if not math.isfinite(spread_width_per_share):
+        raise ValueError(f"spread_width_per_share must be finite, got {spread_width_per_share}")
     return abs(spread_width_per_share) * 100.0
 
 
@@ -151,12 +152,12 @@ def iron_condor_margin(
     Margin = the GREATER of the two spread widths × 100.
     Only one side can be in the money at expiration.
 
+    Widths may be signed; ``abs()`` is applied internally.
+
     Returns margin per contract (× 100).
     """
-    _require_non_negative(
-        call_spread_width=abs(call_spread_width_per_share),
-        put_spread_width=abs(put_spread_width_per_share),
-    )
+    if not math.isfinite(call_spread_width_per_share) or not math.isfinite(put_spread_width_per_share):
+        raise ValueError("Spread widths must be finite numbers")
     return max(abs(call_spread_width_per_share), abs(put_spread_width_per_share)) * 100.0
 
 

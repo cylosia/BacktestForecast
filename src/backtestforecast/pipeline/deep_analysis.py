@@ -474,15 +474,19 @@ class SymbolDeepAnalysisService:
             raise NotFoundError("Symbol analysis not found.")
         return analysis
 
-    def list_for_user(self, user: User, limit: int = 20, offset: int = 0) -> list[SymbolAnalysis]:
-        stmt = (
-            select(SymbolAnalysis)
-            .where(SymbolAnalysis.user_id == user.id)
-            .order_by(SymbolAnalysis.created_at.desc())
-            .offset(offset)
-            .limit(limit)
+    def list_for_user(
+        self,
+        user: User,
+        limit: int = 20,
+        offset: int = 0,
+        cursor_before: datetime | None = None,
+    ) -> list[SymbolAnalysis]:
+        from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
+
+        repo = SymbolAnalysisRepository(self.session)
+        return repo.list_for_user(
+            user.id, limit=limit, offset=offset, cursor_before=cursor_before,
         )
-        return list(self.session.scalars(stmt))
 
     def count_for_user(self, user: User) -> int:
         from sqlalchemy import func as sa_func
@@ -545,6 +549,8 @@ class SymbolDeepAnalysisService:
                 if trade_count > 0:
                     sample_factor = min(trade_count / 10.0, 1.0)
                     score = roi * (win_rate / 100.0) * (1.0 - drawdown / 100.0) * sample_factor
+                    if drawdown >= 100.0:
+                        score = min(score, 0.0)
                 return LandscapeCell(
                     strategy_type=strategy_type,
                     strategy_label=label,
@@ -566,31 +572,29 @@ class SymbolDeepAnalysisService:
 
         max_workers = max(1, min(8, len(work_items)))
         landscape_timeout = max(300, min(len(work_items) * 2, 900))
-        pool = ThreadPoolExecutor(max_workers=max_workers)
-        collected_futures: set = set()
-        try:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            collected_futures: set = set()
             futures = {pool.submit(_run_cell, item): item for item in work_items}
-            for future in as_completed(futures, timeout=landscape_timeout):
-                collected_futures.add(future)
-                try:
-                    cell = future.result(timeout=300)
-                except Exception:
-                    logger.warning("deep_analysis.landscape_future_failed", exc_info=True)
-                    continue
-                if cell is not None:
-                    cells.append(cell)
-        except TimeoutError:
-            logger.warning("deep_analysis.landscape_timeout", total_items=len(work_items), collected=len(cells))
-            for f in futures:
-                if f not in collected_futures and f.done() and not f.cancelled():
+            try:
+                for future in as_completed(futures, timeout=landscape_timeout):
+                    collected_futures.add(future)
                     try:
-                        cell = f.result(timeout=0)
-                        if cell is not None:
-                            cells.append(cell)
+                        cell = future.result(timeout=300)
                     except Exception:
-                        pass
-        finally:
-            pool.shutdown(wait=True, cancel_futures=True)
+                        logger.warning("deep_analysis.landscape_future_failed", exc_info=True)
+                        continue
+                    if cell is not None:
+                        cells.append(cell)
+            except TimeoutError:
+                logger.warning("deep_analysis.landscape_timeout", total_items=len(work_items), collected=len(cells))
+                for f in futures:
+                    if f not in collected_futures and f.done() and not f.cancelled():
+                        try:
+                            cell = f.result(timeout=0)
+                            if cell is not None:
+                                cells.append(cell)
+                        except Exception:
+                            pass
 
         return cells
 
@@ -627,26 +631,24 @@ class SymbolDeepAnalysisService:
 
         max_workers = max(1, min(4, len(candidates)))
         backtest_results: list[tuple[LandscapeCell, dict[str, Any] | None]] = []
-        pool = ThreadPoolExecutor(max_workers=max_workers)
-        collected_futures: set = set()
-        try:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            collected_futures: set = set()
             futures = {pool.submit(_run_candidate, c): c for c in candidates}
-            for future in as_completed(futures, timeout=300):
-                collected_futures.add(future)
-                try:
-                    backtest_results.append(future.result(timeout=300))
-                except Exception:
-                    logger.warning("deep_analysis.deep_dive_future_failed", exc_info=True)
-        except TimeoutError:
-            logger.warning("deep_analysis.deep_dive_timeout", total_candidates=len(candidates), collected=len(backtest_results))
-            for f in futures:
-                if f not in collected_futures and f.done() and not f.cancelled():
+            try:
+                for future in as_completed(futures, timeout=300):
+                    collected_futures.add(future)
                     try:
-                        backtest_results.append(f.result(timeout=0))
+                        backtest_results.append(future.result(timeout=300))
                     except Exception:
-                        pass
-        finally:
-            pool.shutdown(wait=True, cancel_futures=True)
+                        logger.warning("deep_analysis.deep_dive_future_failed", exc_info=True)
+            except TimeoutError:
+                logger.warning("deep_analysis.deep_dive_timeout", total_candidates=len(candidates), collected=len(backtest_results))
+                for f in futures:
+                    if f not in collected_futures and f.done() and not f.cancelled():
+                        try:
+                            backtest_results.append(f.result(timeout=0))
+                        except Exception:
+                            pass
 
         for idx, c in enumerate(candidates):
             c.stable_order = idx
@@ -663,6 +665,8 @@ class SymbolDeepAnalysisService:
             trade_count = full.get("trade_count", 1)
             sample_factor = min(trade_count / 10.0, 1.0)
             score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
+            if drawdown >= 100.0:
+                score = min(score, 0.0)
 
             forecast: dict[str, Any] = {}
             if self.forecaster:

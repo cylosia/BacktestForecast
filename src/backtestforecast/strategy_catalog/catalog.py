@@ -508,3 +508,14 @@ def get_catalog_entries_grouped() -> list[tuple[StrategyCategory, list[StrategyC
     for entry in STRATEGY_CATALOG.values():
         groups[entry.category].append(entry)
     return [(cat, entries) for cat, entries in groups.items() if entries]
+
+
+_all_strategy_types = {st.value for st in StrategyType}
+_missing = _all_strategy_types - set(STRATEGY_CATALOG.keys())
+if _missing:
+    import warnings
+    warnings.warn(
+        f"Strategy catalog is missing entries for: {sorted(_missing)}. "
+        "Add StrategyCatalogEntry instances in catalog.py.",
+        stacklevel=1,
+    )

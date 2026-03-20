@@ -8,7 +8,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
-from backtestforecast.schemas.common import JobStatus, sanitize_error_message
+from backtestforecast.schemas.common import RunJobStatus, sanitize_error_message
+
+DailyPicksStatus = Literal["ok", "no_data"]
 
 
 class AnalysisSummaryResponse(BaseModel):
@@ -16,7 +18,7 @@ class AnalysisSummaryResponse(BaseModel):
 
     id: UUID
     symbol: str
-    status: JobStatus
+    status: RunJobStatus
     stage: Literal["pending", "regime", "landscape", "deep_dive", "forecast"]
     close_price: Decimal | None = None
     strategies_tested: int
@@ -79,10 +81,10 @@ class AnalysisTopResult(BaseModel):
 class AnalysisDetailResponse(AnalysisSummaryResponse):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
-    regime: RegimeDetail | None = Field(default=None, alias="regime_json")
-    landscape: list[LandscapeCell] | None = Field(default=None, alias="landscape_json")
-    top_results: list[AnalysisTopResult] | None = Field(default=None, alias="top_results_json")
-    forecast: dict[str, Any] | None = Field(default=None, alias="forecast_json")
+    regime: RegimeDetail | None = Field(default=None, validation_alias="regime_json")
+    landscape: list[LandscapeCell] | None = Field(default=None, validation_alias="landscape_json")
+    top_results: list[AnalysisTopResult] | None = Field(default=None, validation_alias="top_results_json")
+    forecast: dict[str, Any] | None = Field(default=None, validation_alias="forecast_json")
 
 
 class CreateAnalysisRequest(BaseModel):
@@ -107,6 +109,7 @@ class AnalysisListResponse(BaseModel):
     total: int = Field(default=0, ge=0)
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=50, ge=1)
+    next_cursor: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +172,7 @@ class DailyPickItemResponse(BaseModel):
 class DailyPicksResponse(BaseModel):
     trade_date: date | None = None
     pipeline_run_id: UUID | None = None
-    status: JobStatus
+    status: DailyPicksStatus
     items: list[DailyPickItemResponse] = Field(default_factory=list)
     pipeline_stats: PipelineStatsResponse | None = None
 
@@ -177,7 +180,7 @@ class DailyPicksResponse(BaseModel):
 class PipelineHistoryItemResponse(BaseModel):
     id: UUID
     trade_date: date
-    status: str
+    status: RunJobStatus
     symbols_screened: int
     recommendations_produced: int
     duration_seconds: Decimal | None = None

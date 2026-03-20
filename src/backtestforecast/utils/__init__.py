@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import math
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 DECIMAL_QUANT = Decimal("0.0001")
@@ -37,3 +39,44 @@ def to_decimal(value: float | Decimal | None, *, allow_infinite: bool = False) -
             return None
         raise ValueError(f"Non-finite value: {value}")
     return Decimal(str(fval)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
+
+
+def encode_cursor(dt: datetime) -> str:
+    """Encode a datetime as an opaque, URL-safe pagination cursor."""
+    return base64.urlsafe_b64encode(dt.isoformat().encode()).decode()
+
+
+def decode_cursor(cursor: str) -> datetime | None:
+    """Decode a pagination cursor back to a datetime. Returns None on invalid input."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        return datetime.fromisoformat(raw)
+    except (ValueError, UnicodeDecodeError, Exception):
+        return None
+
+
+def create_cache_redis(
+    *,
+    decode_responses: bool = True,
+    socket_timeout: float = 5.0,
+    socket_connect_timeout: float = 3.0,
+):
+    """Create a Redis client connected to the cache/ops Redis (not the Celery broker).
+
+    Centralises the connection parameters that were previously scattered
+    across worker tasks, health checks, and utility functions.  Always
+    uses ``redis_cache_url`` from settings — never ``redis_url`` (the
+    broker).
+
+    Callers are responsible for closing the returned client.
+    """
+    from redis import Redis
+
+    from backtestforecast.config import get_settings
+
+    return Redis.from_url(
+        get_settings().redis_cache_url,
+        decode_responses=decode_responses,
+        socket_timeout=socket_timeout,
+        socket_connect_timeout=socket_connect_timeout,
+    )

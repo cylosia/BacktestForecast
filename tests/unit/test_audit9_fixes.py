@@ -17,7 +17,7 @@ class TestDispatchTimezone:
     """Fix #1: dispatch.py uses datetime.now(UTC) not datetime.now()."""
 
     def test_dispatch_failure_sets_utc_completed_at(self):
-        from backtestforecast.models import RunJobStatus
+        from backtestforecast.schemas.common import RunJobStatus
 
         job = MagicMock()
         job.status = RunJobStatus.QUEUED

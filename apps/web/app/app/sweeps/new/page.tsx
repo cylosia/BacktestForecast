@@ -19,7 +19,7 @@ export default async function NewSweepPage() {
           <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Sweeps</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">New parameter sweep</h1>
         </div>
-        <UpgradePrompt message="Sweep optimization requires a Pro or Premium plan. Upgrade to run parameter sweeps." />
+        <UpgradePrompt message="Sweep optimization requires a Pro or Premium plan. Upgrade to run parameter sweeps." requiredTier="pro" />
       </div>
     );
   }

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+
+import structlog
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -15,6 +17,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
@@ -87,6 +90,12 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
                 "ADMIN_TOKEN must be set to a non-empty value in production/staging. "
                 "The /admin/dlq endpoint will fall back to metrics_token without it."
             )
+        if not settings.clerk_authorized_parties:
+            raise RuntimeError(
+                "CLERK_AUTHORIZED_PARTIES must be set in production/staging. "
+                "Without it, any Clerk application sharing the same JWKS endpoint "
+                "could generate valid tokens. Set it to your frontend app's client ID."
+            )
     else:
         if not settings.clerk_audience:
             logger.warning(
@@ -104,6 +113,13 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
                 "startup.clerk_authorized_parties_missing",
                 hint="CLERK_AUTHORIZED_PARTIES is empty; the azp claim will not be checked.",
             )
+
+    if "*" in settings.web_cors_origins and settings.app_env in ("production", "staging"):
+        raise RuntimeError(
+            "WEB_CORS_ORIGINS must not contain '*' in production/staging when "
+            "allow_credentials=True. This would allow any origin to make "
+            "credentialed cross-origin requests."
+        )
 
     _cors_hosts = set()
     for origin in settings.web_cors_origins:
@@ -129,13 +145,23 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     register_invalidation_callback(reset_trusted_networks)
     register_invalidation_callback(reset_token_verifier)
 
-    from backtestforecast.exports.storage import _invalidate_storage
-    register_invalidation_callback(_invalidate_storage)
-
-    from backtestforecast.events import _reset_redis as _reset_events_redis
-    register_invalidation_callback(_reset_events_redis)
-
     register_invalidation_callback(_invalidate_dlq_redis)
+
+    if settings.clerk_jwks_url or settings.clerk_issuer:
+        try:
+            from apps.api.app.dependencies import get_token_verifier
+            verifier = get_token_verifier()
+            verifier._get_jwks_client()
+            logger.info("lifespan.jwks_cache_warmed")
+        except Exception:
+            logger.warning("lifespan.jwks_cache_warmup_failed", exc_info=True)
+
+    try:
+        from backtestforecast.observability.tracing import init_tracing
+        if init_tracing(service_name="backtestforecast-api"):
+            logger.info("lifespan.tracing_initialized")
+    except Exception:
+        logger.debug("lifespan.tracing_init_skipped", exc_info=True)
 
     logger.info("lifespan.startup_complete")
     yield
@@ -150,13 +176,14 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     _shutdown_sync_redis()
 
     global _dlq_redis
-    if _dlq_redis is not None:
-        try:
-            _dlq_redis.close()
-            _dlq_redis = None
-            logger.info("lifespan.dlq_redis_closed")
-        except Exception:
-            logger.warning("lifespan.dlq_redis_close_failed", exc_info=True)
+    with _dlq_redis_lock:
+        if _dlq_redis is not None:
+            try:
+                _dlq_redis.close()
+                _dlq_redis = None
+                logger.info("lifespan.dlq_redis_closed")
+            except Exception:
+                logger.warning("lifespan.dlq_redis_close_failed", exc_info=True)
 
     from backtestforecast.db.session import _get_engine
 
@@ -312,6 +339,7 @@ class _CancelledErrorMiddleware:
 # 7. ApiSecurityHeadersMiddleware — adds security response headers
 #
 # Starlette builds middleware LIFO: the last add_middleware call is outermost.
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 app.add_middleware(ApiSecurityHeadersMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
 app.add_middleware(
@@ -346,7 +374,6 @@ class _RequestTimeoutMiddleware:
         if scope["type"] != "http" or any(scope["path"].startswith(p) for p in self._EXEMPT_PREFIXES):
             await self.app(scope, receive, send)
             return
-        import asyncio
 
         response_started = False
 
@@ -367,6 +394,12 @@ class _RequestTimeoutMiddleware:
                     headers["X-Debug-Timeout"] = str(self.timeout_seconds)
                 resp = _JR(status_code=504, content={"error": {"code": "request_timeout", "message": "Request timed out."}}, headers=headers)
                 await resp(scope, receive, send)
+            else:
+                structlog.get_logger("api.timeout").warning(
+                    "request.timeout_after_headers_sent",
+                    path=scope.get("path", "/unknown"),
+                    timeout_seconds=self.timeout_seconds,
+                )
 
 
 app.add_middleware(_RequestTimeoutMiddleware, timeout_seconds=settings.request_timeout_seconds)
@@ -500,7 +533,7 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
 @app.get("/metrics", include_in_schema=False)
 def prometheus_metrics(request: Request) -> Response:
     ip_address = _extract_client_ip(request)
-    get_rate_limiter().check(bucket="admin", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
+    get_rate_limiter().check(bucket="admin_metrics", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
     _settings = get_settings()
     if _settings.app_env in ("production", "staging"):
         import hmac as _hmac
@@ -544,7 +577,7 @@ def dlq_status(request: Request) -> Response:
     Requires the admin token (falls back to metrics token if admin_token is not set).
     """
     ip_address = _extract_client_ip(request)
-    get_rate_limiter().check(bucket="admin", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
+    get_rate_limiter().check(bucket="admin_dlq", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
     import hmac as _hmac
 
     auth = request.headers.get("Authorization", "")
@@ -563,13 +596,24 @@ def dlq_status(request: Request) -> Response:
         recent_raw = r.lrange("bff:dead_letter_queue", 0, 9)
 
         _REDACT_KEYS = frozenset({
-            "email", "password", "secret", "token", "api_key",
+            "email", "emails", "password", "secret", "token", "api_key",
             "stripe_customer_id", "stripe_subscription_id", "clerk_user_id",
-            "ip_address", "ip_hash",
+            "ip_address", "ip_hash", "ip",
             "name", "first_name", "last_name", "full_name",
             "phone", "phone_number", "address", "date_of_birth",
-            "ssn", "user_agent",
+            "ssn", "user_agent", "authorization",
         })
+
+        def _redact_list(items: list) -> list:
+            result = []
+            for item in items:
+                if isinstance(item, dict):
+                    result.append(_redact_dict(item))
+                elif isinstance(item, list):
+                    result.append(_redact_list(item))
+                else:
+                    result.append(item)
+            return result
 
         def _redact_dict(d: dict) -> dict:
             result = {}
@@ -579,7 +623,7 @@ def dlq_status(request: Request) -> Response:
                 elif isinstance(v, dict):
                     result[k] = _redact_dict(v)
                 elif isinstance(v, list):
-                    result[k] = [_redact_dict(i) if isinstance(i, dict) else i for i in v]
+                    result[k] = _redact_list(v)
                 else:
                     result[k] = v
             return result

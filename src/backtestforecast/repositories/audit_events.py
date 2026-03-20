@@ -73,6 +73,7 @@ class AuditEventRepository:
             subject_id=deduped_subject_id,
             user_id=event.user_id,
             request_id=event.request_id,
+            ip_hash=event.ip_hash,
             metadata_json=event.metadata_json,
         )
         nested = self.session.begin_nested()
@@ -105,28 +106,13 @@ class AuditEventRepository:
         stmt = stmt.order_by(AuditEvent.created_at.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt))
 
-    def list_for_user(self, user_id: UUID, *, limit: int = 50, offset: int = 0) -> list[AuditEvent]:
-        """Return audit events for a specific user."""
+    def list_by_type(self, event_type: str, *, user_id: UUID | None = None, limit: int = 50, offset: int = 0) -> list[AuditEvent]:
+        """Return audit events of a specific type, optionally scoped to a user."""
         limit = min(limit, _MAX_PAGE_SIZE)
-        stmt = (
-            select(AuditEvent)
-            .where(AuditEvent.user_id == user_id)
-            .order_by(AuditEvent.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(self.session.scalars(stmt))
-
-    def list_by_type(self, event_type: str, *, limit: int = 50, offset: int = 0) -> list[AuditEvent]:
-        """Return audit events of a specific type."""
-        limit = min(limit, _MAX_PAGE_SIZE)
-        stmt = (
-            select(AuditEvent)
-            .where(AuditEvent.event_type == event_type)
-            .order_by(AuditEvent.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-        )
+        stmt = select(AuditEvent).where(AuditEvent.event_type == event_type)
+        if user_id is not None:
+            stmt = stmt.where(AuditEvent.user_id == user_id)
+        stmt = stmt.order_by(AuditEvent.created_at.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt))
 
     def exists(self, *, event_type: str, subject_type: str, subject_id: str | None) -> bool:

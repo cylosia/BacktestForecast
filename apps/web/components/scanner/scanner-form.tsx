@@ -9,7 +9,7 @@ import { ApiError } from "@/lib/api/shared";
 import type { CreateScannerJobRequest, ScannerMode, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { getScannerLimits, parseSymbols, validateScannerForm, type PlanTier } from "@/lib/scanner/validation";
-import { daysAgo } from "@/lib/utils";
+import { daysAgoET } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -150,8 +150,8 @@ export function ScannerForm({
     rsiOperator: "lt",
     rsiThreshold: "35",
     rsiPeriod: "14",
-    startDate: daysAgo(365),
-    endDate: daysAgo(0),
+    startDate: daysAgoET(365),
+    endDate: daysAgoET(0),
     targetDte: "30",
     dteTolerance: "5",
     maxHolding: "10",
@@ -172,6 +172,7 @@ export function ScannerForm({
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
+  const [requiredTier, setRequiredTier] = useState<string | undefined>();
 
   useEffect(() => {
     const allowed: Set<string> = new Set(
@@ -271,7 +272,7 @@ export function ScannerForm({
       commission_per_contract: Number(form.commission),
       max_recommendations: Number(form.maxRecs),
       refresh_daily: false,
-      refresh_priority: 50,
+      refresh_priority: 0,
       idempotency_key: crypto.randomUUID(),
     };
 
@@ -293,18 +294,20 @@ export function ScannerForm({
     } catch (error) {
       const msg = error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Scan could not be created.";
       const code = error instanceof ApiError ? error.code : undefined;
+      const reqTier = error instanceof ApiError ? error.requiredTier : undefined;
       setStatus("error");
       setErrorMessage(msg);
       setErrorCode(code);
+      setRequiredTier(reqTier);
     } finally {
       submittingRef.current = false;
     }
-  }, [form, selectedStrategies, getToken, router]);
+  }, [form, selectedStrategies, getToken, router, planTier]);
 
   return (
     <form className="space-y-6" noValidate onSubmit={handleSubmit} aria-label="Scanner configuration">
       {errorMessage && isPlanLimitError(errorCode) ? (
-        <UpgradePrompt message={errorMessage} />
+        <UpgradePrompt message={errorMessage} requiredTier={requiredTier} />
       ) : errorMessage ? (
         <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive whitespace-pre-line">
           {errorMessage}

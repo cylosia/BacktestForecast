@@ -104,8 +104,20 @@ class _MassiveClientCore:
             if parsed_next.netloc != self._base_netloc or parsed_next.scheme != parsed_base.scheme:
                 logger.debug("massive_client.pagination_next_url_rejected", next_url=next_url)
                 return False
-        elif not next_url.startswith("/"):
+            path = parsed_next.path
+        elif next_url.startswith("/"):
+            path = next_url.split("?")[0].split("#")[0]
+        else:
             logger.debug("massive_client.pagination_next_url_rejected", next_url=next_url)
+            return False
+        from posixpath import normpath
+        normalized = normpath(path)
+        if not normalized.startswith("/") or ".." in normalized:
+            logger.warning(
+                "massive_client.pagination_path_traversal_blocked",
+                next_url=next_url,
+                normalized=normalized,
+            )
             return False
         return True
 
@@ -419,45 +431,13 @@ class MassiveClient(_MassiveClientCore):
         return [s for item in rows if (s := self.parse_snapshot_result(item)) is not None]
 
     def get_market_holidays(self) -> list[date]:
-        if not self._circuit.allow_request():
-            raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
-
-        url = f"{self.base_url}/v1/marketstatus/upcoming"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        retryable_message: str | None = None
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                response = self._http.get(url, headers=headers)
-            except httpx.HTTPError as exc:
-                self._circuit.record_failure(is_transient=True)
-                retryable_message = "Massive request failed due to a network error."
-                if attempt < self.max_retries:
-                    time.sleep(self._compute_retry_delay(attempt, None))
-                    continue
-                raise ExternalServiceError(retryable_message) from exc
-
-            if response.status_code == 429 or response.status_code >= 500:
-                self._circuit.record_failure(is_transient=True)
-                retryable_message = "Massive rate limit reached. Retry later." if response.status_code == 429 else "Massive is currently unavailable."
-                if attempt < self.max_retries:
-                    time.sleep(self._compute_retry_delay(attempt, response.headers.get("Retry-After")))
-                    continue
-                raise ExternalServiceError(retryable_message)
-            if response.status_code == 404:
-                logger.debug("massive_client.market_holidays_not_found", status=404)
-                return []
-            if response.status_code >= 400:
-                self._circuit.record_failure(is_transient=False)
-                raise ExternalServiceError(f"Massive returned {response.status_code} for market holidays.")
-
-            self._circuit.record_success()
-            data = response.json()
-            if not isinstance(data, list):
-                raise ExternalServiceError("Massive market holidays returned an unexpected payload.")
-            return self.parse_holidays(data)
-
-        raise ExternalServiceError(retryable_message or "Massive request failed.")
+        data = self._request_with_retry("/v1/marketstatus/upcoming", not_found_returns_none=True)
+        if data is None:
+            logger.debug("massive_client.market_holidays_not_found", status=404)
+            return []
+        if not isinstance(data, list):
+            raise ExternalServiceError("Massive market holidays returned an unexpected payload.")
+        return self.parse_holidays(data)
 
     def list_earnings_event_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         last_error: ExternalServiceError | None = None
@@ -494,7 +474,20 @@ class MassiveClient(_MassiveClientCore):
             page += 1
         return rows
 
-    def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request_with_retry(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        not_found_returns_none: bool = False,
+    ) -> Any:
+        """Execute a GET request with retry, circuit-breaker, and deadline.
+
+        Returns the parsed JSON body (``dict`` or ``list``).  Raises
+        ``ExternalServiceError`` on exhausted retries or non-retryable errors.
+        When *not_found_returns_none* is True, 404 returns ``None`` instead of
+        raising.
+        """
         if not self._circuit.allow_request():
             raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
 
@@ -526,6 +519,8 @@ class MassiveClient(_MassiveClientCore):
                 time.sleep(self._compute_retry_delay(attempt, response.headers.get("Retry-After")))
                 continue
             if action == "raise_404":
+                if not_found_returns_none:
+                    return None
                 raise ExternalServiceError(msg or "Not found.")
             if action == "raise":
                 is_transient = response.status_code >= 500 or response.status_code == 429
@@ -538,11 +533,15 @@ class MassiveClient(_MassiveClientCore):
                 self._circuit.record_failure(is_transient=True)
                 raise ExternalServiceError(f"Invalid JSON response from Massive API: {exc}") from exc
             self._circuit.record_success()
-            if not isinstance(data, dict):
-                raise ExternalServiceError("Massive returned an unexpected response payload.")
             return data
 
         raise ExternalServiceError(retryable_message or "Massive request failed.")
+
+    def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = self._request_with_retry(path, params)
+        if not isinstance(data, dict):
+            raise ExternalServiceError("Massive returned an unexpected response payload.")
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -632,45 +631,13 @@ class AsyncMassiveClient(_MassiveClientCore):
         return [s for item in rows if (s := self.parse_snapshot_result(item)) is not None]
 
     async def get_market_holidays(self) -> list[date]:
-        if not await self._circuit.allow_request_async():
-            raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
-
-        url = f"{self.base_url}/v1/marketstatus/upcoming"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        retryable_message: str | None = None
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                response = await self._http.get(url, headers=headers)
-            except httpx.HTTPError as exc:
-                await self._circuit.record_failure_async(is_transient=True)
-                retryable_message = "Massive request failed due to a network error."
-                if attempt < self.max_retries:
-                    await asyncio.sleep(self._compute_retry_delay(attempt, None))
-                    continue
-                raise ExternalServiceError(retryable_message) from exc
-
-            if response.status_code == 429 or response.status_code >= 500:
-                await self._circuit.record_failure_async(is_transient=True)
-                retryable_message = "Massive rate limit reached. Retry later." if response.status_code == 429 else "Massive is currently unavailable."
-                if attempt < self.max_retries:
-                    await asyncio.sleep(self._compute_retry_delay(attempt, response.headers.get("Retry-After")))
-                    continue
-                raise ExternalServiceError(retryable_message)
-            if response.status_code == 404:
-                logger.debug("massive_client.market_holidays_not_found", status=404)
-                return []
-            if response.status_code >= 400:
-                await self._circuit.record_failure_async(is_transient=False)
-                raise ExternalServiceError(f"Massive returned {response.status_code} for market holidays.")
-
-            await self._circuit.record_success_async()
-            data = response.json()
-            if not isinstance(data, list):
-                raise ExternalServiceError("Massive market holidays returned an unexpected payload.")
-            return self.parse_holidays(data)
-
-        raise ExternalServiceError(retryable_message or "Massive request failed.")
+        data = await self._request_with_retry("/v1/marketstatus/upcoming", not_found_returns_none=True)
+        if data is None:
+            logger.debug("massive_client.market_holidays_not_found", status=404)
+            return []
+        if not isinstance(data, list):
+            raise ExternalServiceError("Massive market holidays returned an unexpected payload.")
+        return self.parse_holidays(data)
 
     async def list_earnings_event_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         last_error: ExternalServiceError | None = None
@@ -707,7 +674,14 @@ class AsyncMassiveClient(_MassiveClientCore):
             page += 1
         return rows
 
-    async def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def _request_with_retry(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        not_found_returns_none: bool = False,
+    ) -> Any:
+        """Async version of MassiveClient._request_with_retry."""
         if not await self._circuit.allow_request_async():
             raise ExternalServiceError("Massive API circuit breaker is open. Retry later.")
 
@@ -739,6 +713,8 @@ class AsyncMassiveClient(_MassiveClientCore):
                 await asyncio.sleep(self._compute_retry_delay(attempt, response.headers.get("Retry-After")))
                 continue
             if action == "raise_404":
+                if not_found_returns_none:
+                    return None
                 raise ExternalServiceError(msg or "Not found.")
             if action == "raise":
                 is_transient = response.status_code >= 500 or response.status_code == 429
@@ -751,8 +727,12 @@ class AsyncMassiveClient(_MassiveClientCore):
                 await self._circuit.record_failure_async(is_transient=True)
                 raise ExternalServiceError(f"Invalid JSON response from Massive API: {exc}") from exc
             await self._circuit.record_success_async()
-            if not isinstance(data, dict):
-                raise ExternalServiceError("Massive returned an unexpected response payload.")
             return data
 
         raise ExternalServiceError(retryable_message or "Massive request failed.")
+
+    async def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = await self._request_with_retry(path, params)
+        if not isinstance(data, dict):
+            raise ExternalServiceError("Massive returned an unexpected response payload.")
+        return data

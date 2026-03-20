@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PlanTier, normalize_plan_tier
-from backtestforecast.errors import ConfigurationError, ConflictError, NotFoundError, QuotaExceededError, ValidationError
+from backtestforecast.errors import AppValidationError, ConfigurationError, ConflictError, NotFoundError, QuotaExceededError
 from backtestforecast.models import BacktestTemplate, User
 from backtestforecast.repositories.templates import BacktestTemplateRepository
 from backtestforecast.services.audit import AuditService
@@ -76,8 +76,27 @@ class BacktestTemplateService:
             self.session.rollback()
             exc_str = str(exc).lower()
             if "unique" in exc_str or "duplicate" in exc_str:
-                raise ValidationError(f"A template named '{request.name}' already exists.")
+                raise AppValidationError(f"A template named '{request.name}' already exists.")
             raise
+
+        template_limit = _resolve_template_limit(
+            user.plan_tier, user.subscription_status, user.subscription_current_period_end,
+        )
+        if template_limit is not None:
+            post_count = self.repository.count_for_user(user.id)
+            if post_count > template_limit:
+                logger.warning(
+                    "templates.limit_exceeded_post_commit",
+                    user_id=str(user.id),
+                    count=post_count,
+                    limit=template_limit,
+                )
+                self.session.delete(template)
+                self.session.commit()
+                raise AppValidationError(
+                    f"Template limit ({template_limit}) reached. Please delete an existing template first."
+                )
+
         self.session.refresh(template)
         return self._to_response(template)
 
@@ -86,16 +105,14 @@ class BacktestTemplateService:
         total = self.repository.count_for_user(user.id)
         template_limit = _resolve_template_limit(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
         items = []
-        skipped = 0
         for t in templates:
             try:
                 items.append(self._to_response(t))
             except Exception:
-                skipped += 1
                 logger.warning("templates.invalid_template_skipped", template_id=str(t.id))
         return TemplateListResponse(
             items=items,
-            total=max(total - skipped, len(items)),
+            total=total,
             template_limit=template_limit,
         )
 
@@ -123,7 +140,7 @@ class BacktestTemplateService:
                 expected = expected.replace(tzinfo=timezone.utc)
             if actual is not None and actual.tzinfo is None:
                 actual = actual.replace(tzinfo=timezone.utc)
-            if actual is not None and abs((actual - expected).total_seconds()) > 1.0:
+            if actual is not None and abs((actual - expected).total_seconds()) > 0.1:
                 raise ConflictError(
                     "Template was modified by another request. Please refresh and try again."
                 )
@@ -143,8 +160,6 @@ class BacktestTemplateService:
             changed = True
         if changed:
             template.updated_at = datetime.now(UTC)  # type: ignore[assignment]
-
-        if changed:
             self.audit.record(
                 event_type="template.updated",
                 subject_type="backtest_template",
@@ -159,7 +174,7 @@ class BacktestTemplateService:
             self.session.rollback()
             exc_str = str(exc.orig).lower() if exc.orig else ""
             if "unique" in exc_str or "duplicate" in exc_str or "uq_" in exc_str:
-                raise ValidationError(f"A template named '{request.name or template.name}' already exists.")
+                raise AppValidationError(f"A template named '{request.name or template.name}' already exists.")
             raise
         self.session.refresh(template)
         return self._to_response(template)

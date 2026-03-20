@@ -37,11 +37,6 @@ return count
 """
 
 
-# Future enhancement: log requests that are near the rate limit threshold
-# (e.g., 80%+ of limit) to detect potential abuse patterns before they
-# hit the hard limit.
-
-
 class RateLimiter:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -102,16 +97,23 @@ class RateLimiter:
             REDIS_RATE_LIMIT_FALLBACK_TOTAL.labels(bucket=bucket).inc()
             logger.warning("rate_limiter.redis_fallback", key=bucket, exc_info=True)
             if self._fail_closed:
+                fallback_limit = max(limit // 2, 1)
                 mem_count, _ = self._check_memory(namespaced, window_seconds)
-                if mem_count > limit:
-                    logger.error("rate_limiter.fail_closed_enforced", bucket=bucket, mem_count=mem_count)
+                if mem_count > fallback_limit:
+                    logger.error(
+                        "rate_limiter.fail_closed_enforced",
+                        bucket=bucket,
+                        mem_count=mem_count,
+                        fallback_limit=fallback_limit,
+                    )
                     raise ServiceUnavailableError()
                 logger.warning(
                     "rate_limiter.fail_closed_memory_fallback",
                     bucket=bucket,
                     mem_count=mem_count,
+                    fallback_limit=fallback_limit,
                     msg="Redis unavailable; using in-memory rate limiting as fallback. "
-                        "Limits are per-process only (not shared across workers).",
+                        "Limits are halved and per-process only (not shared across workers).",
                 )
                 count = mem_count
         if count is None:
@@ -120,14 +122,15 @@ class RateLimiter:
         remaining = max(limit - count, 0)
         reset_at = (current_bucket + 1) * window_seconds
         info = RateLimitInfo(limit=limit, remaining=remaining, reset_at=reset_at)
-        # INCR returns the post-increment value, so count=limit means
-        # the limit-th request (the last allowed one). count > limit means
-        # the request exceeded the quota.
         if count > limit:
             RATE_LIMIT_HITS_TOTAL.labels(bucket=bucket).inc()
             err = RateLimitError()
             err.rate_limit_info = info
             raise err
+        _NEAR_LIMIT_THRESHOLD = 0.8
+        if limit >= 5 and count >= int(limit * _NEAR_LIMIT_THRESHOLD):
+            from backtestforecast.observability.metrics import RATE_LIMIT_NEAR_TOTAL
+            RATE_LIMIT_NEAR_TOTAL.labels(bucket=bucket).inc()
         return info
 
     async def async_check(
@@ -219,13 +222,13 @@ class RateLimiter:
                 for k in stale_aggressive:
                     del self._memory_counters[k]
                 if len(self._memory_counters) > max_keys * 2:
-                    keep_count = max_keys
-                    sorted_items = sorted(
-                        self._memory_counters.items(),
-                        key=lambda kv: kv[1][0],
-                        reverse=True,
-                    )
-                    self._memory_counters = dict(sorted_items[:keep_count])
+                    current_items = {k: v for k, v in self._memory_counters.items() if v[0] >= bucket}
+                    older_items = {k: v for k, v in self._memory_counters.items() if v[0] < bucket}
+                    keep_older = max(0, max_keys - len(current_items))
+                    if keep_older > 0 and older_items:
+                        sorted_older = sorted(older_items.items(), key=lambda kv: kv[1][0], reverse=True)
+                        current_items.update(dict(sorted_older[:keep_older]))
+                    self._memory_counters = current_items
             counter_bucket, counter_value = self._memory_counters.get(namespaced, (bucket, 0))
             if counter_bucket != bucket:
                 counter_value = 0

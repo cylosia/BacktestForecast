@@ -43,6 +43,7 @@ export function BacktestForm({
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
+  const [requiredTier, setRequiredTier] = useState<string | undefined>(undefined);
   const [submittedCount, setSubmittedCount] = useState(0);
   const submitAbortRef = useRef<AbortController | null>(null);
   const submittingRef = useRef(false);
@@ -126,10 +127,12 @@ export function BacktestForm({
             ? error.message
             : "The backtest could not be created.";
       const code = error instanceof ApiError ? error.code : undefined;
+      const reqTier = error instanceof ApiError ? error.requiredTier : undefined;
 
       setStatus("error");
       setServerMessage(message);
       setErrorCode(code);
+      setRequiredTier(reqTier);
     } finally {
       submittingRef.current = false;
     }
@@ -154,6 +157,7 @@ export function BacktestForm({
       {effectiveReached ? (
         <UpgradePrompt
           message={`This account has used ${effectiveUsed}${quota.limit !== null ? ` of ${quota.limit}` : ""} backtests this month. Upgrade for unlimited backtests.`}
+          requiredTier="pro"
         />
       ) : effectiveRemaining !== null && effectiveRemaining <= 1 && effectiveRemaining > 0 ? (
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
@@ -177,7 +181,7 @@ export function BacktestForm({
       )}
 
       {serverMessage && isPlanLimitError(errorCode) ? (
-        <UpgradePrompt message={serverMessage} />
+        <UpgradePrompt message={serverMessage} requiredTier={requiredTier} />
       ) : serverMessage ? (
         <div
           id="backtest-form-feedback"

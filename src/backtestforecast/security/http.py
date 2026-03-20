@@ -8,7 +8,12 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from backtestforecast.observability import REQUEST_ID_HEADER
 
 BODY_LIMIT_OVERRIDES: dict[str, int] = {
-    "/v1/billing/webhook": 512_000,
+    # Stripe webhook payloads are typically 5-15 KB but can reach 50+ KB
+    # for subscription events with large metadata or multi-item invoices.
+    # 128 KB provides headroom while limiting DoS surface.  The Stripe SDK
+    # needs the complete raw body for HMAC signature verification, so a
+    # truncated payload would surface as "Invalid Stripe webhook signature."
+    "/v1/billing/webhook": 131_072,
     "/v1/events/backtest": 0,
     "/v1/events/scan": 0,
     "/v1/events/sweep": 0,
@@ -24,8 +29,7 @@ class _BodyTooLarge(Exception):
 # NOTE: Response body size is not limited at the middleware level.
 # Large responses (e.g., compare endpoint with 10 runs × 10K trades)
 # are bounded by trade_limit parameters at the service layer.
-# Consider adding response compression (gzip) middleware if response
-# sizes become a concern in production.
+# GZipMiddleware (min_size=1000, level=6) is enabled in main.py.
 
 
 class RequestBodyLimitMiddleware:
@@ -149,6 +153,7 @@ class ApiSecurityHeadersMiddleware:
 
             app_env = get_settings().app_env
         self._is_production = app_env in ("production", "staging")
+        self._show_version = app_env in ("development", "test")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -181,7 +186,7 @@ class ApiSecurityHeadersMiddleware:
                         "Strict-Transport-Security",
                         "max-age=31536000; includeSubDomains",
                     )
-                if not self._is_production:
+                if self._show_version:
                     headers["X-API-Version"] = API_VERSION
             await send(message)
 

@@ -127,7 +127,7 @@ export function usePolling<T>({
       if (next >= maxAttemptsRef.current) {
         setStatus("error");
       } else {
-        const backoff = intervalRef.current * Math.min(2 ** consecutiveErrorsRef.current, 16);
+        const backoff = intervalRef.current * Math.min(2 ** consecutiveErrorsRef.current, 16) * (0.5 + Math.random());
         timerRef.current = setTimeout(poll, backoff);
       }
     }

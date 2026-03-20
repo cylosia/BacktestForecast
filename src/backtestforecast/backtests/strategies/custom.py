@@ -176,6 +176,8 @@ class CustomNLegStrategy(StrategyDefinition):
             short_leg_margin = self._estimate_credit_margin(option_legs, bar.close_price)
             capital = max(short_leg_margin, abs(net_cost), 1.0)
 
+        max_loss = self._estimate_max_loss(option_legs, net_cost, bar.close_price)
+
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker(tickers),
             strategy_type=self.strategy_type,
@@ -188,7 +190,7 @@ class CustomNLegStrategy(StrategyDefinition):
             stock_legs=stock_legs,
             scheduled_exit_date=earliest_exp,
             capital_required_per_unit=capital,
-            max_loss_per_unit=None,
+            max_loss_per_unit=max_loss,
             max_profit_per_unit=None,
             detail_json={
                 "custom_legs": [
@@ -217,33 +219,39 @@ class CustomNLegStrategy(StrategyDefinition):
         option_legs: list[OpenOptionLeg],
         underlying_price: float,
     ) -> float:
+        """Estimate margin for a multi-leg credit position.
+
+        Uses a globally-optimal greedy pairing: enumerate all valid
+        (short, long) pairs, sort by spread width ascending, and assign
+        the tightest pairs first.  This avoids the suboptimal results of
+        the per-short greedy approach where pairing short1 with the
+        nearest long could leave short2 unpaired when a global
+        rearrangement would pair both.
+        """
         short_legs = [leg for leg in option_legs if leg.side == -1]
         long_legs = [leg for leg in option_legs if leg.side == 1]
         short_remaining = [leg.quantity_per_unit for leg in short_legs]
         long_remaining = [leg.quantity_per_unit for leg in long_legs]
         margin = 0.0
 
+        candidates: list[tuple[float, int, int]] = []
         for si, short in enumerate(short_legs):
-            if short_remaining[si] <= 0:
-                continue
-            best_li = None
-            best_width = float("inf")
             for li, long in enumerate(long_legs):
-                if long_remaining[li] <= 0:
-                    continue
                 if long.contract_type != short.contract_type:
                     continue
                 if long.expiration_date != short.expiration_date:
                     continue
                 width = abs(short.strike_price - long.strike_price)
-                if width < best_width:
-                    best_width = width
-                    best_li = li
-            if best_li is not None:
-                paired_qty = min(short_remaining[si], long_remaining[best_li])
-                margin += credit_spread_margin(best_width) * paired_qty
-                short_remaining[si] -= paired_qty
-                long_remaining[best_li] -= paired_qty
+                candidates.append((width, si, li))
+        candidates.sort()
+
+        for width, si, li in candidates:
+            if short_remaining[si] <= 0 or long_remaining[li] <= 0:
+                continue
+            paired_qty = min(short_remaining[si], long_remaining[li])
+            margin += credit_spread_margin(width) * paired_qty
+            short_remaining[si] -= paired_qty
+            long_remaining[li] -= paired_qty
 
         for si, short in enumerate(short_legs):
             if short_remaining[si] <= 0:
@@ -254,10 +262,59 @@ class CustomNLegStrategy(StrategyDefinition):
 
         return margin
 
+    @staticmethod
+    def _estimate_max_loss(
+        option_legs: list[OpenOptionLeg],
+        net_cost: float,
+        underlying_price: float,
+    ) -> float | None:
+        """Estimate worst-case max loss for position sizing.
+
+        For fully-hedged positions (all shorts paired with longs of same type
+        and expiration), max loss is the widest spread width per pair.
+        For positions with naked shorts, returns None (unlimited risk).
+
+        Pairs are sorted by width ascending (tightest first) to maximize the
+        chance of covering all shorts — same strategy as _estimate_credit_margin.
+        """
+        short_legs = [leg for leg in option_legs if leg.side == -1]
+        long_legs = [leg for leg in option_legs if leg.side == 1]
+        if not short_legs:
+            return max(net_cost, 0.0) if net_cost > 0 else 0.0
+
+        short_remaining = [leg.quantity_per_unit for leg in short_legs]
+        long_remaining = [leg.quantity_per_unit for leg in long_legs]
+
+        candidates: list[tuple[float, int, int]] = []
+        for si, short in enumerate(short_legs):
+            for li, long in enumerate(long_legs):
+                if long.contract_type != short.contract_type:
+                    continue
+                if long.expiration_date != short.expiration_date:
+                    continue
+                width = abs(short.strike_price - long.strike_price)
+                candidates.append((width, si, li))
+        candidates.sort()
+
+        max_spread_risk = 0.0
+        for width, si, li in candidates:
+            if short_remaining[si] <= 0 or long_remaining[li] <= 0:
+                continue
+            paired_qty = min(short_remaining[si], long_remaining[li])
+            max_spread_risk = max(max_spread_risk, width * 100.0 * paired_qty)
+            short_remaining[si] -= paired_qty
+            long_remaining[li] -= paired_qty
+
+        has_naked = any(r > 0 for r in short_remaining)
+        if has_naked:
+            return None
+        return max_spread_risk + max(net_cost, 0.0)
+
 
 CUSTOM_2_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_2_leg")
 CUSTOM_3_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_3_leg")
 CUSTOM_4_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_4_leg")
 CUSTOM_5_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_5_leg")
 CUSTOM_6_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_6_leg")
+CUSTOM_7_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_7_leg")
 CUSTOM_8_LEG_STRATEGY = CustomNLegStrategy(strategy_type="custom_8_leg")

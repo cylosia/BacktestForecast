@@ -48,17 +48,25 @@ class ExportJobRepository:
         )
         return self.session.scalar(stmt)
 
-    def list_for_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[ExportJob]:
+    def list_for_user(
+        self,
+        user_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+        cursor_before: datetime | None = None,
+    ) -> list[ExportJob]:
+        if offset > 0 and cursor_before is not None:
+            raise ValueError("Cannot combine offset and cursor_before pagination.")
         limit = max(limit, 1)
         offset = max(offset, 0)
         stmt = (
             select(ExportJob)
             .where(ExportJob.user_id == user_id)
             .options(defer(ExportJob.content_bytes))
-            .order_by(desc(ExportJob.created_at))
-            .offset(offset)
-            .limit(min(limit, _MAX_PAGE_SIZE))
         )
+        if cursor_before is not None:
+            stmt = stmt.where(ExportJob.created_at < cursor_before)
+        stmt = stmt.order_by(desc(ExportJob.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 
     def count_for_user(self, user_id: UUID) -> int:
@@ -66,23 +74,32 @@ class ExportJobRepository:
         return int(self.session.scalar(stmt) or 0)
 
     def list_for_user_with_count(
-        self, user_id: UUID, limit: int = 50, offset: int = 0,
+        self,
+        user_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+        cursor_before: datetime | None = None,
     ) -> tuple[list[ExportJob], int]:
-        """Return (items, total) in a single query using a window function."""
-        count_col = func.count().over().label("_total")
+        """Return (items, total) in a single DB round-trip using a window function."""
+        if offset > 0 and cursor_before is not None:
+            raise ValueError("Cannot combine offset and cursor_before pagination.")
+        total_col = func.count(ExportJob.id).over().label("_total")
         stmt = (
-            select(ExportJob, count_col)
+            select(ExportJob, total_col)
             .where(ExportJob.user_id == user_id)
             .options(defer(ExportJob.content_bytes))
-            .order_by(desc(ExportJob.created_at))
-            .offset(offset)
-            .limit(min(limit, _MAX_PAGE_SIZE))
         )
+        if cursor_before is not None:
+            stmt = stmt.where(ExportJob.created_at < cursor_before)
+        stmt = stmt.order_by(desc(ExportJob.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         rows = list(self.session.execute(stmt))
         if not rows:
-            return [], 0
+            total = int(self.session.scalar(
+                select(func.count(ExportJob.id)).where(ExportJob.user_id == user_id)
+            ) or 0)
+            return [], total
         items = [row[0] for row in rows]
-        total = rows[0][1]
+        total = int(rows[0][1])
         return items, total
 
     def list_expired_for_cleanup(self, before: datetime, limit: int) -> list[ExportJob]:

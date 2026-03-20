@@ -348,11 +348,13 @@ def test_tg10_trip_circuit_tolerates_redis_failure():
 
 
 def test_tg10_mark_error_creates_event_on_zero_rows():
+    """When mark_error returns False (no matching event to update), the
+    fallback path should INSERT a new StripeEvent record."""
     from backtestforecast.services.billing import BillingService
 
     session = MagicMock()
     stripe_events = MagicMock()
-    stripe_events.mark_error.return_value = MagicMock(rowcount=0)
+    stripe_events.mark_error.return_value = False
     nested_mock = MagicMock()
     session.begin_nested.return_value = nested_mock
 
@@ -367,3 +369,190 @@ def test_tg10_mark_error_creates_event_on_zero_rows():
     assert added_event.idempotency_status == "error"
     assert added_event.event_type == "test.event"
     assert added_event.livemode is True
+
+
+# ============================================================================
+# TG-6: Jade lizard max_loss_per_unit must include upside risk
+# ============================================================================
+
+def test_tg6_jade_lizard_max_loss_includes_upside_risk():
+    """max_loss_per_unit must be max(downside_risk, upside_risk), not just downside."""
+    from backtestforecast.backtests.strategies.exotic import JadeLizardStrategy
+    source = inspect.getsource(JadeLizardStrategy.build_position)
+    assert "max(downside_risk, upside_risk)" in source, (
+        "Jade lizard must use max(downside, upside) for position sizing"
+    )
+
+
+def test_tg6_jade_lizard_upside_risk_computed():
+    """upside_risk = max(call_width - total_credit, 0.0) must be present."""
+    from backtestforecast.backtests.strategies.exotic import JadeLizardStrategy
+    source = inspect.getsource(JadeLizardStrategy.build_position)
+    assert "upside_risk" in source
+    assert "call_width - total_credit" in source
+
+
+# ============================================================================
+# TG-7: BSM delta must include dividend yield
+# ============================================================================
+
+def test_tg7_bsm_delta_zero_dividend_matches_classic():
+    """With dividend_yield=0, the result should match the classic BSM delta."""
+    from backtestforecast.backtests.strategies.common import _approx_bsm_delta
+    delta_no_div = _approx_bsm_delta(100.0, 100.0, 30, "call", vol=0.25, dividend_yield=0.0)
+    assert 0.45 < delta_no_div < 0.65, f"ATM 30-DTE call delta should be ~0.5, got {delta_no_div}"
+
+
+def test_tg7_bsm_delta_high_dividend_reduces_call_delta():
+    """A high dividend yield should reduce call delta compared to zero yield."""
+    from backtestforecast.backtests.strategies.common import _approx_bsm_delta
+    delta_no_div = _approx_bsm_delta(100.0, 100.0, 45, "call", vol=0.30, dividend_yield=0.0)
+    delta_high_div = _approx_bsm_delta(100.0, 100.0, 45, "call", vol=0.30, dividend_yield=0.05)
+    assert delta_high_div < delta_no_div, (
+        f"5% dividend should reduce call delta: {delta_high_div} should be < {delta_no_div}"
+    )
+
+
+def test_tg7_bsm_delta_high_dividend_increases_put_magnitude():
+    """A high dividend yield should increase put delta magnitude (more negative)."""
+    from backtestforecast.backtests.strategies.common import _approx_bsm_delta
+    delta_no_div = _approx_bsm_delta(100.0, 100.0, 45, "put", vol=0.30, dividend_yield=0.0)
+    delta_high_div = _approx_bsm_delta(100.0, 100.0, 45, "put", vol=0.30, dividend_yield=0.05)
+    assert delta_high_div < delta_no_div, (
+        f"5% dividend should make put delta more negative: {delta_high_div} vs {delta_no_div}"
+    )
+
+
+def test_tg7_bsm_delta_parameter_exists():
+    """The dividend_yield parameter must exist on the function signature."""
+    from backtestforecast.backtests.strategies.common import _approx_bsm_delta
+    sig = inspect.signature(_approx_bsm_delta)
+    assert "dividend_yield" in sig.parameters
+
+
+# ============================================================================
+# TG-8: Export CAS rowcount guard prevents content on failed jobs
+# ============================================================================
+
+def test_tg8_export_cas_rowcount_check_exists():
+    """execute_export_by_id must check success_rows.rowcount after CAS update."""
+    from backtestforecast.services.exports import ExportService
+    source = inspect.getsource(ExportService.execute_export_by_id)
+    assert "success_rows.rowcount == 0" in source, (
+        "Export CAS guard must check rowcount to prevent content on failed jobs"
+    )
+
+
+def test_tg8_export_cas_rollback_on_zero_rows():
+    """When CAS fails (rowcount=0), the session must be rolled back."""
+    from backtestforecast.services.exports import ExportService
+    source = inspect.getsource(ExportService.execute_export_by_id)
+    idx_check = source.index("success_rows.rowcount == 0")
+    idx_rollback = source.index("self.session.rollback()", idx_check)
+    assert idx_rollback > idx_check, "rollback must follow rowcount check"
+
+
+def test_tg8_export_content_bytes_after_cas():
+    """content_bytes must be set AFTER the CAS check, not before."""
+    from backtestforecast.services.exports import ExportService
+    source = inspect.getsource(ExportService.execute_export_by_id)
+    idx_cas = source.index("success_rows.rowcount == 0")
+    idx_content = source.index("export_job.content_bytes = content")
+    assert idx_content > idx_cas, (
+        "content_bytes assignment must come after CAS check to prevent dirty ORM state on failed jobs"
+    )
+
+
+# ============================================================================
+# TG-9: custom_7_leg strategy must be registered
+# ============================================================================
+
+def test_tg9_custom_7_leg_in_registry():
+    """custom_7_leg must be registered in STRATEGY_REGISTRY."""
+    from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
+    assert "custom_7_leg" in STRATEGY_REGISTRY, (
+        "custom_7_leg is in entitlements and catalog but must also be in STRATEGY_REGISTRY"
+    )
+
+
+def test_tg9_custom_7_leg_in_entitlements():
+    """custom_7_leg must be in ADVANCED_SCANNER_STRATEGIES."""
+    from backtestforecast.billing.entitlements import ADVANCED_SCANNER_STRATEGIES
+    assert "custom_7_leg" in ADVANCED_SCANNER_STRATEGIES
+
+
+def test_tg9_custom_7_leg_in_catalog():
+    """custom_7_leg must have a catalog entry."""
+    from backtestforecast.strategy_catalog.catalog import get_catalog
+    catalog = get_catalog()
+    types = [e.strategy_type for e in catalog]
+    assert "custom_7_leg" in types
+
+
+# ============================================================================
+# TG-11: GDPR export non-backtest entities always start at offset=0
+# ============================================================================
+
+def test_tg11_gdpr_export_per_entity_offset():
+    """Each entity type must have its own offset parameter for independent pagination."""
+    from apps.api.app.routers.account import export_account_data
+    source = inspect.getsource(export_account_data)
+    assert "templates_offset" in source
+    assert "scans_offset" in source
+    assert "sweeps_offset" in source
+    assert "exports_offset" in source
+    assert "analyses_offset" in source
+
+
+# ============================================================================
+# TG-12: S3 stream timeout must raise, not silently truncate
+# ============================================================================
+
+def test_tg12_s3_stream_timeout_raises_error():
+    """The S3 stream generator must raise TimeoutError on timeout,
+    not silently break (which would deliver a truncated file with 200)."""
+    from apps.api.app.routers.exports import download_export
+    source = inspect.getsource(download_export)
+    assert "raise TimeoutError" in source, (
+        "S3 stream timeout must raise TimeoutError to abort the HTTP response, "
+        "not break silently which would deliver a truncated file"
+    )
+
+
+def test_tg12_s3_stream_timeout_does_not_silently_break():
+    """There must be no bare 'break' after the timeout check —
+    the old code silently truncated the response."""
+    from apps.api.app.routers.exports import download_export
+    source = inspect.getsource(download_export)
+    lines = source.splitlines()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if "_STREAM_TIMEOUT_SECONDS" in stripped and "elapsed" in stripped:
+            for j in range(i + 1, min(i + 8, len(lines))):
+                following = lines[j].strip()
+                if following == "break":
+                    pytest.fail(
+                        f"Line {j}: bare 'break' after timeout check would silently truncate. "
+                        "Must raise TimeoutError instead."
+                    )
+                if "raise" in following:
+                    break
+
+
+# ============================================================================
+# TG-10: Backtest task does not hold FOR UPDATE lock during execution
+# ============================================================================
+
+def test_tg10_backtest_task_does_not_lock_user_row():
+    """The backtest task must NOT use with_for_update on the user row,
+    as this would block concurrent billing webhooks for the entire
+    execution duration (potentially minutes)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        from apps.worker.app.tasks import run_backtest
+    source = inspect.getsource(run_backtest)
+    assert "with_for_update" not in source, (
+        "run_backtest must not use with_for_update on the user row — "
+        "the entitlement check is a point-in-time read that doesn't "
+        "need a row lock."
+    )

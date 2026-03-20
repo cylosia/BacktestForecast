@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from backtestforecast.backtests.margin import short_stock_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
+    choose_atm_strike,
     choose_common_atm_strike,
     choose_primary_expiration,
     contracts_for_expiration,
@@ -38,10 +39,7 @@ class SyntheticPutStrategy(StrategyDefinition):
         cc = contracts_for_expiration(calls, expiration)
         if not cc:
             return None
-        strike = min(
-            [c.strike_price for c in cc],
-            key=lambda s: (abs(s - bar.close_price), s),
-        )
+        strike = choose_atm_strike([c.strike_price for c in cc], bar.close_price)
         long_call = require_contract_for_strike(cc, strike)
 
         cq = option_gateway.get_quote(long_call.ticker, bar.trade_date)

@@ -40,7 +40,7 @@ export default async function AnalysisPage() {
       </div>
 
       {!hasAccess ? (
-        <UpgradePrompt message="Symbol Deep Analysis requires a Pro or Premium plan. Upgrade to analyze any symbol across all strategies and parameter permutations." />
+        <UpgradePrompt message="Symbol Deep Analysis requires a Pro or Premium plan. Upgrade to analyze any symbol across all strategies and parameter permutations." requiredTier="pro" />
       ) : (
         <>
           <SymbolAnalysisLauncher />

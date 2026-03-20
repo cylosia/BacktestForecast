@@ -11,6 +11,7 @@ __all__ = [
     "FeatureLockedError",
     "ConfigurationError",
     "ValidationError",
+    "AppValidationError",
     "DataUnavailableError",
     "ExternalServiceError",
     "NotFoundError",
@@ -74,6 +75,9 @@ class ValidationError(AppError):
         super().__init__(code="validation_error", message=message, status_code=422)
 
 
+AppValidationError = ValidationError
+
+
 class DataUnavailableError(AppError):
     def __init__(self, message: str) -> None:
         super().__init__(code="data_unavailable", message=message, status_code=503)
@@ -90,7 +94,7 @@ class NotFoundError(AppError):
 
 
 class RateLimitError(AppError):
-    rate_limit_info: Any
+    rate_limit_info: Any = None
 
     def __init__(self, message: str = "Rate limit exceeded. Please retry later.") -> None:
         super().__init__(code="rate_limited", message=message, status_code=429)

@@ -15,23 +15,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
-from backtestforecast.errors import ValidationError
+from backtestforecast.errors import AppValidationError
 from backtestforecast.models import BacktestRun, User
 from backtestforecast.schemas.backtests import CompareBacktestsRequest
 from backtestforecast.services.backtests import BacktestService
 
 
-def _strip_partial_indexes_for_sqlite(engine) -> None:
-    """Remove PostgreSQL-specific partial indexes so SQLite create_all succeeds."""
-    if engine.dialect.name != "sqlite":
-        return
-    for table in Base.metadata.tables.values():
-        indexes_to_remove = [
-            idx for idx in table.indexes
-            if idx.dialect_options.get("postgresql", {}).get("where") is not None
-        ]
-        for idx in indexes_to_remove:
-            table.indexes.discard(idx)
+from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
 @pytest.fixture()
@@ -79,7 +69,7 @@ def _create_run(session: Session, user: User, status: str) -> BacktestRun:
 
 
 def test_compare_runs_rejects_running_status(db_session):
-    """compare_runs must raise ValidationError when a run has status 'running'."""
+    """compare_runs must raise AppValidationError when a run has status 'running'."""
     user = _create_user(db_session)
     succeeded_run = _create_run(db_session, user, "succeeded")
     running_run = _create_run(db_session, user, "running")
@@ -87,7 +77,7 @@ def test_compare_runs_rejects_running_status(db_session):
     service = BacktestService(db_session)
     request = CompareBacktestsRequest(run_ids=[succeeded_run.id, running_run.id])
 
-    with pytest.raises(ValidationError, match="succeeded"):
+    with pytest.raises(AppValidationError, match="succeeded"):
         service.compare_runs(user, request)
 
 

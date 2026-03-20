@@ -15,6 +15,8 @@ from backtestforecast.schemas.backtests import (
     EquityCurvePointResponse,
     SpreadWidthMode,
     StrategyType,
+    TradeJsonResponse,
+    validate_spread_width,
 )
 from backtestforecast.schemas.common import PlanTier, RunJobStatus, sanitize_error_message
 from backtestforecast.schemas.scans import RuleSetDefinition
@@ -37,15 +39,7 @@ class WidthGridItem(BaseModel):
 
     @model_validator(mode="after")
     def validate_width(self) -> "WidthGridItem":
-        if self.mode == SpreadWidthMode.STRIKE_STEPS:
-            if self.value < 1 or self.value > 20:
-                raise ValueError("strike_steps width must be between 1 and 20")
-        elif self.mode == SpreadWidthMode.DOLLAR_WIDTH:
-            if self.value < Decimal("0.5") or self.value > Decimal("100"):
-                raise ValueError("dollar_width must be between 0.50 and 100")
-        elif self.mode == SpreadWidthMode.PCT_WIDTH:
-            if self.value < Decimal("0.5") or self.value > Decimal("30"):
-                raise ValueError("pct_width must be between 0.5 and 30")
+        validate_spread_width(self.mode, self.value)
         return self
 
 
@@ -160,7 +154,7 @@ class SweepResultResponse(BaseModel):
     parameter_snapshot_json: dict[str, Any] = Field(default_factory=dict)
     summary: BacktestSummaryResponse
     warnings: list[dict[str, Any]] = Field(default_factory=list)
-    trades_json: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
+    trades_json: list[TradeJsonResponse] = Field(default_factory=list, max_length=10000)
     equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list, max_length=10000)
     trades_truncated: bool = False
     created_at: datetime | None = None
@@ -178,14 +172,14 @@ class SweepJobResponse(BaseModel):
     status: SweepJobStatus
     symbol: str
     mode: SweepMode = SweepMode.GRID
-    engine_version: str = "options-multileg-v2"
+    engine_version: Literal["options-multileg-v1", "options-multileg-v2"] = "options-multileg-v2"
     plan_tier_snapshot: PlanTier
     candidate_count: int
     evaluated_candidate_count: int
     result_count: int
-    prefetch_summary: dict[str, Any] | None = Field(default=None, alias="prefetch_summary_json")
-    warnings: list[dict[str, Any]] = Field(default_factory=list, alias="warnings_json")
-    request_snapshot: dict[str, Any] = Field(default_factory=dict, alias="request_snapshot_json")
+    prefetch_summary: dict[str, Any] | None = Field(default=None, validation_alias="prefetch_summary_json")
+    warnings: list[dict[str, Any]] = Field(default_factory=list, validation_alias="warnings_json")
+    request_snapshot: dict[str, Any] = Field(default_factory=dict, validation_alias="request_snapshot_json")
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
@@ -212,3 +206,4 @@ class SweepJobListResponse(BaseModel):
     total: int = 0
     offset: int = 0
     limit: int = 50
+    next_cursor: str | None = None

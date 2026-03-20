@@ -24,8 +24,6 @@ from backtestforecast.observability.metrics import (
     BACKTEST_RUNS_TOTAL,
     CELERY_TASKS_TOTAL,
     DLQ_DEPTH,
-    DLQ_MESSAGES_TOTAL,
-    DLQ_WRITE_FAILURES_TOTAL,
     DUPLICATE_TASK_EXECUTION_TOTAL,
     EXPORT_JOBS_TOTAL,
     NIGHTLY_PIPELINE_RUNS_TOTAL,
@@ -50,179 +48,7 @@ logger = structlog.get_logger("worker.tasks")
 
 
 from apps.worker.app.task_helpers import commit_then_publish as _commit_then_publish
-
-
-def _mark_job_failed(
-    session: "Session",
-    model_cls: type,
-    obj_id: UUID,
-    *,
-    error_code: str,
-    error_message: str,
-    allowed_from: tuple[str, ...] = ("queued", "running"),
-) -> None:
-    """Mark a job as failed if it is in one of the allowed source statuses."""
-    from datetime import UTC, datetime
-    from sqlalchemy import update
-
-    obj = session.get(model_cls, obj_id)
-    if obj is not None and getattr(obj, "status", None) in allowed_from:
-        values: dict[str, object] = {
-            "status": "failed",
-            "error_message": error_message,
-            "completed_at": datetime.now(UTC),
-            "updated_at": datetime.now(UTC),
-        }
-        if hasattr(model_cls, "error_code"):
-            values["error_code"] = error_code
-        session.execute(
-            update(model_cls)
-            .where(model_cls.id == obj_id, model_cls.status.in_(allowed_from))
-            .values(**values)
-        )
-        try:
-            session.commit()
-        except Exception:
-            logger.exception("mark_job_failed.commit_failed", model=model_cls.__name__, obj_id=str(obj_id))
-            session.rollback()
-
-
-_dlq_redis_pool: object | None = None
-_dlq_redis_lock = __import__("threading").Lock()
-
-
-def _get_dlq_redis():
-    """Return a reusable Redis connection for DLQ writes.
-
-    Uses a module-level connection pool so repeated DLQ writes during
-    cascading failures don't exhaust connections.
-    """
-    global _dlq_redis_pool
-    if _dlq_redis_pool is not None:
-        return __import__("redis").Redis(connection_pool=_dlq_redis_pool)
-    with _dlq_redis_lock:
-        if _dlq_redis_pool is not None:
-            return __import__("redis").Redis(connection_pool=_dlq_redis_pool)
-        from backtestforecast.config import get_settings
-        from redis import ConnectionPool
-        _dlq_redis_pool = ConnectionPool.from_url(
-            get_settings().redis_url,
-            socket_timeout=5,
-            max_connections=3,
-            decode_responses=False,
-        )
-        return __import__("redis").Redis(connection_pool=_dlq_redis_pool)
-
-
-class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
-    """Base class for Celery tasks that persists failure metadata to a Redis
-    dead-letter list (``bff:dead_letter_queue``) when all retries are exhausted.
-
-    Usage: set ``base=BaseTaskWithDLQ`` in ``@celery_app.task(...)`` decorators.
-    Failed tasks are JSON-serialised and left-pushed so operators can inspect
-    or replay them via ``LRANGE bff:dead_letter_queue 0 -1``.
-    """
-
-    def before_start(self, task_id, args, kwargs):
-        super().before_start(task_id, args, kwargs)
-        headers = getattr(self.request, 'headers', None) or {}
-        if isinstance(headers, dict):
-            ctx: dict[str, str] = {}
-            if headers.get('traceparent'):
-                ctx['traceparent'] = headers['traceparent']
-            if headers.get('request_id'):
-                ctx['request_id'] = headers['request_id']
-            if ctx:
-                structlog.contextvars.bind_contextvars(**ctx)
-
-    def on_failure(self, exc, task_id, args, kwargs, einfo):
-        super().on_failure(exc, task_id, args, kwargs, einfo)
-        is_terminal = (
-            (self.max_retries is not None and self.request.retries >= self.max_retries)
-            or isinstance(exc, SoftTimeLimitExceeded)
-        )
-        if is_terminal:
-            logger.error(
-                "task.dead_letter",
-                task_name=self.name,
-                task_id=task_id,
-                args=args,
-                retries=self.request.retries,
-                exc=str(exc),
-            )
-            try:
-                import json
-                redis_conn = self.app.backend.client if hasattr(self.app, 'backend') and hasattr(self.app.backend, 'client') else None
-                if redis_conn is None:
-                    redis_conn = _get_dlq_redis()
-                _DLQ_REDACT_KEYS = frozenset({
-                    "email", "password", "secret", "token", "api_key",
-                    "stripe_customer_id", "stripe_subscription_id",
-                    "clerk_user_id", "ip_address", "ip_hash",
-                })
-
-                def _redact(d: dict) -> dict:
-                    return {k: "[REDACTED]" if k in _DLQ_REDACT_KEYS else v for k, v in d.items()}
-
-                def _sanitize_error(err_str: str) -> str:
-                    """Truncate and strip sensitive patterns from error messages."""
-                    truncated = err_str[:2000]
-                    import re
-                    truncated = re.sub(
-                        r"(password|secret|token|api_key|bearer)\s*[=:]\s*\S+",
-                        r"\1=[REDACTED]",
-                        truncated,
-                        flags=re.IGNORECASE,
-                    )
-                    truncated = re.sub(
-                        r"(sk_live_|sk_test_|whsec_|pk_live_|pk_test_)\w+",
-                        "[REDACTED_KEY]",
-                        truncated,
-                    )
-                    return truncated
-
-                def _redact_args(raw_args: tuple | list | None) -> list:
-                    """Redact positional args — keep UUIDs/IDs, redact anything else."""
-                    if not raw_args:
-                        return []
-                    result = []
-                    for arg in raw_args:
-                        if isinstance(arg, str) and len(arg) <= 80:
-                            result.append(arg)
-                        elif isinstance(arg, (int, float, bool)):
-                            result.append(arg)
-                        else:
-                            result.append("[REDACTED]")
-                    return result
-
-                dlq_key = "bff:dead_letter_queue"
-                safe_kwargs = _redact(dict(kwargs or {}))
-                redis_conn.lpush(dlq_key, json.dumps({
-                    "task_name": self.name,
-                    "task_id": task_id,
-                    "args": _redact_args(args),
-                    "kwargs": safe_kwargs,
-                    "retries": self.request.retries,
-                    "error": _sanitize_error(str(exc)),
-                }))
-                redis_conn.ltrim(dlq_key, 0, 4999)
-                redis_conn.expire(dlq_key, 60 * 60 * 24 * 30)
-                DLQ_MESSAGES_TOTAL.labels(task_name=self.name).inc()
-                try:
-                    DLQ_DEPTH.set(redis_conn.llen(dlq_key))
-                except Exception:
-                    pass
-                try:
-                    import sentry_sdk as _sentry
-                    _sentry.capture_message(
-                        f"Task {self.name} exhausted retries and moved to DLQ",
-                        level="error",
-                    )
-                except Exception:
-                    pass
-            except Exception:
-                DLQ_WRITE_FAILURES_TOTAL.labels(task_name=self.name).inc()
-                logger.warning("task.dlq_persist_failed", task_name=self.name, exc_info=True)
+from apps.worker.app.task_base import BaseTaskWithDLQ, _get_dlq_redis  # noqa: F401
 
 
 @celery_app.task(name="maintenance.ping", ignore_result=True)
@@ -327,8 +153,8 @@ def nightly_scan_pipeline(
 
         if symbols is None:
             try:
-                from redis import Redis as _SymRedis
-                _sym_r = _SymRedis.from_url(settings.redis_url, decode_responses=True, socket_timeout=3)
+                from backtestforecast.utils import create_cache_redis as _create_sym_redis
+                _sym_r = _create_sym_redis(socket_timeout=3.0)
                 _override = _sym_r.get("bff:pipeline:symbols")
                 _sym_r.close()
                 if _override:
@@ -362,11 +188,11 @@ def nightly_scan_pipeline(
                 logger.info("pipeline.skipped_holiday", trade_date=str(trade_date))
                 return {"status": "skipped", "reason": "market_holiday"}
 
-        from redis import Redis
+        from backtestforecast.utils import create_cache_redis as _create_lock_redis
         lock_key = f"bff:pipeline:{trade_date.isoformat()}"
-        redis_client = Redis.from_url(settings.redis_url, socket_timeout=5)
+        redis_client = _create_lock_redis(decode_responses=False)
         try:
-            lock = redis_client.lock(lock_key, timeout=1920, blocking=False)
+            lock = redis_client.lock(lock_key, timeout=2100, blocking=False)
         except Exception:
             redis_client.close()
             raise
@@ -380,7 +206,6 @@ def nightly_scan_pipeline(
             redis_client.close()
             return {"status": "skipped", "reason": "locked"}
 
-        _retrying = False
         try:
             with create_worker_session() as session:
                 service = NightlyPipelineService(
@@ -413,7 +238,6 @@ def nightly_scan_pipeline(
                 except Exception as exc:
                     session.rollback()
                     logger.exception("pipeline.task_failed", trade_date=str(trade_date))
-                    _retrying = True
                     try:
                         lock.release()
                     except Exception:
@@ -425,7 +249,6 @@ def nightly_scan_pipeline(
                             "trade_date_iso": trade_date.isoformat(),
                         })
                     except MaxRetriesExceededError:
-                        _retrying = False
                         run_obj = _find_pipeline_run(session, NightlyPipelineRun, run, trade_date)
                         if run_obj is not None and run_obj.status == "running":
                             run_obj.status = "failed"
@@ -448,11 +271,10 @@ def nightly_scan_pipeline(
                     "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
                 }
         finally:
-            if not _retrying:
-                try:
-                    lock.release()
-                except Exception:
-                    pass
+            try:
+                lock.release()
+            except Exception:
+                pass
             try:
                 redis_client.close()
             except Exception:
@@ -483,6 +305,7 @@ def _update_heartbeat(session: "Session", model_cls: type, obj_id: UUID) -> None
     """
     from datetime import UTC, datetime
     from sqlalchemy import update
+    nested = None
     try:
         nested = session.begin_nested()
         session.execute(
@@ -492,10 +315,11 @@ def _update_heartbeat(session: "Session", model_cls: type, obj_id: UUID) -> None
         )
         nested.commit()
     except Exception:
-        try:
-            nested.rollback()
-        except Exception:
-            pass
+        if nested is not None:
+            try:
+                nested.rollback()
+            except Exception:
+                pass
 
 
 def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, expected_task_id: str | None) -> bool:
@@ -522,6 +346,7 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
     if stored == expected_task_id:
         return True
     if stored is None:
+        nested = session.begin_nested()
         result = session.execute(
             update(model_cls)
             .where(model_cls.id == obj_id, model_cls.celery_task_id.is_(None))
@@ -530,9 +355,9 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
         )
         claimed = result.fetchone() is not None
         try:
-            session.commit()
+            nested.commit()
         except Exception:
-            session.rollback()
+            nested.rollback()
             logger.warning("validate_task_ownership.commit_failed", model=model_cls.__name__, obj_id=str(obj_id), exc_info=True)
             return False
         if not claimed:
@@ -541,6 +366,7 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
         return True
     current_status = getattr(obj, "status", None)
     if current_status is not None and current_status not in _TERMINAL_STATUSES:
+        nested = session.begin_nested()
         result = session.execute(
             update(model_cls)
             .where(
@@ -553,9 +379,9 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
         )
         claimed = result.fetchone() is not None
         try:
-            session.commit()
+            nested.commit()
         except Exception:
-            session.rollback()
+            nested.rollback()
             logger.warning("validate_task_ownership.redelivery_commit_failed", model=model_cls.__name__, obj_id=str(obj_id), exc_info=True)
             return False
         if claimed:
@@ -582,7 +408,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         if run_obj is None:
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
             return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
-        user = session.get(User, run_obj.user_id, with_for_update=True)
+        user = session.get(User, run_obj.user_id)
         if user is None:
             run_obj.status = "failed"
             run_obj.error_code = "entitlement_revoked"
@@ -776,7 +602,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             if ej_obj is not None and ej_obj.status in ("queued", "running"):
                 ej_obj.status = "failed"
                 ej_obj.error_code = exc.code
-                ej_obj.error_message = str(exc.message)
+                ej_obj.error_message = str(exc.message)[:500] if exc.message else None
                 ej_obj.completed_at = _dt_app.now(UTC)
                 try:
                     session.commit()
@@ -954,7 +780,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     from datetime import UTC, datetime as _dt_analysis_app
                     sa_fail.status = "failed"
                     sa_fail.error_code = exc.code
-                    sa_fail.error_message = str(exc.message)
+                    sa_fail.error_message = str(exc.message)[:500] if exc.message else None
                     sa_fail.completed_at = _dt_analysis_app.now(UTC)
                     try:
                         session.commit()
@@ -1062,8 +888,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             sj.status = "failed"
             sj.error_code = "entitlement_revoked"
             sj.error_message = "User account not found."
-            session.commit()
-            publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            _commit_then_publish(session, "scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
         mode_requires_advanced = sj.mode == "advanced"
@@ -1071,8 +896,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             sj.status = "failed"
             sj.error_code = "entitlement_revoked"
             sj.error_message = f"Your plan no longer supports {sj.mode} scanner mode."
-            session.commit()
-            publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            _commit_then_publish(session, "scan", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         publish_job_status("scan", UUID(job_id), "running")
         _update_heartbeat(session, ScannerJobModel, UUID(job_id))
@@ -1197,16 +1021,14 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
             sj.status = "failed"
             sj.error_code = "entitlement_revoked"
             sj.error_message = "User account not found."
-            session.commit()
-            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            _commit_then_publish(session, "sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
         if not policy.forecasting_access:
             sj.status = "failed"
             sj.error_code = "entitlement_revoked"
             sj.error_message = "Your plan no longer supports this operation."
-            session.commit()
-            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            _commit_then_publish(session, "sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         if policy.monthly_sweep_quota is not None:
             from datetime import UTC, datetime as _dt_sweep_quota
@@ -1229,8 +1051,7 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                 sj.status = "failed"
                 sj.error_code = "quota_exceeded"
                 sj.error_message = f"Monthly sweep quota ({policy.monthly_sweep_quota}) reached. Used: {sweep_used}."
-                session.commit()
-                publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "quota_exceeded"})
+                _commit_then_publish(session, "sweep", UUID(job_id), "failed", metadata={"error_code": "quota_exceeded"})
                 return {"status": "failed", "job_id": job_id, "error_code": "quota_exceeded"}
         publish_job_status("sweep", UUID(job_id), "running")
         _update_heartbeat(session, SweepJobModel, UUID(job_id))
@@ -1253,7 +1074,7 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
             if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
                 sweep_obj.status = "failed"
                 sweep_obj.error_code = exc.code
-                sweep_obj.error_message = str(exc.message)
+                sweep_obj.error_message = str(exc.message)[:500] if exc.message else None
                 sweep_obj.completed_at = _dt_sweep_app.now(UTC)
                 try:
                     session.commit()
@@ -1329,14 +1150,13 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
 
 @celery_app.task(name="scans.refresh_prioritized", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=300, time_limit=360)
 def refresh_prioritized_scans(self) -> dict[str, int]:
-    from redis import Redis
     from sqlalchemy import update as sa_update
 
     from backtestforecast.config import get_settings
     from backtestforecast.models import ScannerJob
+    from backtestforecast.utils import create_cache_redis
 
-    settings = get_settings()
-    redis = Redis.from_url(settings.redis_url, socket_timeout=5)
+    redis = create_cache_redis(decode_responses=False)
     lock = redis.lock("bff:refresh_scans:lock", timeout=360, blocking_timeout=0)
     if not lock.acquire(blocking=False):
         redis.close()
@@ -1479,16 +1299,13 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
     stale_minutes = max(stale_minutes, 5)
 
-    from redis import Redis
-
     from backtestforecast.config import get_settings
     from backtestforecast.observability.metrics import CELERY_WORKERS_ONLINE
-
-    settings = get_settings()
+    from backtestforecast.utils import create_cache_redis
 
     _MAX_HEARTBEAT_SCAN = 500
     try:
-        _count_redis = Redis.from_url(settings.redis_url, socket_timeout=5, decode_responses=True)
+        _count_redis = create_cache_redis()
         try:
             heartbeat_count = 0
             for _ in _count_redis.scan_iter("worker:heartbeat:*", count=100):
@@ -1505,7 +1322,7 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
     lock = None
     lock_acquired = False
     try:
-        redis = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=5.0)
+        redis = create_cache_redis()
         lock = redis.lock("bff:reaper:lock", timeout=300, blocking_timeout=0)
         lock_acquired = lock.acquire(blocking=False)
         if not lock_acquired:
@@ -1664,17 +1481,22 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
     try:
         from backtestforecast.config import get_settings as _gs
+        from backtestforecast.utils import create_cache_redis as _create_metric_redis
         from redis import Redis as _Redis
 
-        _r = _Redis.from_url(_gs().redis_url, decode_responses=True, socket_timeout=5)
+        _broker_r = _Redis.from_url(_gs().redis_url, decode_responses=True, socket_timeout=5)
         try:
             for q_name in ("research", "exports", "maintenance", "pipeline"):
-                depth = _r.llen(q_name)
+                depth = _broker_r.llen(q_name)
                 QUEUE_DEPTH.labels(queue=q_name).set(depth)
-            dlq_depth = _r.llen("bff:dead_letter_queue")
+        finally:
+            _broker_r.close()
+        _cache_r = _create_metric_redis()
+        try:
+            dlq_depth = _cache_r.llen("bff:dead_letter_queue")
             DLQ_DEPTH.set(dlq_depth)
         finally:
-            _r.close()
+            _cache_r.close()
     except Exception:
         logger.warning("reaper.queue_depth_unavailable", exc_info=True)
 
@@ -2183,7 +2005,9 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
                     kwargs=msg.task_kwargs_json,
                     queue=msg.queue,
                 )
+                from datetime import UTC, datetime as _dt_outbox
                 msg.status = "sent"
+                msg.completed_at = _dt_outbox.now(UTC)
                 sent += 1
                 OUTBOX_RECOVERED_TOTAL.labels(task_name=msg.task_name).inc()
                 logger.info(
@@ -2373,3 +2197,28 @@ def cleanup_stripe_orphan(
             cust_ok=cust_ok,
         )
         raise
+
+
+@celery_app.task(name="maintenance.expire_old_exports", base=BaseTaskWithDLQ, max_retries=1)
+def expire_old_exports(self):
+    """Transition succeeded exports past their expires_at to 'expired' status."""
+    from datetime import UTC, datetime
+    from sqlalchemy import update as sa_update
+
+    CELERY_TASKS_TOTAL.labels(task_name="maintenance.expire_old_exports", status="started").inc()
+    with create_worker_session() as session:
+        now = datetime.now(UTC)
+        result = session.execute(
+            sa_update(ExportJobModel)
+            .where(
+                ExportJobModel.status == "succeeded",
+                ExportJobModel.expires_at.isnot(None),
+                ExportJobModel.expires_at < now,
+            )
+            .values(status="expired", updated_at=now)
+        )
+        expired_count = result.rowcount
+        session.commit()
+        logger.info("expire_old_exports.completed", expired_count=expired_count)
+        CELERY_TASKS_TOTAL.labels(task_name="maintenance.expire_old_exports", status="succeeded").inc()
+        return {"expired_count": expired_count}

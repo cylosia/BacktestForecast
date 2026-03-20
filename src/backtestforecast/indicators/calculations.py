@@ -172,25 +172,33 @@ def macd(
         (i for i, v in enumerate(macd_line) if v is not None),
         len(values),
     )
-    macd_valid_indices = [first_valid + i for i, v in enumerate(macd_line[first_valid:]) if v is not None]
-    macd_seed = [macd_line[i] for i in macd_valid_indices]
 
-    if macd_seed and len(macd_valid_indices) >= 2:
-        expected_span = macd_valid_indices[-1] - macd_valid_indices[0] + 1
-        if len(macd_valid_indices) < expected_span:
-            gap_count = expected_span - len(macd_valid_indices)
+    if first_valid < len(values):
+        macd_filled: list[float] = []
+        last_good: float = 0.0
+        gap_count = 0
+        for i in range(first_valid, len(values)):
+            if macd_line[i] is not None:
+                last_good = macd_line[i]
+            else:
+                gap_count += 1
+            macd_filled.append(last_good)
+        if gap_count > 0:
             _logger.warning(
-                "MACD line contains %d None gap(s) within valid range [%d..%d]; "
-                "signal line may be inaccurate",
+                "MACD line contains %d None gap(s) in range [%d..%d]; "
+                "gaps filled with carry-forward for signal line accuracy",
                 gap_count,
-                macd_valid_indices[0],
-                macd_valid_indices[-1],
+                first_valid,
+                len(values) - 1,
             )
+        raw_signal = ema(macd_filled, signal_period)
+    else:
+        raw_signal = []
 
-    raw_signal = ema(macd_seed, signal_period)
     signal_line: list[float | None] = [None] * len(values)
-    for idx, sig_val in zip(macd_valid_indices, raw_signal):
-        signal_line[idx] = sig_val
+    for i, sig_val in enumerate(raw_signal):
+        if sig_val is not None:
+            signal_line[first_valid + i] = sig_val
     histogram: list[float | None] = [None] * len(values)
     for index in range(len(values)):
         if macd_line[index] is None or signal_line[index] is None:

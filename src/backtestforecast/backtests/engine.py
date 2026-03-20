@@ -21,7 +21,7 @@ from backtestforecast.backtests.types import (
     PositionSnapshot,
     TradeResult,
 )
-from backtestforecast.errors import DataUnavailableError, ValidationError
+from backtestforecast.errors import AppValidationError, DataUnavailableError
 from backtestforecast.market_data.types import DailyBar
 
 logger = structlog.get_logger(__name__)
@@ -39,17 +39,25 @@ _D100 = Decimal("100")
 
 
 _D_CACHE: dict[int | float, Decimal] = {
-    0: _D0, 1: Decimal("1"), -1: Decimal("-1"), 100: Decimal("100"),
-    0.0: _D0, 1.0: Decimal("1"), -1.0: Decimal("-1"),
+    0: _D0, 1: Decimal("1"), -1: Decimal("-1"), 100: _D100,
 }
+
+_D_CACHE_MAX = 4096
 
 
 def _D(v: float | int) -> Decimal:
-    """Convert a float/int to Decimal via string to avoid IEEE 754 artefacts."""
+    """Convert a float/int to Decimal via string to avoid IEEE 754 artefacts.
+
+    Results are cached (up to 4096 entries) because the same prices recur
+    across bars during mark-to-market and commission calculations.
+    """
     cached = _D_CACHE.get(v)
     if cached is not None:
         return cached
-    return Decimal(str(v))
+    result = Decimal(str(v))
+    if len(_D_CACHE) < _D_CACHE_MAX:
+        _D_CACHE[v] = result
+    return result
 
 
 class OptionsBacktestEngine:
@@ -76,7 +84,7 @@ class OptionsBacktestEngine:
 
         strategy = STRATEGY_REGISTRY.get(config.strategy_type)
         if strategy is None:
-            raise ValidationError(f"Unsupported strategy_type: {config.strategy_type}")
+            raise AppValidationError(f"Unsupported strategy_type: {config.strategy_type}")
 
         # FIXME(#98): Model early assignment risk for American-style options.
         # Deep ITM short legs near ex-dividend dates should be flagged.
@@ -110,9 +118,9 @@ class OptionsBacktestEngine:
         # of financial computation, not at storage.
 
         if config.start_date > config.end_date:
-            raise ValidationError("start_date must not be after end_date")
+            raise AppValidationError("start_date must not be after end_date")
         if config.account_size <= 0:
-            raise ValidationError("account_size must be positive")
+            raise AppValidationError("account_size must be positive")
 
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         _pre_filter_len = len(sorted_bars)
@@ -133,6 +141,7 @@ class OptionsBacktestEngine:
         cash = Decimal(str(config.account_size))
         peak_equity = cash
         position: OpenMultiLegPosition | None = None
+        realized_vol = self._estimate_realized_vol(sorted_bars)
         trades: list[TradeResult] = []
         equity_curve: list[EquityPointResult] = []
         evaluator = EntryRuleEvaluator(
@@ -230,6 +239,8 @@ class OptionsBacktestEngine:
                     build_kwargs: dict = {}
                     if config.custom_legs is not None:
                         build_kwargs["custom_legs"] = list(config.custom_legs)
+                    if realized_vol is not None:
+                        build_kwargs["realized_vol"] = realized_vol
                     candidate = strategy.build_position(
                         config,
                         bar,
@@ -348,7 +359,7 @@ class OptionsBacktestEngine:
             position = None
             equity = cash
             peak_equity = max(peak_equity, equity)
-            drawdown_pct = (peak_equity - equity) / peak_equity * _D100 if peak_equity else _D0
+            drawdown_pct = (peak_equity - equity) / peak_equity * _D100 if peak_equity > _D0 else _D0
             force_close_point = EquityPointResult(
                 trade_date=sorted_bars[-1].trade_date,
                 equity=equity,
@@ -443,7 +454,7 @@ class OptionsBacktestEngine:
                 ))
             missing_quote_tickers.append(leg.ticker)
             return leg.last_mid
-        if not math.isfinite(quote.mid_price) or quote.mid_price < 0:
+        if quote.mid_price is None or not math.isfinite(quote.mid_price) or quote.mid_price <= 0:
             missing_quote_tickers.append(leg.ticker)
             return leg.last_mid
         return quote.mid_price
@@ -549,27 +560,24 @@ class OptionsBacktestEngine:
         total_slippage = entry_slippage + exit_slippage
         net_pnl = gross_pnl - total_commissions - total_slippage
 
-        def _is_finite_d(v: Decimal) -> bool:
-            return v.is_finite()
-
         nan_fields: list[str] = []
         for name, val in [("gross_pnl", gross_pnl), ("net_pnl", net_pnl), ("exit_value_per_unit", exit_value_per_unit)]:
-            if not _is_finite_d(val):
+            if not val.is_finite():
                 logger.warning("engine.non_finite_trade_value", field=name, value=str(val), ticker=position.display_ticker)
                 nan_fields.append(name)
-        if not _is_finite_d(gross_pnl):
+        if not gross_pnl.is_finite():
             gross_pnl = _D0
-        if not _is_finite_d(net_pnl):
+        if not net_pnl.is_finite():
             net_pnl = _D0
-        if not _is_finite_d(exit_value_per_unit):
+        if not exit_value_per_unit.is_finite():
             exit_value_per_unit = _D0
-        if not _is_finite_d(total_commissions):
+        if not total_commissions.is_finite():
             nan_fields.append("total_commissions")
             total_commissions = _D0
-        if not _is_finite_d(total_slippage):
+        if not total_slippage.is_finite():
             nan_fields.append("total_slippage")
             total_slippage = _D0
-        if not _is_finite_d(cash_delta):
+        if not cash_delta.is_finite():
             nan_fields.append("cash_delta")
             cash_delta = _D0
         if nan_fields and warnings is not None and warning_codes is not None:
@@ -637,10 +645,15 @@ class OptionsBacktestEngine:
         if value is not None and value != 0.0:
             return float(value)
         if position.option_legs:
-            logger.warning(
-                "engine.missing_entry_underlying_close",
-                ticker=position.display_ticker,
-            )
+            strikes = [leg.strike_price for leg in position.option_legs if leg.strike_price > 0]
+            if strikes:
+                fallback = sum(strikes) / len(strikes)
+                logger.warning(
+                    "engine.missing_entry_underlying_close",
+                    ticker=position.display_ticker,
+                    fallback=fallback,
+                )
+                return fallback
         return 0.0
 
     @staticmethod
@@ -741,6 +754,19 @@ class OptionsBacktestEngine:
         if contract_type == "call":
             return max(_D0, _D(underlying_close) - _D(strike_price))
         return max(_D0, _D(strike_price) - _D(underlying_close))
+
+    @staticmethod
+    def _estimate_realized_vol(bars: list, lookback: int = 60) -> float | None:
+        """Estimate annualized realized volatility from recent close prices."""
+        closes = [b.close_price for b in bars[-lookback:] if b.close_price > 0]
+        if len(closes) < 20:
+            return None
+        log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes)) if closes[i - 1] > 0]
+        if len(log_returns) < 10:
+            return None
+        mean_r = sum(log_returns) / len(log_returns)
+        variance = sum((r - mean_r) ** 2 for r in log_returns) / (len(log_returns) - 1)
+        return math.sqrt(variance * 252)
 
     @staticmethod
     def _add_warning_once(

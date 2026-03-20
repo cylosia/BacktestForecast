@@ -11,7 +11,7 @@ from backtestforecast.billing.entitlements import (
     resolve_scanner_policy,
 )
 from backtestforecast.billing.urls import resolve_return_url
-from backtestforecast.errors import FeatureLockedError, ValidationError
+from backtestforecast.errors import AppValidationError, FeatureLockedError
 
 
 def test_inactive_subscription_state_downgrades_to_free_policy() -> None:
@@ -63,10 +63,10 @@ def test_billing_return_url_rejects_cross_origin_targets() -> None:
         == "https://app.backtestforecast.com/pricing"
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(AppValidationError):
         resolve_return_url("https://app.backtestforecast.com", "https://evil.example/portal")
 
 
 def test_billing_return_url_rejects_protocol_relative_urls() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(AppValidationError):
         resolve_return_url("https://app.backtestforecast.com", "//evil.example/phishing")

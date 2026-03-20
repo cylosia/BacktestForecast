@@ -21,6 +21,18 @@ def build_summary(
     All values are converted to float at this statistics boundary since
     summary metrics use ``math.sqrt`` and other float-only functions.
 
+    **Annualization conventions**
+
+    - Sharpe/Sortino: annualized using ``sqrt(252)`` (trading days), since
+      daily returns are computed from the equity curve which contains only
+      trading days.
+    - CAGR: annualized using ``365.25`` calendar days, since CAGR measures
+      calendar-time growth rate regardless of market open days.
+
+    These conventions are intentionally different and both correct for
+    their respective metrics. Do not "unify" them without understanding
+    why they differ.
+
     Break-even trades (net_pnl == 0) are excluded from both wins and losses.
     This can inflate win rate when many trades break even, as the effective
     sample size is reduced. Consider this when interpreting results.
@@ -69,11 +81,32 @@ def build_summary(
             })
 
     sharpe_ratio, sortino_ratio = _compute_sharpe_sortino(equity_curve, risk_free_rate, trade_count)
+    if sharpe_ratio is None and warnings is not None and trade_count > 0:
+        if trade_count < _MIN_TRADES_FOR_RATIOS:
+            warnings.append({
+                "code": "ratios_insufficient_trades",
+                "message": f"Sharpe and Sortino ratios are not reported because the backtest has only {trade_count} trades (minimum {_MIN_TRADES_FOR_RATIOS} required).",
+            })
+        elif len(equity_curve) < _MIN_EQUITY_POINTS_FOR_RATIOS:
+            warnings.append({
+                "code": "ratios_insufficient_data",
+                "message": f"Sharpe and Sortino ratios are not reported because the backtest has only {len(equity_curve)} equity data points (minimum {_MIN_EQUITY_POINTS_FOR_RATIOS} required).",
+            })
+        elif equity_curve and (equity_curve[-1].trade_date - equity_curve[0].trade_date).days < _MIN_CALENDAR_DAYS_FOR_RATIOS:
+            warnings.append({
+                "code": "ratios_insufficient_duration",
+                "message": f"Sharpe and Sortino ratios are not reported because the backtest spans fewer than {_MIN_CALENDAR_DAYS_FOR_RATIOS} calendar days.",
+            })
     cagr_pct = _compute_cagr(starting_equity, ending_equity, equity_curve, warnings=warnings)
 
     if cagr_pct is None and warnings is not None and equity_curve:
         calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
-        if calendar_days < 60:
+        if len(equity_curve) < _MIN_TRADING_DAYS_FOR_CAGR:
+            warnings.append({
+                "code": "cagr_insufficient_data",
+                "message": f"CAGR is not reported because the backtest has only {len(equity_curve)} trading day data points (minimum {_MIN_TRADING_DAYS_FOR_CAGR} required).",
+            })
+        elif calendar_days < 60:
             warnings.append({
                 "code": "cagr_insufficient_duration",
                 "message": f"CAGR is not reported because the backtest spans only {calendar_days} calendar days (minimum 60 required).",

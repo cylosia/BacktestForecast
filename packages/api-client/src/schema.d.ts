@@ -739,6 +739,27 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountDataExportResponse
+         * @description GDPR data portability export containing all user data.
+         */
+        AccountDataExportResponse: {
+            /** Backtests */
+            backtests: components["schemas"]["_GdprBacktest"][];
+            /** Export Jobs */
+            export_jobs: components["schemas"]["_GdprExportJob"][];
+            pagination: components["schemas"]["_GdprPagination"];
+            /** Scanner Jobs */
+            scanner_jobs: components["schemas"]["_GdprScannerJob"][];
+            /** Sweep Jobs */
+            sweep_jobs: components["schemas"]["_GdprSweepJob"][];
+            /** Symbol Analyses */
+            symbol_analyses: components["schemas"]["_GdprAnalysis"][];
+            /** Templates */
+            templates: components["schemas"]["_GdprTemplate"][];
+            totals: components["schemas"]["_GdprTotals"];
+            user: components["schemas"]["_GdprUserSummary"];
+        };
         /** AnalysisDetailResponse */
         AnalysisDetailResponse: {
             /** Close Price */
@@ -758,8 +779,8 @@ export interface components {
             error_code?: string | null;
             /** Error Message */
             error_message?: string | null;
-            /** Forecast Json */
-            forecast_json?: {
+            /** Forecast */
+            forecast?: {
                 [key: string]: unknown;
             } | null;
             /**
@@ -767,9 +788,9 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Landscape Json */
-            landscape_json?: components["schemas"]["LandscapeCell"][] | null;
-            regime_json?: components["schemas"]["RegimeDetail"] | null;
+            /** Landscape */
+            landscape?: components["schemas"]["LandscapeCell"][] | null;
+            regime?: components["schemas"]["RegimeDetail"] | null;
             /**
              * Stage
              * @enum {string}
@@ -777,15 +798,15 @@ export interface components {
             stage: "pending" | "regime" | "landscape" | "deep_dive" | "forecast";
             /** Started At */
             started_at?: string | null;
-            status: components["schemas"]["JobStatus"];
+            status: components["schemas"]["RunJobStatus"];
             /** Strategies Tested */
             strategies_tested: number;
             /** Symbol */
             symbol: string;
+            /** Top Results */
+            top_results?: components["schemas"]["AnalysisTopResult"][] | null;
             /** Top Results Count */
             top_results_count: number;
-            /** Top Results Json */
-            top_results_json?: components["schemas"]["AnalysisTopResult"][] | null;
         };
         /** AnalysisListResponse */
         AnalysisListResponse: {
@@ -838,7 +859,7 @@ export interface components {
             stage: "pending" | "regime" | "landscape" | "deep_dive" | "forecast";
             /** Started At */
             started_at?: string | null;
-            status: components["schemas"]["JobStatus"];
+            status: components["schemas"]["RunJobStatus"];
             /** Strategies Tested */
             strategies_tested: number;
             /** Symbol */
@@ -961,7 +982,7 @@ export interface components {
             max_holding_days: number;
             /**
              * Risk Free Rate
-             * @description Annualized risk-free rate used for Sharpe and Sortino ratio calculations.
+             * @description Annualized risk-free rate used for Sharpe and Sortino ratio calculations. Sourced from the run's persisted column or input snapshot. Null only when the value could not be determined (very old runs).
              */
             risk_free_rate?: string | null;
             /** Risk Per Trade Pct */
@@ -978,8 +999,8 @@ export interface components {
             target_dte: number;
             /** Trades */
             trades: components["schemas"]["BacktestTradeResponse"][];
-            /** Warnings Json */
-            warnings_json: {
+            /** Warnings */
+            warnings: {
                 [key: string]: unknown;
             }[];
         };
@@ -1033,6 +1054,11 @@ export interface components {
              */
             limit: number;
             /**
+             * Next Cursor
+             * @description Opaque cursor for keyset pagination. Pass as `cursor` on the next request to fetch the next page.
+             */
+            next_cursor?: string | null;
+            /**
              * Offset
              * @default 0
              */
@@ -1060,7 +1086,17 @@ export interface components {
             started_at?: string | null;
             status: components["schemas"]["RunJobStatus"];
         };
-        /** BacktestSummaryResponse */
+        /**
+         * BacktestSummaryResponse
+         * @description Backtest summary metrics.
+         *
+         *     DUAL-PURPOSE: This schema is used for BOTH ORM mapping (``from_attributes=True``
+         *     on BacktestRunDetailResponse) AND manual construction from JSON blobs
+         *     (scanner/sweep ``summary_json`` fields). Fields like ``decided_trades``
+         *     that don't exist on the ORM model will silently default to ``None``.
+         *     Do not add validators that assume ORM context — they will break the
+         *     JSON construction path.
+         */
         BacktestSummaryResponse: {
             /**
              * Average Dte At Open
@@ -1086,10 +1122,18 @@ export interface components {
             cagr_pct?: string | null;
             /** Calmar Ratio */
             calmar_ratio?: string | null;
+            /**
+             * Decided Trades
+             * @description Trades with non-zero net P&L. Win rate denominator. Equals trade_count minus break-even trades.
+             */
+            decided_trades?: number | null;
             /** Ending Equity */
             ending_equity: string;
-            /** Expectancy */
-            expectancy?: string | null;
+            /**
+             * Expectancy
+             * @default 0
+             */
+            expectancy: string;
             /**
              * Max Consecutive Losses
              * @default 0
@@ -1121,18 +1165,25 @@ export interface components {
             total_commissions: string;
             /** Total Net Pnl */
             total_net_pnl: string;
-            /** Total Roi Pct */
-            total_roi_pct?: string | null;
+            /**
+             * Total Roi Pct
+             * @default 0
+             */
+            total_roi_pct: string;
             /** Trade Count */
             trade_count: number;
-            /** Decided Trades - Trades with non-zero net P&L. Win rate denominator. Equals trade_count minus break-even trades. */
-            decided_trades?: number | null;
-            /** Win Rate */
-            win_rate?: string | null;
+            /**
+             * Win Rate
+             * @default 0
+             */
+            win_rate: string;
         };
         /** BacktestTradeResponse */
         BacktestTradeResponse: {
-            /** Detail Json */
+            /**
+             * Detail Json
+             * @description Trade leg details. May be large for multi-leg strategies.
+             */
             detail_json?: {
                 [key: string]: unknown;
             };
@@ -1143,7 +1194,10 @@ export interface components {
              * Format: date
              */
             entry_date: string;
-            /** Entry Mid - Per-share position value (net premium / contract multiplier). NOT the raw exchange mid-price. Multiply by 100 × quantity for total cost. */
+            /**
+             * Entry Mid
+             * @description Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value × 100 × quantity.
+             */
             entry_mid: string;
             /** Entry Reason */
             entry_reason: string;
@@ -1154,7 +1208,10 @@ export interface components {
              * Format: date
              */
             exit_date: string;
-            /** Exit Mid - Per-share position value at exit. Same convention as entry_mid. */
+            /**
+             * Exit Mid
+             * @description Per-unit position value at exit divided by 100. Same convention as entry_mid.
+             */
             exit_mid: string;
             /** Exit Reason */
             exit_reason: string;
@@ -1167,9 +1224,15 @@ export interface components {
             expiration_date: string;
             /** Gross Pnl */
             gross_pnl: string;
-            /** Holding Period Days - Calendar days between entry and exit dates. */
+            /**
+             * Holding Period Days
+             * @description Calendar days between entry and exit dates.
+             */
             holding_period_days: number;
-            /** Holding Period Trading Days - Trading days (market-open days) held. Null for wheel strategy. */
+            /**
+             * Holding Period Trading Days
+             * @description Trading days (market-open days) held. None for wheel strategy.
+             */
             holding_period_trading_days?: number | null;
             /**
              * Id
@@ -1241,16 +1304,14 @@ export interface components {
         };
         /** CheckoutSessionResponse */
         CheckoutSessionResponse: {
-            /** Billing Interval */
-            billing_interval: string;
+            billing_interval: components["schemas"]["BillingInterval"];
             /** Checkout Url */
             checkout_url: string;
             /** Expires At */
             expires_at?: string | null;
             /** Session Id */
             session_id: string;
-            /** Tier */
-            tier: string;
+            tier: components["schemas"]["PlanTier"];
         };
         /** CompareBacktestsRequest */
         CompareBacktestsRequest: {
@@ -1302,6 +1363,7 @@ export interface components {
             /**
              * End Date
              * Format: date
+             * @description Backtest end date. Must be after start_date.
              */
             end_date: string;
             /** Entry Rules */
@@ -1329,6 +1391,7 @@ export interface components {
             /**
              * Start Date
              * Format: date
+             * @description Backtest start date. Maximum window is 1825 days (5 years) from end_date.
              */
             start_date: string;
             /**
@@ -1339,7 +1402,10 @@ export interface components {
             /** @description Optional overrides for strike placement and spread width */
             strategy_overrides?: components["schemas"]["StrategyOverrides"] | null;
             strategy_type: components["schemas"]["StrategyType"];
-            /** Symbol */
+            /**
+             * Symbol
+             * @description Ticker symbol (e.g., AAPL, SPY). Uppercase letters, dots, and slashes allowed.
+             */
             symbol: string;
             /** Target Dte */
             target_dte: number;
@@ -1654,7 +1720,11 @@ export interface components {
             /** Pipeline Run Id */
             pipeline_run_id?: string | null;
             pipeline_stats?: components["schemas"]["PipelineStatsResponse"] | null;
-            status: components["schemas"]["JobStatus"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "no_data";
             /** Trade Date */
             trade_date?: string | null;
         };
@@ -1752,8 +1822,7 @@ export interface components {
             error_message?: string | null;
             /** Expires At */
             expires_at?: string | null;
-            /** Export Format */
-            export_format: string;
+            export_format: components["schemas"]["ExportFormat"];
             /** File Name */
             file_name: string;
             /**
@@ -1765,15 +1834,14 @@ export interface components {
             mime_type: string;
             /** Sha256 Hex */
             sha256_hex?: string | null;
-            /** Size Bytes */
-            size_bytes?: number | null;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
             /** Started At */
             started_at?: string | null;
             status: components["schemas"]["JobStatus"];
-            /** Warnings */
-            warnings?: {
-                [key: string]: unknown;
-            }[] | null;
         };
         /** FeatureAccessResponse */
         FeatureAccessResponse: {
@@ -1835,6 +1903,11 @@ export interface components {
              * @default true
              */
             scanner: boolean;
+            /**
+             * Sweeps
+             * @default true
+             */
+            sweeps: boolean;
         };
         /** ForecastEnvelopeResponse */
         ForecastEnvelopeResponse: {
@@ -2167,8 +2240,7 @@ export interface components {
             id: string;
             /** Recommendations Produced */
             recommendations_produced: number;
-            /** Status */
-            status: string;
+            status: components["schemas"]["RunJobStatus"];
             /** Symbols Screened */
             symbols_screened: number;
             /**
@@ -2341,13 +2413,13 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Idempotency Key */
-            idempotency_key?: string | null;
             /** Job Kind */
             job_kind: string;
             mode: components["schemas"]["ScannerMode"];
             /** Name */
             name: string | null;
+            /** Pipeline Run Id */
+            pipeline_run_id?: string | null;
             plan_tier_snapshot: components["schemas"]["PlanTier"];
             /**
              * Ranking Version
@@ -2363,8 +2435,8 @@ export interface components {
             /** Started At */
             started_at?: string | null;
             status: components["schemas"]["RunJobStatus"];
-            /** Warnings Json */
-            warnings_json?: {
+            /** Warnings */
+            warnings?: {
                 [key: string]: unknown;
             }[];
         };
@@ -2647,12 +2719,12 @@ export interface components {
             /** @default grid */
             mode: components["schemas"]["SweepMode"];
             plan_tier_snapshot: components["schemas"]["PlanTier"];
-            /** Prefetch Summary Json */
-            prefetch_summary_json?: {
+            /** Prefetch Summary */
+            prefetch_summary?: {
                 [key: string]: unknown;
             } | null;
-            /** Request Snapshot Json */
-            request_snapshot_json?: {
+            /** Request Snapshot */
+            request_snapshot?: {
                 [key: string]: unknown;
             };
             /** Result Count */
@@ -2662,8 +2734,8 @@ export interface components {
             status: components["schemas"]["RunJobStatus"];
             /** Symbol */
             symbol: string;
-            /** Warnings Json */
-            warnings_json?: {
+            /** Warnings */
+            warnings?: {
                 [key: string]: unknown;
             }[];
         };
@@ -2746,9 +2818,7 @@ export interface components {
             strategy_type: string;
             summary: components["schemas"]["BacktestSummaryResponse"];
             /** Trades Json */
-            trades_json?: {
-                [key: string]: unknown;
-            }[];
+            trades_json?: components["schemas"]["TradeJsonResponse"][];
             /**
              * Trades Truncated
              * @default false
@@ -2826,7 +2896,7 @@ export interface components {
         };
         /** TemplateResponse */
         TemplateResponse: {
-            config_json: components["schemas"]["TemplateConfig-Output"];
+            config: components["schemas"]["TemplateConfig-Output"];
             /**
              * Created At
              * Format: date-time
@@ -2858,7 +2928,10 @@ export interface components {
          *     database primary key.
          */
         TradeJsonResponse: {
-            /** Detail Json */
+            /**
+             * Detail Json
+             * @description Trade leg details. May be large for multi-leg strategies.
+             */
             detail_json?: {
                 [key: string]: unknown;
             };
@@ -2869,7 +2942,10 @@ export interface components {
              * Format: date
              */
             entry_date: string;
-            /** Entry Mid - Per-share position value (net premium / contract multiplier). NOT the raw exchange mid-price. */
+            /**
+             * Entry Mid
+             * @description Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price.
+             */
             entry_mid: string;
             /** Entry Reason */
             entry_reason: string;
@@ -2880,7 +2956,10 @@ export interface components {
              * Format: date
              */
             exit_date: string;
-            /** Exit Mid - Per-share position value at exit. Same convention as entry_mid. */
+            /**
+             * Exit Mid
+             * @description Per-unit position value at exit divided by 100. Same convention as entry_mid.
+             */
             exit_mid: string;
             /** Exit Reason */
             exit_reason: string;
@@ -2893,9 +2972,15 @@ export interface components {
             expiration_date: string;
             /** Gross Pnl */
             gross_pnl: string;
-            /** Holding Period Days - Calendar days between entry and exit dates. */
+            /**
+             * Holding Period Days
+             * @description Calendar days between entry and exit dates.
+             */
             holding_period_days: number;
-            /** Holding Period Trading Days - Trading days (market-open days) held. */
+            /**
+             * Holding Period Trading Days
+             * @description Trading days (market-open days) held.
+             */
             holding_period_trading_days?: number | null;
             /** Net Pnl */
             net_pnl: string;
@@ -3005,6 +3090,137 @@ export interface components {
             mode: components["schemas"]["SpreadWidthMode"];
             /** Value */
             value: number | string;
+        };
+        /** _GdprAnalysis */
+        _GdprAnalysis: {
+            /** Created At */
+            created_at: string | null;
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Strategies Tested */
+            strategies_tested: number;
+            /** Symbol */
+            symbol: string;
+            /** Top Results Count */
+            top_results_count: number;
+        };
+        /** _GdprBacktest */
+        _GdprBacktest: {
+            /** Created At */
+            created_at: string | null;
+            /** Date From */
+            date_from: string | null;
+            /** Date To */
+            date_to: string | null;
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Strategy Type */
+            strategy_type: string;
+            /** Symbol */
+            symbol: string;
+            /** Total Net Pnl */
+            total_net_pnl: string | null;
+            /** Trade Count */
+            trade_count: number;
+        };
+        /** _GdprExportJob */
+        _GdprExportJob: {
+            /** Backtest Run Id */
+            backtest_run_id: string | null;
+            /** Created At */
+            created_at: string | null;
+            /** Export Format */
+            export_format: string;
+            /** File Name */
+            file_name: string;
+            /** Id */
+            id: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Status */
+            status: string;
+        };
+        /** _GdprPagination */
+        _GdprPagination: {
+            /** Backtests Offset */
+            backtests_offset: number;
+            /** Hint */
+            hint: string;
+            /** Limit */
+            limit: number;
+        };
+        /** _GdprScannerJob */
+        _GdprScannerJob: {
+            /** Created At */
+            created_at: string | null;
+            /** Id */
+            id: string;
+            /** Mode */
+            mode: string;
+            /** Recommendation Count */
+            recommendation_count: number;
+            /** Status */
+            status: string;
+        };
+        /** _GdprSweepJob */
+        _GdprSweepJob: {
+            /** Created At */
+            created_at: string | null;
+            /** Id */
+            id: string;
+            /** Result Count */
+            result_count: number;
+            /** Status */
+            status: string;
+            /** Symbol */
+            symbol: string;
+        };
+        /** _GdprTemplate */
+        _GdprTemplate: {
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            };
+            /** Created At */
+            created_at: string | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Strategy Type */
+            strategy_type: string;
+        };
+        /** _GdprTotals */
+        _GdprTotals: {
+            /** Backtests */
+            backtests: number;
+            /** Export Jobs */
+            export_jobs: number;
+            /** Scanner Jobs */
+            scanner_jobs: number;
+            /** Sweep Jobs */
+            sweep_jobs: number;
+            /** Symbol Analyses */
+            symbol_analyses: number;
+            /** Templates */
+            templates: number;
+        };
+        /** _GdprUserSummary */
+        _GdprUserSummary: {
+            /** Clerk User Id */
+            clerk_user_id: string;
+            /** Created At */
+            created_at: string | null;
+            /** Email */
+            email: string | null;
+            /** Id */
+            id: string;
+            /** Plan Tier */
+            plan_tier: string;
         };
         /**
          * _Unset
@@ -3339,9 +3555,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["AccountDataExportResponse"];
                 };
             };
             /** @description Authentication required or session expired. */
@@ -3787,6 +4001,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                /** @description Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored. */
+                cursor?: string | null;
             };
             header?: {
                 authorization?: string | null;

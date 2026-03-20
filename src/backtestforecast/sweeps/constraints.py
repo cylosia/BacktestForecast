@@ -113,24 +113,28 @@ def repair(individual: Individual) -> Individual:
         idx = random.randrange(len(option_legs))
         option_legs[idx]["side"] = "long" if option_legs[idx]["side"] == "short" else "short"
 
-    max_repair_iterations = 200
-    _repair_iter = 0
-    while _has_cancelling_legs(option_legs):
-        _repair_iter += 1
-        if _repair_iter > max_repair_iterations:
-            import structlog
-            structlog.get_logger("sweeps.constraints").warning(
-                "repair.iteration_limit_reached",
-                max_iterations=max_repair_iterations,
-            )
+    _max_repair = 50
+    for _ in range(_max_repair):
+        if not _has_cancelling_legs(option_legs):
             break
-        for leg in option_legs:
-            if leg["side"] == "long":
-                leg["strike_offset"] = leg.get("strike_offset", 0) + random.choice([-1, 1])
-                leg["strike_offset"] = max(-20, min(20, leg["strike_offset"]))
+        for i, a in enumerate(option_legs):
+            repaired = False
+            for b in option_legs[i + 1:]:
+                if (
+                    a["contract_type"] == b["contract_type"]
+                    and a.get("strike_offset", 0) == b.get("strike_offset", 0)
+                    and a.get("expiration_offset", 0) == b.get("expiration_offset", 0)
+                    and a["side"] != b["side"]
+                    and Decimal(str(a.get("quantity_ratio", 1))) == Decimal(str(b.get("quantity_ratio", 1)))
+                ):
+                    target = a if a["side"] == "long" else b
+                    offset = target.get("strike_offset", 0)
+                    new_offset = offset + random.choice([-2, -1, 1, 2])
+                    target["strike_offset"] = max(-20, min(20, new_offset))
+                    repaired = True
+                    break
+            if repaired:
                 break
-        else:
-            break
 
     return individual
 

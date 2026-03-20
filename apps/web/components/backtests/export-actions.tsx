@@ -59,6 +59,7 @@ export function ExportActions({
   const [busyFormat, setBusyFormat] = useState<ExportFormat | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
+  const [requiredTier, setRequiredTier] = useState<string | undefined>();
   const mountedRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
   const revokeTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -164,7 +165,7 @@ export function ExportActions({
       const exportJob = await createExport(token, {
         run_id: runId,
         format,
-        idempotency_key: `${runId}:${format}`,
+        idempotency_key: crypto.randomUUID(),
       }, controller.signal);
 
       if (controller.signal.aborted) return;
@@ -183,8 +184,10 @@ export function ExportActions({
             ? error.message
             : "Export could not be completed.";
       const code = error instanceof ApiError ? error.code : undefined;
+      const reqTier = error instanceof ApiError ? error.requiredTier : undefined;
       setMessage(nextMessage);
       setErrorCode(code);
+      setRequiredTier(reqTier);
     } finally {
       setBusyFormat(null);
     }
@@ -219,7 +222,7 @@ export function ExportActions({
         })}
       </div>
       {message && isPlanLimitError(errorCode) ? (
-        <UpgradePrompt message={message} />
+        <UpgradePrompt message={message} requiredTier={requiredTier} />
       ) : message ? (
         <p className="flex items-center gap-2 text-sm text-destructive">
           <Download className="h-4 w-4" />

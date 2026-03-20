@@ -24,6 +24,10 @@ class Regime(str, Enum):
     BULLISH = "bullish"
     BEARISH = "bearish"
     NEUTRAL = "neutral"
+    # These labels use realized-vol rank as a proxy for implied vol. The proxy
+    # tracks actual IV closely for liquid underlyings but can diverge during
+    # vol risk-premium compression or expansion. See pipeline/regime.py comment
+    # at the iv_rank_proxy computation for details.
     HIGH_IV = "high_iv"
     LOW_IV = "low_iv"
     TRENDING = "trending"
@@ -103,7 +107,9 @@ def classify_regime(
     if vol_20 is not None and not math.isfinite(vol_20):
         vol_20 = None
 
-    # IV rank proxy: where current 20-day realized vol sits in its 252-day range
+    # Realized-vol rank proxy for IV: where current 20-day HV sits in its
+    # 252-day range. This correlates with IV rank for liquid underlyings but
+    # can diverge when the vol risk premium contracts or expands.
     vol_values = [v for v in vol_20_values[-252:] if v is not None]
     if len(vol_values) >= 60 and vol_20 is not None:
         vol_min = min(vol_values)
@@ -125,7 +131,7 @@ def classify_regime(
     else:
         regimes.add(Regime.NEUTRAL)
 
-    # Volatility
+    # Volatility (realized vol rank as proxy for IV — see Regime enum comment)
     if iv_rank_proxy > 60:
         regimes.add(Regime.HIGH_IV)
     elif iv_rank_proxy < 30:
@@ -171,12 +177,12 @@ def classify_regime(
 def _daily_returns(closes: list[float]) -> list[float]:
     """Compute daily returns as raw decimals (0.02 = 2% gain).
 
-    Returns a list of length ``len(closes) - 1`` (no dummy element for
-    the first close).  Note: forecasts/analog.py uses percentage format
-    (2.0 = 2% gain).  These conventions are independent and should not
-    be mixed.
+    Returns a list of length ``len(closes)`` with a leading 0.0 for the
+    first close (no prior bar to compute a return from).  This keeps the
+    output aligned index-for-index with other indicator series derived
+    from ``closes``.
     """
-    returns: list[float] = []
+    returns: list[float] = [0.0]
     for i in range(1, len(closes)):
         if closes[i - 1] > 0:
             returns.append((closes[i] - closes[i - 1]) / closes[i - 1])

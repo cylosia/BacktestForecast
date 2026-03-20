@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 
@@ -281,16 +281,23 @@ class HistoricalAnalogForecaster:
             f"with a median of {median_return:.2f}% and {positive_rate:.1f}% positive analogs; this {alignment}."
         )
 
-    _SMALL_HORIZON_LOOKUP = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
-
     @staticmethod
-    def _calendar_to_trading_days(calendar_days: int) -> int:
+    def _calendar_to_trading_days(calendar_days: int, reference_date: date | None = None) -> int:
+        """Convert calendar days to trading days.
+
+        When *reference_date* is provided and the horizon is <= 30 calendar
+        days, counts actual trading days using the market holiday calendar.
+        Otherwise uses the standard 252/365 approximation.
+        """
         if calendar_days <= 0:
             return 0
-        if calendar_days in HistoricalAnalogForecaster._SMALL_HORIZON_LOOKUP:
-            return HistoricalAnalogForecaster._SMALL_HORIZON_LOOKUP[calendar_days]
+        if reference_date is not None and calendar_days <= 30:
+            from backtestforecast.utils.dates import trading_days_in_range
+            end = reference_date + timedelta(days=calendar_days)
+            count = trading_days_in_range(reference_date, end)
+            return max(1, count)
         weekday_days = round(calendar_days * 5 / 7)
-        estimated_holidays = calendar_days * 9.0 / 365.0  # ~9 NYSE holidays per year
+        estimated_holidays = calendar_days * 9.0 / 365.0
         return max(1, round(weekday_days - estimated_holidays))
 
     _QUANT = Decimal("0.0001")

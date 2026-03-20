@@ -33,23 +33,39 @@ def list_exports(
     db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+    cursor: Annotated[str | None, Query(max_length=200)] = None,
     settings: Settings = Depends(get_settings),
 ) -> ExportJobListResponse:
-    # Entitlement not checked on read: users retain access to past exports
-    # even after downgrade, consistent with backtests router policy.
     get_rate_limiter().check(
         bucket="exports:read",
         actor_key=str(user.id),
         limit=settings.export_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
+    from backtestforecast.utils import decode_cursor, encode_cursor
+
+    cursor_before = None
+    if cursor:
+        cursor_before = decode_cursor(cursor)
+        if cursor_before is None:
+            from backtestforecast.errors import ValidationError
+            raise ValidationError("Invalid pagination cursor.")
+        offset = 0
+
     with ExportService(db) as service:
-        jobs, total = service.exports.list_for_user_with_count(user.id, limit=limit, offset=offset)
+        jobs, total = service.exports.list_for_user_with_count(
+            user.id, limit=limit + 1, offset=offset, cursor_before=cursor_before,
+        )
+        has_next = len(jobs) > limit
+        if has_next:
+            jobs = jobs[:limit]
+        next_cursor = encode_cursor(jobs[-1].created_at) if has_next and jobs else None
         return ExportJobListResponse(
             items=[service.to_response(j) for j in jobs],
             total=total,
             offset=offset,
             limit=limit,
+            next_cursor=next_cursor,
         )
 
 
@@ -226,9 +242,12 @@ def download_export(
                     "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
                     "X-Accel-Buffering": "no",
                     "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-store, no-cache, must-revalidate",
+                    "Transfer-Encoding": "chunked",
                 }
-                if content_length is not None:
+                if content_length is not None and content_length <= 5 * 1024 * 1024:
                     headers["Content-Length"] = str(content_length)
+                    del headers["Transfer-Encoding"]
 
                 _CHUNK_SIZE = 32_768  # 32 KB
                 _STREAM_TIMEOUT_SECONDS = 300  # 5 minutes
@@ -240,12 +259,14 @@ def download_export(
                         while True:
                             elapsed = _time.monotonic() - stream_start
                             if elapsed > _STREAM_TIMEOUT_SECONDS:
-                                logger.warning(
+                                logger.error(
                                     "export.stream_timeout",
                                     export_job_id=str(export_job_id),
                                     elapsed_seconds=round(elapsed, 1),
                                 )
-                                break
+                                raise TimeoutError(
+                                    f"S3 stream exceeded {_STREAM_TIMEOUT_SECONDS}s timeout"
+                                )
                             chunk = body.read(_CHUNK_SIZE)
                             if not chunk:
                                 break
@@ -288,15 +309,31 @@ def download_export(
             raise NotFoundError("Export file is not available.")
 
         if len(content) > _MAX_EXPORT_SIZE_BYTES:
-            from backtestforecast.errors import ValidationError
-            raise ValidationError("Export file exceeds maximum allowed size.")
+            from backtestforecast.errors import AppValidationError
+            raise AppValidationError("Export file exceeds maximum allowed size.")
+
+        if export_job.sha256_hex:
+            import hashlib
+            actual_hash = hashlib.sha256(content).hexdigest()
+            if actual_hash != export_job.sha256_hex:
+                logger.error(
+                    "export.integrity_check_failed",
+                    export_job_id=str(export_job_id),
+                    expected_sha256=export_job.sha256_hex[:16],
+                    actual_sha256=actual_hash[:16],
+                )
+                from backtestforecast.errors import ExternalServiceError
+                raise ExternalServiceError("Export file integrity check failed. Please re-export.")
 
         headers = {
             "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
             "Content-Length": str(len(content)),
             "X-Accel-Buffering": "no",
             "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store, no-cache, must-revalidate",
         }
+        if export_job.sha256_hex:
+            headers["ETag"] = f'"{export_job.sha256_hex[:32]}"'
 
         _FALLBACK_CHUNK_SIZE = 32_768  # 32 KB
 

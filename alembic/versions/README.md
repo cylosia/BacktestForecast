@@ -48,8 +48,73 @@ alembic downgrade base
 | `daily_recommendations` | Ranked picks from the nightly pipeline |
 | `symbol_analyses` | Deep single-symbol analysis jobs |
 
+## Migration Branch Note
+
+The migration graph contains one branch that diverges from `20260318_0026`
+and merges back at `20260319_0034`:
+
+```
+20260318_0026 ─┬── 20260319_0026 → … → 20260319_0033 ──┐
+               └── 20260318_0027 → 0024_heartbeat ──────┘→ 20260319_0034 → … → HEAD
+```
+
+- **Main chain:** `0026` → `20260319_0026` → … → `0033`
+- **Branch:** `0026` → `20260318_0027` (GIN indexes) → `0024_heartbeat` (stub)
+- **Merge:** `20260319_0034` (merges `0033` + `0024_heartbeat`)
+
+Running `alembic upgrade head` traverses both paths to the merge point
+automatically. Always use `alembic upgrade head` (not a specific revision)
+in deployment scripts.
+
+## Additional Tables (Post-Baseline)
+
+| Table | Migration | Description |
+|-------|-----------|-------------|
+| `stripe_events` | 0002 | Stripe webhook event deduplication |
+| `outbox_messages` | 0012 | Transactional outbox for reliable Celery dispatch |
+| `sweep_jobs` | 0006 | Parameter sweep job lifecycle |
+| `sweep_results` | 0006 | Ranked results from parameter sweeps |
+| `task_results` | 0037 | Structured task outcome tracking |
+
 ## Trigger
 
 The `set_updated_at()` PostgreSQL trigger function is applied to all tables with an
 `updated_at` column. It fires `BEFORE UPDATE` and sets `updated_at = NOW()`,
 ensuring accuracy even for direct SQL updates that bypass the ORM's `onupdate`.
+
+## Migration Squash Procedure
+
+With 47 migrations accumulated during rapid development, fresh deployments
+take longer than necessary. To squash into a new consolidated baseline:
+
+```bash
+# 1. Verify current state on a throwaway database
+alembic upgrade head
+alembic check  # must report "No new upgrade operations detected"
+
+# 2. Dump the current schema (after all migrations applied)
+pg_dump --schema-only --no-owner --no-privileges backtestforecast > schema_snapshot.sql
+
+# 3. Create a new baseline migration
+alembic revision -m "consolidated_baseline_v2"
+
+# 4. Replace upgrade() with the full CREATE TABLE statements from schema_snapshot.sql
+#    Include all tables, indexes, constraints, triggers, and the set_updated_at() function.
+#    Set down_revision = None.
+
+# 5. Archive old migration files
+mkdir -p alembic/versions/_archived
+mv alembic/versions/2026031*.py alembic/versions/_archived/
+
+# 6. Stamp existing databases (they already have the schema)
+alembic stamp <new_revision_id>
+
+# 7. Verify both paths work
+#    Fresh database: alembic upgrade head
+#    Existing database: alembic current (should show new revision)
+```
+
+**IMPORTANT**: Only squash when:
+- All environments (dev, staging, production) are at the same revision
+- No pending migrations are in flight
+- You have a tested rollback plan

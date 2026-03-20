@@ -8,12 +8,26 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(table: str, column: str) -> bool:
+    bind = op.get_bind()
+    row = bind.execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = :tbl AND column_name = :col"
+        ),
+        {"tbl": table, "col": column},
+    ).fetchone()
+    return row is not None
+
+
 def upgrade() -> None:
-    op.add_column(
-        "backtest_runs",
-        sa.Column("risk_free_rate", sa.Numeric(6, 4), nullable=True),
-    )
+    if not _column_exists("backtest_runs", "risk_free_rate"):
+        op.add_column(
+            "backtest_runs",
+            sa.Column("risk_free_rate", sa.Numeric(6, 4), nullable=True),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("backtest_runs", "risk_free_rate")
+    if _column_exists("backtest_runs", "risk_free_rate"):
+        op.drop_column("backtest_runs", "risk_free_rate")

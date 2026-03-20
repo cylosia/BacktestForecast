@@ -30,17 +30,22 @@ DOUBLE_DIAGONAL_MARGIN_FACTOR = 0.50  # fraction of naked margin used for double
 
 
 def _deep_itm_call_strike(strikes: list[float], underlying_close: float) -> float:
-    """Select a deep ITM call strike — 2 increments below spot, or the lowest available.
+    """Select a deep ITM call strike targeting ~70-80 delta (roughly 10% below spot).
 
-    Raises DataUnavailableError when no in-the-money strikes exist, because
-    a PMCC with an OTM long leg is structurally invalid (unlimited risk).
+    Uses the deepest available ITM strike that is at least 5% below the
+    underlying. Falls back to 2 strikes below if nothing reaches that
+    threshold. Raises DataUnavailableError when no ITM strikes exist.
     """
     below = sorted([s for s in strikes if s < underlying_close])
+    if not below:
+        raise DataUnavailableError("No deep ITM call strike available for PMCC — all strikes are at or above the underlying price.")
+    target = underlying_close * 0.90
+    deep_candidates = [s for s in below if s <= underlying_close * 0.95]
+    if deep_candidates:
+        return min(deep_candidates, key=lambda s: abs(s - target))
     if len(below) >= 2:
         return below[-2]
-    if below:
-        return below[-1]
-    raise DataUnavailableError("No deep ITM call strike available for PMCC — all strikes are at or above the underlying price.")
+    return below[-1]
 
 
 @dataclass(frozen=True, slots=True)

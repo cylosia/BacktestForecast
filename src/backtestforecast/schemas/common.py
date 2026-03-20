@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from enum import Enum, StrEnum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -9,27 +9,34 @@ from pydantic import BaseModel, Field
 _SENSITIVE_PATTERNS = [
     re.compile(r"Traceback \(most recent call"),
     re.compile(
-        r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b.{0,2000}\b(FROM|INTO|SET|TABLE|WHERE|VALUES|INDEX)\b",
+        r"\b(SELECT|INSERT|UPDATE|DELETE)\b\s+.{0,200}\b(FROM|INTO|SET|TABLE|WHERE|VALUES)\b",
         re.IGNORECASE | re.DOTALL,
     ),
+    re.compile(
+        r"\b(DROP|ALTER|CREATE|TRUNCATE)\b\s+(TABLE|INDEX|CONSTRAINT|DATABASE|SCHEMA)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"psycopg|sqlalchemy\.exc|SQLSTATE|pg_catalog", re.IGNORECASE),
-    re.compile(r"[A-Za-z]:\\(?:[^\s\\]+\\){2,}[^\s]*|/(?:home|usr|var|tmp|etc)/[^\s]+"),
+    re.compile(r"[A-Za-z]:\\(?:[^\s\\]+\\){2,}[^\s]*|/(?:home|usr|var|tmp|etc|app)/[^\s]+"),
     re.compile(r"https?://(?:localhost|127\.0\.0\.1|10\.\d+|172\.(?:1[6-9]|2\d|3[01])|192\.168)[^\s]*"),
-    re.compile(r"redis(?:s)?://[^\s]+", re.IGNORECASE),
+    re.compile(r"(?:redis(?:s)?|postgresql(?:\+\w+)?|mysql(?:\+\w+)?|sqlite)://[^\s]+", re.IGNORECASE),
     re.compile(r"\b(password|secret|token|api_key|bearer|authorization)\b.*[:=]\s*\S+", re.IGNORECASE),
     re.compile(r"\b(sk_live_|sk_test_|pk_live_|pk_test_|whsec_)\w+", re.IGNORECASE),
 ]
+
+_SANITIZE_MAX_INPUT = 2000
 
 
 def sanitize_error_message(msg: str | None) -> str | None:
     """Redact potentially sensitive details, then truncate error messages."""
     if msg is None:
         return None
+    check = msg[:_SANITIZE_MAX_INPUT]
     for pattern in _SENSITIVE_PATTERNS:
-        if pattern.search(msg):
+        if pattern.search(check):
             return "An internal error occurred."
-    if len(msg) > 500:
-        msg = msg[:500] + "..."
+    if len(msg) > 300:
+        msg = msg[:300] + "..."
     return msg
 
 
@@ -58,6 +65,12 @@ class PlanTier(StrEnum):
     PREMIUM = "premium"
 
 
+STRIPE_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset({
+    "incomplete", "incomplete_expired", "trialing", "active",
+    "past_due", "canceled", "unpaid", "paused",
+})
+
+
 class QuotaErrorDetail(BaseModel):
     """Extra fields attached to 403 quota_exceeded / feature_locked errors."""
     current_tier: str | None = None
@@ -74,7 +87,7 @@ class ErrorDetail(BaseModel):
     )
     details: list[dict[str, object]] | None = Field(
         default=None,
-        max_length=20,
+        max_length=50,
         description="Present on 422 validation errors with per-field error descriptions.",
     )
 

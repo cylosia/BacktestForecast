@@ -76,7 +76,44 @@ def run_migrations_online() -> None:
             connection.execute(text("SELECT pg_advisory_unlock(2817513)"))
 
 
+def run_migrations_online_autocommit() -> None:
+    """Run migrations outside a transaction block (autocommit mode).
+
+    Required for DDL that cannot run inside a transaction, such as
+    ``CREATE INDEX CONCURRENTLY``.  Invoke via::
+
+        ALEMBIC_AUTOCOMMIT=1 alembic upgrade head
+
+    Individual migrations must be idempotent when using this mode,
+    since there is no transaction to roll back on failure.
+    """
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        connection.execute(text("SELECT pg_advisory_lock(2817513)"))
+        try:
+            connection = connection.execution_options(isolation_level="AUTOCOMMIT")
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                compare_type=True,
+                compare_server_default=True,
+                transaction_per_migration=True,
+            )
+            context.run_migrations()
+        finally:
+            connection.execute(text("SELECT pg_advisory_unlock(2817513)"))
+
+
+import os
+
 if context.is_offline_mode():
     run_migrations_offline()
+elif os.environ.get("ALEMBIC_AUTOCOMMIT", "").strip() == "1":
+    run_migrations_online_autocommit()
 else:
     run_migrations_online()

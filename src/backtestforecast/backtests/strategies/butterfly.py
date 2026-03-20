@@ -68,8 +68,8 @@ class ButterflyStrategy(StrategyDefinition):
         # moves far away from center strike). Max profit = narrower wing width
         # minus debit paid (underlying pins exactly at center strike at
         # expiration). If opened for a credit (unusual, asymmetric strikes):
-        # max loss = 0 (credit covers any adverse outcome within the wings),
-        # max profit = wing width + credit received.
+        # max loss = wider wing width minus credit received,
+        # max profit = narrower wing width + credit received.
         if entry_value_per_unit >= 0:
             capital_per_unit = entry_value_per_unit
             max_loss_per_unit = entry_value_per_unit
@@ -77,9 +77,8 @@ class ButterflyStrategy(StrategyDefinition):
         else:
             credit = abs(entry_value_per_unit)
             wider_wing = max(left_width, right_width)
-            tail_risk = max(wider_wing - wing_width - credit, 0.0)
             capital_per_unit = max(wider_wing - credit, 0.0)
-            max_loss_per_unit = tail_risk
+            max_loss_per_unit = max(wider_wing - credit, 0.0)
             max_profit_per_unit = wing_width + credit
 
         detail_json = {

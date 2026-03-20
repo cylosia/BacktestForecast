@@ -64,6 +64,10 @@ class LongOptionStrategy(StrategyDefinition):
             return None
 
         entry_value_per_unit = entry_quote.mid_price * 100.0
+        if self.contract_type == "put":
+            max_profit = max(contract.strike_price * 100.0 - entry_value_per_unit, 0.0)
+        else:
+            max_profit = None
         detail_json = {
             "legs": [
                 {
@@ -83,7 +87,7 @@ class LongOptionStrategy(StrategyDefinition):
             ],
             "capital_required_per_unit": entry_value_per_unit,
             "max_loss_per_unit": entry_value_per_unit,
-            "max_profit_per_unit": None,
+            "max_profit_per_unit": max_profit,
             "entry_package_market_value": entry_value_per_unit,
         }
         return OpenMultiLegPosition(
@@ -109,7 +113,7 @@ class LongOptionStrategy(StrategyDefinition):
             scheduled_exit_date=contract.expiration_date,
             capital_required_per_unit=entry_value_per_unit,
             max_loss_per_unit=entry_value_per_unit,
-            max_profit_per_unit=None,
+            max_profit_per_unit=max_profit,
             detail_json=detail_json,
         )
 

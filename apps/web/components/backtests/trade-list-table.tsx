@@ -72,8 +72,8 @@ export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) 
                         <p>{trade.quantity} contract(s)</p>
                         <p className="text-xs text-muted-foreground">
                           {formatNumber(trade.dte_at_open)} DTE · {formatNumber(trade.holding_period_days)}d hold
-                          {(trade as any).holding_period_trading_days != null && (
-                            <> ({formatNumber((trade as any).holding_period_trading_days)} trading)</>
+                          {trade.holding_period_trading_days != null && (
+                            <> ({formatNumber(trade.holding_period_trading_days)} trading)</>
                           )}
                         </p>
                       </div>

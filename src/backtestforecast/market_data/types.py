@@ -40,10 +40,10 @@ class OptionQuoteRecord:
     participant_timestamp: int | None
 
     @property
-    def mid_price(self) -> float:
+    def mid_price(self) -> float | None:
         result = (self.bid_price + self.ask_price) / 2.0
         if not math.isfinite(result):
-            return 0.0
+            return None
         return result
 
 
@@ -66,5 +66,8 @@ class OptionSnapshotRecord:
     @property
     def mid_price(self) -> float | None:
         if self.bid_price is not None and self.ask_price is not None:
-            return (self.bid_price + self.ask_price) / 2.0
+            result = (self.bid_price + self.ask_price) / 2.0
+            if not math.isfinite(result):
+                return None
+            return result
         return None

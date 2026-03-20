@@ -104,15 +104,22 @@ class TestIsFeatureEnabled:
             results = [is_feature_enabled("sweeps", user_id=uuid.uuid4()) for _ in range(100)]
             assert all(results)
 
-    def test_no_user_id_skips_rollout_check(self):
+    def test_no_user_id_with_partial_rollout_returns_false(self):
+        """Without a user_id, partial rollout cannot hash, so returns False."""
         settings = self._mock_settings(feature_sweeps_rollout_pct=50)
+        with patch("backtestforecast.feature_flags.get_settings", return_value=settings):
+            assert is_feature_enabled("sweeps") is False
+
+    def test_no_user_id_with_full_rollout_returns_true(self):
+        """100% rollout does not need a user_id to hash."""
+        settings = self._mock_settings(feature_sweeps_rollout_pct=100)
         with patch("backtestforecast.feature_flags.get_settings", return_value=settings):
             assert is_feature_enabled("sweeps") is True
 
-    def test_unknown_feature_defaults_to_enabled(self):
+    def test_unknown_feature_returns_false(self):
         settings = self._mock_settings()
         with patch("backtestforecast.feature_flags.get_settings", return_value=settings):
-            assert is_feature_enabled("nonexistent_feature", user_id=uuid.uuid4()) is True
+            assert is_feature_enabled("nonexistent_feature", user_id=uuid.uuid4()) is False
 
     def test_kill_switch_takes_precedence_over_allow_list(self):
         uid = uuid.uuid4()
@@ -122,3 +129,21 @@ class TestIsFeatureEnabled:
         )
         with patch("backtestforecast.feature_flags.get_settings", return_value=settings):
             assert is_feature_enabled("sweeps", user_id=uid) is False
+
+    def test_float_rollout_pct_is_respected(self):
+        """A float rollout_pct (e.g. 50.0) must work the same as int 50."""
+        settings = self._mock_settings(feature_sweeps_rollout_pct=50.0)
+        enabled_count = 0
+        total = 500
+        with patch("backtestforecast.feature_flags.get_settings", return_value=settings):
+            for _ in range(total):
+                if is_feature_enabled("sweeps", user_id=uuid.uuid4()):
+                    enabled_count += 1
+        ratio = enabled_count / total
+        assert 0.3 < ratio < 0.7, f"Float rollout 50.0 should enable ~50%, got {ratio:.1%}"
+
+    def test_float_rollout_zero_disables_all(self):
+        settings = self._mock_settings(feature_sweeps_rollout_pct=0.0)
+        with patch("backtestforecast.feature_flags.get_settings", return_value=settings):
+            results = [is_feature_enabled("sweeps", user_id=uuid.uuid4()) for _ in range(100)]
+            assert not any(results)

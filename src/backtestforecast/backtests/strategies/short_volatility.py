@@ -127,8 +127,14 @@ class ShortVolatilityStrategy(StrategyDefinition):
                         "entry_mid": pq.mid_price,
                     },
                 ],
-                "max_profit_per_unit": credit,
+                "assumptions": [
+                    "Short volatility is modeled as selling both a call and put at/near ATM.",
+                    "Margin requirement is estimated using naked option margin for each leg.",
+                ],
+                "entry_package_market_value": -credit,
                 "capital_required_per_unit": capital_required,
+                "max_loss_per_unit": None,
+                "max_profit_per_unit": credit,
             },
         )
 

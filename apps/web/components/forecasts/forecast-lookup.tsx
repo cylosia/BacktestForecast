@@ -51,6 +51,7 @@ export function ForecastLookup() {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
+  const [requiredTier, setRequiredTier] = useState<string | undefined>();
   const [result, setResult] = useState<ForecastEnvelopeResponse | null>(null);
   const mountedRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -112,9 +113,11 @@ export function ForecastLookup() {
             ? error.message
             : "Forecast could not be loaded.";
       const code = error instanceof ApiError ? error.code : undefined;
+      const reqTier = error instanceof ApiError ? error.requiredTier : undefined;
       setStatus("error");
       setErrorMessage(msg);
       setErrorCode(code);
+      setRequiredTier(reqTier);
     } finally {
       submittingRef.current = false;
     }
@@ -185,7 +188,7 @@ export function ForecastLookup() {
       </form>
 
       {errorMessage && isPlanLimitError(errorCode) ? (
-        <UpgradePrompt message={errorMessage} />
+        <UpgradePrompt message={errorMessage} requiredTier={requiredTier} />
       ) : errorMessage ? (
         <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
           {errorMessage}

@@ -31,23 +31,53 @@ def test_all_migrations_have_upgrade_and_downgrade(alembic_scripts: ScriptDirect
         )
 
 
+_ALLOWED_MERGE_REVISIONS = {
+    "20260319_0034",
+}
+
+
 def test_migration_chain_is_linear(alembic_scripts: ScriptDirectory) -> None:
-    """The migration chain must have no branches (each revision has at most one child)."""
+    """The migration chain must have no branches (each revision has at most one child).
+
+    Merge migrations listed in ``_ALLOWED_MERGE_REVISIONS`` are permitted
+    because they deliberately close a feature branch (e.g., heartbeat columns).
+    """
+    merge_ancestor_revisions: set[str] = set()
     children: dict[str | None, list[str]] = {}
     for script in alembic_scripts.walk_revisions():
         parent = script.down_revision
         if isinstance(parent, tuple):
-            pytest.fail(
-                f"Migration {script.revision} has multiple parents (merge migration). "
-                f"The chain must be strictly linear. Parents: {parent}"
-            )
-        children.setdefault(parent, []).append(script.revision)
+            if script.revision not in _ALLOWED_MERGE_REVISIONS:
+                pytest.fail(
+                    f"Migration {script.revision} has multiple parents (merge migration). "
+                    f"The chain must be strictly linear. Parents: {parent}"
+                )
+            for p in parent:
+                children.setdefault(p, []).append(script.revision)
+                merge_ancestor_revisions.add(p)
+        else:
+            children.setdefault(parent, []).append(script.revision)
+
+    def _feeds_into_merge(rev: str, visited: set[str] | None = None) -> bool:
+        """Check if a revision eventually feeds into an allowed merge."""
+        if visited is None:
+            visited = set()
+        if rev in visited:
+            return False
+        visited.add(rev)
+        if rev in merge_ancestor_revisions:
+            return True
+        for child in children.get(rev, []):
+            if _feeds_into_merge(child, visited):
+                return True
+        return False
 
     for parent_rev, child_revs in children.items():
-        assert len(child_revs) == 1, (
-            f"Branching detected: revision {parent_rev!r} has multiple children: {child_revs}. "
-            f"The migration chain must be linear."
-        )
+        if len(child_revs) > 1 and not _feeds_into_merge(parent_rev):
+            assert len(child_revs) == 1, (
+                f"Branching detected: revision {parent_rev!r} has multiple children: {child_revs}. "
+                f"The migration chain must be linear."
+            )
 
 
 def test_latest_revision_matches_alembic_head(alembic_scripts: ScriptDirectory) -> None:

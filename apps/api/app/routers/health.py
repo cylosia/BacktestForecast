@@ -128,6 +128,7 @@ _health_window: deque[float] = deque(maxlen=_HEALTH_MAX_RPM + 50)
 _health_lock = Lock()
 
 HEALTH_VERSION = "0.1.0"
+_SHOW_VERSION_IN_HEALTH = get_settings().app_env not in ("production", "staging")
 
 
 _LIVE_MAX_RPM = 300
@@ -144,7 +145,10 @@ def live() -> dict[str, str] | JSONResponse:
         if len(_live_window) >= _LIVE_MAX_RPM:
             return JSONResponse(status_code=429, content={"status": "rate_limited"})
         _live_window.append(now)
-    return {"status": "ok", "service": "api", "version": HEALTH_VERSION}
+    resp: dict[str, str] = {"status": "ok", "service": "api"}
+    if _SHOW_VERSION_IN_HEALTH:
+        resp["version"] = HEALTH_VERSION
+    return resp
 
 
 @router.get("/health/ready")
@@ -174,7 +178,9 @@ def ready(request: Request) -> JSONResponse:
         db_up = False
 
     if not db_up:
-        content: dict[str, str] = {"status": "degraded", "version": HEALTH_VERSION}
+        content: dict[str, str] = {"status": "degraded"}
+        if _SHOW_VERSION_IN_HEALTH:
+            content["version"] = HEALTH_VERSION
         if show_details:
             content["environment"] = settings.app_env
             content["database"] = "down"
@@ -183,7 +189,9 @@ def ready(request: Request) -> JSONResponse:
         return JSONResponse(status_code=503, content=content)
 
     if not broker_up:
-        content = {"status": "degraded", "version": HEALTH_VERSION}
+        content = {"status": "degraded"}
+        if _SHOW_VERSION_IN_HEALTH:
+            content["version"] = HEALTH_VERSION
         if show_details:
             content["environment"] = settings.app_env
             content["database"] = "up"
@@ -192,7 +200,9 @@ def ready(request: Request) -> JSONResponse:
         return JSONResponse(status_code=503, content=content)
 
     if not redis_up and settings.rate_limit_fail_closed:
-        content = {"status": "unavailable", "version": HEALTH_VERSION}
+        content = {"status": "unavailable"}
+        if _SHOW_VERSION_IN_HEALTH:
+            content["version"] = HEALTH_VERSION
         if show_details:
             content["environment"] = settings.app_env
             content["database"] = "up"
@@ -211,8 +221,9 @@ def ready(request: Request) -> JSONResponse:
     all_ok = redis_up and broker_up and massive_status in ("ok", "unconfigured")
     payload: dict[str, object] = {
         "status": "ok" if all_ok else "degraded",
-        "version": HEALTH_VERSION,
     }
+    if _SHOW_VERSION_IN_HEALTH:
+        payload["version"] = HEALTH_VERSION
     if show_details:
         payload["environment"] = settings.app_env
         payload["database"] = "up"
@@ -246,4 +257,41 @@ def ready(request: Request) -> JSONResponse:
                 payload["sentry"] = "unavailable"
         if settings.app_env not in ("development",):
             payload["migration_aligned"] = _check_migration_drift()
+        payload["outbox"] = _check_outbox_health()
     return JSONResponse(status_code=200, content=payload)
+
+
+def _check_outbox_health() -> dict[str, object]:
+    """Check for stale outbox messages that may indicate dispatch problems."""
+    try:
+        from sqlalchemy import func, select
+
+        from backtestforecast.db.session import create_session
+        from backtestforecast.models import OutboxMessage
+
+        with create_session() as session:
+            pending_count = session.scalar(
+                select(func.count(OutboxMessage.id)).where(OutboxMessage.status == "pending")
+            ) or 0
+            oldest_pending = session.scalar(
+                select(func.min(OutboxMessage.created_at)).where(OutboxMessage.status == "pending")
+            )
+            session.rollback()
+
+        result: dict[str, object] = {"pending_count": pending_count}
+        if oldest_pending is not None:
+            from datetime import UTC, datetime
+
+            age_seconds = (datetime.now(UTC) - oldest_pending.replace(tzinfo=UTC)).total_seconds()
+            result["oldest_pending_age_seconds"] = round(age_seconds, 1)
+            if age_seconds > 300:
+                result["status"] = "stale"
+            elif pending_count > 0:
+                result["status"] = "pending"
+            else:
+                result["status"] = "ok"
+        else:
+            result["status"] = "ok"
+        return result
+    except Exception:
+        return {"status": "unknown"}

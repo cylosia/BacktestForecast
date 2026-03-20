@@ -28,7 +28,7 @@ def _make_engine():
     return create_engine(url)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def session_factory() -> Generator[sessionmaker[Session], None, None]:
     engine = _make_engine()
     alembic_cfg = AlembicConfig("alembic.ini")
@@ -45,9 +45,11 @@ def session_factory() -> Generator[sessionmaker[Session], None, None]:
 @pytest.fixture()
 def db_session(session_factory: sessionmaker[Session]) -> Generator[Session, None, None]:
     session = session_factory()
+    session.begin_nested()
     try:
         yield session
     finally:
+        session.rollback()
         session.close()
 
 
@@ -105,12 +107,11 @@ class _FakeCeleryApp:
 
         handler = self._handlers.get(name)
         if handler is None:
-            import structlog
-            structlog.get_logger("tests").warning(
-                "fake_celery.unregistered_task",
-                task_name=name,
-                hint="Task dispatched but no handler registered — returning noop. "
-                     "Register it with _fake_celery.register() if you need inline execution.",
+            import warnings
+            warnings.warn(
+                f"FakeCeleryApp: task '{name}' dispatched but no handler registered. "
+                "Register it with _fake_celery.register() if you need inline execution.",
+                stacklevel=2,
             )
             return types.SimpleNamespace(id=f"noop-{name}")
         handler(name, kwargs)  # type: ignore[operator]
@@ -128,7 +129,7 @@ def _fake_celery(monkeypatch: pytest.MonkeyPatch) -> _FakeCeleryApp:
 
 @pytest.fixture()
 def stub_execution(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tests.integration.test_api_critical_flows import FakeExecutionService, FakeForecaster
+    from tests.integration.fakes import FakeExecutionService, FakeForecaster
 
     import backtestforecast.services.backtests as bs
     import backtestforecast.services.scans as ss

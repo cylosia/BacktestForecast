@@ -62,6 +62,12 @@ export async function getTemplates(): Promise<TemplateListResponse> {
 }
 
 export async function compareBacktests(runIds: string[]): Promise<CompareBacktestsResponse> {
+  if (runIds.length < 2 || runIds.length > 8) {
+    throw new Error("compareBacktests requires between 2 and 8 run IDs.");
+  }
+  if (new Set(runIds).size !== runIds.length) {
+    throw new Error("compareBacktests requires unique run IDs.");
+  }
   const token = await getServerToken();
   return apiRequest<CompareBacktestsResponse>("/v1/backtests/compare", token, {
     method: "POST",

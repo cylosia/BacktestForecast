@@ -142,9 +142,7 @@ groups:
           description: "Worker {{ $labels.instance }} is using {{ $value | humanize1024 }}B. Consider increasing worker_max_memory_per_child or investigating memory leaks."
 
       - alert: ScanCandidateFailureRate
-        expr: rate(backtestforecast_scan_candidate_failures_total[15m]) > 5
-        # NOTE: This metric name intentionally uses the backtestforecast_ prefix
-        # to match the Prometheus metric definition in observability/metrics.py
+        expr: rate(scan_candidate_failures_total[15m]) > 5
         for: 10m
         labels:
           severity: warning
@@ -153,7 +151,7 @@ groups:
           description: "Scan candidates are failing at {{ $value }}/s, which may indicate a data provider outage or misconfiguration."
 
       - alert: WorkerHeartbeatGap
-        expr: backtestforecast_celery_workers_online < 1
+        expr: celery_workers_online < 1
         for: 5m
         labels:
           severity: critical

@@ -23,12 +23,23 @@ class BacktestRunRepository:
         self.session.flush()
         return run
 
-    def get_by_id_unfiltered(self, run_id: UUID, *, for_update: bool = False) -> BacktestRun | None:
-        """Fetch by PK without ownership filter. WORKER-ONLY — never call from API routes."""
+    def get_by_id_unfiltered(
+        self,
+        run_id: UUID,
+        *,
+        for_update: bool = False,
+        load_relationships: bool = False,
+    ) -> BacktestRun | None:
+        """Fetch by PK without ownership filter. WORKER-ONLY — never call from API routes.
+
+        Set *load_relationships* to ``True`` to eagerly load trades and
+        equity points. Default is ``False`` to avoid pulling thousands of
+        rows when only scalar columns are needed (e.g. after execution).
+        """
         stmt = select(BacktestRun).where(BacktestRun.id == run_id)
         if for_update:
             stmt = stmt.with_for_update()
-        else:
+        elif load_relationships:
             stmt = stmt.options(
                 selectinload(BacktestRun.trades),
                 selectinload(BacktestRun.equity_points),
@@ -86,6 +97,52 @@ class BacktestRunRepository:
         if created_since is not None:
             stmt = stmt.where(BacktestRun.created_at >= created_since)
         return int(self.session.scalar(stmt) or 0)
+
+    def list_for_user_with_count(
+        self,
+        user_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        created_since: datetime | None = None,
+        cursor_before: datetime | None = None,
+    ) -> tuple[list[BacktestRun], int]:
+        """Return (runs, total_count) in a single DB round-trip using a window function."""
+        if offset > 0 and cursor_before is not None:
+            raise ValueError("Cannot combine offset and cursor_before pagination.")
+        limit = max(limit, 1)
+        offset = max(offset, 0)
+
+        count_filter = [BacktestRun.user_id == user_id]
+        if created_since is not None:
+            count_filter.append(BacktestRun.created_at >= created_since)
+
+        total_count_col = func.count(BacktestRun.id).over().label("_total_count")
+        stmt = (
+            select(BacktestRun, total_count_col)
+            .where(*count_filter)
+            .options(
+                noload(BacktestRun.trades),
+                noload(BacktestRun.equity_points),
+                defer(BacktestRun.input_snapshot_json),
+            )
+        )
+        if cursor_before is not None:
+            stmt = stmt.where(BacktestRun.created_at < cursor_before)
+        stmt = stmt.order_by(desc(BacktestRun.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+
+        rows = self.session.execute(stmt).all()
+        if not rows:
+            if count_filter:
+                total = int(self.session.scalar(
+                    select(func.count(BacktestRun.id)).where(*count_filter)
+                ) or 0)
+            else:
+                total = 0
+            return [], total
+        runs = [row[0] for row in rows]
+        total = int(rows[0][1])
+        return runs, total
 
     def count_for_user_created_between(
         self,
@@ -173,7 +230,6 @@ class BacktestRunRepository:
             return {}
         run_ids = run_ids[:50]
         from sqlalchemy import func as sa_func
-        from sqlalchemy.orm import aliased
         row_num = sa_func.row_number().over(
             partition_by=BacktestTrade.run_id,
             order_by=BacktestTrade.entry_date,

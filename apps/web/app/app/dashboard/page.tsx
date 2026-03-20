@@ -124,6 +124,7 @@ export default async function DashboardPage() {
       {user.plan_tier === "free" && quota.reached ? (
         <UpgradePrompt
           message={`You have used all ${quota.limit} free backtests this month. Upgrade to Pro for unlimited backtests, CSV exports, and scanner access.`}
+          requiredTier="pro"
         />
       ) : user.plan_tier === "free" && quota.remaining !== null && quota.remaining <= 2 && quota.remaining > 0 ? (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-700 dark:text-amber-400">

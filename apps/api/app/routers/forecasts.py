@@ -9,7 +9,7 @@ from apps.api.app.dependencies import get_current_user
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import FeatureLockedError, ValidationError
+from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import StrategyType
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
@@ -37,7 +37,7 @@ def get_forecast(
     settings: Settings = Depends(get_settings),
 ) -> ForecastEnvelopeResponse:
     if not _TICKER_RE.match(ticker):
-        raise ValidationError("Ticker must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
+        raise AppValidationError("Ticker must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
     get_rate_limiter().check(
         bucket="forecasts:get",
         actor_key=str(user.id),

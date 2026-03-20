@@ -105,7 +105,7 @@ class ClerkTokenVerifier:
         email: str | None = None
         raw_email = claims.get("email") or claims.get("primary_email_address")
         if isinstance(raw_email, str) and raw_email:
-            if re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', raw_email) and len(raw_email) <= 320:
+            if re.match(r'^[a-zA-Z0-9.!#$%&\'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$', raw_email) and len(raw_email) <= 320:
                 email = raw_email
 
         session_id = claims.get("sid") if isinstance(claims.get("sid"), str) else None
@@ -172,7 +172,7 @@ class ClerkTokenVerifier:
 
             self._jwks_client = PyJWKClient(
                 jwks_url, timeout=self.settings.clerk_jwks_fetch_timeout,
-                cache_jwk_set=True, lifespan=300,
+                cache_jwk_set=True, lifespan=3600,
             )
             return self._jwks_client
 

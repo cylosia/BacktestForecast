@@ -177,7 +177,7 @@ class TestFallbackPersistStatus:
 
     def test_valid_target_statuses(self):
         from backtestforecast.events import _VALID_TARGET_STATUSES
-        from backtestforecast.models import JobStatus
+        from backtestforecast.schemas.common import JobStatus
 
         assert JobStatus.SUCCEEDED in _VALID_TARGET_STATUSES
         assert JobStatus.FAILED in _VALID_TARGET_STATUSES
@@ -185,7 +185,7 @@ class TestFallbackPersistStatus:
 
     def test_export_includes_expired(self):
         from backtestforecast.events import _EXPORT_VALID_TARGET_STATUSES
-        from backtestforecast.models import JobStatus
+        from backtestforecast.schemas.common import JobStatus
 
         assert JobStatus.EXPIRED in _EXPORT_VALID_TARGET_STATUSES
 

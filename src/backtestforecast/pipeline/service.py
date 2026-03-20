@@ -205,7 +205,18 @@ class NightlyPipelineService:
             quick_results = self._stage3_quick_backtest(pairs, trade_date, executor=pool)
             run.quick_backtests_run = len(quick_results)
 
-            if not quick_results and pairs:
+            positive_results = [r for r in quick_results if r.score > 0]
+            negative_count = len(quick_results) - len(positive_results)
+            if negative_count > 0:
+                logger.info(
+                    "pipeline.stage3_negative_scores_filtered",
+                    run_id=str(run.id),
+                    total=len(quick_results),
+                    positive=len(positive_results),
+                    filtered=negative_count,
+                )
+
+            if not positive_results and pairs:
                 logger.warning(
                     "pipeline.survivorship_bias_all_filtered",
                     run_id=str(run.id),
@@ -214,8 +225,8 @@ class NightlyPipelineService:
                         "Results may reflect survivorship bias.",
                 )
 
-            quick_results.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))
-            top_candidates = quick_results[:max_full_candidates]
+            positive_results.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))
+            top_candidates = positive_results[:max_full_candidates]
             logger.info(
                 "pipeline.stage3_complete",
                 run_id=str(run.id),
@@ -441,7 +452,17 @@ class NightlyPipelineService:
                 drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
                 trade_count = summary.get("trade_count", 1)
                 sample_factor = min(trade_count / 10.0, 1.0)
-                score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
+                sharpe = summary.get("sharpe_ratio") or 0.0
+                # Additive weighted score balances ROI against consistency
+                # and risk. Previous multiplicative formula (roi * win_rate *
+                # (1-dd/100)) heavily favoured high-ROI/low-win-rate
+                # strategies that are typically riskier.
+                score = (
+                    roi * 0.30
+                    + win_rate * 100.0 * 0.25
+                    + sharpe * 20.0 * 0.25
+                    - drawdown * 0.20
+                ) * sample_factor
                 if drawdown >= 100.0:
                     score = min(score, 0.0)
 

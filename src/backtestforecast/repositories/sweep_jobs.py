@@ -27,17 +27,25 @@ class SweepJobRepository:
         self.session.flush()
         return job
 
-    def list_for_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[SweepJob]:
+    def list_for_user(
+        self,
+        user_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+        cursor_before: datetime | None = None,
+    ) -> list[SweepJob]:
+        if offset > 0 and cursor_before is not None:
+            raise ValueError("Cannot combine offset and cursor_before pagination.")
         limit = max(limit, 1)
         offset = max(offset, 0)
         stmt = (
             select(SweepJob)
             .where(SweepJob.user_id == user_id)
             .options(noload(SweepJob.results))
-            .order_by(desc(SweepJob.created_at))
-            .offset(offset)
-            .limit(min(limit, _MAX_PAGE_SIZE))
         )
+        if cursor_before is not None:
+            stmt = stmt.where(SweepJob.created_at < cursor_before)
+        stmt = stmt.order_by(desc(SweepJob.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 
     def count_for_user(self, user_id: UUID) -> int:
@@ -122,7 +130,12 @@ class SweepJobRepository:
         request_snapshot: dict,
         since: datetime,
     ) -> SweepJob | None:
-        """Find a recently created sweep with matching parameters."""
+        """Find a recently created sweep with matching parameters.
+
+        Uses request_hash column for SQL-level filtering when available,
+        falling back to Python-side comparison for rows without a hash.
+        """
+        needle_hash = _request_hash(request_snapshot)
         stmt = (
             select(SweepJob)
             .where(
@@ -130,12 +143,27 @@ class SweepJobRepository:
                 SweepJob.symbol == symbol,
                 SweepJob.created_at >= since,
                 SweepJob.status.in_(["queued", "running"]),
+                SweepJob.request_hash == needle_hash,
+            )
+            .order_by(desc(SweepJob.created_at))
+            .limit(1)
+        )
+        result = self.session.scalar(stmt)
+        if result is not None:
+            return result
+        fallback_stmt = (
+            select(SweepJob)
+            .where(
+                SweepJob.user_id == user_id,
+                SweepJob.symbol == symbol,
+                SweepJob.created_at >= since,
+                SweepJob.status.in_(["queued", "running"]),
+                SweepJob.request_hash.is_(None),
             )
             .order_by(desc(SweepJob.created_at))
             .limit(5)
         )
-        needle_hash = _request_hash(request_snapshot)
-        for job in self.session.scalars(stmt):
+        for job in self.session.scalars(fallback_stmt):
             if _request_hash(job.request_snapshot_json) == needle_hash:
                 return job
         return None
@@ -161,5 +189,5 @@ class SweepJobRepository:
         self.session.execute(
             sa_delete(SweepResult)
             .where(SweepResult.sweep_job_id == job_id)
-            .execution_options(synchronize_session=False)
+            .execution_options(synchronize_session="fetch")
         )

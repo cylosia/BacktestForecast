@@ -1,11 +1,81 @@
-"""Shared serialization helpers for scan and sweep services."""
+"""Shared serialization and validation helpers for scan and sweep services."""
 from __future__ import annotations
 
 import math
 from decimal import Decimal
 from typing import Any
 
-from backtestforecast.services.backtests import to_decimal
+import structlog
+
+from backtestforecast.utils import to_decimal
+
+_validate_logger = structlog.get_logger("services.validation")
+
+_ZEROED_SUMMARY = {
+    "trade_count": 0, "total_commissions": 0, "total_net_pnl": 0,
+    "starting_equity": 0, "ending_equity": 0,
+}
+
+
+def safe_validate_summary(data: dict) -> "BacktestSummaryResponse":
+    """Parse summary JSON, returning a zeroed summary on corrupt data.
+
+    Used by both scan and sweep response builders.
+    """
+    from backtestforecast.schemas.backtests import BacktestSummaryResponse
+
+    try:
+        return BacktestSummaryResponse.model_validate(data)
+    except Exception:
+        try:
+            from backtestforecast.observability.metrics import SCAN_CORRUPT_SUMMARY_TOTAL
+            SCAN_CORRUPT_SUMMARY_TOTAL.inc()
+        except Exception:
+            pass
+        _validate_logger.error(
+            "malformed_summary_json",
+            keys=list(data.keys()) if isinstance(data, dict) else None,
+        )
+        return BacktestSummaryResponse.model_validate(_ZEROED_SUMMARY)
+
+
+def safe_validate_list(model_cls: type, items: list | None, field_name: str) -> list:
+    """Validate a list of JSON dicts against a Pydantic model, skipping malformed entries."""
+    if items is None:
+        return []
+    result = []
+    for item in items:
+        try:
+            result.append(model_cls.model_validate(item))
+        except Exception:
+            _validate_logger.warning(
+                "malformed_json_entry_skipped",
+                field=field_name,
+                item_keys=list(item.keys()) if isinstance(item, dict) else None,
+            )
+    return result
+
+
+def safe_validate_equity_curve(data: list) -> list:
+    """Parse equity curve JSON items, skipping corrupt entries."""
+    from backtestforecast.schemas.backtests import EquityCurvePointResponse
+
+    results = []
+    for item in data:
+        try:
+            results.append(EquityCurvePointResponse.model_validate(item))
+        except Exception:
+            continue
+    return results
+
+
+def safe_validate_json(data: Any, label: str, *, default: Any = None) -> Any:
+    """Return *data* if it's a dict or list, otherwise *default*."""
+    if data is None:
+        return default
+    if isinstance(data, (dict, list)):
+        return data
+    return default
 
 
 def _safe_decimal(val: float | Decimal) -> float:
@@ -102,9 +172,24 @@ def downsample_equity_curve(
     if n <= max_points:
         return [serialize_equity_point(p) for p in curve]
     step = max(1, -(-n // max_points))
-    max_dd_idx = max(range(n), key=lambda i: curve[i].drawdown_pct if curve[i].drawdown_pct is not None else 0)
+
+    max_dd_idx = 0
+    max_dd_val = 0
     sampled: list[dict[str, Any]] = []
     for i, point in enumerate(curve):
-        if i % step == 0 or i == n - 1 or i == max_dd_idx:
+        dd = point.drawdown_pct
+        if dd is not None and dd > max_dd_val:
+            max_dd_val = dd
+            max_dd_idx = i
+        if i % step == 0 or i == n - 1:
             sampled.append(serialize_equity_point(point))
+
+    if max_dd_idx % step != 0 and max_dd_idx != n - 1:
+        entry = serialize_equity_point(curve[max_dd_idx])
+        insert_pos = next(
+            (j for j, s in enumerate(sampled)
+             if s.get("trade_date", "") > entry.get("trade_date", "")),
+            len(sampled),
+        )
+        sampled.insert(insert_pos, entry)
     return sampled

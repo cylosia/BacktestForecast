@@ -17,11 +17,11 @@ from uuid import uuid4
 import structlog
 from sqlalchemy.orm import Session
 
-from backtestforecast.models import JobStatus, RunJobStatus
+from backtestforecast.schemas.common import RunJobStatus
 from backtestforecast.observability.metrics import DISPATCH_RESULTS_TOTAL
 
-_SEND_MAX_ATTEMPTS = 2
-_SEND_RETRY_DELAY = 0.25
+_SEND_MAX_ATTEMPTS = 1
+_SEND_RETRY_DELAY = 0.0
 
 
 class DispatchResult(enum.Enum):
@@ -66,9 +66,10 @@ def dispatch_celery_task(
 
     Returns a :class:`DispatchResult` indicating the outcome.
     """
-    for k, v in task_kwargs.items():
+    for k, v in list(task_kwargs.items()):
         if not isinstance(v, str):
             logger.warning("dispatch.non_string_kwarg", key=k, type=type(v).__name__)
+            task_kwargs[k] = str(v)
 
     if job.status != RunJobStatus.QUEUED or job.celery_task_id is not None:
         logger.info(
@@ -107,18 +108,28 @@ def dispatch_celery_task(
         )
         db.add(outbox_msg)
     except Exception:
-        logger.debug("dispatch.outbox_write_skipped", exc_info=True)
+        logger.warning("dispatch.outbox_write_skipped", exc_info=True)
 
     try:
         db.commit()
     except Exception:
         db.rollback()
         logger.exception(f"{log_event}.pre_commit_failed", **task_kwargs)
-        job.status = RunJobStatus.FAILED
-        job.error_code = "enqueue_failed"
-        job.error_message = "Unable to persist task state before dispatch."
         try:
-            db.commit()
+            from sqlalchemy import update as _sa_update
+            job_id = getattr(job, "id", None)
+            if job_id is not None:
+                model_cls = type(job)
+                db.execute(
+                    _sa_update(model_cls)
+                    .where(model_cls.id == job_id)
+                    .values(
+                        status=RunJobStatus.FAILED,
+                        error_code="enqueue_failed",
+                        error_message="Unable to persist task state before dispatch.",
+                    )
+                )
+                db.commit()
         except Exception:
             db.rollback()
         DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.PRE_COMMIT_FAILED.value, task_name=task_name).inc()
@@ -127,36 +138,33 @@ def dispatch_celery_task(
     from apps.worker.app.celery_app import celery_app
 
     last_exc: Exception | None = None
-    for attempt in range(1, _SEND_MAX_ATTEMPTS + 1):
-        try:
-            celery_app.send_task(
-                task_name, kwargs=task_kwargs, queue=queue,
-                headers=headers if headers else None,
-                task_id=task_id,
-            )
-            if outbox_msg is not None:
-                try:
-                    outbox_msg.status = "sent"
-                    db.commit()
-                except Exception:
-                    db.rollback()
-            logger.info("dispatch.enqueued", log_event=log_event, celery_task_id=task_id, attempt=attempt, **task_kwargs)
-            DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.SENT.value, task_name=task_name).inc()
-            return DispatchResult.SENT
-        except Exception as exc:
-            last_exc = exc
-            logger.warning(
-                "dispatch.send_attempt_failed",
-                log_event=log_event,
-                celery_task_id=task_id,
-                attempt=attempt,
-                max_attempts=_SEND_MAX_ATTEMPTS,
-                **task_kwargs,
-            )
-            if attempt < _SEND_MAX_ATTEMPTS:
-                time.sleep(_SEND_RETRY_DELAY * attempt)
+    try:
+        celery_app.send_task(
+            task_name, kwargs=task_kwargs, queue=queue,
+            headers=headers if headers else None,
+            task_id=task_id,
+        )
+        if outbox_msg is not None:
+            try:
+                from datetime import UTC, datetime
+                outbox_msg.status = "sent"
+                outbox_msg.completed_at = datetime.now(UTC)
+                db.commit()
+            except Exception:
+                db.rollback()
+        logger.info("dispatch.enqueued", log_event=log_event, celery_task_id=task_id, **task_kwargs)
+        DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.SENT.value, task_name=task_name).inc()
+        return DispatchResult.SENT
+    except Exception as exc:
+        last_exc = exc
+        logger.warning(
+            "dispatch.send_failed",
+            log_event=log_event,
+            celery_task_id=task_id,
+            **task_kwargs,
+        )
 
-    # All inline send attempts failed.
+    # Inline send failed.
     if outbox_msg is not None:
         # The outbox message was committed in the same transaction as the
         # job record.  Leave the job in "queued" status so the poll_outbox

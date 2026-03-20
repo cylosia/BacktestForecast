@@ -5,7 +5,11 @@ export interface ApiErrorPayload {
     code: string;
     message: string;
     request_id?: string;
-    details?: Record<string, string[]>;
+    detail?: {
+      current_tier?: string;
+      required_tier?: string;
+    };
+    details?: Array<{ loc?: string[]; msg?: string; type?: string }>;
   };
 }
 
@@ -37,17 +41,51 @@ export function combinedSignal(userSignal: AbortSignal, timeoutSignal: AbortSign
   return { signal: controller.signal, cleanup: detach };
 }
 
+export interface QuotaErrorDetail {
+  current_tier?: string;
+  required_tier?: string;
+}
+
+export interface ValidationFieldError {
+  loc?: string[];
+  msg?: string;
+  type?: string;
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;
   requestId?: string;
+  detail?: QuotaErrorDetail;
+  fieldErrors?: ValidationFieldError[];
 
-  constructor(message: string, status: number, code?: string, requestId?: string) {
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    requestId?: string,
+    detail?: QuotaErrorDetail,
+    fieldErrors?: ValidationFieldError[],
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.detail = detail;
+    this.fieldErrors = fieldErrors;
+  }
+
+  get currentTier(): string | undefined {
+    return this.detail?.current_tier;
+  }
+
+  get requiredTier(): string | undefined {
+    return this.detail?.required_tier;
+  }
+
+  get isQuotaError(): boolean {
+    return this.code === "quota_exceeded" || this.code === "feature_locked";
   }
 }
 
@@ -76,7 +114,7 @@ async function handleKnownStatus(response: Response): Promise<void> {
 
   if (response.status === 401 && typeof window !== "undefined") {
     const path = window.location.pathname + window.location.search;
-    const isValidRedirect = path.startsWith("/") && !path.includes("//");
+    const isValidRedirect = path.startsWith("/") && !path.includes("//") && !path.includes("\\");
     const returnTo = isValidRedirect ? encodeURIComponent(path) : "";
     window.location.href = returnTo ? `/sign-in?redirect_url=${returnTo}` : "/sign-in";
     await new Promise<never>(() => {});
@@ -87,6 +125,8 @@ async function handleKnownStatus(response: Response): Promise<void> {
     response.status,
     payload?.error?.code ?? fallback.code,
     payload?.error?.request_id,
+    payload?.error?.detail,
+    payload?.error?.details,
   );
 }
 
@@ -138,6 +178,8 @@ async function parseApiError(response: Response): Promise<never> {
     response.status,
     payload?.error?.code,
     payload?.error?.request_id,
+    payload?.error?.detail,
+    payload?.error?.details,
   );
 }
 
@@ -184,6 +226,32 @@ export async function apiRequest<T>(path: string, token: string, init?: RequestI
   } finally {
     clearTimeout(timeout);
     combined?.cleanup();
+  }
+}
+
+/**
+ * Like {@link apiRequest} but validates the response shape at runtime.
+ *
+ * @param validator - receives the parsed JSON and must throw if the shape is
+ *   wrong (e.g. missing required fields). Return the (possibly narrowed)
+ *   value.  A simple guard: `(d) => { if (!d?.id) throw new Error('missing id'); return d as Foo; }`
+ */
+export async function validatedApiRequest<T>(
+  path: string,
+  token: string,
+  validator: (data: unknown) => T,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<T> {
+  const raw: unknown = await apiRequest<unknown>(path, token, init);
+  try {
+    return validator(raw);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new ApiError(
+      `Unexpected response shape from ${path}: ${detail}`,
+      0,
+      "response_validation_error",
+    );
   }
 }
 

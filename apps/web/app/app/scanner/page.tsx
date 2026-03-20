@@ -8,10 +8,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
+import { PaginationControls } from "@/components/shared/pagination-controls";
 
 export const dynamic = "force-dynamic";
 
-export default async function ScannerPage() {
+const PAGE_SIZE = 20;
+
+export default async function ScannerPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ offset?: string }>;
+}) {
+  const params = await searchParams;
+  const offset = Math.max(0, parseInt(params.offset ?? "0", 10) || 0);
   let user;
   try {
     user = await getCurrentUser();
@@ -25,7 +34,7 @@ export default async function ScannerPage() {
   let jobsError: string | null = null;
   if (hasAccess) {
     try {
-      jobs = await getScannerJobs(20);
+      jobs = await getScannerJobs(PAGE_SIZE, offset);
     } catch (err) {
       jobs = null;
       jobsError = err instanceof Error ? err.message : "Failed to load scanner history.";
@@ -54,7 +63,7 @@ export default async function ScannerPage() {
       </div>
 
       {!hasAccess ? (
-        <UpgradePrompt message="Scanner access requires a Pro or Premium plan. Upgrade to run multi-symbol strategy scans with ranked recommendations." />
+        <UpgradePrompt message="Scanner access requires a Pro or Premium plan. Upgrade to run multi-symbol strategy scans with ranked recommendations." requiredTier="pro" />
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -82,7 +91,7 @@ export default async function ScannerPage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tracking-tight">
-              {jobs ? (jobs.items.length >= 20 ? "20+" : jobs.items.length) : "—"}
+              {jobs ? jobs.total : "—"}
             </p>
           </CardContent>
         </Card>
@@ -158,6 +167,12 @@ export default async function ScannerPage() {
                   ))}
                 </TableBody>
               </Table>
+              <PaginationControls
+                basePath="/app/scanner"
+                offset={offset}
+                limit={PAGE_SIZE}
+                total={jobs.total}
+              />
             )}
           </CardContent>
         </Card>

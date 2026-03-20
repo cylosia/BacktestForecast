@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import random
 import time
-from typing import Any, Protocol
+from contextlib import contextmanager
+from typing import Any, Generator, Protocol
 from uuid import UUID
 
 import structlog
@@ -95,7 +96,13 @@ _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024  # 50 MB safety cap
 
 
 def _retry(fn, max_attempts=3, base_delay=0.5):
-    from botocore.exceptions import ClientError, EndpointConnectionError, ConnectionClosedError
+    try:
+        from botocore.exceptions import ClientError, EndpointConnectionError, ConnectionClosedError
+    except ImportError as exc:
+        raise ConfigurationError(
+            "boto3/botocore is required for S3 storage. "
+            "Install with: pip install 'backtestforecast[s3]'"
+        ) from exc
     last_exc: Exception | None = None
     for attempt in range(max_attempts):
         try:
@@ -145,7 +152,9 @@ class S3Storage:
     def _sanitize_file_name(file_name: str) -> str:
         import posixpath
         import re
+        import unicodedata
         name = posixpath.basename(file_name.replace("\\", "/"))
+        name = unicodedata.normalize("NFC", name)
         name = name.lstrip(".")
         name = re.sub(r'[\x00-\x1f\x7f\\]', '', name)
         name = name.replace('"', "'")
@@ -168,7 +177,9 @@ class S3Storage:
         key = self._object_key(export_job_id, file_name)
         safe_name = self._sanitize_file_name(file_name)
         content_type = self._guess_content_type(file_name)
-        disposition = f'attachment; filename="{safe_name}"'
+        from urllib.parse import quote
+        encoded_name = quote(safe_name, safe="")
+        disposition = f"attachment; filename=\"{safe_name}\"; filename*=UTF-8''{encoded_name}"
         _retry(lambda: self._client.put_object(
             Bucket=self._bucket,
             Key=key,
@@ -186,16 +197,31 @@ class S3Storage:
     def get_object(self, storage_key: str):
         """Return the raw S3 GetObject response (for streaming).
 
-        Callers MUST close the ``Body`` stream when finished, e.g.::
-
-            resp = storage.get_object(key)
-            try:
-                yield from resp["Body"].iter_chunks()
-            finally:
-                resp["Body"].close()
+        Prefer :meth:`stream_object` which auto-closes the body.
         """
         self._validate_prefix(storage_key)
         return _retry(lambda: self._client.get_object(Bucket=self._bucket, Key=storage_key))
+
+    @contextmanager
+    def stream_object(self, storage_key: str) -> Generator[dict[str, Any], None, None]:
+        """Context manager that auto-closes the S3 body stream on exit.
+
+        Usage::
+
+            with storage.stream_object(key) as resp:
+                for chunk in resp["Body"].iter_chunks(32768):
+                    yield chunk
+        """
+        resp = self.get_object(storage_key)
+        try:
+            yield resp
+        finally:
+            body = resp.get("Body")
+            if body is not None:
+                try:
+                    body.close()
+                except Exception:
+                    logger.debug("s3.stream_close_failed", key=storage_key, exc_info=True)
 
     def get(self, storage_key: str) -> bytes:
         self._validate_prefix(storage_key)

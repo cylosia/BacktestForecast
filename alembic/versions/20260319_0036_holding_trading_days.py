@@ -18,18 +18,43 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(table: str, column: str) -> bool:
+    bind = op.get_bind()
+    row = bind.execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = :tbl AND column_name = :col"
+        ),
+        {"tbl": table, "col": column},
+    ).fetchone()
+    return row is not None
+
+
+def _constraint_exists(name: str) -> bool:
+    bind = op.get_bind()
+    result = bind.execute(
+        sa.text("SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = :name"),
+        {"name": name},
+    ).fetchone()
+    return result is not None
+
+
 def upgrade() -> None:
-    op.add_column(
-        "backtest_trades",
-        sa.Column("holding_period_trading_days", sa.Integer(), nullable=True),
-    )
-    op.create_check_constraint(
-        "ck_backtest_trades_holding_trading_days_nonneg",
-        "backtest_trades",
-        "holding_period_trading_days IS NULL OR holding_period_trading_days >= 0",
-    )
+    if not _column_exists("backtest_trades", "holding_period_trading_days"):
+        op.add_column(
+            "backtest_trades",
+            sa.Column("holding_period_trading_days", sa.Integer(), nullable=True),
+        )
+    if not _constraint_exists("ck_backtest_trades_holding_trading_days_nonneg"):
+        op.create_check_constraint(
+            "ck_backtest_trades_holding_trading_days_nonneg",
+            "backtest_trades",
+            "holding_period_trading_days IS NULL OR holding_period_trading_days >= 0",
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_backtest_trades_holding_trading_days_nonneg", "backtest_trades", type_="check")
-    op.drop_column("backtest_trades", "holding_period_trading_days")
+    if _constraint_exists("ck_backtest_trades_holding_trading_days_nonneg"):
+        op.drop_constraint("ck_backtest_trades_holding_trading_days_nonneg", "backtest_trades", type_="check")
+    if _column_exists("backtest_trades", "holding_period_trading_days"):
+        op.drop_column("backtest_trades", "holding_period_trading_days")

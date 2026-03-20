@@ -85,6 +85,58 @@ def create_worker_session() -> Session:
     return _get_worker_session_factory()()
 
 
+def get_worker_db() -> Generator[Session, None, None]:
+    """Yield a worker session with guaranteed cleanup on exit."""
+    db = create_worker_session()
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@lru_cache
+def _get_readonly_engine() -> Engine | None:
+    settings = get_settings()
+    if not settings.database_read_replica_url:
+        return None
+    return build_engine(
+        settings,
+        database_url=settings.database_read_replica_url,
+        statement_timeout_ms=settings.db_statement_timeout_ms,
+    )
+
+
+@lru_cache
+def _get_readonly_session_factory() -> sessionmaker[Session] | None:
+    engine = _get_readonly_engine()
+    if engine is None:
+        return None
+    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=True)
+
+
+def get_readonly_db() -> Generator[Session, None, None]:
+    """Yield a read-only session, preferring the read replica if configured.
+
+    Falls back to the primary database when no replica URL is set.
+    Use this for list/detail/compare endpoints that don't mutate data.
+    """
+    factory = _get_readonly_session_factory()
+    if factory is None:
+        yield from get_db()
+        return
+    db = factory()
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def get_db() -> Generator[Session, None, None]:
     """Yield a SQLAlchemy session for request-scoped use.
 
@@ -129,6 +181,7 @@ def _invalidate_db_caches() -> None:
     for engine_fn, factory_fn in [
         (_get_engine, _get_session_factory),
         (_get_worker_engine, _get_worker_session_factory),
+        (_get_readonly_engine, _get_readonly_session_factory),
     ]:
         engine_ref = None
         if engine_fn.cache_info().currsize > 0:

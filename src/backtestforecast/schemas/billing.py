@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import BillingInterval
-from backtestforecast.schemas.common import PlanTier
+from backtestforecast.schemas.common import PlanTier, sanitize_error_message
 
 
 class CreateCheckoutSessionRequest(BaseModel):
@@ -18,8 +18,8 @@ class CreateCheckoutSessionRequest(BaseModel):
 class CheckoutSessionResponse(BaseModel):
     session_id: str
     checkout_url: str
-    tier: str
-    billing_interval: str
+    tier: PlanTier
+    billing_interval: BillingInterval
     expires_at: datetime | None = None
 
     @field_validator("checkout_url")
@@ -45,16 +45,15 @@ class PortalSessionResponse(BaseModel):
         return v
 
 
-_VALID_SUBSCRIPTION_STATUSES = frozenset({
-    "incomplete", "incomplete_expired", "trialing", "active",
-    "past_due", "canceled", "unpaid", "paused",
-})
+from backtestforecast.schemas.common import STRIPE_SUBSCRIPTION_STATUSES as _VALID_SUBSCRIPTION_STATUSES
 
 
 class BillingStateResponse(BaseModel):
     plan_tier: PlanTier
     subscription_status: str | None = None
-    subscription_billing_interval: str | None = None
+    subscription_billing_interval: BillingInterval | None = None
+    subscription_current_period_end: datetime | None = None
+    cancel_at_period_end: bool = False
 
     @field_validator("subscription_status", mode="before")
     @classmethod
@@ -62,8 +61,6 @@ class BillingStateResponse(BaseModel):
         if v is not None and v not in _VALID_SUBSCRIPTION_STATUSES:
             raise ValueError(f"Invalid subscription_status: {v}")
         return v
-    subscription_current_period_end: datetime | None = None
-    cancel_at_period_end: bool = False
 
 
 class WebhookResponse(BaseModel):
@@ -72,3 +69,5 @@ class WebhookResponse(BaseModel):
     event_type: str | None = None
     reason: str | None = Field(default=None, max_length=500)
     code: str | None = None
+
+    _sanitize_reason = field_validator("reason", mode="before")(sanitize_error_message)

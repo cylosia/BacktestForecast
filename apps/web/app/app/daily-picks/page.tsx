@@ -122,7 +122,7 @@ export default async function DailyPicksPage() {
           <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Daily picks</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">Today&apos;s top trades</h1>
         </div>
-        <UpgradePrompt message="Daily Picks requires a Pro or Premium plan. Upgrade to see the best option trades for tomorrow, generated nightly from a 5-stage AI pipeline." />
+        <UpgradePrompt message="Daily Picks requires a Pro or Premium plan. Upgrade to see the best option trades for tomorrow, generated nightly from a 5-stage AI pipeline." requiredTier="pro" />
       </div>
     );
   }

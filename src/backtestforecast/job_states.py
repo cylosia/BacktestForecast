@@ -6,9 +6,16 @@ where code attempts an invalid transition (e.g., succeeded → running).
 """
 from __future__ import annotations
 
-from backtestforecast.schemas.common import JobStatus, RunJobStatus
-
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
+    "queued": frozenset({"running", "failed", "cancelled"}),
+    "running": frozenset({"succeeded", "failed", "cancelled"}),
+    "succeeded": frozenset(),
+    "failed": frozenset(),
+    "cancelled": frozenset(),
+    "expired": frozenset(),
+}
+
+EXPORT_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "queued": frozenset({"running", "failed", "cancelled"}),
     "running": frozenset({"succeeded", "failed", "cancelled"}),
     "succeeded": frozenset({"expired"}),
@@ -34,13 +41,17 @@ def validate_transition(
     *,
     context: str = "",
     strict: bool = False,
+    job_type: str = "",
 ) -> bool:
     """Check whether transitioning from *current* to *target* is valid.
 
     Returns True if valid. When *strict* is True, raises
     ``InvalidStatusTransition`` instead of returning False.
+    Pass ``job_type="export"`` to use the export-specific transition graph
+    which allows ``succeeded → expired``.
     """
-    allowed = ALLOWED_TRANSITIONS.get(current)
+    transitions = EXPORT_ALLOWED_TRANSITIONS if job_type == "export" else ALLOWED_TRANSITIONS
+    allowed = transitions.get(current)
     if allowed is None:
         if strict:
             raise InvalidStatusTransition(current, target, context)

@@ -24,7 +24,7 @@ const primaryCards: Array<{
 ];
 
 function WinRateContext({ summary }: { summary: BacktestSummaryResponse }) {
-  const decided = (summary as any).decided_trades;
+  const decided = summary.decided_trades;
   const total = summary.trade_count;
   if (decided == null || decided === total || total === 0) return null;
   const breakEven = total - decided;

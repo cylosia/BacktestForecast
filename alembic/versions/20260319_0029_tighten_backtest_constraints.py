@@ -46,6 +46,24 @@ def upgrade() -> None:
         "OR account_size > 100000000"
     )).scalar()
     if row and row > 0:
+        import json, sys
+        audit_rows = bind.execute(sa.text(
+            "SELECT id, target_dte, dte_tolerance_days, max_holding_days, "
+            "commission_per_contract, account_size FROM backtest_runs "
+            "WHERE target_dte > 365 OR dte_tolerance_days > 60 "
+            "OR max_holding_days > 120 OR commission_per_contract > 100 "
+            "OR account_size > 100000000"
+        )).fetchall()
+        print(
+            f"[migration 0029] Clipping {len(audit_rows)} rows. Original values:",
+            file=sys.stderr,
+        )
+        for r in audit_rows:
+            print(
+                json.dumps({"id": str(r[0]), "target_dte": r[1], "dte_tolerance_days": r[2],
+                            "max_holding_days": r[3], "commission": float(r[4]), "account_size": float(r[5])}),
+                file=sys.stderr,
+            )
         bind.execute(sa.text(
             "UPDATE backtest_runs SET "
             "target_dte = LEAST(target_dte, 365), "

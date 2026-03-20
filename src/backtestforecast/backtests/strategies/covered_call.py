@@ -75,7 +75,7 @@ class CoveredCallStrategy(StrategyDefinition):
         stock_value = bar.close_price * 100.0
         call_credit = quote.mid_price * 100.0
         entry_value_per_unit = stock_value - call_credit
-        max_loss_per_unit = max(entry_value_per_unit, 0.0)
+        max_loss_per_unit = entry_value_per_unit
         margin = covered_call_margin(bar.close_price)
         max_profit_per_unit = ((short_call.strike_price - bar.close_price) * 100.0) + call_credit
         detail_json = {

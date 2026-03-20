@@ -54,9 +54,10 @@ def _get_trusted_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Networ
 
 def reset_trusted_networks() -> None:
     """Clear cached networks so they are re-read from settings on next call."""
-    global _trusted_networks
+    global _trusted_networks, _normalized_origins
     with _trusted_networks_lock:
         _trusted_networks = None
+    _normalized_origins = None
 
 
 def _is_trusted_proxy(host: str | None) -> bool:
@@ -124,6 +125,18 @@ def _normalize_origin(value: str) -> str:
     return normalize_origin(value)
 
 
+_normalized_origins: list[str] | None = None
+
+
+def _get_allowed_origins() -> list[str]:
+    """Return the list of normalized allowed origins, caching across requests."""
+    global _normalized_origins
+    if _normalized_origins is not None:
+        return _normalized_origins
+    _normalized_origins = [_normalize_origin(o) for o in get_settings().web_cors_origins]
+    return _normalized_origins
+
+
 def get_current_user(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
@@ -160,6 +173,16 @@ def get_current_user(
                 raise AuthenticationError(
                     "Cookie-based authentication is not allowed from cross-site contexts."
                 )
+            fetch_dest = request.headers.get("sec-fetch-dest")
+            if fetch_dest and fetch_dest in ("document", "iframe", "embed", "object"):
+                structlog.get_logger("security").warning(
+                    "auth.cookie_navigation_rejected",
+                    sec_fetch_dest=fetch_dest,
+                    method=request.method,
+                )
+                raise AuthenticationError(
+                    "Cookie-based authentication is not allowed for navigation requests."
+                )
         if token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             xrw = request.headers.get("x-requested-with")
             if not xrw or xrw.strip().lower() != "xmlhttprequest":
@@ -167,7 +190,7 @@ def get_current_user(
                     "Cookie-based authentication requires the X-Requested-With: XMLHttpRequest header for state-changing requests."
                 )
         if token:
-            _allowed = [_normalize_origin(o) for o in get_settings().web_cors_origins]
+            _allowed = _get_allowed_origins()
             origin = request.headers.get("origin")
             if origin:
                 if _normalize_origin(origin) not in _allowed:
@@ -178,7 +201,7 @@ def get_current_user(
                     raise AuthenticationError(
                         "Cookie-based request origin not in allowed list."
                     )
-            elif request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            else:
                 referer = request.headers.get("referer")
                 if referer:
                     from urllib.parse import urlparse as _urlparse
@@ -189,10 +212,20 @@ def get_current_user(
                         structlog.get_logger("security").warning(
                             "auth.cookie_referer_rejected",
                             referer_origin=referer_origin,
+                            method=request.method,
                         )
                         raise AuthenticationError(
                             "Cookie-based request referer not in allowed list."
                         )
+                elif request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                    structlog.get_logger("security").warning(
+                        "auth.cookie_no_origin_or_referer",
+                        method=request.method,
+                        path=request.url.path,
+                    )
+                    raise AuthenticationError(
+                        "Cookie-based state-changing requests must include an Origin or Referer header."
+                    )
 
     if not token:
         raise AuthenticationError()

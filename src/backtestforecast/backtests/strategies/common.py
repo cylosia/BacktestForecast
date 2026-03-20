@@ -163,8 +163,9 @@ def _approx_bsm_delta(
     contract_type: str,
     vol: float = 0.30,
     risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
 ) -> float:
-    """Approximate Black-Scholes delta.
+    """Approximate Black-Scholes delta with continuous dividend yield.
 
     When *vol* is left at the default 0.30 it acts as a rough fallback.
     Callers should pass estimated implied volatility when available for
@@ -180,13 +181,13 @@ def _approx_bsm_delta(
     t = dte_days / 365.0
     sqrt_t = math.sqrt(t)
     try:
-        d1 = (math.log(spot / strike) + (risk_free_rate + 0.5 * vol * vol) * t) / (vol * sqrt_t)
+        d1 = (math.log(spot / strike) + (risk_free_rate - dividend_yield + 0.5 * vol * vol) * t) / (vol * sqrt_t)
     except (ValueError, ZeroDivisionError):
         return 0.5 if contract_type == "call" else -0.5
 
     if contract_type == "call":
-        return _norm_cdf(d1)
-    return _norm_cdf(d1) - 1.0
+        return math.exp(-dividend_yield * t) * _norm_cdf(d1)
+    return math.exp(-dividend_yield * t) * (_norm_cdf(d1) - 1.0)
 
 
 def _estimate_iv_for_strike(
@@ -276,13 +277,15 @@ def resolve_strike(
     trade_date: date | None = None,
     expiration_date: date | None = None,
     iv_cache: dict[tuple[str, date], float | None] | None = None,
+    realized_vol: float | None = None,
 ) -> float:
     """Resolve a strike based on the selection config, or fall back to nearest OTM.
 
     For DELTA_TARGET mode, the resolution order is:
       1. *delta_lookup* — pre-built (strike, expiration)->delta map (from API chain snapshot)
       2. IV-improved BSM — estimate IV from the market quote for each candidate
-      3. Hardcoded 30% vol BSM — final fallback
+      3. *realized_vol* — historical realized volatility (if available)
+      4. Hardcoded 30% vol BSM — final fallback
     """
     if selection is None or selection.mode == StrikeSelectionMode.NEAREST_OTM:
         if contract_type == "call":
@@ -339,6 +342,8 @@ def resolve_strike(
                     )
                 if iv is not None:
                     delta = _approx_bsm_delta(underlying_close, strike, dte_days, contract_type, vol=iv)
+                elif realized_vol is not None:
+                    delta = _approx_bsm_delta(underlying_close, strike, dte_days, contract_type, vol=realized_vol)
                 else:
                     delta = _approx_bsm_delta(underlying_close, strike, dte_days, contract_type)
 
@@ -374,12 +379,13 @@ def resolve_wing_strike(
         The resolved wing strike, or None if no valid strike exists.
     """
     result: float | None = None
+    unique_sorted = sorted(set(strikes))
 
     if width_config is None:
-        result = offset_strike(sorted(set(strikes)), short_strike, direction)
+        result = offset_strike(unique_sorted, short_strike, direction)
     elif width_config.mode == SpreadWidthMode.STRIKE_STEPS:
         steps = int(float(width_config.value))
-        result = offset_strike(sorted(set(strikes)), short_strike, direction * steps)
+        result = offset_strike(unique_sorted, short_strike, direction * steps)
     elif width_config.mode == SpreadWidthMode.DOLLAR_WIDTH:
         val = float(width_config.value)
         target = short_strike + val if direction > 0 else short_strike - val
@@ -390,7 +396,7 @@ def resolve_wing_strike(
         target = short_strike + dollar_width if direction > 0 else short_strike - dollar_width
         result = _nearest_strike(strikes, target)
     else:
-        result = offset_strike(sorted(set(strikes)), short_strike, direction)
+        result = offset_strike(unique_sorted, short_strike, direction)
 
     if result is not None:
         wrong_side = (
@@ -399,8 +405,7 @@ def resolve_wing_strike(
             or (direction < 0 and result > short_strike)
         )
         if wrong_side:
-            candidates = sorted(set(strikes))
-            fallback = offset_strike(candidates, short_strike, direction)
+            fallback = offset_strike(unique_sorted, short_strike, direction)
             if fallback is not None and fallback != short_strike:
                 result = fallback
             else:
@@ -418,9 +423,9 @@ def resolve_wing_strike(
     return result
 
 
-def valid_entry_mids(*mids: float) -> bool:
+def valid_entry_mids(*mids: float | None) -> bool:
     """Return True if every mid price is finite and positive."""
-    return all(math.isfinite(m) and m > 0 for m in mids)
+    return all(m is not None and math.isfinite(m) and m > 0 for m in mids)
 
 
 def get_overrides(config_overrides: StrategyOverrides | None) -> StrategyOverrides:

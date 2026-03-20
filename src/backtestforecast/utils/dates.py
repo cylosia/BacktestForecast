@@ -2,7 +2,7 @@
 
 Holiday data comes from two sources, merged at runtime:
 
-1. A static fallback set covering 2025-2035 (always available).
+1. A static fallback set covering 2025-2036 (always available).
 2. A dynamic set fetched from the Massive ``/v1/marketstatus/upcoming``
    endpoint and cached in Redis (key ``bff:market_holidays``).  A Celery
    beat task refreshes this cache weekly; processes read from Redis and
@@ -151,19 +151,30 @@ _US_MARKET_HOLIDAYS: frozenset[date] = frozenset({
     date(2035, 9, 3),    # Labor Day
     date(2035, 11, 22),  # Thanksgiving
     date(2035, 12, 25),  # Christmas
+    # 2036
+    date(2036, 1, 1),    # New Year's Day
+    date(2036, 1, 20),   # MLK Day
+    date(2036, 2, 17),   # Presidents' Day
+    date(2036, 4, 11),   # Good Friday
+    date(2036, 5, 26),   # Memorial Day
+    date(2036, 6, 19),   # Juneteenth
+    date(2036, 7, 4),    # Independence Day
+    date(2036, 9, 1),    # Labor Day
+    date(2036, 11, 27),  # Thanksgiving
+    date(2036, 12, 25),  # Christmas
 })
 
-_LAST_STATIC_HOLIDAY_YEAR = 2035
+_LAST_STATIC_HOLIDAY_YEAR = 2036
 
 
 def _check_holiday_list_freshness() -> None:
     """Log a warning if the static holiday list is nearing expiry."""
-    import logging
     current_year = date.today().year
     if current_year >= _LAST_STATIC_HOLIDAY_YEAR - 1:
-        logging.getLogger("backtestforecast.dates").warning(
-            "Static holiday list expires in %d. Update utils/dates.py or ensure Redis holiday refresh is configured.",
-            _LAST_STATIC_HOLIDAY_YEAR,
+        logger.warning(
+            "static_holiday_list_expiring",
+            last_year=_LAST_STATIC_HOLIDAY_YEAR,
+            hint="Update utils/dates.py or ensure Redis holiday refresh is configured.",
         )
 
 
@@ -307,6 +318,57 @@ def market_date_today() -> date:
         today -= timedelta(days=1)
     else:
         raise RuntimeError("Could not find a valid market date within 30 days")
+
+
+def is_trading_day(d: date) -> bool:
+    """Return True if *d* is a weekday and not a known market holiday."""
+    return d.weekday() < 5 and d not in get_all_holidays()
+
+
+def trading_days_in_range(start: date, end: date) -> int:
+    """Count trading days (inclusive) between *start* and *end*.
+
+    Uses the real holiday calendar. For ranges > 365 days, falls back to
+    the 252/365 approximation for performance.
+    """
+    span = (end - start).days
+    if span < 0:
+        return 0
+    if span > 365:
+        weekdays = round(span * 5 / 7)
+        return max(0, weekdays - round(span * 9 / 365))
+    holidays = get_all_holidays()
+    count = 0
+    current = start
+    while current <= end:
+        if current.weekday() < 5 and current not in holidays:
+            count += 1
+        current += timedelta(days=1)
+    return count
+
+
+def trading_to_calendar_days(trading_days: int, reference_date: date | None = None) -> int:
+    """Convert trading days to approximate calendar days using the real calendar.
+
+    When *reference_date* is provided and trading_days <= 30, walks forward
+    from the reference to count exactly. Otherwise uses the 5:7 ratio
+    approximation with a 1-day buffer for holiday clusters.
+    """
+    if trading_days <= 0:
+        return 0
+    if reference_date is not None and trading_days <= 30:
+        holidays = get_all_holidays()
+        cal = 0
+        counted = 0
+        d = reference_date
+        while counted < trading_days:
+            d += timedelta(days=1)
+            cal += 1
+            if d.weekday() < 5 and d not in holidays:
+                counted += 1
+        return cal
+    weeks, remainder = divmod(trading_days, 5)
+    return weeks * 7 + remainder + 1
 
 
 _check_holiday_list_freshness()

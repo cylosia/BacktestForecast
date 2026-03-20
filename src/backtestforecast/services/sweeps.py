@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppError, ConflictError, NotFoundError, ValidationError
+from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError
 from backtestforecast.schemas.json_shapes import _SUMMARY_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.market_data.prefetch import OptionDataPrefetcher
 from backtestforecast.market_data.service import HistoricalDataBundle
@@ -41,7 +41,7 @@ from backtestforecast.observability.metrics import (
 )
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
-from backtestforecast.services.backtests import to_decimal
+from backtestforecast.utils import to_decimal
 from backtestforecast.services.serialization import (
     downsample_equity_curve,
     serialize_equity_point,
@@ -52,30 +52,10 @@ from backtestforecast.services.serialization import (
 logger = structlog.get_logger("services.sweeps")
 
 
-_ZEROED_SUMMARY = {
-    "trade_count": 0, "total_commissions": 0, "total_net_pnl": 0,
-    "starting_equity": 0, "ending_equity": 0,
-}
-
-
-def _safe_validate_summary(data: dict) -> BacktestSummaryResponse:
-    """Parse summary JSON, returning a zeroed-out summary on corrupt data."""
-    try:
-        return BacktestSummaryResponse.model_validate(data)
-    except Exception:
-        logger.warning("sweep.corrupt_summary_json", exc_info=True)
-        return BacktestSummaryResponse.model_validate(_ZEROED_SUMMARY)
-
-
-def _safe_validate_equity_curve(data: list) -> list[EquityCurvePointResponse]:
-    """Parse equity curve JSON items, skipping corrupt entries."""
-    results: list[EquityCurvePointResponse] = []
-    for item in data:
-        try:
-            results.append(EquityCurvePointResponse.model_validate(item))
-        except Exception:
-            continue
-    return results
+from backtestforecast.services.serialization import (
+    safe_validate_equity_curve as _safe_validate_equity_curve,
+    safe_validate_summary as _safe_validate_summary,
+)
 
 
 _CANDIDATE_TIMEOUT_SECONDS = 120
@@ -94,13 +74,18 @@ def _sweep_scoring_config() -> dict[str, float]:
     }
 
 
+_heartbeat_failures: int = 0
+
+
 def _update_heartbeat(session: Session, job_id: UUID) -> None:
     """Best-effort heartbeat update so the reaper knows the job is alive.
 
     Uses a savepoint to avoid committing dirty ORM state from the parent
     transaction (e.g. in-progress candidate counts).
     """
+    global _heartbeat_failures
     from sqlalchemy import update as _hb_update
+    nested = None
     try:
         nested = session.begin_nested()
         session.execute(
@@ -109,11 +94,21 @@ def _update_heartbeat(session: Session, job_id: UUID) -> None:
             .values(last_heartbeat_at=datetime.now(UTC))
         )
         nested.commit()
+        _heartbeat_failures = 0
     except Exception:
-        try:
-            nested.rollback()
-        except Exception:
-            pass
+        _heartbeat_failures += 1
+        if nested is not None:
+            try:
+                nested.rollback()
+            except Exception:
+                pass
+        if _heartbeat_failures >= 3:
+            logger.error(
+                "sweep.heartbeat_consecutive_failures",
+                job_id=str(job_id),
+                consecutive_failures=_heartbeat_failures,
+                hint="Reaper may kill this job if heartbeat stays stale.",
+            )
 
 
 class SweepService:
@@ -174,22 +169,28 @@ class SweepService:
 
         candidate_count = self._compute_candidate_count(payload)
         if candidate_count == 0:
-            raise ValidationError("The sweep grid produces zero candidates.")
+            raise AppValidationError("The sweep grid produces zero candidates.")
 
         _MAX_CANDIDATES = 50_000
         if candidate_count > _MAX_CANDIDATES:
-            raise ValidationError(
+            raise AppValidationError(
                 f"Sweep grid produces {candidate_count:,} candidates, exceeding the {_MAX_CANDIDATES:,} limit. "
                 "Reduce the number of parameter combinations."
             )
 
+        snapshot = payload.model_dump(mode="json")
+        import hashlib, json
+        request_hash = hashlib.sha256(
+            json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         job = SweepJob(
             user_id=user.id,
             symbol=payload.symbol,
             status="queued",
             plan_tier_snapshot=user.plan_tier,
             candidate_count=candidate_count,
-            request_snapshot_json=payload.model_dump(mode="json"),
+            request_snapshot_json=snapshot,
+            request_hash=request_hash,
             idempotency_key=payload.idempotency_key,
         )
         self.repository.add(job)
@@ -277,7 +278,7 @@ class SweepService:
             self.session.commit()
             self.session.refresh(job)
             if job.status == "succeeded":
-                self.audit.record(
+                self.audit.record_always(
                     event_type="sweep.completed",
                     subject_type="sweep_job",
                     subject_id=job.id,
@@ -292,10 +293,8 @@ class SweepService:
                     expected="succeeded",
                     actual=job.status,
                 )
-            SWEEP_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - _run_start)
             return job
         except Exception:
-            SWEEP_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - _run_start)
             self.session.rollback()
             try:
                 job = self.repository.get(job_id, for_update=True)
@@ -309,16 +308,40 @@ class SweepService:
                 logger.exception("sweep.run_job_failed.recovery_failed", job_id=str(job_id))
                 self.session.rollback()
             raise
+        finally:
+            SWEEP_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - _run_start)
 
-    def list_jobs(self, user: User, limit: int = 50, offset: int = 0) -> SweepJobListResponse:
+    def list_jobs(
+        self,
+        user: User,
+        limit: int = 50,
+        offset: int = 0,
+        cursor: str | None = None,
+    ) -> SweepJobListResponse:
+        from backtestforecast.utils import decode_cursor, encode_cursor
+
         effective_limit = min(limit, 200)
-        jobs = self.repository.list_for_user(user.id, limit=effective_limit, offset=offset)
+        cursor_before = None
+        if cursor:
+            cursor_before = decode_cursor(cursor)
+            if cursor_before is None:
+                from backtestforecast.errors import ValidationError
+                raise ValidationError("Invalid pagination cursor.")
+            offset = 0
+        jobs = self.repository.list_for_user(
+            user.id, limit=effective_limit + 1, offset=offset, cursor_before=cursor_before,
+        )
+        has_next = len(jobs) > effective_limit
+        if has_next:
+            jobs = jobs[:effective_limit]
         total = self.repository.count_for_user(user.id)
+        next_cursor = encode_cursor(jobs[-1].created_at) if has_next and jobs else None
         return SweepJobListResponse(
             items=[self._to_job_response(j) for j in jobs],
             total=total,
             offset=offset,
             limit=effective_limit,
+            next_cursor=next_cursor,
         )
 
     def get_job(self, user: User, job_id: UUID) -> SweepJobResponse:
@@ -398,6 +421,7 @@ class SweepService:
                 SweepJob.user_id == user.id,
                 SweepJob.created_at >= month_start,
                 SweepJob.created_at < next_month,
+                SweepJob.status.notin_(("failed", "cancelled")),
             )
         ) or 0
         if used >= quota:
@@ -453,7 +477,7 @@ class SweepService:
 
         # Phase 2: execute grid
         candidates: list[dict[str, Any]] = []
-        _MAX_CANDIDATES_IN_MEMORY = 5_000
+        _MAX_CANDIDATES_IN_MEMORY = 2_000
         sweep_start = _time.monotonic()
         sweep_timeout = max(get_settings().sweep_timeout_seconds, _CANDIDATE_TIMEOUT_SECONDS * 2)
         timed_out = False
@@ -519,17 +543,41 @@ class SweepService:
                                 ))
                                 local_evaluated_count += 1
                                 if local_evaluated_count % 50 == 0:
-                                    job.evaluated_candidate_count = local_evaluated_count
+                                    _update_heartbeat(self.session, job.id)
+                                    nested_progress = None
                                     try:
-                                        self.session.commit()
+                                        nested_progress = self.session.begin_nested()
+                                        from sqlalchemy import update as _progress_update
+                                        self.session.execute(
+                                            _progress_update(SweepJob)
+                                            .where(SweepJob.id == job.id)
+                                            .values(evaluated_candidate_count=local_evaluated_count)
+                                        )
+                                        nested_progress.commit()
                                     except Exception:
-                                        self.session.rollback()
+                                        if nested_progress is not None:
+                                            try:
+                                                nested_progress.rollback()
+                                            except Exception:
+                                                pass
                                         logger.warning(
                                             "sweep.progress_commit_failed",
                                             evaluated=local_evaluated_count,
                                             candidates_in_memory=len(candidates),
                                         )
-                                    _update_heartbeat(self.session, job.id)
+                                _TRIM_INTERVAL = 200
+                                max_results = payload.max_results or 20
+                                if (
+                                    len(candidates) > 0
+                                    and len(candidates) % _TRIM_INTERVAL == 0
+                                    and len(candidates) > max_results * 2
+                                ):
+                                    candidates.sort(key=lambda c: c.get("score", 0), reverse=True)
+                                    keep = max(max_results * 3, _TRIM_INTERVAL)
+                                    for c in candidates[keep:]:
+                                        c["trades_json"] = []
+                                        c["equity_curve"] = []
+
                                 if len(candidates) >= _MAX_CANDIDATES_IN_MEMORY:
                                     timed_out = True
                                     warnings.append({
@@ -625,13 +673,13 @@ class SweepService:
 
         gc = payload.genetic_config
         if gc is None:
-            raise ValidationError("genetic_config is required for genetic mode.")
+            raise AppValidationError("genetic_config is required for genetic mode.")
 
         num_legs = gc.num_legs
         leg_count_map = {v: k for k, v in CUSTOM_LEG_COUNT.items()}
         strategy_type = leg_count_map.get(num_legs)
         if strategy_type is None:
-            raise ValidationError(f"No custom strategy type for {num_legs} legs.")
+            raise AppValidationError(f"No custom strategy type for {num_legs} legs.")
 
         warnings: list[dict[str, Any]] = []
 
@@ -717,7 +765,7 @@ class SweepService:
                 result = exec_service.execute_request(request, bundle=bundle)
                 summary = self._serialize_summary(result.summary)
                 return self._score_candidate_from_summary(summary)
-            except (AppError, ValidationError):
+            except (AppError, AppValidationError):
                 return 0.0
             except _PydanticValidationError:
                 return 0.0
@@ -725,6 +773,7 @@ class SweepService:
                 logger.warning("sweep.genetic_fitness_unexpected_error", exc_info=True)
                 return 0.0
 
+        effective_max_workers = min(gc.max_workers, get_settings().pipeline_max_workers)
         ga_config = GeneticConfig(
             num_legs=gc.num_legs,
             population_size=gc.population_size,
@@ -733,7 +782,7 @@ class SweepService:
             crossover_rate=gc.crossover_rate,
             mutation_rate=gc.mutation_rate,
             elitism_count=gc.elitism_count,
-            max_workers=gc.max_workers,
+            max_workers=effective_max_workers,
             max_stale_generations=gc.max_stale_generations,
         )
         optimizer = GeneticOptimizer(ga_config)
@@ -879,24 +928,28 @@ class SweepService:
         if delta_val is None and width_val is None:
             return None
 
-        strike_sel = None
-        if delta_val is not None:
-            strike_sel = StrikeSelection(
-                mode=StrikeSelectionMode.DELTA_TARGET,
-                value=Decimal(str(delta_val)),
-            )
-
         spread_width = None
         if width_val is not None:
-            from backtestforecast.schemas.backtests import SpreadWidthMode
             spread_width = SpreadWidthConfig(
                 mode=SpreadWidthMode(width_val[0]),
                 value=width_val[1],
             )
 
+        put_strike_sel = None
+        call_strike_sel = None
+        if delta_val is not None:
+            put_strike_sel = StrikeSelection(
+                mode=StrikeSelectionMode.DELTA_TARGET,
+                value=Decimal(str(delta_val)),
+            )
+            call_strike_sel = StrikeSelection(
+                mode=StrikeSelectionMode.DELTA_TARGET,
+                value=Decimal(str(delta_val)),
+            )
+
         return StrategyOverrides(
-            short_put_strike=strike_sel,
-            short_call_strike=strike_sel,
+            short_put_strike=put_strike_sel,
+            short_call_strike=call_strike_sel,
             spread_width=spread_width,
         )
 
@@ -944,6 +997,35 @@ class SweepService:
 
     @staticmethod
     def _score_candidate_from_summary(summary: dict[str, Any], cfg: dict[str, float] | None = None) -> float:
+        """Score a candidate based on backtest summary metrics.
+
+        **Formula**::
+
+            raw = win_rate * W_wr + roi * W_roi + sharpe * (M * W_sharpe) - drawdown * W_dd
+            score = raw * norm
+
+        Where:
+
+        - ``M`` is the ``sharpe_multiplier`` (default 2.0), which amplifies
+          Sharpe's *relative* contribution vs other factors.
+        - ``norm`` is a normalization factor that keeps the total effective
+          weight proportional to the configured sum (default 1.0). Without
+          normalization, the multiplier would inflate absolute scores.
+
+        **Default weights** (effective after normalization):
+
+        ========== ========== ========= ===========
+        Factor     Configured Effective Proportion
+        ========== ========== ========= ===========
+        Win rate   0.25       0.25      ~21%
+        ROI        0.35       0.35      ~29%
+        Sharpe     0.20×2.0   0.40      ~33%
+        Drawdown   0.20       0.20      ~17%
+        ========== ========== ========= ===========
+
+        The multiplier makes Sharpe the highest-weighted factor, favouring
+        risk-adjusted returns over raw ROI in sweep ranking.
+        """
         if cfg is None:
             cfg = _sweep_scoring_config()
         win_rate = Decimal(str(summary.get("win_rate", 0)))
@@ -966,12 +1048,19 @@ class SweepService:
         sharpe_m = Decimal(str(round(cfg["sharpe_multiplier"], 10)))
         drawdown_w = Decimal(str(round(cfg["drawdown_weight"], 10)))
 
+        effective_sharpe_w = sharpe_w * sharpe_m
+        total_effective = win_rate_w + roi_w + effective_sharpe_w + drawdown_w
+        if total_effective > 0:
+            norm = (win_rate_w + roi_w + sharpe_w + drawdown_w) / total_effective
+        else:
+            norm = Decimal("1")
+
         score = (
             win_rate * win_rate_w
             + roi * roi_w
-            + sharpe * sharpe_m * sharpe_w
+            + sharpe * effective_sharpe_w
             - drawdown * drawdown_w
-        )
+        ) * norm
         return float(score)
 
     _serialize_summary = staticmethod(serialize_summary)
@@ -1016,7 +1105,7 @@ class SweepService:
             delta=params.get("delta"),
             width_mode=params.get("width_mode"),
             width_value=params.get("width_value"),
-            entry_rule_set_name=params.get("entry_rule_set_name") or "",
+            entry_rule_set_name=params.get("entry_rule_set_name") or "default",
             exit_rule_set_name=params.get("exit_rule_set_name"),
             profit_target_pct=params.get("profit_target_pct"),
             stop_loss_pct=params.get("stop_loss_pct"),

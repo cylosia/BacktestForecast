@@ -4,12 +4,23 @@ import { buildBacktestQuota } from "@/lib/backtests/quota";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SelectableHistoryList } from "@/components/backtests/selectable-history-list";
+import { PaginationControls } from "@/components/shared/pagination-controls";
 
 export const dynamic = "force-dynamic";
 
-export default async function BacktestsPage() {
+const PAGE_SIZE = 20;
+
+export default async function BacktestsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ offset?: string; limit?: string }>;
+}) {
+  const params = await searchParams;
+  const offset = Math.max(0, parseInt(params.offset ?? "0", 10) || 0);
+  const limit = Math.min(100, Math.max(1, parseInt(params.limit ?? String(PAGE_SIZE), 10) || PAGE_SIZE));
+
   try {
-    const [user, history] = await Promise.all([getCurrentUser(), getBacktestHistory()]);
+    const [user, history] = await Promise.all([getCurrentUser(), getBacktestHistory(limit, offset)]);
     const quota = buildBacktestQuota(user);
 
     return (
@@ -68,6 +79,12 @@ export default async function BacktestsPage() {
             <SelectableHistoryList
               items={history.items}
               comparisonLimit={user.features?.side_by_side_comparison_limit}
+            />
+            <PaginationControls
+              basePath="/app/backtests"
+              offset={offset}
+              limit={limit}
+              total={history.total}
             />
           </CardContent>
         </Card>

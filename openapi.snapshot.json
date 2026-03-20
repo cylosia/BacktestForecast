@@ -1,6 +1,75 @@
 {
   "components": {
     "schemas": {
+      "AccountDataExportResponse": {
+        "description": "GDPR data portability export containing all user data.",
+        "properties": {
+          "backtests": {
+            "items": {
+              "$ref": "#/components/schemas/_GdprBacktest"
+            },
+            "title": "Backtests",
+            "type": "array"
+          },
+          "export_jobs": {
+            "items": {
+              "$ref": "#/components/schemas/_GdprExportJob"
+            },
+            "title": "Export Jobs",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/_GdprPagination"
+          },
+          "scanner_jobs": {
+            "items": {
+              "$ref": "#/components/schemas/_GdprScannerJob"
+            },
+            "title": "Scanner Jobs",
+            "type": "array"
+          },
+          "sweep_jobs": {
+            "items": {
+              "$ref": "#/components/schemas/_GdprSweepJob"
+            },
+            "title": "Sweep Jobs",
+            "type": "array"
+          },
+          "symbol_analyses": {
+            "items": {
+              "$ref": "#/components/schemas/_GdprAnalysis"
+            },
+            "title": "Symbol Analyses",
+            "type": "array"
+          },
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/_GdprTemplate"
+            },
+            "title": "Templates",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/_GdprTotals"
+          },
+          "user": {
+            "$ref": "#/components/schemas/_GdprUserSummary"
+          }
+        },
+        "required": [
+          "user",
+          "pagination",
+          "totals",
+          "backtests",
+          "templates",
+          "scanner_jobs",
+          "sweep_jobs",
+          "export_jobs",
+          "symbol_analyses"
+        ],
+        "title": "AccountDataExportResponse",
+        "type": "object"
+      },
       "AnalysisDetailResponse": {
         "properties": {
           "close_price": {
@@ -70,7 +139,7 @@
             ],
             "title": "Error Message"
           },
-          "forecast_json": {
+          "forecast": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -80,14 +149,14 @@
                 "type": "null"
               }
             ],
-            "title": "Forecast Json"
+            "title": "Forecast"
           },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
           },
-          "landscape_json": {
+          "landscape": {
             "anyOf": [
               {
                 "items": {
@@ -99,9 +168,9 @@
                 "type": "null"
               }
             ],
-            "title": "Landscape Json"
+            "title": "Landscape"
           },
-          "regime_json": {
+          "regime": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/RegimeDetail"
@@ -135,7 +204,7 @@
             "title": "Started At"
           },
           "status": {
-            "$ref": "#/components/schemas/JobStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           },
           "strategies_tested": {
             "title": "Strategies Tested",
@@ -145,11 +214,7 @@
             "title": "Symbol",
             "type": "string"
           },
-          "top_results_count": {
-            "title": "Top Results Count",
-            "type": "integer"
-          },
-          "top_results_json": {
+          "top_results": {
             "anyOf": [
               {
                 "items": {
@@ -161,7 +226,11 @@
                 "type": "null"
               }
             ],
-            "title": "Top Results Json"
+            "title": "Top Results"
+          },
+          "top_results_count": {
+            "title": "Top Results Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -309,7 +378,7 @@
             "title": "Started At"
           },
           "status": {
-            "$ref": "#/components/schemas/JobStatus"
+            "$ref": "#/components/schemas/RunJobStatus"
           },
           "strategies_tested": {
             "title": "Strategies Tested",
@@ -535,7 +604,7 @@
                 "type": "null"
               }
             ],
-            "description": "Annualized risk-free rate used for Sharpe and Sortino ratio calculations.",
+            "description": "Annualized risk-free rate used for Sharpe and Sortino ratio calculations. Sourced from the run's persisted column or input snapshot. Null only when the value could not be determined (very old runs).",
             "title": "Risk Free Rate"
           },
           "risk_per_trade_pct": {
@@ -581,13 +650,13 @@
             "title": "Trades",
             "type": "array"
           },
-          "warnings_json": {
+          "warnings": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
             "maxItems": 100,
-            "title": "Warnings Json",
+            "title": "Warnings",
             "type": "array"
           }
         },
@@ -607,7 +676,7 @@
           "engine_version",
           "data_source",
           "created_at",
-          "warnings_json",
+          "warnings",
           "summary",
           "trades",
           "equity_curve"
@@ -704,6 +773,18 @@
             "title": "Limit",
             "type": "integer"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque cursor for keyset pagination. Pass as `cursor` on the next request to fetch the next page.",
+            "title": "Next Cursor"
+          },
           "offset": {
             "default": 0,
             "title": "Offset",
@@ -786,6 +867,7 @@
         "type": "object"
       },
       "BacktestSummaryResponse": {
+        "description": "Backtest summary metrics.\n\nDUAL-PURPOSE: This schema is used for BOTH ORM mapping (``from_attributes=True``\non BacktestRunDetailResponse) AND manual construction from JSON blobs\n(scanner/sweep ``summary_json`` fields). Fields like ``decided_trades``\nthat don't exist on the ORM model will silently default to ``None``.\nDo not add validators that assume ORM context \u2014 they will break the\nJSON construction path.",
         "properties": {
           "average_dte_at_open": {
             "default": "0",
@@ -835,22 +917,28 @@
             ],
             "title": "Calmar Ratio"
           },
+          "decided_trades": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trades with non-zero net P&L. Win rate denominator. Equals trade_count minus break-even trades.",
+            "title": "Decided Trades"
+          },
           "ending_equity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Ending Equity",
             "type": "string"
           },
           "expectancy": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expectancy"
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Expectancy",
+            "type": "string"
           },
           "max_consecutive_losses": {
             "default": 0,
@@ -944,32 +1032,20 @@
             "type": "string"
           },
           "total_roi_pct": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total Roi Pct"
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Roi Pct",
+            "type": "string"
           },
           "trade_count": {
             "title": "Trade Count",
             "type": "integer"
           },
           "win_rate": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Win Rate"
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Win Rate",
+            "type": "string"
           }
         },
         "required": [
@@ -986,6 +1062,7 @@
         "properties": {
           "detail_json": {
             "additionalProperties": true,
+            "description": "Trade leg details. May be large for multi-leg strategies.",
             "title": "Detail Json",
             "type": "object"
           },
@@ -999,6 +1076,7 @@
             "type": "string"
           },
           "entry_mid": {
+            "description": "Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value \u00d7 100 \u00d7 quantity.",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Entry Mid",
             "type": "string"
@@ -1018,6 +1096,7 @@
             "type": "string"
           },
           "exit_mid": {
+            "description": "Per-unit position value at exit divided by 100. Same convention as entry_mid.",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Exit Mid",
             "type": "string"
@@ -1042,8 +1121,21 @@
             "type": "string"
           },
           "holding_period_days": {
+            "description": "Calendar days between entry and exit dates.",
             "title": "Holding Period Days",
             "type": "integer"
+          },
+          "holding_period_trading_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trading days (market-open days) held. None for wheel strategy.",
+            "title": "Holding Period Trading Days"
           },
           "id": {
             "format": "uuid",
@@ -1202,8 +1294,7 @@
       "CheckoutSessionResponse": {
         "properties": {
           "billing_interval": {
-            "title": "Billing Interval",
-            "type": "string"
+            "$ref": "#/components/schemas/BillingInterval"
           },
           "checkout_url": {
             "title": "Checkout Url",
@@ -1226,8 +1317,7 @@
             "type": "string"
           },
           "tier": {
-            "title": "Tier",
-            "type": "string"
+            "$ref": "#/components/schemas/PlanTier"
           }
         },
         "required": [
@@ -1383,6 +1473,7 @@
             "type": "integer"
           },
           "end_date": {
+            "description": "Backtest end date. Must be after start_date.",
             "format": "date",
             "title": "End Date",
             "type": "string"
@@ -1508,6 +1599,7 @@
             "title": "Slippage Pct"
           },
           "start_date": {
+            "description": "Backtest start date. Maximum window is 1825 days (5 years) from end_date.",
             "format": "date",
             "title": "Start Date",
             "type": "string"
@@ -1545,6 +1637,7 @@
             "$ref": "#/components/schemas/StrategyType"
           },
           "symbol": {
+            "description": "Ticker symbol (e.g., AAPL, SPY). Uppercase letters, dots, and slashes allowed.",
             "maxLength": 16,
             "minLength": 1,
             "title": "Symbol",
@@ -2080,6 +2173,7 @@
           "subscription_billing_interval": {
             "anyOf": [
               {
+                "pattern": "^(monthly|yearly)$",
                 "type": "string"
               },
               {
@@ -2390,7 +2484,12 @@
             ]
           },
           "status": {
-            "$ref": "#/components/schemas/JobStatus"
+            "enum": [
+              "ok",
+              "no_data"
+            ],
+            "title": "Status",
+            "type": "string"
           },
           "trade_date": {
             "anyOf": [
@@ -2672,9 +2771,7 @@
             "title": "Expires At"
           },
           "export_format": {
-            "pattern": "^(csv|pdf)$",
-            "title": "Export Format",
-            "type": "string"
+            "$ref": "#/components/schemas/ExportFormat"
           },
           "file_name": {
             "title": "File Name",
@@ -2701,15 +2798,9 @@
             "title": "Sha256 Hex"
           },
           "size_bytes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Size Bytes"
+            "default": 0,
+            "title": "Size Bytes",
+            "type": "integer"
           },
           "started_at": {
             "anyOf": [
@@ -2725,21 +2816,6 @@
           },
           "status": {
             "$ref": "#/components/schemas/JobStatus"
-          },
-          "warnings": {
-            "anyOf": [
-              {
-                "items": {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Warnings"
           }
         },
         "required": [
@@ -2857,6 +2933,11 @@
           "scanner": {
             "default": true,
             "title": "Scanner",
+            "type": "boolean"
+          },
+          "sweeps": {
+            "default": true,
+            "title": "Sweeps",
             "type": "boolean"
           }
         },
@@ -3553,8 +3634,7 @@
             "type": "integer"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/RunJobStatus"
           },
           "symbols_screened": {
             "title": "Symbols Screened",
@@ -4080,17 +4160,6 @@
             "title": "Id",
             "type": "string"
           },
-          "idempotency_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Idempotency Key"
-          },
           "job_kind": {
             "title": "Job Kind",
             "type": "string"
@@ -4108,6 +4177,18 @@
               }
             ],
             "title": "Name"
+          },
+          "pipeline_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Run Id"
           },
           "plan_tier_snapshot": {
             "$ref": "#/components/schemas/PlanTier"
@@ -4144,12 +4225,12 @@
           "status": {
             "$ref": "#/components/schemas/RunJobStatus"
           },
-          "warnings_json": {
+          "warnings": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Warnings Json",
+            "title": "Warnings",
             "type": "array"
           }
         },
@@ -4828,7 +4909,7 @@
           "plan_tier_snapshot": {
             "$ref": "#/components/schemas/PlanTier"
           },
-          "prefetch_summary_json": {
+          "prefetch_summary": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -4838,11 +4919,11 @@
                 "type": "null"
               }
             ],
-            "title": "Prefetch Summary Json"
+            "title": "Prefetch Summary"
           },
-          "request_snapshot_json": {
+          "request_snapshot": {
             "additionalProperties": true,
-            "title": "Request Snapshot Json",
+            "title": "Request Snapshot",
             "type": "object"
           },
           "result_count": {
@@ -4868,12 +4949,12 @@
             "title": "Symbol",
             "type": "string"
           },
-          "warnings_json": {
+          "warnings": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Warnings Json",
+            "title": "Warnings",
             "type": "array"
           }
         },
@@ -5082,8 +5163,7 @@
           },
           "trades_json": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/TradeJsonResponse"
             },
             "maxItems": 10000,
             "title": "Trades Json",
@@ -5431,7 +5511,7 @@
       },
       "TemplateResponse": {
         "properties": {
-          "config_json": {
+          "config": {
             "$ref": "#/components/schemas/TemplateConfig-Output"
           },
           "created_at": {
@@ -5474,7 +5554,7 @@
           "name",
           "description",
           "strategy_type",
-          "config_json",
+          "config",
           "created_at",
           "updated_at"
         ],
@@ -5486,6 +5566,7 @@
         "properties": {
           "detail_json": {
             "additionalProperties": true,
+            "description": "Trade leg details. May be large for multi-leg strategies.",
             "title": "Detail Json",
             "type": "object"
           },
@@ -5499,6 +5580,7 @@
             "type": "string"
           },
           "entry_mid": {
+            "description": "Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price.",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Entry Mid",
             "type": "string"
@@ -5518,6 +5600,7 @@
             "type": "string"
           },
           "exit_mid": {
+            "description": "Per-unit position value at exit divided by 100. Same convention as entry_mid.",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Exit Mid",
             "type": "string"
@@ -5542,8 +5625,21 @@
             "type": "string"
           },
           "holding_period_days": {
+            "description": "Calendar days between entry and exit dates.",
             "title": "Holding Period Days",
             "type": "integer"
+          },
+          "holding_period_trading_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trading days (market-open days) held.",
+            "title": "Holding Period Trading Days"
           },
           "net_pnl": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -5865,6 +5961,417 @@
           "value"
         ],
         "title": "WidthGridItem",
+        "type": "object"
+      },
+      "_GdprAnalysis": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "strategies_tested": {
+            "title": "Strategies Tested",
+            "type": "integer"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "top_results_count": {
+            "title": "Top Results Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "symbol",
+          "status",
+          "strategies_tested",
+          "top_results_count",
+          "created_at"
+        ],
+        "title": "_GdprAnalysis",
+        "type": "object"
+      },
+      "_GdprBacktest": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "date_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date From"
+          },
+          "date_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date To"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "strategy_type": {
+            "title": "Strategy Type",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "total_net_pnl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Net Pnl"
+          },
+          "trade_count": {
+            "title": "Trade Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "symbol",
+          "strategy_type",
+          "status",
+          "date_from",
+          "date_to",
+          "trade_count",
+          "total_net_pnl",
+          "created_at"
+        ],
+        "title": "_GdprBacktest",
+        "type": "object"
+      },
+      "_GdprExportJob": {
+        "properties": {
+          "backtest_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backtest Run Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "export_format": {
+            "title": "Export Format",
+            "type": "string"
+          },
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "backtest_run_id",
+          "export_format",
+          "status",
+          "file_name",
+          "size_bytes",
+          "created_at"
+        ],
+        "title": "_GdprExportJob",
+        "type": "object"
+      },
+      "_GdprPagination": {
+        "properties": {
+          "backtests_offset": {
+            "title": "Backtests Offset",
+            "type": "integer"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limit",
+          "backtests_offset",
+          "hint"
+        ],
+        "title": "_GdprPagination",
+        "type": "object"
+      },
+      "_GdprScannerJob": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "recommendation_count": {
+            "title": "Recommendation Count",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "mode",
+          "recommendation_count",
+          "created_at"
+        ],
+        "title": "_GdprScannerJob",
+        "type": "object"
+      },
+      "_GdprSweepJob": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "result_count": {
+            "title": "Result Count",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "symbol",
+          "status",
+          "result_count",
+          "created_at"
+        ],
+        "title": "_GdprSweepJob",
+        "type": "object"
+      },
+      "_GdprTemplate": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "strategy_type": {
+            "title": "Strategy Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "strategy_type",
+          "created_at"
+        ],
+        "title": "_GdprTemplate",
+        "type": "object"
+      },
+      "_GdprTotals": {
+        "properties": {
+          "backtests": {
+            "title": "Backtests",
+            "type": "integer"
+          },
+          "export_jobs": {
+            "title": "Export Jobs",
+            "type": "integer"
+          },
+          "scanner_jobs": {
+            "title": "Scanner Jobs",
+            "type": "integer"
+          },
+          "sweep_jobs": {
+            "title": "Sweep Jobs",
+            "type": "integer"
+          },
+          "symbol_analyses": {
+            "title": "Symbol Analyses",
+            "type": "integer"
+          },
+          "templates": {
+            "title": "Templates",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "backtests",
+          "templates",
+          "scanner_jobs",
+          "sweep_jobs",
+          "export_jobs",
+          "symbol_analyses"
+        ],
+        "title": "_GdprTotals",
+        "type": "object"
+      },
+      "_GdprUserSummary": {
+        "properties": {
+          "clerk_user_id": {
+            "title": "Clerk User Id",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "plan_tier": {
+            "title": "Plan Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "clerk_user_id",
+          "email",
+          "plan_tier",
+          "created_at"
+        ],
+        "title": "_GdprUserSummary",
         "type": "object"
       },
       "_Unset": {
@@ -6250,8 +6757,8 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 1000,
-              "maximum": 1000,
+              "default": 200,
+              "maximum": 200,
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
@@ -6291,9 +6798,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Export Account Data V1 Account Me Export Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AccountDataExportResponse"
                 }
               }
             },
@@ -6935,6 +7440,25 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.",
+              "title": "Cursor"
             }
           },
           {

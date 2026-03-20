@@ -359,6 +359,19 @@ class SpreadWidthMode(str, Enum):
     """Percentage of the underlying (e.g., 3 → 3% wide)."""
 
 
+def validate_spread_width(mode: SpreadWidthMode, value: Decimal) -> None:
+    """Shared validation for spread width bounds. Used by both SpreadWidthConfig and WidthGridItem."""
+    if mode == SpreadWidthMode.STRIKE_STEPS:
+        if value < 1 or value > 20:
+            raise ValueError("strike_steps width must be between 1 and 20")
+    elif mode == SpreadWidthMode.DOLLAR_WIDTH:
+        if value < Decimal("0.5") or value > Decimal("100"):
+            raise ValueError("dollar_width must be between 0.50 and 100")
+    elif mode == SpreadWidthMode.PCT_WIDTH:
+        if value < Decimal("0.5") or value > Decimal("30"):
+            raise ValueError("pct_width must be between 0.5 and 30")
+
+
 class SpreadWidthConfig(BaseModel):
     """Configuration for how wide a spread's wings are."""
     model_config = ConfigDict(extra="forbid")
@@ -368,15 +381,7 @@ class SpreadWidthConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_width(self) -> "SpreadWidthConfig":
-        if self.mode == SpreadWidthMode.STRIKE_STEPS:
-            if self.value < 1 or self.value > 20:
-                raise ValueError("strike_steps width must be between 1 and 20")
-        elif self.mode == SpreadWidthMode.DOLLAR_WIDTH:
-            if self.value < Decimal("0.5") or self.value > Decimal("100"):
-                raise ValueError("dollar_width must be between 0.50 and 100")
-        elif self.mode == SpreadWidthMode.PCT_WIDTH:
-            if self.value < Decimal("0.5") or self.value > Decimal("30"):
-                raise ValueError("pct_width must be between 0.5 and 30")
+        validate_spread_width(self.mode, self.value)
         return self
 
 
@@ -426,6 +431,17 @@ class CreateBacktestRunRequest(BaseModel):
     )
     strategy_overrides: StrategyOverrides | None = Field(
         default=None, description="Optional overrides for strike placement and spread width"
+    )
+    risk_free_rate: Decimal | None = Field(
+        default=None, ge=Decimal("0"), le=Decimal("0.20"),
+        description="Annualized risk-free rate for Sharpe/Sortino calculations. "
+                    "If not provided, uses the server default (see /v1/meta). "
+                    "Set to 0.0 for ZIRP-era backtests.",
+    )
+    dividend_yield: Decimal | None = Field(
+        default=None, ge=Decimal("0"), le=Decimal("0.15"),
+        description="Annualized dividend yield for BSM IV estimation (e.g. 0.03 = 3%). "
+                    "Improves IV accuracy for high-yield stocks. Defaults to 0.0.",
     )
 
     @field_validator("symbol")
@@ -506,7 +522,9 @@ class CurrentUserResponse(BaseModel):
     email: str | None
     plan_tier: PlanTier
     subscription_status: str | None = None
-    subscription_billing_interval: str | None = None
+    subscription_billing_interval: str | None = Field(
+        default=None, pattern=r"^(monthly|yearly)$",
+    )
     subscription_current_period_end: datetime | None = None
     cancel_at_period_end: bool = False
     created_at: datetime
@@ -517,6 +535,18 @@ class CurrentUserResponse(BaseModel):
 
 
 class BacktestSummaryResponse(BaseModel):
+    """Backtest summary metrics.
+
+    DUAL-PURPOSE: This schema is used for BOTH ORM mapping (``from_attributes=True``
+    on BacktestRunDetailResponse) AND manual construction from JSON blobs
+    (scanner/sweep ``summary_json`` fields). Fields like ``decided_trades``
+    that don't exist on the ORM model will silently default to ``None``.
+    Do not add validators that assume ORM context — they will break the
+    JSON construction path.
+    """
+    # NOTE: Used both for ORM mapping (BacktestRun detail) and JSON blob
+    # parsing (scanner/sweep summary_json). Fields not on the ORM model
+    # (e.g. decided_trades) must have defaults so from_attributes works.
     model_config = ConfigDict(from_attributes=True)
 
     trade_count: int
@@ -525,8 +555,8 @@ class BacktestSummaryResponse(BaseModel):
         description="Trades with non-zero net P&L. Win rate denominator. "
                     "Equals trade_count minus break-even trades.",
     )
-    win_rate: Decimal | None = None
-    total_roi_pct: Decimal | None = None
+    win_rate: Decimal = Decimal("0")
+    total_roi_pct: Decimal = Decimal("0")
     average_win_amount: Decimal = Decimal("0")
     average_loss_amount: Decimal = Decimal("0")
     average_holding_period_days: Decimal = Decimal("0")
@@ -538,7 +568,7 @@ class BacktestSummaryResponse(BaseModel):
     ending_equity: Decimal
     profit_factor: Decimal | None = None
     payoff_ratio: Decimal | None = None
-    expectancy: Decimal | None = None
+    expectancy: Decimal = Decimal("0")
     sharpe_ratio: Decimal | None = None
     sortino_ratio: Decimal | None = None
     cagr_pct: Decimal | None = None
@@ -569,7 +599,7 @@ class BacktestTradeResponse(BaseModel):
     total_commissions: Decimal
     entry_reason: str
     exit_reason: str
-    detail_json: dict[str, Any] = Field(default_factory=dict)
+    detail_json: dict[str, Any] = Field(default_factory=dict, description="Trade leg details. May be large for multi-leg strategies.")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -600,7 +630,7 @@ class TradeJsonResponse(BaseModel):
     total_commissions: Decimal
     entry_reason: str
     exit_reason: str
-    detail_json: dict[str, Any] = Field(default_factory=dict)
+    detail_json: dict[str, Any] = Field(default_factory=dict, description="Trade leg details. May be large for multi-leg strategies.")
 
     model_config = ConfigDict(extra="ignore")
 
@@ -647,12 +677,12 @@ class BacktestRunDetailResponse(BaseModel):
     account_size: Decimal
     risk_per_trade_pct: Decimal
     commission_per_contract: Decimal
-    engine_version: str
-    data_source: str
+    engine_version: Literal["options-multileg-v1", "options-multileg-v2"] = "options-multileg-v2"
+    data_source: Literal["massive", "manual"] = "massive"
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    warnings: list[dict[str, Any]] = Field(alias="warnings_json", max_length=100)
+    warnings: list[dict[str, Any]] = Field(validation_alias="warnings_json", max_length=100)
     error_code: str | None = None
     error_message: str | None = None
     summary: BacktestSummaryResponse
@@ -661,10 +691,14 @@ class BacktestRunDetailResponse(BaseModel):
     equity_curve_truncated: bool = False
     risk_free_rate: Decimal | None = Field(
         default=None,
-        description="Annualized risk-free rate used for Sharpe and Sortino ratio calculations.",
+        description=(
+            "Annualized risk-free rate used for Sharpe and Sortino ratio calculations. "
+            "Sourced from the run's persisted column or input snapshot. "
+            "Null only when the value could not be determined (very old runs)."
+        ),
     )
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
@@ -685,6 +719,10 @@ class BacktestRunListResponse(BaseModel):
     total: int = 0
     offset: int = 0
     limit: int = 50
+    next_cursor: str | None = Field(
+        default=None,
+        description="Opaque cursor for keyset pagination. Pass as `cursor` on the next request to fetch the next page.",
+    )
 
 
 class CompareBacktestsRequest(BaseModel):

@@ -6,10 +6,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from backtestforecast.billing.entitlements import (
-    ACTIVE_RENEWAL_GRACE,
     ExportFormat,
     FeatureLockedError,
     PlanTier,
+    _active_renewal_grace,
     ensure_export_access,
     ensure_forecasting_access,
     normalize_plan_tier,
@@ -34,11 +34,11 @@ class TestNormalizePlanTier:
         assert normalize_plan_tier("premium", "active", future) == PlanTier.PREMIUM
 
     def test_free_when_period_expired_beyond_grace(self):
-        expired = datetime.now(UTC) - ACTIVE_RENEWAL_GRACE - timedelta(hours=1)
+        expired = datetime.now(UTC) - _active_renewal_grace() - timedelta(hours=1)
         assert normalize_plan_tier("pro", "active", expired) == PlanTier.FREE
 
     def test_pro_within_renewal_grace(self):
-        almost_expired = datetime.now(UTC) - ACTIVE_RENEWAL_GRACE + timedelta(minutes=30)
+        almost_expired = datetime.now(UTC) - _active_renewal_grace() + timedelta(minutes=30)
         assert normalize_plan_tier("pro", "active", almost_expired) == PlanTier.PRO
 
     def test_past_due_within_grace_period(self):
@@ -52,8 +52,10 @@ class TestNormalizePlanTier:
     def test_past_due_no_period_end(self):
         assert normalize_plan_tier("pro", "past_due", None) == PlanTier.FREE
 
-    def test_unknown_status_returns_free(self):
-        assert normalize_plan_tier("pro", "some_unknown_status") == PlanTier.FREE
+    def test_unknown_status_preserves_current_tier(self):
+        assert normalize_plan_tier("pro", "some_unknown_status") == PlanTier.PRO
+        assert normalize_plan_tier("premium", "some_unknown_status") == PlanTier.PREMIUM
+        assert normalize_plan_tier("free", "some_unknown_status") == PlanTier.FREE
 
     def test_inactive_statuses(self):
         for status in ("canceled", "unpaid", "incomplete", "incomplete_expired", "paused"):

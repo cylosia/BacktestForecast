@@ -135,7 +135,9 @@ class OptionDataPrefetcher:
                     )
             return result
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=workers)
+        timed_out = False
+        try:
             futures = {
                 pool.submit(_fetch_date, td): td for td in trade_dates
             }
@@ -164,6 +166,7 @@ class OptionDataPrefetcher:
                                 quotes=summary.quotes_fetched,
                             )
             except TimeoutError:
+                timed_out = True
                 logger.warning(
                     "prefetch.timeout",
                     symbol=symbol,
@@ -171,8 +174,8 @@ class OptionDataPrefetcher:
                     dates_total=len(trade_dates),
                 )
                 summary.errors.append(f"{symbol}: prefetch timed out after {self._timeout}s")
-                for f in futures:
-                    f.cancel()
+        finally:
+            pool.shutdown(wait=not timed_out, cancel_futures=timed_out)
 
         logger.info(
             "prefetch.completed",

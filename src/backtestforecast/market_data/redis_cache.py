@@ -11,7 +11,6 @@ import structlog
 import redis
 
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
-from backtestforecast.observability.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
 
 logger = structlog.get_logger("market_data.redis_cache")
 
@@ -102,17 +101,22 @@ class OptionDataRedisCache:
         )
         self._ttl = ttl_seconds
         self._client: redis.Redis | None = None
+        self._closed = False
         self._lock = threading.Lock()
 
     def close(self) -> None:
         with self._lock:
+            self._closed = True
             self._client = None
-        self._pool.disconnect()
+            self._pool.disconnect()
 
     def _conn(self) -> redis.Redis:
-        if self._client is not None:
-            return self._client
+        client = self._client
+        if client is not None:
+            return client
         with self._lock:
+            if self._closed:
+                raise RuntimeError("OptionDataRedisCache is closed")
             if self._client is None:
                 self._client = redis.Redis(connection_pool=self._pool)
             return self._client
@@ -131,12 +135,9 @@ class OptionDataRedisCache:
         try:
             raw = self._conn().get(key)
             if raw is None:
-                CACHE_MISSES_TOTAL.labels(cache="option_contracts").inc()
                 return None
-            CACHE_HITS_TOTAL.labels(cache="option_contracts").inc()
             return _deserialize_contracts(raw)
         except Exception:
-            CACHE_MISSES_TOTAL.labels(cache="option_contracts").inc()
             logger.debug("redis_cache.get_contracts_failed", symbol=symbol, exc_info=True)
             try:
                 self._conn().delete(key)
@@ -159,7 +160,7 @@ class OptionDataRedisCache:
             pipe.set(key, _serialize_contracts(contracts), ex=self._ttl)
             pipe.set(f"{key}:ts", str(int(time.time())), ex=self._ttl)
             pipe.execute()
-            self.track_symbol_write(symbol)
+            self.track_symbol_write(symbol, cache_key=key)
         except Exception:
             logger.debug("redis_cache.set_contracts_failed", symbol=symbol, exc_info=True)
 
@@ -175,12 +176,9 @@ class OptionDataRedisCache:
         try:
             raw = self._conn().get(key)
             if raw is None:
-                CACHE_MISSES_TOTAL.labels(cache="option_quotes").inc()
                 return CACHE_MISS
-            CACHE_HITS_TOTAL.labels(cache="option_quotes").inc()
             return _deserialize_quote(raw)
         except Exception:
-            CACHE_MISSES_TOTAL.labels(cache="option_quotes").inc()
             logger.debug("redis_cache.get_quote_failed", ticker=option_ticker, exc_info=True)
             try:
                 self._conn().delete(key)
@@ -200,8 +198,21 @@ class OptionDataRedisCache:
             pipe.set(key, _serialize_quote(quote), ex=self._ttl)
             pipe.set(f"{key}:ts", str(int(time.time())), ex=self._ttl)
             pipe.execute()
-            symbol = option_ticker.split(":")[0] if ":" in option_ticker else option_ticker[:6]
-            self.track_symbol_write(symbol)
+            if ":" in option_ticker:
+                symbol = option_ticker.split(":")[0]
+            else:
+                import re
+                m = re.match(r"^([A-Z.^/]+)", option_ticker)
+                if m:
+                    symbol = m.group(1)
+                else:
+                    symbol = option_ticker[:6]
+                    logger.warning(
+                        "redis_cache.symbol_extraction_fallback",
+                        option_ticker=option_ticker,
+                        fallback_symbol=symbol,
+                    )
+            self.track_symbol_write(symbol, cache_key=key)
         except Exception:
             logger.debug("redis_cache.set_quote_failed", ticker=option_ticker, exc_info=True)
 
@@ -218,21 +229,31 @@ class OptionDataRedisCache:
     def _symbol_meta_key(self, symbol: str) -> str:
         return f"{_KEY_PREFIX}:meta:{symbol}"
 
-    def track_symbol_write(self, symbol: str) -> None:
+    def _symbol_keys_set(self, symbol: str) -> str:
+        return f"{_KEY_PREFIX}:keys:{symbol}"
+
+    def track_symbol_write(self, symbol: str, cache_key: str | None = None) -> None:
         """Record that a cache entry was written for *symbol*.
 
         Maintains a lightweight per-symbol hash with ``oldest_ts`` and
         ``entry_count`` so freshness checks avoid expensive SCAN operations.
+        When *cache_key* is provided, also tracks the key in a per-symbol SET
+        so ``invalidate_symbol`` can delete by set membership (O(M)) instead
+        of SCAN (O(N)).
         """
         now_s = str(int(time.time()))
         try:
             r = self._conn()
-            key = self._symbol_meta_key(symbol)
+            meta_key = self._symbol_meta_key(symbol)
             pipe = r.pipeline(transaction=False)
-            pipe.hsetnx(key, "oldest_ts", now_s)
-            pipe.hincrby(key, "entry_count", 1)
-            pipe.hset(key, "latest_ts", now_s)
-            pipe.expire(key, self._ttl + 3600)
+            pipe.hsetnx(meta_key, "oldest_ts", now_s)
+            pipe.hincrby(meta_key, "entry_count", 1)
+            pipe.hset(meta_key, "latest_ts", now_s)
+            pipe.expire(meta_key, self._ttl + 3600)
+            if cache_key is not None:
+                keys_set = self._symbol_keys_set(symbol)
+                pipe.sadd(keys_set, cache_key, f"{cache_key}:ts")
+                pipe.expire(keys_set, self._ttl + 3600)
             pipe.execute()
         except Exception:
             logger.debug("redis_cache.track_symbol_write_failed", symbol=symbol, exc_info=True)
@@ -265,11 +286,19 @@ class OptionDataRedisCache:
             entry_count = int(meta.get("entry_count", 0))
             info["total_entries"] = entry_count
             oldest_ts = meta.get("oldest_ts")
+            newest_ts = meta.get("newest_ts")
             if oldest_ts is not None:
-                age = time.time() - float(oldest_ts)
-                if age > _FRESHNESS_WARN_SECONDS:
-                    info["stale_entries"] = entry_count
-                info["oldest_age_seconds"] = round(age, 1)
+                oldest_age = time.time() - float(oldest_ts)
+                if oldest_age > _FRESHNESS_WARN_SECONDS:
+                    if newest_ts is not None:
+                        newest_age = time.time() - float(newest_ts)
+                        if newest_age > _FRESHNESS_WARN_SECONDS:
+                            info["stale_entries"] = entry_count
+                        else:
+                            info["stale_entries"] = "partial"
+                    else:
+                        info["stale_entries"] = entry_count
+                info["oldest_age_seconds"] = round(oldest_age, 1)
         except Exception:
             logger.debug("redis_cache.freshness_check_failed", symbol=symbol, exc_info=True)
         return info
@@ -277,23 +306,36 @@ class OptionDataRedisCache:
     def invalidate_symbol(self, symbol: str) -> int:
         """Delete all cached data for *symbol*. Returns count of keys deleted.
 
-        Uses the per-symbol metadata to find cached keys efficiently.
-        Falls back to SCAN if metadata is unavailable.
+        Uses the per-symbol key set for O(M) deletion (M = keys for this
+        symbol) instead of O(N) SCAN over all Redis keys.  Falls back to
+        SCAN if the key set is empty (e.g. entries written before this
+        tracking was added).
         """
         deleted = 0
         try:
             r = self._conn()
             meta_key = self._symbol_meta_key(symbol)
-            pattern = f"{_KEY_PREFIX}:*{symbol}*"
-            cursor = 0
-            while True:
-                cursor, keys = r.scan(cursor, match=pattern, count=200)
-                if keys:
-                    r.delete(*keys)
-                    deleted += len(keys)
-                if cursor == 0:
-                    break
-            r.delete(meta_key)
+            keys_set = self._symbol_keys_set(symbol)
+
+            tracked_keys = r.smembers(keys_set)
+            if tracked_keys:
+                batch: list[str | bytes] = list(tracked_keys)
+                batch.append(keys_set)
+                batch.append(meta_key)
+                r.delete(*batch)
+                deleted = len(tracked_keys)
+            else:
+                escaped_symbol = symbol.replace("*", "\\*").replace("?", "\\?").replace("[", "\\[").replace("]", "\\]")
+                pattern = f"{_KEY_PREFIX}:*:{escaped_symbol}:*"
+                cursor = 0
+                while True:
+                    cursor, keys = r.scan(cursor, match=pattern, count=200)
+                    if keys:
+                        r.delete(*keys)
+                        deleted += len(keys)
+                    if cursor == 0:
+                        break
+                r.delete(meta_key, keys_set)
             logger.info("redis_cache.symbol_invalidated", symbol=symbol, keys_deleted=deleted)
         except Exception:
             logger.warning("redis_cache.invalidate_failed", symbol=symbol, exc_info=True)

@@ -32,7 +32,11 @@ SSE_MAX_CONNECTIONS_PER_USER = 10
 # Per-process limit on simultaneous SSE connections. With N uvicorn workers,
 # the effective server-wide limit is N × SSE_MAX_CONNECTIONS_PROCESS.
 # Per-user limits are enforced via Redis (see _acquire_sse_slot).
-SSE_MAX_CONNECTIONS_PROCESS = 200
+#
+# IMPORTANT: Each SSE connection holds a Redis Pub/Sub subscription for its
+# lifetime. This value MUST NOT exceed sse_redis_max_connections (default 50)
+# or SSE subscribers will block waiting for a Redis connection.
+SSE_MAX_CONNECTIONS_PROCESS = 45
 
 _SSE_CONN_KEY_PREFIX = "sse:connections:"
 _SSE_CONN_TTL = 600
@@ -388,13 +392,7 @@ async def _event_stream(
             await _sse_process_dec()
         if user_slot_acquired:
             if used_redis_for_slot:
-                try:
-                    await _release_sse_slot(user_id)
-                except Exception:
-                    logger.warning("sse.slot_release_failed_redis", user_id=str(user_id), exc_info=True)
-                    # Redis failed during release — also decrement in-process
-                    # counter to avoid leaking the slot for the full TTL.
-                    await _release_sse_slot_in_process(user_id)
+                await _release_sse_slot(user_id)
             else:
                 await _release_sse_slot_in_process(user_id)
 

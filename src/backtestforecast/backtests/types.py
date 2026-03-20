@@ -10,6 +10,29 @@ from backtestforecast.schemas.backtests import CustomLegDefinition, EntryRule, S
 
 DEFAULT_CONTRACT_MULTIPLIER: float = 100.0
 
+_HISTORICAL_RISK_FREE_RATES: dict[int, float] = {
+    2005: 0.031, 2006: 0.048, 2007: 0.045, 2008: 0.014,
+    2009: 0.002, 2010: 0.001, 2011: 0.001, 2012: 0.001,
+    2013: 0.001, 2014: 0.001, 2015: 0.002, 2016: 0.003,
+    2017: 0.010, 2018: 0.020, 2019: 0.021, 2020: 0.004,
+    2021: 0.001, 2022: 0.020, 2023: 0.052, 2024: 0.053,
+    2025: 0.045, 2026: 0.045,
+}
+
+
+def estimate_risk_free_rate(start_date: date, end_date: date) -> float:
+    """Estimate annualized risk-free rate for a backtest period.
+
+    Uses average 3-month T-bill yields by year. Falls back to 4.5% for
+    years outside the lookup table.
+    """
+    if start_date.year == end_date.year:
+        return _HISTORICAL_RISK_FREE_RATES.get(start_date.year, 0.045)
+    rates = []
+    for year in range(start_date.year, end_date.year + 1):
+        rates.append(_HISTORICAL_RISK_FREE_RATES.get(year, 0.045))
+    return sum(rates) / len(rates) if rates else 0.045
+
 
 class OptionDataGateway(Protocol):
     """Gateway for option chain and quote data for a single underlying.
@@ -30,12 +53,13 @@ class OptionDataGateway(Protocol):
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None: ...
 
 
-class MultiUnderlyingGateway:
+class MultiUnderlyingGateway:  # noqa: vulture — planned extension point
     """Gateway wrapper for strategies that trade options on multiple underlyings.
 
-    Delegates to per-symbol ``OptionDataGateway`` instances. Not yet used by
-    any strategy — this is the extension point for future multi-underlying
-    support (e.g., pairs trading, correlation strategies).
+    **STATUS: Not yet used by any strategy.** This is the extension point for
+    future multi-underlying support (e.g., pairs trading, correlation strategies).
+    Retained intentionally; remove only if multi-underlying strategies are
+    permanently out of scope.
 
     Usage::
 
@@ -91,25 +115,8 @@ class BacktestConfig:
     risk_per_trade_pct: Decimal
     commission_per_contract: Decimal
     entry_rules: Sequence[EntryRule]
-    # FIXME(#97): Use a time-varying risk-free rate based on the backtest
-    # date range (e.g., average 3-month T-bill rate over the period).
-    #
-    # A static 4.5% rate is inaccurate for backtests spanning periods with
-    # very different rate environments (e.g., 2009-2021 near-zero rates vs.
-    # 2022-2024 elevated rates). This distorts Sharpe ratio, Sortino ratio,
-    # and any other risk-adjusted metric that subtracts the risk-free rate.
-    #
-    # Recommended approach:
-    # 1. Add a `RiskFreeRateProvider` protocol with a method
-    #    `get_rate(trade_date: date) -> float` that looks up the 3-month
-    #    T-bill rate (or Fed Funds rate) for a given date.
-    # 2. Implement a concrete provider backed by a static CSV or an API
-    #    (e.g., FRED DGS3MO series cached in Redis with daily refresh).
-    # 3. In `build_summary`, compute the average risk-free rate across
-    #    the equity curve dates rather than using a single constant.
-    # 4. For per-trade Sharpe contribution, use the rate on the entry date.
-    # 5. Keep the static default as a fallback when no provider is configured.
     risk_free_rate: float = 0.045
+    dividend_yield: float = 0.0
     slippage_pct: float = 0.0
     strategy_overrides: StrategyOverrides | None = None
     custom_legs: Sequence[CustomLegDefinition] | None = None

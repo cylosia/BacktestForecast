@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,9 +32,17 @@ class UserRepository:
         existing = self.get_by_clerk_user_id(clerk_user_id)
         if existing is not None:
             if email and existing.email != email:
-                existing.email = email
-                self.session.add(existing)
-                self.session.flush()
+                nested = self.session.begin_nested()
+                try:
+                    self.session.execute(
+                        update(User)
+                        .where(User.id == existing.id, User.email != email)
+                        .values(email=email)
+                    )
+                    nested.commit()
+                    self.session.refresh(existing)
+                except Exception:
+                    nested.rollback()
             return existing
 
         user = User(clerk_user_id=clerk_user_id, email=email)
@@ -44,12 +52,15 @@ class UserRepository:
             nested.commit()
         except IntegrityError:
             nested.rollback()
+            self.session.expire_all()
+            existing = self.get_by_clerk_user_id(clerk_user_id)
+            if existing is not None:
+                return existing
             import time as _time
-            for _attempt in range(3):
-                self.session.expire(user)
-                existing = self.get_by_clerk_user_id(clerk_user_id)
-                if existing is not None:
-                    return existing
-                _time.sleep(0.05 * (2 ** _attempt))
+            _time.sleep(0.01)
+            self.session.expire_all()
+            existing = self.get_by_clerk_user_id(clerk_user_id)
+            if existing is not None:
+                return existing
             raise
         return user

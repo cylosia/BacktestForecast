@@ -130,15 +130,33 @@ jobs:
       - name: Verify staging secrets
         env:
           _STAGING_DB: ${{ secrets.STAGING_DATABASE_URL }}
+          STAGING_DEPLOY_CMD: ${{ secrets.STAGING_DEPLOY_COMMAND }}
         run: |
           if [ -z "$_STAGING_DB" ]; then
             echo "::error::STAGING_DATABASE_URL secret is not configured. Staging deployment cannot proceed."
             exit 1
           fi
-          if [ -z "${{ secrets.STAGING_DEPLOY_COMMAND }}" ]; then
+          if [ -z "$STAGING_DEPLOY_CMD" ]; then
             echo "::error::STAGING_DEPLOY_COMMAND secret is not configured. Staging deployment cannot proceed."
             exit 1
           fi
+
+      - name: Backup staging database before migration
+        run: |
+          if [ -n "${STAGING_DATABASE_URL}" ]; then
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            BACKUP_FILE="staging_backup_${TIMESTAMP}.sql.gz"
+            echo "Creating pre-migration backup: ${BACKUP_FILE}"
+            pg_dump "${STAGING_DATABASE_URL}" | gzip > "${BACKUP_FILE}"
+            echo "backup_file=${BACKUP_FILE}" >> "$GITHUB_OUTPUT"
+            echo "::notice::Pre-migration backup created: ${BACKUP_FILE} ($(du -h ${BACKUP_FILE} | cut -f1))"
+          else
+            echo "::warning::STAGING_DATABASE_URL not set; skipping backup."
+          fi
+        env:
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        id: staging_backup
+        continue-on-error: true
 
       - name: Run staging migrations
         run: |
@@ -165,7 +183,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Deploying images..."
-          ${DEPLOY_COMMAND}
+          eval "${DEPLOY_COMMAND}"
 
       - name: Staging smoke test
         env:
@@ -204,6 +222,22 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --constraint constraints.txt -e '.'
 
+      - name: Backup production database before migration
+        run: |
+          if [ -n "${DATABASE_URL}" ]; then
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            BACKUP_FILE="production_backup_${TIMESTAMP}.sql.gz"
+            echo "Creating pre-migration backup: ${BACKUP_FILE}"
+            pg_dump "${DATABASE_URL}" | gzip > "${BACKUP_FILE}"
+            echo "::notice::Pre-migration backup created: ${BACKUP_FILE} ($(du -h ${BACKUP_FILE} | cut -f1))"
+          else
+            echo "::error::DATABASE_URL not set; cannot backup."
+            exit 1
+          fi
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        id: prod_backup
+
       - name: Run database migrations
         run: alembic upgrade head
         env:
@@ -224,7 +258,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Deploying images..."
-          ${DEPLOY_COMMAND}
+          eval "${DEPLOY_COMMAND}"
 
   post-deploy-smoke:
     needs: deploy
@@ -320,7 +354,7 @@ jobs:
           echo ""
           echo "Images re-tagged to :latest. Triggering deployment restart..."
           if [ -n "${DEPLOY_COMMAND:-}" ]; then
-            ${DEPLOY_COMMAND}
+            eval "${DEPLOY_COMMAND}"
           else
             echo "::warning::DEPLOY_COMMAND variable is not configured. Rollback images were re-tagged to :latest but the running deployment was NOT restarted automatically."
             echo "::error::Manual intervention required to complete rollback."

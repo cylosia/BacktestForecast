@@ -3,7 +3,7 @@ import threading
 import structlog
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import task_postrun, task_prerun, worker_ready, worker_shutdown, worker_shutting_down
+from celery.signals import beat_init, task_postrun, task_prerun, worker_ready, worker_shutdown, worker_shutting_down
 from kombu import Queue
 from redbeat import RedBeatSchedulerEntry  # noqa: F401 — registers the custom scheduler
 
@@ -35,7 +35,10 @@ celery_app = Celery(
     "backtestforecast",
     broker=settings.redis_url,
     backend=settings.celery_result_backend_url or settings.redis_url,
-    include=["apps.worker.app.tasks"],
+    include=[
+        "apps.worker.app.tasks",
+        "apps.worker.app.maintenance_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -53,7 +56,7 @@ celery_app.conf.update(
     task_time_limit=3900,
     result_expires=7200,
     worker_max_tasks_per_child=200,
-    worker_max_memory_per_child=500_000,
+    worker_max_memory_per_child=800_000,
     broker_connection_retry_on_startup=True,
     redbeat_redis_url=settings.redis_url,
     # REQUIREMENT: visibility_timeout must exceed the longest task's hard
@@ -96,6 +99,7 @@ celery_app.conf.task_routes = {
     "maintenance.poll_outbox": {"queue": "maintenance"},
     "maintenance.reconcile_subscriptions": {"queue": "maintenance"},
     "maintenance.cleanup_stripe_orphan": {"queue": "maintenance"},
+    "maintenance.expire_old_exports": {"queue": "maintenance"},
 }
 
 # RedBeat loads these entries on first run and stores them in Redis.
@@ -145,6 +149,10 @@ celery_app.conf.beat_schedule = {
     "reconcile-subscriptions-daily": {
         "task": "maintenance.reconcile_subscriptions",
         "schedule": crontab(hour=5, minute=0),
+    },
+    "expire-old-exports": {
+        "task": "maintenance.expire_old_exports",
+        "schedule": crontab(hour="*/6", minute=15),
     },
 }
 
@@ -196,6 +204,8 @@ def _start_worker_metrics_server() -> None:
                 body = generate_latest()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
             else:
@@ -217,6 +227,8 @@ def _start_worker_metrics_server() -> None:
         port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    global _metrics_server
+    _metrics_server = server
     _shutdown_logger.info(
         "worker.metrics_server_started",
         port=port,
@@ -224,6 +236,7 @@ def _start_worker_metrics_server() -> None:
     )
 
 
+_metrics_server: "HTTPServer | None" = None
 _worker_heartbeat_key: str | None = None
 _heartbeat_thread = None
 _heartbeat_stop = threading.Event()
@@ -245,9 +258,10 @@ def _start_heartbeat_loop() -> None:
         while not _heartbeat_stop.is_set():
             try:
                 if conn is None:
-                    conn = Redis.from_url(settings.redis_url, socket_timeout=5)
+                    conn = Redis.from_url(settings.redis_cache_url, socket_timeout=5)
                 conn.setex(_worker_heartbeat_key, 90, "1")
                 consecutive_errors = 0
+                _heartbeat_stop.wait(30)
             except Exception:
                 consecutive_errors += 1
                 if conn is not None:
@@ -256,8 +270,8 @@ def _start_heartbeat_loop() -> None:
                     except Exception:
                         pass
                     conn = None
-            sleep_secs = min(5 * (2 ** consecutive_errors), 60)
-            _heartbeat_stop.wait(sleep_secs)
+                sleep_secs = min(5 * (2 ** consecutive_errors), 60)
+                _heartbeat_stop.wait(sleep_secs)
         if conn is not None:
             try:
                 conn.close()
@@ -273,6 +287,12 @@ def _start_heartbeat_loop() -> None:
 @worker_ready.connect
 def _on_worker_ready(**kwargs):  # type: ignore[no-untyped-def]
     _shutdown_logger.info("worker.ready")
+    try:
+        from backtestforecast.observability.tracing import init_tracing
+        if init_tracing(service_name="backtestforecast-worker"):
+            _shutdown_logger.info("worker.tracing_initialized")
+    except Exception:
+        _shutdown_logger.debug("worker.tracing_init_skipped", exc_info=True)
     try:
         _start_heartbeat_loop()
     except Exception:
@@ -295,7 +315,7 @@ def _seed_market_holidays() -> None:
     """
     from redis import Redis
 
-    r = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=3)
+    r = Redis.from_url(settings.redis_cache_url, decode_responses=True, socket_timeout=3)
     try:
         if r.exists("bff:market_holidays"):
             try:
@@ -305,7 +325,7 @@ def _seed_market_holidays() -> None:
             if count > 0:
                 _shutdown_logger.info("worker.market_holidays_already_cached")
                 return
-        acquired = r.set("bff:market_holidays_seed_lock", "1", nx=True, ex=300)
+        acquired = r.set("bff:market_holidays_seed_lock", "1", nx=True, ex=600)
         if not acquired:
             _shutdown_logger.info("worker.market_holidays_seed_already_dispatched")
             return
@@ -330,10 +350,16 @@ def _on_worker_shutting_down(sig, how, exitcode, **kwargs):  # type: ignore[no-u
 def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
     _shutdown_logger.info("worker.shutdown_cleanup_started")
     _heartbeat_stop.set()
+    if _metrics_server is not None:
+        try:
+            _metrics_server.shutdown()
+            _shutdown_logger.info("worker.metrics_server_stopped")
+        except Exception:
+            _shutdown_logger.warning("worker.metrics_server_stop_failed", exc_info=True)
     if _worker_heartbeat_key:
         try:
             from redis import Redis
-            r = Redis.from_url(settings.redis_url, socket_timeout=5)
+            r = Redis.from_url(settings.redis_cache_url, socket_timeout=5)
             try:
                 r.delete(_worker_heartbeat_key)
             finally:
@@ -358,3 +384,32 @@ def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
     except Exception:
         _shutdown_logger.warning("worker.redis_close_failed", exc_info=True)
     _shutdown_logger.info("worker.shutdown_cleanup_complete")
+
+
+_BEAT_HEARTBEAT_FILE = "/tmp/celerybeat_heartbeat"
+
+
+@beat_init.connect
+def _on_beat_init(**kwargs):  # type: ignore[no-untyped-def]
+    """Write an initial heartbeat file when the beat scheduler starts.
+
+    A background thread updates the file every 30 seconds so the Docker
+    healthcheck can verify the scheduler is not just alive but actively
+    running its tick loop.
+    """
+    import pathlib
+    pathlib.Path(_BEAT_HEARTBEAT_FILE).write_text(str(int(__import__("time").time())))
+    _shutdown_logger.info("beat.heartbeat_init", file=_BEAT_HEARTBEAT_FILE)
+
+    import time as _beat_time
+
+    def _beat_heartbeat_loop():
+        while not _heartbeat_stop.is_set():
+            try:
+                pathlib.Path(_BEAT_HEARTBEAT_FILE).write_text(str(int(_beat_time.time())))
+            except Exception:
+                pass
+            _heartbeat_stop.wait(30)
+
+    t = threading.Thread(target=_beat_heartbeat_loop, daemon=True, name="beat-heartbeat")
+    t.start()

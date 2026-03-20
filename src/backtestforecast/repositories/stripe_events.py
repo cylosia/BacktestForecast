@@ -132,15 +132,18 @@ class StripeEventRepository:
         )
         return result.rowcount > 0
 
-    def list_recent(self, *, limit: int = 50, offset: int = 0) -> list[StripeEvent]:
-        """Return the most recent Stripe events, newest first."""
+    def list_recent(self, *, user_id: UUID | None = None, limit: int = 50, offset: int = 0) -> list[StripeEvent]:
+        """Return the most recent Stripe events, newest first.
+
+        When *user_id* is provided the results are scoped to that user.
+        Without a user_id filter this returns ALL events — callers exposing
+        this to non-admin endpoints MUST pass user_id for data isolation.
+        """
         limit = min(limit, _MAX_PAGE_SIZE)
-        stmt = (
-            select(StripeEvent)
-            .order_by(StripeEvent.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-        )
+        stmt = select(StripeEvent)
+        if user_id is not None:
+            stmt = stmt.where(StripeEvent.user_id == user_id)
+        stmt = stmt.order_by(StripeEvent.created_at.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt))
 
     def get_by_stripe_id(self, stripe_event_id: str) -> StripeEvent | None:

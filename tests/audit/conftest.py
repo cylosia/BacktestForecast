@@ -1,9 +1,17 @@
-"""Audit test fixtures. Drops PostgreSQL-only partial index for SQLite to avoid
-unique constraint on (event_type, subject_type) that would break record_always tests.
+"""Audit test fixtures.
+
+WARNING: These tests run on SQLite, not PostgreSQL.  This means:
+- Partial unique indexes (e.g. uq_audit_events_dedup_null_subject) are removed.
+- PostgreSQL-specific CHECK constraints, JSONB operators, and triggers are
+  NOT exercised.
+- Any Postgres-specific audit bugs will NOT be caught by these tests.
+
+To run against Postgres, set TEST_DATABASE_URL in your environment.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Generator
 
 import pytest
@@ -15,6 +23,9 @@ from backtestforecast.db.base import Base
 
 
 def _make_engine():
+    pg_url = os.environ.get("TEST_DATABASE_URL")
+    if pg_url:
+        return create_engine(pg_url, echo=False)
     return create_engine(
         "sqlite://",
         echo=False,

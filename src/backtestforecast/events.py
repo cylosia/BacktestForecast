@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from backtestforecast.config import get_settings, register_invalidation_callback
-from backtestforecast.models import JobStatus
+from backtestforecast.schemas.common import JobStatus
 from backtestforecast.observability import get_logger
 
 logger = get_logger("events")
@@ -29,7 +29,7 @@ def _get_redis():
     if time.monotonic() < _redis_retry_after:
         return None
 
-    from redis import Redis
+    from redis import ConnectionPool, Redis
 
     with _redis_lock:
         if _redis_client is not None:
@@ -38,7 +38,7 @@ def _get_redis():
             return None
         settings = get_settings()
         try:
-            _redis_client = Redis.from_url(
+            pool = ConnectionPool.from_url(
                 settings.redis_cache_url,
                 decode_responses=True,
                 socket_timeout=settings.sse_redis_socket_timeout,
@@ -46,6 +46,7 @@ def _get_redis():
                 retry_on_timeout=True,
                 max_connections=settings.sse_redis_max_connections,
             )
+            _redis_client = Redis(connection_pool=pool)
         except Exception:
             _redis_client = None
             _redis_retry_after = time.monotonic() + settings.redis_reconnect_backoff_seconds
@@ -97,10 +98,11 @@ def publish_job_status(
     safe_meta = {k: v for k, v in (metadata or {}).items() if k not in _RESERVED_PAYLOAD_KEYS}
 
     channel = f"job:{job_type}:{job_id}:status"
-    payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), **safe_meta}, default=str)
-    if len(payload.encode("utf-8")) > get_settings().sse_max_payload_bytes:
-        logger.warning("events.metadata_too_large", job_type=job_type, job_id=str(job_id))
-        payload = json.dumps({"v": 1, "status": status, "job_id": str(job_id), "_truncated": True}, default=str)
+    job_id_str = str(job_id)
+    payload = json.dumps({"v": 1, "status": status, "job_id": job_id_str, **safe_meta}, default=str)
+    if len(payload) > get_settings().sse_max_payload_bytes:
+        logger.warning("events.metadata_too_large", job_type=job_type, job_id=job_id_str)
+        payload = json.dumps({"v": 1, "status": status, "job_id": job_id_str, "_truncated": True}, default=str)
 
     try:
         for attempt in range(2):
@@ -154,6 +156,9 @@ _VALID_TARGET_STATUSES = frozenset({
 _EXPORT_VALID_TARGET_STATUSES = frozenset({
     JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.EXPIRED,
 })
+_ALL_TERMINAL_STATUS_STRINGS = frozenset(
+    str(s) for s in (_VALID_TARGET_STATUSES | _EXPORT_VALID_TARGET_STATUSES)
+)
 
 
 def _fallback_persist_status(
@@ -171,15 +176,6 @@ def _fallback_persist_status(
     if status not in target_statuses:
         return
 
-    from backtestforecast.job_states import is_terminal as _is_terminal
-    if not _is_terminal(status) and status != "expired":
-        logger.warning(
-            "events.fallback_non_terminal_status",
-            job_type=job_type,
-            job_id=str(job_id),
-            status=status,
-        )
-        return
 
     try:
         from sqlalchemy import update
@@ -199,9 +195,8 @@ def _fallback_persist_status(
 
         with create_worker_session() as session:
             from sqlalchemy.sql import func as sa_func
-            terminal_statuses = {str(s) for s in (_VALID_TARGET_STATUSES | _EXPORT_VALID_TARGET_STATUSES)}
             update_values: dict[str, Any] = {"status": status, "updated_at": sa_func.now()}
-            if status in terminal_statuses:
+            if status in _ALL_TERMINAL_STATUS_STRINGS:
                 update_values["completed_at"] = sa_func.now()
                 if hasattr(model_cls, "started_at"):
                     from sqlalchemy import case

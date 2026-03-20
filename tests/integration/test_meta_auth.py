@@ -6,9 +6,19 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
+def _ensure_user_exists(client, auth_headers):
+    """Hit an authenticated endpoint to trigger user creation via get_or_create.
+
+    The /v1/meta endpoint intentionally does NOT create users (read-only
+    lookup) so we need the user to exist before testing authenticated meta.
+    """
+    client.get("/v1/backtests", headers=auth_headers)
+
+
 def test_meta_returns_features_with_bearer_token(client, auth_headers):
     """GET /v1/meta with a valid Authorization: Bearer header should include
     the ``features`` dict in the response."""
+    _ensure_user_exists(client, auth_headers)
     response = client.get("/v1/meta", headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
@@ -23,3 +33,12 @@ def test_meta_without_auth_omits_features(client):
     assert response.status_code == 200
     data = response.json()
     assert "features" not in data, "Unauthenticated /v1/meta should omit 'features'"
+
+
+def test_meta_with_auth_but_no_user_record_omits_features(client):
+    """GET /v1/meta with a valid JWT but no pre-existing user record should
+    omit features — the meta endpoint must not create user records."""
+    response = client.get("/v1/meta", headers={"Authorization": "Bearer test-token"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("service") == "backtestforecast-api"

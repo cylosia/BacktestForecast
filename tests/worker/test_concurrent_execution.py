@@ -19,19 +19,7 @@ pytestmark = pytest.mark.integration
 
 from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, User
-
-
-def _strip_partial_indexes_for_sqlite(engine) -> None:
-    """Remove PostgreSQL-specific partial indexes so SQLite create_all succeeds."""
-    if engine.dialect.name != "sqlite":
-        return
-    for table in Base.metadata.tables.values():
-        indexes_to_remove = [
-            idx for idx in table.indexes
-            if idx.dialect_options.get("postgresql", {}).get("where") is not None
-        ]
-        for idx in indexes_to_remove:
-            table.indexes.discard(idx)
+from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
 @pytest.fixture()

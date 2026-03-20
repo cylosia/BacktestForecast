@@ -3,6 +3,7 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
+from starlette.responses import JSONResponse
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from backtestforecast.config import get_settings
@@ -85,10 +86,18 @@ def stripe_webhook(
     meta = get_request_metadata(request)
     ip_address = meta.ip_address
     settings = get_settings()
+    if ip_address is None:
+        _webhook_logger.warning(
+            "webhook.ip_extraction_failed",
+            request_id=request_id,
+            hint="Client IP could not be determined. Rate limiting falls back "
+                 "to a shared bucket. Check proxy/load-balancer configuration.",
+        )
+    webhook_actor = f"billing:webhook:{ip_address}" if ip_address else "billing:webhook:unidentified"
     get_rate_limiter().check(
         bucket="billing:webhook",
-        actor_key=f"billing:webhook:{ip_address or 'unknown'}",
-        limit=30,
+        actor_key=webhook_actor,
+        limit=60 if ip_address is None else 30,
         window_seconds=settings.rate_limit_window_seconds,
     )
     get_rate_limiter().check(
@@ -126,9 +135,14 @@ def stripe_webhook(
             )
         if isinstance(exc, _NotFoundErr):
             _webhook_logger.warning(
-                "webhook.user_not_found", code=exc.code, ip=ip_address, request_id=request_id,
+                "webhook.user_not_found_will_retry",
+                code=exc.code, ip=ip_address, request_id=request_id,
+                hint="Returning 500 so Stripe retries. Stale-claim recovery will allow reprocessing after 15 minutes.",
             )
-            return WebhookResponse(received=True, reason="Event processed.")
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "user_not_found", "message": "User not yet provisioned; Stripe should retry."},
+            )
 
         if isinstance(exc, _ExtErr):
             _webhook_logger.exception(
@@ -144,4 +158,7 @@ def stripe_webhook(
             )
             return WebhookResponse(received=True, reason=f"Deterministic error ({exc.code}); will not retry.")
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
-        return WebhookResponse(received=True, reason="Unhandled processing error; will not retry.")
+        return JSONResponse(
+            status_code=500,
+            content={"received": False, "reason": "Transient processing error; please retry."},
+        )

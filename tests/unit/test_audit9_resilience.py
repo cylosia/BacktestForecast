@@ -44,7 +44,7 @@ class TestDispatchEnqueueFailedRecovery:
 
         with patch.dict(os.environ, {"MASSIVE_API_KEY": "dummy"}, clear=False):
             from apps.api.app.dispatch import DispatchResult, dispatch_celery_task
-            from backtestforecast.models import RunJobStatus
+            from backtestforecast.schemas.common import RunJobStatus
 
         job = MagicMock()
         job.status = RunJobStatus.QUEUED

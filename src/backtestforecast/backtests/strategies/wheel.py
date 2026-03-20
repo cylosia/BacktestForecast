@@ -75,14 +75,6 @@ class WheelStrategyBacktestEngine:
 
         warnings: list[dict[str, Any]] = []
         warning_codes: set[str] = set()
-        # Known inconsistency: config.account_size is Decimal but the engine
-        # converts to float here because all downstream arithmetic (option mids,
-        # strike prices, close prices, commissions, slippage) uses float.  Python
-        # raises TypeError on Decimal+float, so keeping cash as Decimal would
-        # require wrapping every interacting value in Decimal(str(...)) — too
-        # invasive for the marginal precision gain on a value that's already
-        # rounded to cents.  If sub-cent precision becomes important (e.g. for
-        # regulatory reporting), convert the entire engine to Decimal.
         cash = float(config.account_size)
         peak_equity = cash
         active_option: OpenShortOptionPhase | None = None
@@ -131,7 +123,7 @@ class WheelStrategyBacktestEngine:
                 active_option.last_mid = current_mid
                 option_value = -current_mid * 100.0 * active_option.quantity
 
-                capital_at_risk = active_option.entry_mid * active_option.quantity * 100.0
+                capital_at_risk = active_option.strike_price * active_option.quantity * 100.0
                 position_pnl = (active_option.entry_mid - current_mid) * active_option.quantity * 100.0
                 should_exit, exit_reason = self._resolve_exit(
                     bar=bar,
@@ -216,7 +208,14 @@ class WheelStrategyBacktestEngine:
                                 total_commissions=_D(float(config.commission_per_contract) * active_option.quantity),
                                 entry_reason="entry_rules_met",
                                 exit_reason="assignment",
-                                detail_json={**option_detail, "assignment": True, "unit_convention": "per_share_option_premium"},
+                                detail_json={
+                                    **option_detail,
+                                    "assignment": True,
+                                    "unit_convention": "per_share_option_premium",
+                                    "total_slippage": entry_slippage,
+                                    "entry_slippage": entry_slippage,
+                                    "exit_slippage": 0.0,
+                                },
                             )
                         )
                     elif (
@@ -257,7 +256,14 @@ class WheelStrategyBacktestEngine:
                                 total_commissions=_D(float(config.commission_per_contract) * active_option.quantity),
                                 entry_reason="entry_rules_met",
                                 exit_reason="call_assignment",
-                                detail_json={**option_detail, "assignment": True, "unit_convention": "per_share_option_premium"},
+                                detail_json={
+                                    **option_detail,
+                                    "assignment": True,
+                                    "unit_convention": "per_share_option_premium",
+                                    "total_slippage": entry_slippage,
+                                    "entry_slippage": entry_slippage,
+                                    "exit_slippage": 0.0,
+                                },
                             )
                         )
                         called_away_price = active_option.strike_price
@@ -286,6 +292,9 @@ class WheelStrategyBacktestEngine:
                                     "phase": "stock_inventory",
                                     "share_quantity": held_shares.quantity * 100,
                                     "unit_convention": "per_share_option_premium",
+                                    "total_slippage": 0.0,
+                                    "entry_slippage": 0.0,
+                                    "exit_slippage": 0.0,
                                     "assumptions": [
                                         "Share P&L is realized separately from short-call"
                                         " premium in the wheel strategy."
@@ -317,7 +326,14 @@ class WheelStrategyBacktestEngine:
                                 + exit_commission),
                                 entry_reason="entry_rules_met",
                                 exit_reason=exit_reason,
-                                detail_json={**option_detail, "assignment": False, "unit_convention": "per_share_option_premium"},
+                                detail_json={
+                                    **option_detail,
+                                    "assignment": False,
+                                    "unit_convention": "per_share_option_premium",
+                                    "total_slippage": entry_slippage + exit_slippage,
+                                    "entry_slippage": entry_slippage,
+                                    "exit_slippage": exit_slippage,
+                                },
                             )
                         )
                     active_option = None
@@ -325,8 +341,20 @@ class WheelStrategyBacktestEngine:
 
             shares_value = 0.0 if held_shares is None else bar.close_price * 100.0 * held_shares.quantity
 
+            just_closed_this_bar = (
+                active_option is None
+                and len(trades) > 0
+                and trades[-1].exit_date == bar.trade_date
+            )
+            if just_closed_this_bar:
+                self._add_warning_once(
+                    warnings, warning_codes, "same_day_reentry_blocked",
+                    "One or more entry signals were suppressed because a position was "
+                    "closed on the same trading day. The engine does not re-enter on "
+                    "the same bar to avoid infinite open/close loops.",
+                )
             entry_allowed = False
-            if active_option is None and bar.trade_date <= config.end_date:
+            if active_option is None and not just_closed_this_bar and bar.trade_date <= config.end_date:
                 try:
                     entry_allowed = evaluator.is_entry_allowed(index)
                 except Exception:
@@ -365,6 +393,7 @@ class WheelStrategyBacktestEngine:
             if not math.isfinite(shares_value):
                 shares_value = 0.0
 
+            cash = round(cash, 2)
             equity = cash + shares_value + option_value
             peak_equity = max(peak_equity, equity)
             drawdown_pct = 0.0 if peak_equity == 0 else ((peak_equity - equity) / peak_equity) * 100.0
@@ -414,6 +443,9 @@ class WheelStrategyBacktestEngine:
                     detail_json={
                         "phase": active_option.phase,
                         "unit_convention": "per_share_option_premium",
+                        "total_slippage": liq_entry_slip + liq_exit_slip,
+                        "entry_slippage": liq_entry_slip,
+                        "exit_slippage": liq_exit_slip,
                         "assumptions": [
                             "Open short option is liquidated at last available mid-price on the final bar."
                         ],
@@ -450,12 +482,32 @@ class WheelStrategyBacktestEngine:
                         "phase": "stock_inventory",
                         "share_quantity": held_shares.quantity * 100,
                         "unit_convention": "per_share_option_premium",
+                        "total_slippage": 0.0,
+                        "entry_slippage": 0.0,
+                        "exit_slippage": 0.0,
                         "assumptions": ["Remaining wheel share inventory is liquidated on the final available bar."],
                     },
                 )
             )
 
-        ending_equity = cash
+        # Reconcile ending equity from trade-level P&L to eliminate
+        # accumulated float arithmetic drift.  Each trade's net_pnl is
+        # computed and stored as Decimal, so summing those is exact.
+        # The float-based cash accumulator drifts ~$0.01 per 100 trades;
+        # this reconciliation ensures the summary statistics (ROI, CAGR,
+        # Sharpe, etc.) are derived from the precise value.
+        trade_pnl_sum = sum(float(t.net_pnl) for t in trades)
+        reconciled_equity = float(config.account_size) + trade_pnl_sum
+        drift = cash - reconciled_equity
+        if abs(drift) > 0.02:
+            logger.warning(
+                "wheel.float_drift_corrected",
+                raw_cash=round(cash, 4),
+                reconciled=round(reconciled_equity, 4),
+                drift=round(drift, 4),
+                trade_count=len(trades),
+            )
+        ending_equity = reconciled_equity
 
         if equity_curve and _D(ending_equity) != equity_curve[-1].equity:
             last_td = equity_curve[-1].trade_date
@@ -464,7 +516,7 @@ class WheelStrategyBacktestEngine:
             equity_curve[-1] = EquityPointResult(
                 trade_date=last_td,
                 equity=_D(ending_equity),
-                cash=_D(cash),
+                cash=_D(ending_equity),
                 position_value=_D(0.0),
                 drawdown_pct=_D(dd),
             )

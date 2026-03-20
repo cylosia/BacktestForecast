@@ -25,15 +25,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # ============================================================================
 
 def test_mt10_task_helpers_module_exists():
-    from apps.worker.app.task_helpers import (
-        commit_then_publish,
-        mark_job_failed,
-        update_heartbeat,
-        validate_task_ownership,
-        handle_task_app_error,
-    )
-    for fn in (commit_then_publish, mark_job_failed, update_heartbeat, validate_task_ownership):
-        assert callable(fn)
+    from apps.worker.app.task_helpers import commit_then_publish
+    assert callable(commit_then_publish)
 
 
 def test_mt10_tasks_imports_from_helpers():

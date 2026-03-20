@@ -83,10 +83,14 @@ class CircuitBreaker:
             self._half_open_calls = 0
             self._probe_in_flight = False
             self._probe_started_at = None
-            self._redis_reset()
             self._update_state_gauge()
             if old_state != self._state:
                 logger.warning("circuit_breaker.state_changed", name=self.name, from_state=old_state.value, to_state=self._state.value)
+
+        try:
+            self._redis_reset()
+        except Exception:
+            logger.warning("circuit_breaker.redis_reset_fire_and_forget_failed", name=self.name, exc_info=True)
 
     def _redis_record_failure(self) -> int | None:
         """Increment cluster-wide failure counter, return new count."""
@@ -123,10 +127,6 @@ class CircuitBreaker:
             logger.warning("circuit_breaker.redis_reset_failed", name=self.name, exc_info=True)
 
     def record_failure(self, *, is_transient: bool = True) -> None:
-        # KNOWN LIMITATION: _redis_record_failure() performs Redis I/O under
-        # self._lock. During Redis degradation, this blocks all threads
-        # checking this circuit breaker until the socket timeout fires.
-        # Future refactor: move Redis I/O outside the lock.
         with self._lock:
             if not is_transient:
                 logger.debug("circuit_breaker.non_transient_failure", name=self.name)
@@ -134,14 +134,13 @@ class CircuitBreaker:
             old_state = self._state
             self._failure_count += 1
             self._last_failure_time = time.monotonic()
-            redis_count = self._redis_record_failure()
-            effective_count = max(self._failure_count, redis_count or 0)
+            local_count = self._failure_count
             was_closed = self._state == CircuitState.CLOSED
             if self._state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.OPEN
                 self._probe_in_flight = False
                 self._probe_started_at = None
-            elif effective_count >= self.failure_threshold:
+            elif local_count >= self.failure_threshold:
                 self._state = CircuitState.OPEN
                 self._probe_in_flight = False
                 self._probe_started_at = None
@@ -150,6 +149,13 @@ class CircuitBreaker:
             self._update_state_gauge()
             if old_state != self._state:
                 logger.warning("circuit_breaker.state_changed", name=self.name, from_state=old_state.value, to_state=self._state.value)
+
+        # Redis I/O outside the lock: fire-and-forget for cross-process tracking.
+        # allow_request() periodically polls Redis to pick up cluster-wide counts.
+        try:
+            self._redis_record_failure()
+        except Exception:
+            logger.warning("circuit_breaker.redis_fire_and_forget_failed", name=self.name, exc_info=True)
 
     def allow_request(self) -> bool:
         redis_check_result: bool | None = None
@@ -206,8 +212,12 @@ class CircuitBreaker:
             self._half_open_calls = 0
             self._probe_in_flight = False
             self._probe_started_at = None
-            self._redis_reset()
             self._update_state_gauge()
+
+        try:
+            self._redis_reset()
+        except Exception:
+            logger.warning("circuit_breaker.redis_reset_fire_and_forget_failed", name=self.name, exc_info=True)
 
     async def allow_request_async(self) -> bool:
         """Non-blocking version of allow_request for async callers."""

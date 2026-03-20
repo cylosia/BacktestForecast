@@ -1,4 +1,4 @@
-"""Item 68: Test export of failed backtest raises ValidationError.
+"""Item 68: Test export of failed backtest raises AppValidationError.
 
 Calling enqueue_export with a backtest run whose status is 'failed'
 must raise a ValidationError rather than proceeding to generate content.
@@ -17,23 +17,13 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.billing.entitlements import ExportFormat
 from backtestforecast.db.base import Base
-from backtestforecast.errors import ValidationError
+from backtestforecast.errors import AppValidationError
 from backtestforecast.models import BacktestRun, User
 from backtestforecast.schemas.exports import CreateExportRequest
 from backtestforecast.services.exports import ExportService
 
 
-def _strip_partial_indexes_for_sqlite(engine) -> None:
-    """Remove PostgreSQL-specific partial indexes so SQLite create_all succeeds."""
-    if engine.dialect.name != "sqlite":
-        return
-    for table in Base.metadata.tables.values():
-        indexes_to_remove = [
-            idx for idx in table.indexes
-            if idx.dialect_options.get("postgresql", {}).get("where") is not None
-        ]
-        for idx in indexes_to_remove:
-            table.indexes.discard(idx)
+from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
 @pytest.fixture()
@@ -104,7 +94,7 @@ def test_enqueue_export_raises_for_failed_backtest(db_session: Session) -> None:
         export_format=ExportFormat.CSV,
     )
 
-    with pytest.raises(ValidationError, match="failed"):
+    with pytest.raises(AppValidationError, match="failed"):
         service.enqueue_export(user, payload)
 
 

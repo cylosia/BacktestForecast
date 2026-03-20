@@ -123,7 +123,9 @@ class VerticalSpreadStrategy(StrategyDefinition):
         # credit upfront. Max profit = credit received. Max loss = strike width
         # - credit (underlying moves fully through the spread).
         if self.is_debit:
-            debit = max(entry_value_per_unit, 0.0)
+            if entry_value_per_unit <= 0:
+                return None
+            debit = entry_value_per_unit
             max_loss_per_unit = debit
             max_profit_per_unit = max(width - debit, 0.0)
             capital_required_per_unit = debit

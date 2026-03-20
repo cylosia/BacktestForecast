@@ -1,8 +1,12 @@
 """Add missing audit_events and sweep_jobs indexes.
 
-Revision ID: 20260319_0030
-Revises: 0024_heartbeat
+Revision ID: 20260319_0033
+Revises: 20260319_0032
 Create Date: 2026-03-19
+
+NOTE: Uses non-CONCURRENTLY indexes within the transaction block.
+For zero-downtime on very large tables, consider running index creation
+manually outside a transaction using CREATE INDEX CONCURRENTLY.
 """
 from alembic import op
 import sqlalchemy as sa
@@ -24,20 +28,16 @@ def _index_exists(name: str) -> bool:
 
 def upgrade() -> None:
     if not _index_exists("ix_audit_events_created_at"):
-        op.create_index(
-            "ix_audit_events_created_at",
-            "audit_events",
-            ["created_at"],
-            postgresql_concurrently=True,
-        )
+        op.execute(sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_audit_events_created_at "
+            "ON audit_events (created_at)"
+        ))
 
     if not _index_exists("ix_sweep_jobs_user_symbol_created"):
-        op.create_index(
-            "ix_sweep_jobs_user_symbol_created",
-            "sweep_jobs",
-            ["user_id", "symbol", "created_at"],
-            postgresql_concurrently=True,
-        )
+        op.execute(sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_sweep_jobs_user_symbol_created "
+            "ON sweep_jobs (user_id, symbol, created_at)"
+        ))
 
 
 def downgrade() -> None:

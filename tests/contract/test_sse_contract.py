@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from backtestforecast.events import publish_job_status
-from backtestforecast.models import JobStatus
+from backtestforecast.schemas.common import JobStatus
 
 
 _REQUIRED_KEYS = {"v", "status", "job_id"}

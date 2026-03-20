@@ -28,7 +28,7 @@ export default async function ForecastsPage() {
       </div>
 
       {!hasAccess ? (
-        <UpgradePrompt message="Forecast access requires a Pro or Premium plan. Upgrade to look up expected-return ranges for any ticker." />
+        <UpgradePrompt message="Forecast access requires a Pro or Premium plan. Upgrade to look up expected-return ranges for any ticker." requiredTier="pro" />
       ) : (
         <ForecastLookup />
       )}

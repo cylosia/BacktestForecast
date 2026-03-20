@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -62,10 +63,12 @@ class EntryRuleEvaluator:
     rolling_support_cache: dict[int, list[float | None]] = field(default_factory=dict)
     rolling_resistance_cache: dict[int, list[float | None]] = field(default_factory=dict)
     iv_series_cache: list[float | None] | None = None
+    _sorted_earnings: list[date] = field(init=False)
 
     def __post_init__(self) -> None:
         self.closes = [bar.close_price for bar in self.bars]
         self.volumes = [bar.volume for bar in self.bars]
+        self._sorted_earnings = sorted(self.earnings_dates)
 
     def is_entry_allowed(self, index: int) -> bool:
         if index <= 0 and self._has_crossover_rule(self.config.entry_rules):
@@ -233,20 +236,15 @@ class EntryRuleEvaluator:
         return previous_close >= prior_support and current_close < (prior_support * (1.0 - tolerance_ratio))
 
     def _evaluate_avoid_earnings_rule(self, rule: AvoidEarningsRule, index: int) -> bool:
+        from backtestforecast.utils.dates import trading_to_calendar_days
+
         bar_date = self.bars[index].trade_date
-        # Blackout window: avoid entry if earnings fell within [bar_date - days_after, bar_date + days_before].
-        # days_after = how many days AFTER an earnings date we still avoid (look backward),
-        # days_before = how many days BEFORE an upcoming earnings date we avoid (look forward).
-        #
-        # Known approximation: timedelta uses calendar days, not trading days.
-        # A 3-day blackout over a Friday earnings date also covers the weekend
-        # (Sat/Sun), which means fewer *trading* days are actually blocked than
-        # the user might expect.  Switching to trading days would require a
-        # trading-calendar lookup (e.g. pandas_market_calendars) which is not
-        # currently available in the engine's dependency set.
-        blackout_start = bar_date - timedelta(days=rule.days_after)
-        blackout_end = bar_date + timedelta(days=rule.days_before)
-        return not any(blackout_start <= earnings_date <= blackout_end for earnings_date in self.earnings_dates)
+        cal_after = trading_to_calendar_days(rule.days_after, reference_date=bar_date)
+        cal_before = trading_to_calendar_days(rule.days_before, reference_date=bar_date)
+        blackout_start = bar_date - timedelta(days=cal_after)
+        blackout_end = bar_date + timedelta(days=cal_before)
+        lo = bisect.bisect_left(self._sorted_earnings, blackout_start)
+        return lo >= len(self._sorted_earnings) or self._sorted_earnings[lo] > blackout_end
 
     @staticmethod
     def _has_crossover_rule(rules: Sequence) -> bool:
@@ -264,6 +262,7 @@ class EntryRuleEvaluator:
                 target_dte=self.config.target_dte,
                 dte_tolerance_days=self.config.dte_tolerance_days,
                 risk_free_rate=self.config.risk_free_rate,
+                dividend_yield=self.config.dividend_yield,
             )
         return self.iv_series_cache
 
@@ -284,6 +283,7 @@ def build_estimated_iv_series(
     target_dte: int,
     dte_tolerance_days: int,
     risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
     sample_interval: int = 1,
 ) -> list[float | None]:
     _SENTINEL = object()
@@ -304,6 +304,7 @@ def build_estimated_iv_series(
                     target_dte=target_dte,
                     dte_tolerance_days=dte_tolerance_days,
                     risk_free_rate=risk_free_rate,
+                    dividend_yield=dividend_yield,
                 )
                 iv_cache[bar.trade_date] = iv_value
             if iv_value is not None:
@@ -321,6 +322,7 @@ def estimate_atm_iv_for_date(
     target_dte: int,
     dte_tolerance_days: int,
     risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
 ) -> float | None:
     calls = option_gateway.list_contracts(trade_date, "call", target_dte, dte_tolerance_days)
     puts = option_gateway.list_contracts(trade_date, "put", target_dte, dte_tolerance_days)
@@ -371,6 +373,7 @@ def estimate_atm_iv_for_date(
             time_to_expiry_years=dte / CALENDAR_DAYS_PER_YEAR,
             option_type=option_type,
             risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
         )
         if iv is not None:
             estimates.append(iv)
@@ -387,14 +390,12 @@ def implied_volatility_from_price(
     time_to_expiry_years: float,
     option_type: str,
     risk_free_rate: float = 0.045,
-    # NOTE: Dividend yield is hardcoded to 0. For high-yield stocks (>3%),
-    # this biases IV estimates upward for calls and downward for puts.
     dividend_yield: float = 0.0,
 ) -> float | None:
     if option_price <= 0 or underlying_price <= 0 or strike_price <= 0 or time_to_expiry_years <= 0:
         return None
 
-    low = 0.01
+    low = 0.001
     high = 10.0
     _CONVERGENCE_TOL = 1e-4
     for _ in range(60):

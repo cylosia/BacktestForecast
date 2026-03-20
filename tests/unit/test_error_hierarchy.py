@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from backtestforecast.errors import (
     AppError,
+    AppValidationError,
     AuthenticationError,
     AuthorizationError,
     ConfigurationError,
@@ -14,7 +15,6 @@ from backtestforecast.errors import (
     QuotaExceededError,
     RateLimitError,
     ServiceUnavailableError,
-    ValidationError,
 )
 
 
@@ -54,7 +54,7 @@ class TestAppError:
         assert err.status_code == 409
 
     def test_validation_error(self):
-        err = ValidationError("bad input")
+        err = AppValidationError("bad input")
         assert err.status_code == 422
 
     def test_data_unavailable_error(self):
@@ -85,7 +85,7 @@ class TestAppError:
             QuotaExceededError,
             FeatureLockedError,
             ConfigurationError,
-            ValidationError,
+            AppValidationError,
             DataUnavailableError,
             ExternalServiceError,
             NotFoundError,

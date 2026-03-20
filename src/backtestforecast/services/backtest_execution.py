@@ -27,10 +27,12 @@ class BacktestExecutionService:
         engine: OptionsBacktestEngine | None = None,
     ) -> None:
         self._owns_client = market_data_service is None
+        self._closed = False
         self.market_data_service = market_data_service or MarketDataService(MassiveClient())
         self.engine = engine or OptionsBacktestEngine()
 
     def close(self) -> None:
+        self._closed = True
         if self._owns_client:
             self.market_data_service.client.close()
 
@@ -45,8 +47,16 @@ class BacktestExecutionService:
         request: CreateBacktestRunRequest,
         bundle: HistoricalDataBundle | None = None,
     ) -> BacktestExecutionResult:
+        if self._closed:
+            raise RuntimeError("BacktestExecutionService has been closed and cannot be reused.")
         settings = get_settings()
         resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
+        from backtestforecast.backtests.types import estimate_risk_free_rate
+
+        rfr = settings.risk_free_rate
+        if rfr == 0.045:
+            rfr = estimate_risk_free_rate(request.start_date, request.end_date)
+        div_yield = float(request.dividend_yield) if request.dividend_yield is not None else 0.0
         config = BacktestConfig(
             symbol=request.symbol,
             strategy_type=request.strategy_type.value,
@@ -59,7 +69,8 @@ class BacktestExecutionService:
             risk_per_trade_pct=request.risk_per_trade_pct,
             commission_per_contract=request.commission_per_contract,
             entry_rules=request.entry_rules,
-            risk_free_rate=settings.risk_free_rate,
+            risk_free_rate=rfr,
+            dividend_yield=div_yield,
             slippage_pct=request.slippage_pct,
             strategy_overrides=request.strategy_overrides,
             custom_legs=request.custom_legs,
@@ -108,4 +119,4 @@ class BacktestExecutionService:
                     warn_threshold=warn_age,
                 )
         except Exception:
-            _logger.debug("backtest.staleness_check_failed", symbol=symbol, exc_info=True)
+            _logger.warning("backtest.staleness_check_failed", symbol=symbol, exc_info=True)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -206,19 +206,19 @@ class ScannerJobResponse(BaseModel):
     status: ScannerJobStatus
     mode: ScannerMode
     plan_tier_snapshot: PlanTier
-    job_kind: str
+    job_kind: Literal["manual", "refresh", "nightly"]
     candidate_count: int
     evaluated_candidate_count: int
     recommendation_count: int
     refresh_daily: bool
     refresh_priority: int
-    ranking_version: str = "scanner-ranking-v1"
-    engine_version: str = "options-multileg-v2"
-    warnings: list[dict[str, Any]] = Field(default_factory=list, alias="warnings_json")
+    pipeline_run_id: UUID | None = None
+    ranking_version: Literal["scanner-ranking-v1", "scanner-ranking-v2"] = "scanner-ranking-v1"
+    engine_version: Literal["options-multileg-v1", "options-multileg-v2"] = "options-multileg-v2"
+    warnings: list[dict[str, Any]] = Field(default_factory=list, validation_alias="warnings_json")
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
-    idempotency_key: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
 
@@ -242,3 +242,7 @@ class ScannerJobListResponse(BaseModel):
     total: int = 0
     offset: int = 0
     limit: int = 50
+    next_cursor: str | None = Field(
+        default=None,
+        description="Opaque cursor for keyset pagination.",
+    )

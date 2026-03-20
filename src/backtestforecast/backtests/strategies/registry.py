@@ -15,6 +15,7 @@ from backtestforecast.backtests.strategies.custom import (
     CUSTOM_4_LEG_STRATEGY,
     CUSTOM_5_LEG_STRATEGY,
     CUSTOM_6_LEG_STRATEGY,
+    CUSTOM_7_LEG_STRATEGY,
     CUSTOM_8_LEG_STRATEGY,
 )
 from backtestforecast.backtests.strategies.diagonal import (
@@ -125,6 +126,7 @@ STRATEGY_REGISTRY: dict[str, StrategyDefinition] = {
     CUSTOM_4_LEG_STRATEGY.strategy_type: CUSTOM_4_LEG_STRATEGY,
     CUSTOM_5_LEG_STRATEGY.strategy_type: CUSTOM_5_LEG_STRATEGY,
     CUSTOM_6_LEG_STRATEGY.strategy_type: CUSTOM_6_LEG_STRATEGY,
+    CUSTOM_7_LEG_STRATEGY.strategy_type: CUSTOM_7_LEG_STRATEGY,
     CUSTOM_8_LEG_STRATEGY.strategy_type: CUSTOM_8_LEG_STRATEGY,
     NAKED_CALL_STRATEGY.strategy_type: NAKED_CALL_STRATEGY,
     NAKED_PUT_STRATEGY.strategy_type: NAKED_PUT_STRATEGY,

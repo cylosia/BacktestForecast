@@ -141,6 +141,8 @@ export function strategyLabel(strategy: string | StrategyType): string {
       return "Custom 5-Leg";
     case "custom_6_leg":
       return "Custom 6-Leg";
+    case "custom_7_leg":
+      return "Custom 7-Leg";
     case "custom_8_leg":
       return "Custom 8-Leg";
     case "naked_call":

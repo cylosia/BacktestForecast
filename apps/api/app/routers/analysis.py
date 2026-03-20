@@ -13,7 +13,7 @@ from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import FeatureLockedError, ValidationError
+from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.models import User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import (
@@ -62,7 +62,7 @@ def create_analysis(
 
     symbol = payload.symbol.strip().upper()
     if not SYMBOL_ALLOWED_CHARS.match(symbol):
-        raise ValidationError("Symbol must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
+        raise AppValidationError("Symbol must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
 
     idempotency_key = payload.idempotency_key
 
@@ -159,6 +159,7 @@ def list_analyses(
     db: Session = Depends(get_db),
     limit: int = Query(default=10, ge=1, le=50),
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+    cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,
     settings: Settings = Depends(get_settings),
 ) -> AnalysisListResponse:
     """List recent analyses for the current user."""
@@ -168,14 +169,33 @@ def list_analyses(
         limit=settings.analysis_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
+    from backtestforecast.utils import decode_cursor, encode_cursor
+
+    cursor_before = None
+    if cursor:
+        cursor_before = decode_cursor(cursor)
+        if cursor_before is None:
+            from backtestforecast.errors import ValidationError
+            raise ValidationError("Invalid pagination cursor.")
+        offset = 0
+
+    effective_limit = min(limit, 50)
     with _analysis_service(db) as service:
-        analyses = service.list_for_user(user, limit=limit, offset=offset)
+        analyses = service.list_for_user(
+            user, limit=effective_limit + 1, offset=offset,
+            cursor_before=cursor_before,
+        )
+        has_next = len(analyses) > effective_limit
+        if has_next:
+            analyses = analyses[:effective_limit]
         total = service.count_for_user(user)
+        next_cursor = encode_cursor(analyses[-1].created_at) if has_next and analyses else None
         return AnalysisListResponse(
             items=[_to_summary(a) for a in analyses],
             total=total,
             offset=offset,
-            limit=limit,
+            limit=effective_limit,
+            next_cursor=next_cursor,
         )
 
 

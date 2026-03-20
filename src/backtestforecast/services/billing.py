@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time as _time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -12,11 +13,11 @@ from backtestforecast.billing.events import log_billing_event
 from backtestforecast.billing.urls import resolve_return_url
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.errors import (
+    AppValidationError,
     AuthenticationError,
     ConfigurationError,
     ExternalServiceError,
     NotFoundError,
-    ValidationError,
 )
 from backtestforecast.models import User
 from backtestforecast.observability import get_logger
@@ -33,6 +34,17 @@ from backtestforecast.schemas.billing import (
 from backtestforecast.services.audit import AuditService
 
 logger = get_logger("billing")
+
+_KNOWN_STRIPE_EVENTS = frozenset({
+    "checkout.session.completed",
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "customer.subscription.paused",
+    "customer.subscription.resumed",
+    "invoice.payment_failed",
+    "invoice.payment_succeeded",
+})
 
 
 _STRIPE_CIRCUIT_KEY = "bff:stripe_circuit_open"
@@ -63,7 +75,7 @@ class BillingService:
         ip_address: str | None = None,
     ) -> CheckoutSessionResponse:
         if payload.tier == PlanTier.FREE.value:
-            raise ValidationError("Free does not require a Stripe checkout session.")
+            raise AppValidationError("Free does not require a Stripe checkout session.")
         client = self._get_stripe_client()
         customer_id = self._get_or_create_customer(user)
         price_id = self._price_id_for(payload.tier, payload.billing_interval.value)
@@ -172,10 +184,11 @@ class BillingService:
             raise AuthenticationError("Invalid Stripe webhook signature.") from exc
 
         event_type = str(event["type"])
+        safe_event_type = event_type if event_type in _KNOWN_STRIPE_EVENTS else "other"
         event_id = self._coerce_stripe_id(event.get("id")) or str(event.get("id") or "")
         if not event_id:
             logger.warning("billing.webhook.missing_event_id", event_type=event_type)
-            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ignored").inc()
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=safe_event_type, result="ignored").inc()
             return {"status": "ignored", "reason": "missing_event_id"}
 
         from backtestforecast.observability import hash_ip
@@ -193,7 +206,7 @@ class BillingService:
         )
         if claimed is None:
             logger.info("billing.webhook.duplicate", event_id=event_id, event_type=event_type)
-            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="duplicate").inc()
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=safe_event_type, result="duplicate").inc()
             return {"status": "duplicate", "event_type": event_type}
         self.session.flush()
 
@@ -216,14 +229,21 @@ class BillingService:
         except ExternalServiceError as ese:
             self.session.rollback()
             self._mark_stripe_event_error(event_id, str(ese), event_type=event_type, livemode=bool(event.get("livemode")))
-            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=safe_event_type, result="error").inc()
             if not isinstance(ese.__cause__, NotFoundError) and "not found" not in str(ese).lower():
                 self._trip_stripe_circuit()
             raise
         except NotFoundError as nfe:
             self.session.rollback()
             self._mark_stripe_event_error(event_id, str(nfe), event_type=event_type, livemode=bool(event.get("livemode")))
-            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=safe_event_type, result="not_found_retry").inc()
+            logger.warning(
+                "billing.webhook.user_not_found",
+                event_id=event_id,
+                event_type=event_type,
+                error=str(nfe),
+                hint="Event marked as error. Stripe retry after 15min will succeed via stale-claim recovery.",
+            )
             raise
         except (KeyError, TypeError, ValueError, AttributeError) as programming_exc:
             self.session.rollback()
@@ -239,13 +259,13 @@ class BillingService:
                 event_type=event_type,
                 error_type=type(programming_exc).__name__,
             )
-            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=safe_event_type, result="error").inc()
             raise
         except Exception:
             self.session.rollback()
             self._mark_stripe_event_error(event_id, "Unhandled processing error", event_type=event_type, livemode=bool(event.get("livemode")))
             logger.exception("billing.webhook.processing_error", event_id=event_id, event_type=event_type)
-            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="error").inc()
+            STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=safe_event_type, result="error").inc()
             raise
 
         self.stripe_events.mark_processed(event_id)
@@ -256,7 +276,7 @@ class BillingService:
             self.publish_cancellation_events(pending)
             self._pending_cancellation_events = []
 
-        STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=event_type, result="ok").inc()
+        STRIPE_WEBHOOK_EVENTS_TOTAL.labels(event_type=safe_event_type, result="ok").inc()
         return {"status": "ok", "event_type": event_type}
 
     def _sync_checkout_session(self, checkout_session: Any) -> User | None:
@@ -345,17 +365,23 @@ class BillingService:
         elif status not in PAID_STATUSES:
             effective_tier = PlanTier.FREE.value
 
+        _TIER_RANK = {"free": 0, "pro": 1, "premium": 2}
+        incoming_tier_rank = _TIER_RANK.get(effective_tier, 0)
+        current_tier_rank = _TIER_RANK.get(user.plan_tier, 0)
+        is_upgrade = incoming_tier_rank > current_tier_rank
+
         if (
             subscription_id is not None
             and user.stripe_subscription_id is not None
             and subscription_id != user.stripe_subscription_id
+            and not is_upgrade
             and user.subscription_status in ("active", "trialing", "past_due")
             and current_period_end is not None
             and user.subscription_current_period_end is not None
             and self._normalize_utc(current_period_end) < self._normalize_utc(user.subscription_current_period_end)
         ):
             logger.warning(
-                "billing.subscription.stale_event_skipped_may_need_reconciliation",
+                "billing.subscription.stale_event_skipped",
                 user_id=str(user.id),
                 incoming_subscription_id=subscription_id,
                 incoming_period_end=current_period_end.isoformat() if current_period_end else None,
@@ -363,15 +389,9 @@ class BillingService:
                 current_period_end=user.subscription_current_period_end.isoformat() if user.subscription_current_period_end else None,
                 current_status=user.subscription_status,
                 current_plan_tier=user.plan_tier,
-                hint="If this was a plan change (upgrade/downgrade), the user's entitlements may be wrong. "
-                     "Verify via Stripe dashboard and correct the user's plan_tier if needed.",
+                hint="Skipped because incoming subscription has an earlier period end and is not an upgrade.",
             )
             return
-
-        _TIER_RANK = {"free": 0, "pro": 1, "premium": 2}
-        incoming_tier_rank = _TIER_RANK.get(effective_tier, 0)
-        current_tier_rank = _TIER_RANK.get(user.plan_tier, 0)
-        is_upgrade = incoming_tier_rank > current_tier_rank
 
         is_terminal = status in ("canceled", "unpaid", "incomplete_expired")
         if (
@@ -439,7 +459,7 @@ class BillingService:
             and status != "past_due"
         ):
             cancelled_ids = self.cancel_in_flight_jobs(user.id)
-        self._pending_cancellation_events = cancelled_ids
+        self._pending_cancellation_events.extend(cancelled_ids)
 
         try:
             log_billing_event(
@@ -507,6 +527,15 @@ class BillingService:
                 if dry_run:
                     action["action"] = "would_sync"
                 else:
+                    # NOTE: session.commit() below releases the FOR UPDATE
+                    # lock acquired by the initial SELECT.  A concurrent
+                    # reconciliation run could re-select users that we've
+                    # already committed.  This is acceptable because:
+                    #   1. The operation is idempotent (re-applying the same
+                    #      Stripe data produces the same local state).
+                    #   2. skip_locked=True in the SELECT prevents contention
+                    #      while the original transaction is open.
+                    #   3. Duplicate processing only wastes Stripe API calls.
                     nested = self.session.begin_nested()
                     try:
                         self._apply_subscription_to_user(user, subscription)
@@ -689,18 +718,23 @@ class BillingService:
         )
         self.session.flush()
         if result.rowcount == 0:
-            import time as _time
-            for _attempt in range(5):
+            try:
+                client.customers.delete(customer.id)
+            except Exception:
+                logger.warning(
+                    "billing.orphan_customer_cleanup_failed",
+                    customer_id=customer.id,
+                )
                 try:
-                    client.customers.delete(customer.id)
-                    break
-                except Exception:
-                    logger.warning(
-                        "billing.orphan_customer_cleanup_failed",
-                        customer_id=customer.id,
-                        attempt=_attempt + 1,
+                    from apps.worker.app.celery_app import celery_app
+                    celery_app.send_task(
+                        "maintenance.cleanup_stripe_orphan",
+                        kwargs={"customer_id": customer.id, "subscription_id": None, "user_id_str": str(user.id)},
+                        queue="maintenance",
+                        countdown=10,
                     )
-                    _time.sleep(0.2 * (2 ** _attempt))
+                except Exception:
+                    logger.warning("billing.orphan_customer_cleanup_dispatch_failed", customer_id=customer.id)
             self.session.refresh(user)
             if user.stripe_customer_id is None:
                 raise ExternalServiceError(
@@ -732,6 +766,13 @@ class BillingService:
         for (tier, _interval), configured_price_id in self.settings.stripe_price_lookup.items():
             if configured_price_id == price_id:
                 return tier
+        logger.warning(
+            "billing.unknown_price_id",
+            price_id=price_id,
+            configured_prices=list(self.settings.stripe_price_lookup.values()),
+            hint="This price ID is not in the configured stripe_price_lookup. "
+                 "User may be downgraded to free if metadata also lacks requested_tier.",
+        )
         return None
 
     @staticmethod
@@ -756,12 +797,12 @@ class BillingService:
         if not items:
             return None, None
         known_price_ids = set(self.settings.stripe_price_lookup.values())
+        for item in items:
+            price = item.get("price", {})
+            pid = price.get("id") if isinstance(price, dict) else None
+            if pid and pid in known_price_ids:
+                return self._interval_from_price(price)
         if len(items) > 1:
-            for item in items:
-                price = item.get("price", {})
-                pid = price.get("id") if isinstance(price, dict) else None
-                if pid and pid in known_price_ids:
-                    return self._interval_from_price(price)
             logger.warning(
                 "billing.multi_item_subscription_no_plan_match",
                 item_count=len(items),
@@ -826,7 +867,11 @@ class BillingService:
         if value in {None, ""}:
             return None
         try:
-            return datetime.fromtimestamp(int(value), tz=UTC)
+            ts = int(value)
+            if ts < 0:
+                logger.warning("billing.negative_timestamp", value=value)
+                return None
+            return datetime.fromtimestamp(ts, tz=UTC)
         except (TypeError, ValueError, OSError):
             return None
 
@@ -866,7 +911,7 @@ class BillingService:
         rows_updated = 0
         try:
             result = self.stripe_events.mark_error(stripe_event_id, detail)
-            rows_updated = result.rowcount if hasattr(result, 'rowcount') else 0
+            rows_updated = 1 if result else 0
             self.session.commit()
         except Exception:
             self.session.rollback()
@@ -885,9 +930,14 @@ class BillingService:
                 self.session.add(error_event)
                 try:
                     nested.commit()
-                    self.session.commit()
                 except Exception:
                     nested.rollback()
+                    return
+                try:
+                    self.session.commit()
+                except Exception:
+                    self.session.rollback()
+                    logger.warning("billing.error_event_commit_failed", exc_info=True)
             except Exception:
                 self.session.rollback()
                 logger.debug("billing.stripe_event_error_mark_failed", event_id=stripe_event_id)

@@ -13,10 +13,12 @@ export function TemplateActions({
   templateId,
   templateName,
   templateDescription,
+  templateUpdatedAt,
 }: {
   templateId: string;
   templateName: string;
   templateDescription: string;
+  templateUpdatedAt?: string;
 }) {
   const router = useRouter();
   const { getToken } = useAuth();
@@ -81,6 +83,7 @@ export function TemplateActions({
         templateId={templateId}
         initialName={templateName}
         initialDescription={templateDescription}
+        initialUpdatedAt={templateUpdatedAt}
         open={editOpen}
         onClose={() => setEditOpen(false)}
       />

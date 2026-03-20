@@ -48,12 +48,13 @@ class TestExportSha256Computation:
         assert h == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
     def test_sha256_stored_with_size_bytes(self):
-        """Production code stores both sha256_hex and size_bytes in the same CAS update."""
+        """Verify SHA-256 hex digest is a 64-char lowercase hex string and size_bytes is positive."""
         content = b"sample csv export content"
         sha256_hex = hashlib.sha256(content).hexdigest()
         size_bytes = len(content)
-        assert sha256_hex == hashlib.sha256(content).hexdigest()
-        assert size_bytes == len(content)
+        assert len(sha256_hex) == 64
+        assert all(c in "0123456789abcdef" for c in sha256_hex)
+        assert size_bytes > 0
 
 
 class TestDatabaseStoragePut:
@@ -103,18 +104,15 @@ class TestExportSizeLimitEnforcement:
         mock_detail = MagicMock()
         mock_detail.trades = [MagicMock()] * 100_000
         mock_detail.equity_curve = [MagicMock()] * 100_000
-        estimated = (len(mock_detail.trades) + len(mock_detail.equity_curve) + 30) * 200
-        assert estimated > _MAX_EXPORT_BYTES
+        service = ExportService.__new__(ExportService)
+        with pytest.raises(ValueError, match="size"):
+            service._build_csv(mock_detail)
 
-    def test_content_exceeding_limit_raises_value_error(self):
-        """When generated content exceeds the limit, a ValueError is raised
-        in the production code path."""
-        oversized = b"x" * (_MAX_EXPORT_BYTES + 1)
-        with pytest.raises(ValueError, match="size limit"):
-            if len(oversized) > _MAX_EXPORT_BYTES:
-                raise ValueError(
-                    f"Generated export exceeds the {_MAX_EXPORT_BYTES // (1024 * 1024)} MB size limit."
-                )
+    def test_content_exceeding_limit_detected(self):
+        """Verify _MAX_EXPORT_BYTES check works on real-sized content."""
+        assert _MAX_EXPORT_BYTES == 10 * 1024 * 1024
+        content = b"x" * (_MAX_EXPORT_BYTES + 1)
+        assert len(content) > _MAX_EXPORT_BYTES
 
     def test_content_within_limit_passes(self):
         content = b"x" * 1000

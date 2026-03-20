@@ -20,17 +20,25 @@ class ScannerJobRepository:
         self.session.flush()
         return job
 
-    def list_for_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[ScannerJob]:
+    def list_for_user(
+        self,
+        user_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+        cursor_before: datetime | None = None,
+    ) -> list[ScannerJob]:
+        if offset > 0 and cursor_before is not None:
+            raise ValueError("Cannot combine offset and cursor_before pagination.")
         limit = max(limit, 1)
         offset = max(offset, 0)
         stmt = (
             select(ScannerJob)
             .where(ScannerJob.user_id == user_id)
             .options(noload(ScannerJob.recommendations))
-            .order_by(desc(ScannerJob.created_at))
-            .offset(offset)
-            .limit(min(limit, _MAX_PAGE_SIZE))
         )
+        if cursor_before is not None:
+            stmt = stmt.where(ScannerJob.created_at < cursor_before)
+        stmt = stmt.order_by(desc(ScannerJob.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 
     def count_for_user(self, user_id: UUID) -> int:
@@ -94,7 +102,7 @@ class ScannerJobRepository:
         self.session.execute(
             delete(ScannerRecommendation)
             .where(ScannerRecommendation.scanner_job_id == job_id)
-            .execution_options(synchronize_session="fetch")
+            .execution_options(synchronize_session=False)
         )
 
     def list_refresh_sources(self, limit: int = 100) -> list[ScannerJob]:

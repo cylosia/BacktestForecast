@@ -17,11 +17,11 @@ from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, va
 from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.errors import (
     AppError,
+    AppValidationError,
     ConflictError,
     FeatureLockedError,
     NotFoundError,
     QuotaExceededError,
-    ValidationError,
 )
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
@@ -47,9 +47,9 @@ from backtestforecast.utils import to_decimal
 
 logger = structlog.get_logger("services.backtests")
 
-# Hard limit on equity points per response. For runs with more points,
-# consider adding server-side downsampling or cursor-based pagination.
 EQUITY_CURVE_LIMIT = 10_000
+
+from backtestforecast.utils import decode_cursor as _decode_cursor, encode_cursor as _encode_cursor
 
 
 class BacktestService:
@@ -101,8 +101,12 @@ class BacktestService:
             account_size=to_decimal(request.account_size),
             risk_per_trade_pct=to_decimal(request.risk_per_trade_pct),
             commission_per_contract=to_decimal(request.commission_per_contract),
-            risk_free_rate=to_decimal(get_settings().risk_free_rate),
-            input_snapshot_json={**request.model_dump(mode="json"), "risk_free_rate": get_settings().risk_free_rate},
+            risk_free_rate=to_decimal(request.risk_free_rate if request.risk_free_rate is not None else get_settings().risk_free_rate),
+            input_snapshot_json={
+                **request.model_dump(mode="json"),
+                "risk_free_rate": float(request.risk_free_rate) if request.risk_free_rate is not None else get_settings().risk_free_rate,
+                "dividend_yield": float(request.dividend_yield) if request.dividend_yield is not None else 0.0,
+            },
             idempotency_key=request.idempotency_key,
             warnings_json=[],
             engine_version="options-multileg-v2",
@@ -157,8 +161,6 @@ class BacktestService:
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:
         """Execute the backtest for a previously enqueued run. Called by the Celery worker."""
-        from sqlalchemy import update as sa_update
-
         run = self.run_repository.get_by_id_unfiltered(run_id, for_update=True)
         if run is None:
             raise NotFoundError("Backtest run not found.")
@@ -175,10 +177,11 @@ class BacktestService:
             self.session.commit()
             return run
 
+        _transition_ts = datetime.now(UTC)
         rows = self.session.execute(
-            sa_update(BacktestRun)
+            update(BacktestRun)
             .where(BacktestRun.id == run_id, BacktestRun.status == "queued")
-            .values(status="running", updated_at=datetime.now(UTC), started_at=datetime.now(UTC))
+            .values(status="running", updated_at=_transition_ts, started_at=_transition_ts)
         )
         self.session.commit()
         if rows.rowcount == 0:
@@ -220,7 +223,7 @@ class BacktestService:
             else:
                 run.status = "succeeded"
                 run.completed_at = completed_at
-                self.audit.record(
+                self.audit.record_always(
                     event_type="backtest.completed",
                     subject_type="backtest_run",
                     subject_id=run.id,
@@ -263,7 +266,7 @@ class BacktestService:
             BACKTEST_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - _exec_start)
             self.session.expire_all()
 
-        stored = self.run_repository.get_by_id_unfiltered(run.id)
+        stored = self.session.get(BacktestRun, run.id)
         if stored is None:
             raise NotFoundError("Backtest run was executed but could not be reloaded.")
         return stored
@@ -276,10 +279,10 @@ class BacktestService:
         dispatch layer and holds a DB connection for the entire execution.
         """
         settings = get_settings()
-        if settings.app_env in ("production", "staging"):
+        if settings.app_env not in ("test", "development"):
             raise RuntimeError(
                 "create_and_run is for tests only; use enqueue + Celery in production"
-        )
+            )
         if request.idempotency_key:
             existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
             if existing is not None:
@@ -348,12 +351,24 @@ class BacktestService:
             raise NotFoundError("Backtest run was created but could not be reloaded.")
         return stored
 
-    def list_runs(self, user: User, limit: int = 50, offset: int = 0) -> BacktestRunListResponse:
+    def list_runs(
+        self,
+        user: User,
+        limit: int = 50,
+        offset: int = 0,
+        cursor: str | None = None,
+    ) -> BacktestRunListResponse:
         """List backtest runs for the user. Returns BacktestRunHistoryItemResponse items
         without equity curve data; equity curves are only included in detail/compare responses.
+
+        Supports both offset-based and cursor-based pagination.  When
+        ``cursor`` is provided, ``offset`` is ignored and keyset pagination
+        is used (no scan-and-discard overhead at high page numbers).
         """
+        if limit < 1:
+            raise AppValidationError("limit must be >= 1")
         if offset < 0:
-            raise ValidationError("offset must be >= 0")
+            raise AppValidationError("offset must be >= 0")
         feature_policy = resolve_feature_policy(
             user.plan_tier, user.subscription_status, user.subscription_current_period_end,
         )
@@ -361,14 +376,38 @@ class BacktestService:
         if feature_policy.history_days is not None:
             created_since = datetime.now(UTC) - timedelta(days=feature_policy.history_days)
         effective_limit = min(limit, feature_policy.history_item_limit, 200)
-        runs = self.run_repository.list_for_user(user.id, limit=effective_limit, offset=offset, created_since=created_since)
-        total = self.run_repository.count_for_user(user.id, created_since=created_since)
+
+        cursor_before = None
+        if cursor:
+            cursor_before = _decode_cursor(cursor)
+            if cursor_before is None:
+                raise AppValidationError("Invalid pagination cursor.")
+            offset = 0
+
+        runs, total = self.run_repository.list_for_user_with_count(
+            user.id,
+            limit=effective_limit + 1,
+            offset=offset,
+            created_since=created_since,
+            cursor_before=cursor_before,
+        )
+
+        has_next = len(runs) > effective_limit
+        if has_next:
+            runs = runs[:effective_limit]
+
         capped_total = min(total, feature_policy.history_item_limit)
+
+        next_cursor = None
+        if has_next and runs:
+            next_cursor = _encode_cursor(runs[-1].created_at)
+
         return BacktestRunListResponse(
             items=[self._to_history_item(run) for run in runs],
             total=capped_total,
             offset=offset,
             limit=effective_limit,
+            next_cursor=next_cursor,
         )
 
     def get_run_status(self, user: User, run_id: UUID) -> BacktestRunStatusResponse:
@@ -384,12 +423,6 @@ class BacktestService:
             error_code=run.error_code,
             error_message=run.error_message,
         )
-
-    def get_run(self, user: User, run_id: UUID, *, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
-        """Deprecated: use ``get_run_for_owner`` directly. Kept for backward compatibility."""
-        import warnings
-        warnings.warn("get_run is deprecated; use get_run_for_owner directly", DeprecationWarning, stacklevel=2)
-        return self.get_run_for_owner(user_id=user.id, run_id=run_id, trade_limit=trade_limit)
 
     def get_run_for_owner(self, *, user_id: UUID, run_id: UUID, trade_limit: int = 10_000) -> BacktestRunDetailResponse:
         run = self.run_repository.get_lightweight_for_user(run_id, user_id)
@@ -422,6 +455,8 @@ class BacktestService:
             raise
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
+        if len(request.run_ids) != len(set(request.run_ids)):
+            raise AppValidationError("Duplicate run IDs are not allowed in comparison requests.")
         feature_policy = resolve_feature_policy(
             user.plan_tier, user.subscription_status, user.subscription_current_period_end,
         )
@@ -454,21 +489,21 @@ class BacktestService:
 
         non_succeeded = [rid for rid in request.run_ids if run_map[rid].status != "succeeded"]
         if non_succeeded:
-            raise ValidationError(
+            raise AppValidationError(
                 f"All runs must have status 'succeeded' to compare. "
                 f"Non-succeeded: {', '.join(str(rid) for rid in non_succeeded)}"
             )
 
         ordered = [run_map[rid] for rid in request.run_ids]
-        # Performance cap: each run's trades are limited to 2000 in comparisons.
-        # Runs with more trades will have their trade list silently truncated.
-        # The frontend should display a notice when len(trades) == trade_limit.
-        trade_limit = 2_000
+        _MAX_TOTAL_COMPARE_TRADES = 8_000
+        _DEFAULT_COMPARE_TRADE_LIMIT = 2_000
+        num_runs = len(ordered)
+        trade_limit = min(_DEFAULT_COMPARE_TRADE_LIMIT, _MAX_TOTAL_COMPARE_TRADES // max(num_runs, 1))
         all_run_ids = [r.id for r in ordered]
         trades_by_run = self.run_repository.get_trades_for_runs(all_run_ids, limit_per_run=trade_limit, user_id=user.id)
         equity_by_run = self.run_repository.get_equity_points_for_runs(all_run_ids, limit_per_run=EQUITY_CURVE_LIMIT, user_id=user.id)
         truncated = any(
-            len(trades_by_run.get(run.id, [])) >= trade_limit
+            len(trades_by_run.get(run.id, [])) > trade_limit
             for run in ordered
         )
         return CompareBacktestsResponse(
@@ -588,10 +623,22 @@ class BacktestService:
         run.max_consecutive_losses = summary.max_consecutive_losses
         run.recovery_factor = to_decimal(summary.recovery_factor, allow_infinite=True) if summary.recovery_factor is not None else None
 
+        _MAX_TRADES = 10_000
+        _MAX_EQUITY_POINTS = 10_000
+        _BATCH_SIZE = 2_000
+
         with self.session.no_autoflush:
             if execution_result.trades:
+                trades_to_insert = execution_result.trades[:_MAX_TRADES]
+                if len(execution_result.trades) > _MAX_TRADES:
+                    logger.warning(
+                        "backtests.trades_capped",
+                        run_id=str(run.id),
+                        total=len(execution_result.trades),
+                        cap=_MAX_TRADES,
+                    )
                 trade_dicts: list[dict] = []
-                for trade in execution_result.trades:
+                for trade in trades_to_insert:
                     if not validate_json_shape(trade.detail_json, "BacktestTrade.detail_json", required_keys=_TRADE_DETAIL_REQUIRED_KEYS):
                         logger.warning("backtests.malformed_trade_detail_json", option_ticker=trade.option_ticker, keys=list(trade.detail_json.keys()) if trade.detail_json else [])
                     trade_dicts.append({
@@ -606,6 +653,7 @@ class BacktestService:
                         "quantity": trade.quantity,
                         "dte_at_open": trade.dte_at_open,
                         "holding_period_days": trade.holding_period_days,
+                        "holding_period_trading_days": trade.holding_period_trading_days,
                         "entry_underlying_close": to_decimal(trade.entry_underlying_close),
                         "exit_underlying_close": to_decimal(trade.exit_underlying_close),
                         "entry_mid": to_decimal(trade.entry_mid),
@@ -617,11 +665,20 @@ class BacktestService:
                         "exit_reason": trade.exit_reason,
                         "detail_json": trade.detail_json,
                     })
-                self.session.execute(insert(BacktestTrade).values(trade_dicts))
+                for batch_start in range(0, len(trade_dicts), _BATCH_SIZE):
+                    self.session.execute(insert(BacktestTrade).values(trade_dicts[batch_start:batch_start + _BATCH_SIZE]))
 
             if execution_result.equity_curve:
+                curve_to_insert = execution_result.equity_curve[:_MAX_EQUITY_POINTS]
+                if len(execution_result.equity_curve) > _MAX_EQUITY_POINTS:
+                    logger.warning(
+                        "backtests.equity_points_capped",
+                        run_id=str(run.id),
+                        total=len(execution_result.equity_curve),
+                        cap=_MAX_EQUITY_POINTS,
+                    )
                 equity_dicts: list[dict] = []
-                for point in execution_result.equity_curve:
+                for point in curve_to_insert:
                     equity_dicts.append({
                         "id": uuid4(),
                         "run_id": run.id,
@@ -631,14 +688,23 @@ class BacktestService:
                         "position_value": to_decimal(point.position_value),
                         "drawdown_pct": to_decimal(point.drawdown_pct),
                     })
-                self.session.execute(insert(BacktestEquityPoint).values(equity_dicts))
+                for batch_start in range(0, len(equity_dicts), _BATCH_SIZE):
+                    self.session.execute(insert(BacktestEquityPoint).values(equity_dicts[batch_start:batch_start + _BATCH_SIZE]))
 
         self.session.expire(run, ["trades", "equity_points"])
 
     @staticmethod
-    def _summary_response(run: BacktestRun) -> BacktestSummaryResponse:
+    def _summary_response(
+        run: BacktestRun,
+        *,
+        trades: list[BacktestTrade] | None = None,
+    ) -> BacktestSummaryResponse:
+        decided: int | None = None
+        if trades is not None:
+            decided = sum(1 for t in trades if t.net_pnl != 0)
         return BacktestSummaryResponse(
             trade_count=run.trade_count,
+            decided_trades=decided,
             win_rate=run.win_rate,
             total_roi_pct=run.total_roi_pct,
             average_win_amount=run.average_win_amount,
@@ -661,6 +727,26 @@ class BacktestService:
             max_consecutive_losses=run.max_consecutive_losses,
             recovery_factor=run.recovery_factor,
         )
+
+    @staticmethod
+    def _resolve_risk_free_rate(run: BacktestRun) -> float:
+        """Return the risk-free rate used for this run.
+
+        Prefers the persisted column (added in migration 0031).  For older
+        runs where the column is NULL, reads the value from
+        ``input_snapshot_json`` (stored at creation time).  Falls back to
+        the current settings value only as a last resort.
+        """
+        if run.risk_free_rate is not None:
+            return float(run.risk_free_rate)
+        snapshot = run.input_snapshot_json or {}
+        snapshot_rate = snapshot.get("risk_free_rate")
+        if snapshot_rate is not None:
+            try:
+                return float(snapshot_rate)
+            except (TypeError, ValueError):
+                pass
+        return get_settings().risk_free_rate
 
     def _to_history_item(self, run: BacktestRun) -> BacktestRunHistoryItemResponse:
         return BacktestRunHistoryItemResponse(
@@ -710,7 +796,7 @@ class BacktestService:
             warnings=run.warnings_json,
             error_code=run.error_code,
             error_message=run.error_message,
-            summary=self._summary_response(run),
+            summary=self._summary_response(run, trades=trades),
             trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
             equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
             equity_curve_truncated=len(equity_points) >= EQUITY_CURVE_LIMIT,

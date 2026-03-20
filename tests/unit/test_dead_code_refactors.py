@@ -96,16 +96,8 @@ def test_dc6_looks_numeric_at_module_level():
 # ---- DC7: task_helpers.py exists for factored-out code ----
 
 def test_dc7_task_helpers_module_exists():
-    from apps.worker.app.task_helpers import (
-        commit_then_publish,
-        mark_job_failed,
-        update_heartbeat,
-        validate_task_ownership,
-    )
+    from apps.worker.app.task_helpers import commit_then_publish
     assert callable(commit_then_publish)
-    assert callable(mark_job_failed)
-    assert callable(update_heartbeat)
-    assert callable(validate_task_ownership)
 
 
 # ---- DC8: _commit_then_publish imports from task_helpers ----

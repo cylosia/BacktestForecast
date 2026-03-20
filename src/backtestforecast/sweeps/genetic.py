@@ -79,11 +79,12 @@ class GeneticOptimizer:
         generations_run = 0
 
         for gen in range(cfg.max_generations):
+            pre_cache_size = len(fitness_cache)
             scored = self._evaluate_population(population, fitness_fn, fitness_cache, cfg.max_workers)
-            total_evals += sum(1 for ind, _ in scored if individual_to_key(ind) not in fitness_cache)
 
             for ind, fit_val in scored:
                 fitness_cache[individual_to_key(ind)] = fit_val
+            total_evals += len(fitness_cache) - pre_cache_size
 
             if len(fitness_cache) > _MAX_FITNESS_CACHE_SIZE:
                 sorted_keys = sorted(fitness_cache, key=fitness_cache.get)
@@ -197,7 +198,15 @@ class GeneticOptimizer:
                     break
             else:
                 logger.warning("genetic.fallback_exhausted", num_legs=num_legs)
-                population.append(random_individual(num_legs))
+                fallback = random_individual(num_legs)
+                fallback = repair(fallback)
+                if is_valid(fallback):
+                    population.append(fallback)
+                else:
+                    logger.warning(
+                        "genetic.invalid_fallback_skipped",
+                        num_legs=num_legs,
+                    )
         if len(population) < size:
             logger.warning(
                 "genetic.seed_population_undersized",

@@ -20,7 +20,7 @@ export default async function NewScanPage() {
           <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Scanner</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">Create a new scan</h1>
         </div>
-        <UpgradePrompt message="Scanner access requires a Pro or Premium plan. Upgrade to create scanner jobs." />
+        <UpgradePrompt message="Scanner access requires a Pro or Premium plan. Upgrade to create scanner jobs." requiredTier="pro" />
       </div>
     );
   }

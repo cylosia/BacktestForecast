@@ -1094,18 +1094,17 @@ def test_export_not_visible_to_other_user(
 
 
 def test_ticker_with_digits_passes_validation():
-    """Verify that ticker 'SPY3' matches the _TICKER_RE regex, confirming
-    digits are allowed in ticker symbols."""
-    import re
+    """Verify that ticker 'SPY3' matches the production SYMBOL_ALLOWED_CHARS regex,
+    confirming digits are allowed in ticker symbols."""
+    from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
 
-    _TICKER_RE = re.compile(r"^[A-Za-z0-9./^]{1,16}$")
-    assert _TICKER_RE.match("SPY3"), "SPY3 should match the ticker regex"
-    assert _TICKER_RE.match("BRK.B"), "BRK.B should match (dots allowed)"
-    assert _TICKER_RE.match("^VIX"), "^VIX should match (caret allowed)"
-    assert _TICKER_RE.match("SPY"), "SPY should match"
-    assert not _TICKER_RE.match("SPY!"), "SPY! should NOT match (special char)"
-    assert not _TICKER_RE.match(""), "Empty string should NOT match"
-    assert not _TICKER_RE.match("A" * 17), "17-char ticker should NOT match"
+    assert SYMBOL_ALLOWED_CHARS.match("SPY3"), "SPY3 should match the ticker regex"
+    assert SYMBOL_ALLOWED_CHARS.match("BRK.B"), "BRK.B should match (dots allowed)"
+    assert SYMBOL_ALLOWED_CHARS.match("^VIX"), "^VIX should match (caret allowed)"
+    assert SYMBOL_ALLOWED_CHARS.match("SPY"), "SPY should match"
+    assert not SYMBOL_ALLOWED_CHARS.match("SPY!"), "SPY! should NOT match (special char)"
+    assert not SYMBOL_ALLOWED_CHARS.match(""), "Empty string should NOT match"
+    assert not SYMBOL_ALLOWED_CHARS.match("A" * 17), "17-char ticker should NOT match"
 
 
 def test_ticker_with_digits_accepted_by_forecast_endpoint(

@@ -229,6 +229,7 @@ export function SymbolAnalysisLauncher() {
   const [stage, setStage] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
+  const [requiredTier, setRequiredTier] = useState<string | undefined>();
   const [result, setResult] = useState<SymbolAnalysisFullResponse | null>(null);
   const analysisIdRef = useRef<string | null>(null);
   const getTokenRef = useRef(getToken);
@@ -337,9 +338,11 @@ export function SymbolAnalysisLauncher() {
       const msg =
         err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Analysis failed.";
       const code = err instanceof ApiError ? err.code : undefined;
+      const reqTier = err instanceof ApiError ? err.requiredTier : undefined;
       setPhase("error");
       setErrorMessage(msg);
       setErrorCode(code);
+      setRequiredTier(reqTier);
     }
   }, [symbol, getToken, cancelPolling, startPolling]);
 
@@ -410,7 +413,7 @@ export function SymbolAnalysisLauncher() {
       </form>
 
       {errorMessage && isPlanLimitError(errorCode) ? (
-        <UpgradePrompt message={errorMessage} />
+        <UpgradePrompt message={errorMessage} requiredTier={requiredTier} />
       ) : errorMessage ? (
         <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
           <p>{errorMessage}</p>

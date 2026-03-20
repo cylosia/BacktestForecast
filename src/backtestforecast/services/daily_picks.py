@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from backtestforecast.errors import ValidationError
+from backtestforecast.errors import AppValidationError
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from backtestforecast.repositories.daily_picks import DailyPicksRepository
 from backtestforecast.schemas.analysis import DailyPicksResponse
@@ -21,16 +21,16 @@ class DailyPicksService:
 
     def get_latest_picks(
         self, trade_date: date | None = None, limit: int = 20, offset: int = 0,
-    ) -> dict[str, Any] | DailyPicksResponse:
+    ) -> DailyPicksResponse:
         pipeline_run = self.repository.get_latest_succeeded_run(trade_date)
         if pipeline_run is None:
-            return {
-                "trade_date": trade_date.isoformat() if trade_date else None,
-                "pipeline_run_id": None,
-                "status": "no_data",
-                "items": [],
-                "pipeline_stats": None,
-            }
+            return DailyPicksResponse(
+                trade_date=trade_date,
+                pipeline_run_id=None,
+                status="no_data",
+                items=[],
+                pipeline_stats=None,
+            )
         recommendations = self.repository.get_recommendations_for_run(
             pipeline_run.id, limit=limit, offset=offset,
         )
@@ -66,14 +66,14 @@ class DailyPicksService:
                 cursor_dt = datetime.fromisoformat(parts[0])
                 cursor_id = UUID(parts[1])
             except (ValueError, IndexError):
-                raise ValidationError(
+                raise AppValidationError(
                     "Invalid pagination cursor format. Expected 'ISO_timestamp|UUID'."
                 )
         else:
             try:
                 cursor_dt = datetime.fromisoformat(cursor)
             except ValueError:
-                raise ValidationError(
+                raise AppValidationError(
                     "Invalid pagination cursor format. Expected an ISO 8601 timestamp."
                 )
             cursor_id = None
@@ -86,7 +86,7 @@ class DailyPicksService:
     def _build_picks_response(
         run: NightlyPipelineRun,
         recommendations: list[DailyRecommendation],
-    ) -> dict[str, Any]:
+    ) -> DailyPicksResponse:
         dur = float(run.duration_seconds) if run.duration_seconds else None
         completed = run.completed_at.isoformat() if run.completed_at else None
         result = {
@@ -109,15 +109,7 @@ class DailyPicksService:
                     "score": rec.score,
                     "symbol": rec.symbol,
                     "strategy_type": rec.strategy_type,
-                    "regime_labels": (
-                        rec.regime_labels
-                        if isinstance(rec.regime_labels, list)
-                        else [
-                            label.strip()
-                            for label in (rec.regime_labels or "").split(",")
-                            if label.strip()
-                        ]
-                    ),
+                    "regime_labels": rec.regime_labels or [],
                     "close_price": rec.close_price,
                     "target_dte": rec.target_dte,
                     "config_snapshot": rec.config_snapshot_json,

@@ -21,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+import structlog
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.sql import func
 
@@ -37,7 +38,6 @@ from backtestforecast.db.types import (
     JSON_DEFAULT_EMPTY_OBJECT,
     JSON_VARIANT,
 )
-from backtestforecast.schemas.common import JobStatus, RunJobStatus  # noqa: F401 – re-exported
 
 
 class User(Base):
@@ -125,6 +125,7 @@ class BacktestRun(Base):
             "data_source IN ('massive', 'manual')",
             name="ck_backtest_runs_valid_data_source",
         ),
+        CheckConstraint("length(symbol) > 0", name="ck_backtest_runs_symbol_not_empty"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -209,6 +210,7 @@ class BacktestTrade(Base):
         CheckConstraint("entry_date <= exit_date", name="ck_backtest_trades_date_order"),
         CheckConstraint("dte_at_open >= 0", name="ck_backtest_trades_dte_at_open_nonneg"),
         CheckConstraint("holding_period_days >= 0", name="ck_backtest_trades_holding_period_nonneg"),
+        CheckConstraint("holding_period_trading_days IS NULL OR holding_period_trading_days >= 0", name="ck_backtest_trades_holding_trading_days_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -224,6 +226,7 @@ class BacktestTrade(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     dte_at_open: Mapped[int] = mapped_column(Integer, nullable=False)
     holding_period_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    holding_period_trading_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     entry_underlying_close: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     exit_underlying_close: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     entry_mid: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
@@ -242,6 +245,7 @@ class BacktestEquityPoint(Base):
     __tablename__ = "backtest_equity_points"
     __table_args__ = (
         Index("ix_backtest_equity_points_run_id", "run_id"),
+        Index("ix_backtest_equity_points_trade_date", "trade_date"),
         UniqueConstraint("run_id", "trade_date", name="uq_backtest_equity_points_run_date"),
     )
 
@@ -266,12 +270,13 @@ class BacktestTemplate(Base):
         Index("ix_backtest_templates_user_updated_at", "user_id", "updated_at"),
         UniqueConstraint("user_id", "name", name="uq_backtest_templates_user_name"),
         CheckConstraint("length(name) > 0", name="ck_backtest_templates_name_not_empty"),
+        CheckConstraint("description IS NULL OR length(description) <= 2000", name="ck_backtest_templates_desc_length"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
     config_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -295,6 +300,7 @@ class ScannerJob(Base):
         Index("ix_scanner_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         Index("ix_scanner_jobs_dedup_lookup", "user_id", "request_hash", "mode", "created_at"),
         Index("ix_scanner_jobs_parent_job_id", "parent_job_id"),
+        Index("ix_scanner_jobs_pipeline_run_id", "pipeline_run_id"),
         Index("ix_scanner_jobs_refresh_sources", "refresh_daily", "status"),
         Index(
             "uq_scanner_jobs_active_dedup",
@@ -331,12 +337,19 @@ class ScannerJob(Base):
             "ranking_version IN ('scanner-ranking-v1', 'scanner-ranking-v2')",
             name="ck_scanner_jobs_valid_ranking_version",
         ),
+        CheckConstraint(
+            "name IS NULL OR length(name) > 0",
+            name="ck_scanner_jobs_name_not_empty",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     parent_job_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("scanner_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    pipeline_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("nightly_pipeline_runs.id", ondelete="SET NULL"), nullable=True
     )
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
@@ -371,10 +384,9 @@ class ScannerJob(Base):
 
     @validates('evaluated_candidate_count')
     def _validate_evaluated_count(self, key, value):
-        if value is not None and hasattr(self, 'candidate_count') and self.candidate_count is not None:
+        if value is not None and self.candidate_count is not None and self.candidate_count > 0:
             _MAX_EVAL_MULTIPLIER = 5
             if value > self.candidate_count * _MAX_EVAL_MULTIPLIER:
-                import structlog
                 structlog.get_logger("models").error(
                     "evaluated_candidate_count_vastly_exceeds_candidate_count",
                     evaluated=value,
@@ -386,7 +398,6 @@ class ScannerJob(Base):
                     f"({self.candidate_count}) by more than {_MAX_EVAL_MULTIPLIER}x"
                 )
             if value > self.candidate_count * 2:
-                import structlog
                 structlog.get_logger("models").warning(
                     "evaluated_candidate_count_exceeds_candidate_count",
                     evaluated=value,
@@ -406,7 +417,9 @@ class ScannerRecommendation(Base):
     __table_args__ = (
         UniqueConstraint("scanner_job_id", "rank", name="uq_scanner_recommendations_job_rank"),
         Index("ix_scanner_recommendations_lookup", "symbol", "strategy_type", "rule_set_hash"),
+        Index("ix_scanner_recommendations_summary_gin", "summary_json", postgresql_using="gin", postgresql_ops={"summary_json": "jsonb_path_ops"}),
         CheckConstraint("rank >= 1", name="ck_scanner_recommendations_rank_positive"),
+        CheckConstraint("length(symbol) > 0", name="ck_scanner_recommendations_symbol_not_empty"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -447,6 +460,8 @@ class ExportJob(Base):
         Index("ix_export_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         Index("ix_export_jobs_status_expires_at", "status", "expires_at"),
         Index("ix_export_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
+        Index("ix_export_jobs_sha256_hex", "sha256_hex"),
+        Index("ix_export_jobs_storage_key", "storage_key"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')",
             name="ck_export_jobs_valid_export_status",
@@ -502,6 +517,12 @@ class AuditEvent(Base):
     ``AuditService.record_always()`` instead of ``record()`` to bypass the
     dedup constraint. Using ``record()`` for repeatable events will silently
     drop all but the first occurrence.
+
+    NULL SUBJECT CONSTRAINT: ``uq_audit_events_dedup_null_subject`` allows
+    only ONE event per (event_type, subject_type) where subject_id IS NULL.
+    No current caller passes subject_id=None to record(), so this constraint
+    is defensive.  If you add system-level events without a subject, use
+    ``record_always()`` to avoid hitting this partial unique index.
     """
 
     __tablename__ = "audit_events"
@@ -510,6 +531,7 @@ class AuditEvent(Base):
         Index("ix_audit_events_event_type", "event_type"),
         Index("ix_audit_events_user_created_at", "user_id", "created_at"),
         Index("ix_audit_events_event_type_created_at", "event_type", "created_at"),
+        Index("ix_audit_events_created_at", "created_at"),
         UniqueConstraint("event_type", "subject_type", "subject_id", name="uq_audit_events_dedup"),
         Index(
             "uq_audit_events_dedup_null_subject",
@@ -617,6 +639,7 @@ class DailyRecommendation(Base):
         Index("ix_daily_recs_trade_date", "trade_date"),
         Index("ix_daily_recs_symbol_strategy", "symbol", "strategy_type"),
         CheckConstraint("rank >= 1", name="ck_daily_recommendations_rank_positive"),
+        CheckConstraint("length(symbol) > 0", name="ck_daily_recommendations_symbol_not_empty"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -658,6 +681,7 @@ class StripeEvent(Base):
         Index("ix_stripe_events_created_at", "created_at"),
         Index("ix_stripe_events_user_id", "user_id"),
         Index("ix_stripe_events_idempotency_status", "idempotency_status"),
+        Index("ix_stripe_events_event_id_status", "stripe_event_id", "idempotency_status"),
         CheckConstraint(
             "idempotency_status IN ('processing', 'processed', 'ignored', 'error')",
             name="ck_stripe_events_valid_status",
@@ -706,6 +730,7 @@ class SymbolAnalysis(Base):
             "stage IN ('pending', 'regime', 'landscape', 'deep_dive', 'forecast')",
             name="ck_symbol_analyses_valid_stage",
         ),
+        CheckConstraint("length(symbol) > 0", name="ck_symbol_analyses_symbol_not_empty"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -746,6 +771,8 @@ class SweepJob(Base):
         Index("ix_sweep_jobs_user_symbol", "user_id", "symbol"),
         Index("ix_sweep_jobs_celery_task_id", "celery_task_id"),
         Index("ix_sweep_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
+        Index("ix_sweep_jobs_user_symbol_created", "user_id", "symbol", "created_at"),
+        Index("ix_sweep_jobs_request_hash", "request_hash"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_sweep_jobs_user_idempotency_key"),
         Index("ix_sweep_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         CheckConstraint(
@@ -767,6 +794,7 @@ class SweepJob(Base):
             "mode IN ('grid', 'genetic')",
             name="ck_sweep_jobs_valid_mode",
         ),
+        CheckConstraint("length(symbol) > 0", name="ck_sweep_jobs_symbol_not_empty"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -779,6 +807,7 @@ class SweepJob(Base):
     evaluated_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     result_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
     prefetch_summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
     engine_version: Mapped[str] = mapped_column(String(32), nullable=False, default="options-multileg-v2", server_default="options-multileg-v2")
@@ -840,6 +869,7 @@ class OutboxMessage(Base):
     )
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     correlation_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
 
 
@@ -848,6 +878,7 @@ class SweepResult(Base):
     __table_args__ = (
         UniqueConstraint("sweep_job_id", "rank", name="uq_sweep_results_job_rank"),
         Index("ix_sweep_results_job_id", "sweep_job_id"),
+        Index("ix_sweep_results_summary_gin", "summary_json", postgresql_using="gin", postgresql_ops={"summary_json": "jsonb_path_ops"}),
         CheckConstraint("rank >= 1", name="ck_sweep_results_rank_positive"),
     )
 
@@ -869,3 +900,34 @@ class SweepResult(Base):
     )
 
     job: Mapped["SweepJob"] = relationship(back_populates="results", lazy="raise")
+
+
+class TaskResult(Base):
+    __tablename__ = "task_results"
+    __table_args__ = (
+        Index("ix_task_results_task_name_created", "task_name", "created_at"),
+        Index("ix_task_results_correlation_id", "correlation_id"),
+        Index("ix_task_results_status_created", "status", "created_at"),
+        CheckConstraint(
+            "status IN ('succeeded', 'failed', 'retried', 'timeout')",
+            name="ck_task_results_valid_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    task_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    task_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    correlation_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    correlation_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    worker_hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

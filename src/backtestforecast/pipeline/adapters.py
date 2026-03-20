@@ -17,7 +17,7 @@ from typing import Any, Self
 
 import structlog
 
-from backtestforecast.errors import DataUnavailableError, ExternalServiceError, ValidationError
+from backtestforecast.errors import AppValidationError, DataUnavailableError, ExternalServiceError
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.market_data.types import DailyBar
@@ -211,7 +211,7 @@ class PipelineBacktestExecutor:
                 "max_drawdown_pct": result.summary.max_drawdown_pct,
                 "average_holding_period_days": result.summary.average_holding_period_days,
             }
-        except (DataUnavailableError, ExternalServiceError, ValidationError):
+        except (DataUnavailableError, ExternalServiceError, AppValidationError):
             logger.warning("pipeline.quick_backtest_failed", symbol=symbol, strategy_type=strategy_type, exc_info=True)
             return None
 
@@ -259,7 +259,7 @@ class PipelineBacktestExecutor:
                 "equity_curve": self._downsample_equity_curve(result.equity_curve),
                 "warnings": list(result.warnings),
             }
-        except (DataUnavailableError, ExternalServiceError, ValidationError):
+        except (DataUnavailableError, ExternalServiceError, AppValidationError):
             logger.warning("pipeline.full_backtest_failed", symbol=symbol, strategy_type=strategy_type, exc_info=True)
             return None
 
@@ -395,6 +395,6 @@ class PipelineForecaster:
                 "analog_count": result.analog_count,
                 "horizon_days": result.horizon_days,
             }
-        except (DataUnavailableError, ExternalServiceError, ValidationError, ValueError):
+        except (DataUnavailableError, ExternalServiceError, AppValidationError, ValueError):
             logger.warning("pipeline.forecast_failed", symbol=symbol, exc_info=True)
             return None

@@ -26,20 +26,23 @@ _ALLOWED_EVENT_PREFIXES = frozenset({
 })
 
 
-def _safe_state(state: dict | None) -> dict | None:
+def _safe_state(state: dict | None, *, _depth: int = 0) -> dict | None:
+    _MAX_DEPTH = 10
     if state is None:
         return None
     if not state:
         return {}
+    if _depth >= _MAX_DEPTH:
+        return {"_truncated": True}
     result: dict = {}
     for k, v in state.items():
         if k.lower() in _BILLING_REDACT_KEYS:
             result[k] = "<redacted>"
             continue
         if isinstance(v, dict):
-            result[k] = _safe_state(v)
+            result[k] = _safe_state(v, _depth=_depth + 1)
         elif isinstance(v, list):
-            result[k] = [_safe_state(item) if isinstance(item, dict) else item for item in v]
+            result[k] = [_safe_state(item, _depth=_depth + 1) if isinstance(item, dict) else item for item in v]
         else:
             result[k] = v
     return result
@@ -98,7 +101,9 @@ def log_billing_event(
                 },
             )
         except Exception:
-            logger.warning(
+            # Dropped audit events create gaps in the billing trail, making
+            # dispute resolution and reconciliation unreliable.
+            logger.error(
                 "billing.audit_write_failed",
                 event_type=event_type,
                 user_id=str(user_id),

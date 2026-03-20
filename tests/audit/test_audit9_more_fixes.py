@@ -111,18 +111,18 @@ class TestMetricsServerBindsToLocalhost:
         )
 
 
-class TestActiveRenewalGraceIsModuleLevel:
-    """Fix 38: ACTIVE_RENEWAL_GRACE must be a module-level constant."""
+class TestActiveRenewalGraceFunction:
+    """Fix 25/38: ACTIVE_RENEWAL_GRACE replaced by configurable _active_renewal_grace()."""
 
-    def test_active_renewal_grace_is_module_attribute(self):
+    def test_active_renewal_grace_function_exists(self):
         import backtestforecast.billing.entitlements as mod
 
-        assert hasattr(mod, "ACTIVE_RENEWAL_GRACE"), (
-            "ACTIVE_RENEWAL_GRACE must be a module-level attribute"
+        assert callable(getattr(mod, "_active_renewal_grace", None)), (
+            "_active_renewal_grace must be a callable in the module"
         )
         from datetime import timedelta
 
-        assert isinstance(mod.ACTIVE_RENEWAL_GRACE, timedelta)
+        assert isinstance(mod._active_renewal_grace(), timedelta)
 
 
 class TestBaselineMigrationServerDefaults:

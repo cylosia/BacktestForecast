@@ -153,3 +153,29 @@ def test_state_machine_covers_all_statuses():
         assert status.value in ALLOWED_TRANSITIONS, (
             f"Status '{status.value}' missing from ALLOWED_TRANSITIONS"
         )
+
+
+def test_compare_backtests_max_ids():
+    """Frontend and backend must agree on max compare IDs (8)."""
+    from backtestforecast.schemas.backtests import CompareBacktestsRequest
+    run_ids_field = CompareBacktestsRequest.model_fields["run_ids"]
+    assert run_ids_field.metadata is not None
+    max_length = None
+    for m in run_ids_field.metadata:
+        if hasattr(m, "max_length"):
+            max_length = m.max_length
+            break
+    assert max_length == 8, (
+        f"CompareBacktestsRequest.run_ids max_length should be 8, got {max_length}. "
+        "Frontend client.ts must use the same limit."
+    )
+
+
+def test_backtest_window_max_days():
+    """Backend max_backtest_window_days must be documented for frontend alignment."""
+    from backtestforecast.config import get_settings
+    settings = get_settings()
+    assert settings.max_backtest_window_days <= 1825, (
+        "max_backtest_window_days exceeds 1825 (5 years). "
+        "If this is intentional, update frontend validation.ts to match."
+    )

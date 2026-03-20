@@ -13,9 +13,14 @@ logger = get_logger("audit")
 
 _REPEATABLE_EVENT_TYPES: frozenset[str] = frozenset({
     "export.downloaded",
+    "export.created",
     "backtest.viewed",
+    "backtest.completed",
     "scan.viewed",
+    "scan.completed",
+    "sweep.completed",
     "analysis.viewed",
+    "analysis.completed",
     "job.cancelled_by_billing",
 })
 

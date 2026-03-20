@@ -78,7 +78,7 @@ class TemplateResponse(BaseModel):
     name: str
     description: str | None
     strategy_type: str
-    config: TemplateConfig = Field(alias="config_json")
+    config: TemplateConfig = Field(validation_alias="config_json")
     created_at: datetime
     updated_at: datetime
 
@@ -89,7 +89,7 @@ class TemplateResponse(BaseModel):
     def coerce_config(cls, data: Any) -> Any:
         if hasattr(data, "__tablename__"):
             raw = getattr(data, "config_json", None)
-            if isinstance(raw, dict):
+            if isinstance(raw, dict) and raw:
                 attrs = {
                     k: getattr(data, k)
                     for k in cls.model_fields
@@ -97,9 +97,11 @@ class TemplateResponse(BaseModel):
                 }
                 attrs["config_json"] = TemplateConfig(**raw)
                 return attrs
+            if isinstance(raw, dict) and not raw:
+                raise ValueError("Template has empty config_json; cannot be serialized.")
         elif isinstance(data, dict):
             raw = data.get("config_json") or data.get("config")
-            if isinstance(raw, dict):
+            if isinstance(raw, dict) and raw:
                 data = {**data, "config_json": TemplateConfig(**raw)}
         return data
 

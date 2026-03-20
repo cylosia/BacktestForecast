@@ -11,7 +11,7 @@ from apps.api.app.dependencies import get_current_user
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import ValidationError
+from backtestforecast.errors import AppValidationError
 from backtestforecast.models import User
 from backtestforecast.schemas.analysis import (
     DailyPicksResponse,
@@ -63,9 +63,9 @@ def get_latest_daily_picks(
     if trade_date is not None:
         today = market_date_today()
         if trade_date > today:
-            raise ValidationError("trade_date cannot be in the future.")
+            raise AppValidationError("trade_date cannot be in the future.")
         if trade_date < today - timedelta(days=5 * 365):
-            raise ValidationError("trade_date cannot be more than 5 years in the past.")
+            raise AppValidationError("trade_date cannot be more than 5 years in the past.")
 
     with _daily_picks_service(db) as service:
         return DailyPicksResponse.model_validate(
@@ -102,9 +102,9 @@ def get_pipeline_history(
         try:
             parsed = datetime.fromisoformat(cursor)
         except (ValueError, TypeError) as exc:
-            raise ValidationError("cursor must be a valid ISO 8601 timestamp.") from exc
+            raise AppValidationError("cursor must be a valid ISO 8601 timestamp.") from exc
         if parsed.tzinfo is None:
-            raise ValidationError("cursor must include timezone information (e.g. +00:00 or Z).")
+            raise AppValidationError("cursor must include timezone information (e.g. +00:00 or Z).")
 
     with _daily_picks_service(db) as service:
         return PipelineHistoryResponse.model_validate(service.get_history(limit=limit, cursor=cursor))

@@ -41,10 +41,9 @@ def list_scans(
     db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+    cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,
     settings: Settings = Depends(get_settings),
 ) -> ScannerJobListResponse:
-    # Entitlement not checked on read: users retain access to past results
-    # even after downgrade, consistent with backtests router policy.
     get_rate_limiter().check(
         bucket="scans:read",
         actor_key=str(user.id),
@@ -52,7 +51,7 @@ def list_scans(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ScanService(db) as service:
-        return service.list_jobs(user, limit=limit, offset=offset)
+        return service.list_jobs(user, limit=limit, offset=offset, cursor=cursor)
 
 
 @router.post("", response_model=ScannerJobResponse, status_code=status.HTTP_202_ACCEPTED)

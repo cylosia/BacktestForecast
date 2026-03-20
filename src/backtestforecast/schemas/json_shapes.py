@@ -121,6 +121,11 @@ def validate_json_shape(
     """
     if not isinstance(data, dict):
         logger.warning("json_shape_invalid_type", label=label, got_type=type(data).__name__)
+        try:
+            from backtestforecast.observability.metrics import JSON_SHAPE_VALIDATION_FAILURES_TOTAL
+            JSON_SHAPE_VALIDATION_FAILURES_TOTAL.labels(label=label).inc()
+        except Exception:
+            pass
         if strict:
             raise ValueError(f"[{label}] expected dict, got {type(data).__name__}")
         return False
@@ -142,6 +147,11 @@ def validate_json_shape(
                     break
         if missing:
             logger.warning("json_shape_missing_keys", label=label, missing=sorted(missing))
+            try:
+                from backtestforecast.observability.metrics import JSON_SHAPE_VALIDATION_FAILURES_TOTAL
+                JSON_SHAPE_VALIDATION_FAILURES_TOTAL.labels(label=label).inc()
+            except Exception:
+                pass
             if strict:
                 raise ValueError(f"[{label}] missing required keys: {sorted(missing)}")
             return False

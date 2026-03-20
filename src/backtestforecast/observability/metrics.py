@@ -22,6 +22,13 @@ HTTP_REQUEST_DURATION_SECONDS = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
 
+HTTP_RESPONSE_SIZE_BYTES = Histogram(
+    "http_response_size_bytes",
+    "HTTP response body size in bytes",
+    ["method", "path"],
+    buckets=(100, 1_000, 10_000, 50_000, 100_000, 500_000, 1_000_000, 5_000_000),
+)
+
 BACKTEST_RUNS_TOTAL = Counter(
     "backtest_runs_total",
     "Total backtest runs by final status",
@@ -40,10 +47,33 @@ RATE_LIMIT_HITS_TOTAL = Counter(
     ["bucket"],
 )
 
+RATE_LIMIT_NEAR_TOTAL = Counter(
+    "rate_limit_near_threshold_total",
+    "Requests that reached 80%+ of the rate limit (early warning for abuse)",
+    ["bucket"],
+)
+
+FEATURE_FLAG_EVALUATIONS_TOTAL = Counter(
+    "feature_flag_evaluations_total",
+    "Feature flag evaluation results (enabled, disabled, rollout_excluded, tier_excluded)",
+    ["feature", "result"],
+)
+
 STRIPE_WEBHOOK_EVENTS_TOTAL = Counter(
     "stripe_webhook_events_total",
     "Total Stripe webhook events processed",
     ["event_type", "result"],
+)
+
+BILLING_UNKNOWN_STATUS_TOTAL = Counter(
+    "billing_unknown_subscription_status_total",
+    "Subscription events with unrecognized Stripe status (add to PAID/INACTIVE sets)",
+    ["status"],
+)
+
+SCAN_CORRUPT_SUMMARY_TOTAL = Counter(
+    "scan_corrupt_summary_total",
+    "Scan recommendations with unparseable summary JSON",
 )
 
 AUDIT_DEDUPE_CONFLICTS_TOTAL = Counter(
@@ -299,24 +329,24 @@ def _normalize_scan_failure_reason(reason: str) -> str:
 
 
 SCAN_CANDIDATE_FAILURES_TOTAL = Counter(
-    "backtestforecast_scan_candidate_failures_total",
+    "scan_candidate_failures_total",
     "Number of individual scanner candidates that failed evaluation",
     ["reason"],
 )
 
 MARKET_DATA_CACHE_HITS = Counter(
-    "backtestforecast_market_data_cache_hits_total",
+    "market_data_cache_hits_total",
     "Market data cache hits",
     ["cache_type"],
 )
 MARKET_DATA_CACHE_MISSES = Counter(
-    "backtestforecast_market_data_cache_misses_total",
+    "market_data_cache_misses_total",
     "Market data cache misses",
     ["cache_type"],
 )
 
 SCAN_EXECUTION_DURATION_SECONDS = Histogram(
-    "backtestforecast_scan_execution_duration_seconds",
+    "scan_execution_duration_seconds",
     "Time to execute a scanner job end-to-end",
     buckets=[10, 30, 60, 120, 300, 600],
 )
@@ -339,6 +369,12 @@ SWEEP_CANDIDATE_FAILURES_TOTAL = Counter(
     ["reason"],
 )
 
+JSON_SHAPE_VALIDATION_FAILURES_TOTAL = Counter(
+    "json_shape_validation_failures_total",
+    "JSONB shape validation failures (missing keys or wrong type)",
+    ["label"],
+)
+
 BACKTEST_EXECUTION_DURATION_SECONDS = Histogram(
     "backtest_execution_duration_seconds",
     "Time to execute a backtest run end-to-end",
@@ -352,13 +388,13 @@ EXPORT_EXECUTION_DURATION_SECONDS = Histogram(
 )
 
 DISPATCH_RESULTS_TOTAL = Counter(
-    "bff_dispatch_results_total",
+    "dispatch_results_total",
     "Celery dispatch outcomes",
     ["result", "task_name"],
 )
 
 OUTBOX_RECOVERED_TOTAL = Counter(
-    "bff_outbox_recovered_total",
+    "outbox_recovered_total",
     "Tasks recovered via outbox poller after inline dispatch failure",
     ["task_name"],
 )
@@ -440,11 +476,16 @@ class PrometheusMiddleware:
         path = _normalize_path(scope.get("path", "/"))
         start = time.perf_counter()
         status_code = 500
+        response_bytes = 0
 
         async def send_with_metrics(message: Message) -> None:
-            nonlocal status_code
+            nonlocal status_code, response_bytes
             if message["type"] == "http.response.start":
                 status_code = message.get("status", 500)
+            elif message["type"] == "http.response.body":
+                body = message.get("body", b"")
+                if body:
+                    response_bytes += len(body)
             await send(message)
 
         try:
@@ -455,6 +496,8 @@ class PrometheusMiddleware:
             duration = time.perf_counter() - start
             HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status=str(status_code)).inc()
             HTTP_REQUEST_DURATION_SECONDS.labels(method=method, path=path).observe(duration)
+            if response_bytes > 0:
+                HTTP_RESPONSE_SIZE_BYTES.labels(method=method, path=path).observe(response_bytes)
 
 
 _logger = structlog.get_logger("observability.metrics")

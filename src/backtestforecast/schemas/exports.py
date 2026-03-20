@@ -25,13 +25,12 @@ class ExportJobResponse(BaseModel):
 
     id: UUID
     run_id: UUID = Field(alias="backtest_run_id")
-    export_format: str = Field(pattern=r"^(csv|pdf)$")
+    export_format: ExportFormat
     status: JobStatus
     file_name: str
     mime_type: str
-    size_bytes: int | None = None
+    size_bytes: int = 0
     sha256_hex: str | None = None
-    warnings: list[dict[str, object]] | None = None
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
@@ -48,3 +47,4 @@ class ExportJobListResponse(BaseModel):
     total: int = 0
     offset: int = 0
     limit: int = 50
+    next_cursor: str | None = None

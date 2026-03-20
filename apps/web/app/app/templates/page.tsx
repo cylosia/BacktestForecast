@@ -82,7 +82,7 @@ export default async function TemplatesPage() {
                 </TableHeader>
                 <TableBody>
                   {data.items.map((template) => {
-                    const cfg = template.config_json;
+                    const cfg = (template as any).config_json ?? template.config;
                     return (
                     <TableRow key={template.id}>
                       <TableCell>
@@ -117,7 +117,7 @@ export default async function TemplatesPage() {
                         {formatDateTime(template.updated_at)}
                       </TableCell>
                       <TableCell>
-                        <TemplateActions templateId={template.id} templateName={template.name} templateDescription={template.description ?? ""} />
+                        <TemplateActions templateId={template.id} templateName={template.name} templateDescription={template.description ?? ""} templateUpdatedAt={template.updated_at} />
                       </TableCell>
                     </TableRow>
                     );

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat, ensure_export_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.errors import AppError, ConflictError, NotFoundError, ValidationError
+from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError
 from backtestforecast.exports.storage import DatabaseStorage, ExportStorage, get_storage
 from backtestforecast.models import ExportJob, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
@@ -65,7 +65,10 @@ class ExportService:
         self._storage = storage or get_storage(settings or get_settings())
 
     def close(self) -> None:
-        self.backtest_service.close()
+        try:
+            self.backtest_service.close()
+        except Exception:
+            logger.debug("export_service.close_failed", exc_info=True)
 
     def __enter__(self) -> Self:
         return self
@@ -95,7 +98,7 @@ class ExportService:
         if run is None:
             raise NotFoundError("Backtest run not found.")
         if run.status != "succeeded":
-            raise ValidationError(
+            raise AppValidationError(
                 f"Cannot export a backtest run with status \"{run.status}\". "
                 "Only succeeded runs can be exported."
             )
@@ -154,6 +157,7 @@ class ExportService:
 
         user = self.session.get(User, export_job.user_id)
         if user is None:
+            now = datetime.now(UTC)
             self.session.execute(
                 sa_update(ExportJob)
                 .where(ExportJob.id == export_job_id)
@@ -161,8 +165,9 @@ class ExportService:
                     status="failed",
                     error_code="user_not_found",
                     error_message="User account not found.",
-                    completed_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
+                    started_at=now,
+                    completed_at=now,
+                    updated_at=now,
                 )
             )
             self.session.commit()
@@ -176,6 +181,7 @@ class ExportService:
                 user.subscription_current_period_end,
             )
         except AppError:
+            now = datetime.now(UTC)
             self.session.execute(
                 sa_update(ExportJob)
                 .where(ExportJob.id == export_job_id)
@@ -183,8 +189,9 @@ class ExportService:
                     status="failed",
                     error_code="entitlement_revoked",
                     error_message="Subscription no longer active.",
-                    completed_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
+                    started_at=now,
+                    completed_at=now,
+                    updated_at=now,
                 )
             )
             self.session.commit()
@@ -205,7 +212,8 @@ class ExportService:
         run = self.backtests.get_lightweight_for_user(export_job.backtest_run_id, export_job.user_id)
         if run is not None:
             trade_count = run.trade_count or 0
-            estimated_size = trade_count * 2000
+            _bytes_per_trade = 500 if export_job.export_format == "csv" else 200
+            estimated_size = trade_count * _bytes_per_trade
             if estimated_size > _MAX_EXPORT_BYTES:
                 self.session.execute(
                     sa_update(ExportJob)
@@ -245,8 +253,6 @@ class ExportService:
             # A periodic cleanup job should reconcile storage keys against the
             # export_jobs table and remove orphans.
             storage_key = self._storage.put(export_job.id, content, export_job.file_name)
-            if isinstance(self._storage, DatabaseStorage):
-                export_job.content_bytes = content
             success_rows = self.session.execute(
                 sa_update_top(ExportJob)
                 .where(ExportJob.id == export_job.id, ExportJob.status == "running")
@@ -259,6 +265,23 @@ class ExportService:
                     updated_at=datetime.now(UTC),
                 )
             )
+            if success_rows.rowcount == 0:
+                self.session.rollback()
+                logger.warning(
+                    "export.success_overwrite_prevented",
+                    export_job_id=str(export_job.id),
+                    msg="Concurrent status change detected; success commit skipped.",
+                )
+                if not isinstance(self._storage, DatabaseStorage):
+                    try:
+                        self._storage.delete(storage_key)
+                        logger.info("export.orphan_cleaned_after_cas_fail", storage_key=storage_key)
+                    except Exception:
+                        logger.warning("export.orphan_cleanup_failed_after_cas", storage_key=storage_key, exc_info=True)
+                self.session.refresh(export_job)
+                return export_job
+            if isinstance(self._storage, DatabaseStorage):
+                export_job.content_bytes = content
             try:
                 self.session.commit()
             except Exception:
@@ -280,71 +303,114 @@ class ExportService:
                         )
                 raise
         except AppError:
-            self.session.rollback()
-            logger.exception("export.execution_failed", export_job_id=str(export_job.id))
-            self.session.execute(
-                sa_update_top(ExportJob)
-                .where(ExportJob.id == export_job.id, ExportJob.status != "succeeded")
-                .values(
-                    status="failed",
-                    error_code="export_generation_failed",
-                    error_message="Export generation failed. Please try again.",
-                    completed_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
-                )
+            self._mark_export_failed(
+                export_job.id,
+                error_message="Export generation failed. Please try again.",
+                log_event="export.execution_failed",
             )
-            self.session.commit()
             raise
         except (ValueError, RuntimeError) as exc:
-            self.session.rollback()
-            logger.exception("export.terminal_failure", export_job_id=str(export_job.id), error=str(exc))
-            self.session.execute(
-                sa_update_top(ExportJob)
-                .where(ExportJob.id == export_job.id, ExportJob.status != "succeeded")
-                .values(
-                    status="failed",
-                    error_code="export_generation_failed",
-                    error_message="Export generation failed due to a data or configuration error.",
-                    completed_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
-                )
+            self._mark_export_failed(
+                export_job.id,
+                error_message="Export generation failed due to a data or configuration error.",
+                log_event="export.terminal_failure",
+                log_extra={"error": str(exc)},
             )
-            self.session.commit()
             raise
         except Exception:
-            self.session.rollback()
-            logger.exception("export.execution_failed", export_job_id=str(export_job.id))
-            self.session.execute(
-                sa_update_top(ExportJob)
-                .where(ExportJob.id == export_job.id, ExportJob.status != "succeeded")
-                .values(
-                    status="failed",
-                    error_code="export_generation_failed",
-                    error_message="Export generation failed due to an unexpected error.",
-                    completed_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
-                )
+            self._mark_export_failed(
+                export_job.id,
+                error_message="Export generation failed due to an unexpected error.",
+                log_event="export.execution_failed",
             )
-            self.session.commit()
             raise
         finally:
             EXPORT_EXECUTION_DURATION_SECONDS.observe(_time.monotonic() - _exec_start)
 
         self.session.refresh(export_job)
         if export_job.status == "succeeded":
-            self.audit.record(
-                event_type="export.created",
-                subject_type="export_job",
-                subject_id=export_job.id,
-                user_id=export_job.user_id,
-                metadata={
-                    "run_id": str(export_job.backtest_run_id),
-                    "format": export_job.export_format,
-                    "size_bytes": export_job.size_bytes,
-                },
+            try:
+                self.audit.record_always(
+                    event_type="export.created",
+                    subject_type="export_job",
+                    subject_id=export_job.id,
+                    user_id=export_job.user_id,
+                    metadata={
+                        "run_id": str(export_job.backtest_run_id),
+                        "format": export_job.export_format,
+                        "size_bytes": export_job.size_bytes,
+                    },
+                )
+                self.session.commit()
+            except Exception:
+                self.session.rollback()
+                logger.warning(
+                    "export.audit_commit_failed",
+                    export_job_id=str(export_job.id),
+                    exc_info=True,
+                )
+        elif export_job.status == "failed":
+            try:
+                self.audit.record(
+                    event_type="export.failed",
+                    subject_type="export_job",
+                    subject_id=export_job.id,
+                    user_id=export_job.user_id,
+                    metadata={
+                        "run_id": str(export_job.backtest_run_id),
+                        "format": export_job.export_format,
+                        "error_code": export_job.error_code or "unknown",
+                    },
+                )
+                self.session.commit()
+            except Exception:
+                self.session.rollback()
+                logger.warning(
+                    "export.failure_audit_commit_failed",
+                    export_job_id=str(export_job.id),
+                    exc_info=True,
+                )
+        return export_job
+
+    def _mark_export_failed(
+        self,
+        export_job_id: UUID,
+        *,
+        error_message: str,
+        log_event: str,
+        log_extra: dict | None = None,
+    ) -> None:
+        """Best-effort mark an export as failed after an exception.
+
+        Rolls back first, then attempts a fresh UPDATE+COMMIT.  If the
+        commit itself fails the job stays in "running" and the stale-job
+        reaper will eventually catch it — but we log loudly so operators
+        notice quickly.
+        """
+        self.session.rollback()
+        log_kw = {"export_job_id": str(export_job_id), **(log_extra or {})}
+        logger.exception(log_event, **log_kw)
+        try:
+            self.session.execute(
+                sa_update_top(ExportJob)
+                .where(ExportJob.id == export_job_id, ExportJob.status != "succeeded")
+                .values(
+                    status="failed",
+                    error_code="export_generation_failed",
+                    error_message=error_message,
+                    completed_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
             )
             self.session.commit()
-        return export_job
+        except Exception:
+            self.session.rollback()
+            logger.error(
+                "export.mark_failed_commit_failed",
+                export_job_id=str(export_job_id),
+                exc_info=True,
+                hint="Job will remain in 'running' status until the stale-job reaper picks it up.",
+            )
 
     def cleanup_expired_exports(self, *, batch_size: int = 100, max_batches: int = 100) -> int:
         """Delete storage content for expired exports. Returns count cleaned.
@@ -393,7 +459,17 @@ class ExportService:
 
             storage_failures = 0
             orphan_keys: list[str] = []
+            _batch_start = _time.monotonic()
+            _BATCH_TIMEOUT = 120.0
             for key in storage_keys_to_delete:
+                if _time.monotonic() - _batch_start > _BATCH_TIMEOUT:
+                    remaining = len(storage_keys_to_delete) - (storage_failures + len(storage_keys_to_delete) - len(orphan_keys))
+                    logger.warning("cleanup.batch_storage_timeout", batch=batch_count, remaining_keys=remaining)
+                    orphan_keys.extend(
+                        k for k in storage_keys_to_delete
+                        if k not in orphan_keys and k != key
+                    )
+                    break
                 try:
                     self._storage.delete(key)
                 except Exception:
@@ -436,6 +512,13 @@ class ExportService:
                 "Cannot delete a job that is currently queued or running. Cancel it first."
             )
         storage_key = export_job.storage_key
+        # Delete DB record first, then external storage.  If the DB commit
+        # fails the storage object remains (recoverable orphan).  The reverse
+        # order would leave a ghost DB record pointing at deleted storage —
+        # an unrecoverable state.  The reconcile_s3_orphans task cleans up
+        # any storage objects left behind after successful DB deletes.
+        self.session.delete(export_job)
+        self.session.commit()
         if storage_key and not isinstance(self._storage, DatabaseStorage):
             try:
                 self._storage.delete(storage_key)
@@ -446,8 +529,6 @@ class ExportService:
                     storage_key=storage_key,
                     exc_info=True,
                 )
-        self.session.delete(export_job)
-        self.session.commit()
 
     def create_export(
         self,
@@ -463,7 +544,7 @@ class ExportService:
         ``enqueue_export`` followed by the Celery task instead.
         """
         settings = get_settings()
-        if settings.app_env in ("production", "staging"):
+        if settings.app_env not in ("test", "development"):
             raise RuntimeError(
                 "create_export is for tests only; use enqueue_export + Celery in production"
             )
@@ -514,8 +595,8 @@ class ExportService:
 
     @staticmethod
     def _build_file_name(symbol: str, strategy_type: str, export_format: ExportFormat) -> str:
-        safe_symbol = re.sub(r'[<>:"/\\|?*\s\x00]', "-", symbol).strip("-").lower()
-        safe_strategy = re.sub(r'[<>:"/\\|?*\s\x00]', "-", strategy_type).strip("-").lower()
+        safe_symbol = re.sub(r'[<>:"/\\|?*\s\x00]', "-", symbol).strip("-").lower() or "unknown"
+        safe_strategy = re.sub(r'[<>:"/\\|?*\s\x00]', "-", strategy_type).strip("-").lower() or "strategy"
         extension = "csv" if export_format == ExportFormat.CSV else "pdf"
         return f"{safe_symbol}-{safe_strategy}-backtest.{extension}"
 
@@ -663,6 +744,7 @@ class ExportService:
                 )
             )
 
+        _check_size()
         text_wrapper.flush()
         text_wrapper.detach()
         return buf.getvalue()
@@ -697,21 +779,24 @@ class ExportService:
             pdf.drawRightString(width - 0.75 * inch, 0.5 * inch, f"Page {_page_number}")
 
         _truncated_at_page_limit = False
+        _page_has_content = False
 
         def line(text: str, *, bold: bool = False, step: float = 16.0) -> bool:
             """Write a line to the PDF. Returns False if page limit was reached."""
-            nonlocal y, _page_number, _truncated_at_page_limit
+            nonlocal y, _page_number, _truncated_at_page_limit, _page_has_content
             if _page_number > _MAX_PDF_PAGES:
                 _truncated_at_page_limit = True
                 return False
             pdf.setFont(_BOLD_FONT if bold else _BASE_FONT, 10 if not bold else 12)
             pdf.drawString(0.75 * inch, y, text)
+            _page_has_content = True
             y -= step
             if y < 0.75 * inch:
                 _draw_page_footer()
                 pdf.showPage()
                 _page_number += 1
                 y = height - 0.75 * inch
+                _page_has_content = False
             return True
 
         def _fmt(val: object) -> str:
@@ -769,7 +854,7 @@ class ExportService:
         if omitted > 0:
             line(f"... {omitted} additional trades omitted (page or count limit reached) ...")
 
-        if detail.equity_curve:
+        if detail.equity_curve and not _truncated_at_page_limit:
             line("")
             line("Equity Curve Summary", bold=True, step=20.0)
             equities = [p.equity for p in detail.equity_curve]
@@ -781,6 +866,24 @@ class ExportService:
             line(f"Trough equity: {_fmt_usd(trough)}")
             line(f"Max drawdown: {_fmt_pct(detail.summary.max_drawdown_pct)}")
             line(f"Data points: {len(detail.equity_curve)}")
+
+        line("")
+        line("Notes", bold=True, step=20.0)
+        line(
+            "Entry/exit values shown per trade are per-unit position values "
+            "divided by 100 (the contract multiplier).",
+            step=14.0,
+        )
+        line(
+            "To reconstruct trade cost: value x 100 x quantity. "
+            "These are NOT raw option mid-prices.",
+            step=14.0,
+        )
+        line(
+            "Sharpe ratio uses sample std-dev (N-1). Sortino uses sample "
+            "downside deviation (N-1). Win rate excludes break-even trades.",
+            step=14.0,
+        )
 
         if _truncated_at_page_limit:
             line(
@@ -796,8 +899,9 @@ class ExportService:
                 max_pages=_MAX_PDF_PAGES,
             )
 
-        _draw_page_footer()
-        pdf.showPage()
+        if _page_has_content:
+            _draw_page_footer()
+            pdf.showPage()
         pdf.save()
         return buffer.getvalue()
 
@@ -813,7 +917,7 @@ class ExportService:
         sanitized = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
         stripped = sanitized.strip()
         first = stripped[:1]
-        if first in {"=", "+", "@", "|"}:
+        if first in {"=", "+", "@", "|", ";"}:
             return "'" + sanitized
         if first == "-" and not _LOOKS_NUMERIC.match(stripped):
             return "'" + sanitized
@@ -821,11 +925,18 @@ class ExportService:
 
     @staticmethod
     def to_response(job: ExportJob) -> ExportJobResponse:
+        effective_status = job.status
+        if (
+            job.status == "succeeded"
+            and job.expires_at is not None
+            and job.expires_at < datetime.now(UTC)
+        ):
+            effective_status = "expired"
         return ExportJobResponse(
             id=job.id,
             run_id=job.backtest_run_id,
             export_format=job.export_format,
-            status=job.status,
+            status=effective_status,
             file_name=job.file_name,
             mime_type=job.mime_type,
             size_bytes=job.size_bytes,

@@ -8,11 +8,12 @@ from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from apps.api.app.dependencies import _extract_client_ip, get_current_user
+from apps.api.app.dependencies import _extract_client_ip, get_token_verifier
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
+from backtestforecast.repositories.users import UserRepository
 from backtestforecast.security import get_rate_limiter
 
 
@@ -24,6 +25,7 @@ class FeatureFlagsResponse(BaseModel):
     analysis: bool = True
     daily_picks: bool = True
     billing: bool = True
+    sweeps: bool = True
 
 
 class MetaResponse(BaseModel):
@@ -40,16 +42,28 @@ API_VERSION = "0.1.0"
 
 
 def _try_authenticate(request: Request, db: Session) -> User | None:
-    """Attempt to authenticate without raising on failure.
+    """Verify JWT and look up the user without creating a new record.
 
-    NOTE: ``get_current_user`` calls ``get_or_create`` on the User table, so a
-    valid JWT presented to this unauthenticated endpoint will create a user
-    record as a side-effect. This is acceptable because the user would be
-    created on the next authenticated API call anyway.
+    Unlike ``get_current_user``, this avoids ``get_or_create`` so that
+    presenting a valid JWT on this unauthenticated endpoint does not
+    produce user-record side-effects.  If the user hasn't been created
+    yet (e.g. first API visit), we simply return None and omit the
+    authenticated metadata from the response.
     """
     try:
+        token: str | None = None
         authorization = request.headers.get("authorization")
-        return get_current_user(request=request, authorization=authorization, db=db)
+        if authorization:
+            scheme, _, candidate = authorization.partition(" ")
+            if scheme.lower() == "bearer" and candidate:
+                token = candidate
+        if not token:
+            token = request.cookies.get("__session")
+        if not token or len(token) > 4096:
+            return None
+        principal = get_token_verifier().verify_bearer_token(token)
+        repo = UserRepository(db)
+        return repo.get_by_clerk_user_id(principal.clerk_user_id)
     except (jwt.exceptions.PyJWTError, ValueError, KeyError, AttributeError, StarletteHTTPException, AuthenticationError):
         return None
     except (DatabaseError, ConnectionError, OSError):
@@ -84,6 +98,7 @@ def get_meta(request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
             "analysis": settings.feature_analysis_enabled,
             "daily_picks": settings.feature_daily_picks_enabled,
             "billing": settings.feature_billing_enabled,
+            "sweeps": settings.feature_sweeps_enabled,
         }
     if settings.app_env not in ("production", "staging"):
         result["environment"] = settings.app_env

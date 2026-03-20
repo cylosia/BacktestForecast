@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from fastapi import APIRouter, Depends, Header, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import ValidationError
+from backtestforecast.errors import AppValidationError
 from backtestforecast.models import User
 from backtestforecast.observability.metrics import ACCOUNT_DELETIONS_TOTAL
 from backtestforecast.security import get_rate_limiter
@@ -22,7 +23,112 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/account", tags=["account"])
 logger = structlog.get_logger("api.account")
 
-_EXPORT_PAGE_SIZE = 1000
+_EXPORT_PAGE_SIZE = 200
+
+
+# ---------------------------------------------------------------------------
+# GDPR export response models
+# ---------------------------------------------------------------------------
+
+class _GdprUserSummary(BaseModel):
+    id: str
+    clerk_user_id: str
+    email: str | None
+    plan_tier: str
+    created_at: str | None
+
+
+class _GdprPagination(BaseModel):
+    limit: int
+    backtests_offset: int
+    hint: str
+
+
+class _GdprTotals(BaseModel):
+    backtests: int
+    templates: int
+    scanner_jobs: int
+    sweep_jobs: int
+    export_jobs: int
+    symbol_analyses: int
+
+
+class _GdprBacktest(BaseModel):
+    id: str
+    symbol: str
+    strategy_type: str
+    status: str
+    date_from: str | None
+    date_to: str | None
+    trade_count: int
+    total_net_pnl: str | None
+    created_at: str | None
+
+
+class _GdprTemplate(BaseModel):
+    id: str
+    name: str
+    strategy_type: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None
+
+
+class _GdprScannerJob(BaseModel):
+    id: str
+    status: str
+    mode: str
+    recommendation_count: int
+    created_at: str | None
+
+
+class _GdprSweepJob(BaseModel):
+    id: str
+    symbol: str
+    status: str
+    result_count: int
+    created_at: str | None
+
+
+class _GdprExportJob(BaseModel):
+    id: str
+    backtest_run_id: str | None
+    export_format: str
+    status: str
+    file_name: str
+    size_bytes: int
+    created_at: str | None
+
+
+class _GdprAnalysis(BaseModel):
+    id: str
+    symbol: str
+    status: str
+    strategies_tested: int
+    top_results_count: int
+    created_at: str | None
+
+
+class _GdprAuditEvent(BaseModel):
+    id: str
+    event_type: str
+    subject_type: str
+    created_at: str | None
+
+
+class AccountDataExportResponse(BaseModel):
+    """GDPR data portability export containing all user data."""
+    model_config = ConfigDict(extra="allow")
+
+    user: _GdprUserSummary
+    pagination: _GdprPagination
+    totals: _GdprTotals
+    backtests: list[_GdprBacktest]
+    templates: list[_GdprTemplate]
+    scanner_jobs: list[_GdprScannerJob]
+    sweep_jobs: list[_GdprSweepJob]
+    export_jobs: list[_GdprExportJob]
+    symbol_analyses: list[_GdprAnalysis]
+    audit_events: list[_GdprAuditEvent] = []
 
 
 def _count_all_for_user(db: Session, user_id: uuid.UUID) -> dict[str, int]:
@@ -128,7 +234,7 @@ def delete_account(
     customer object to stop billing immediately.
     """
     if x_confirm_delete != "permanently-delete-my-account":
-        raise ValidationError(
+        raise AppValidationError(
             'Account deletion requires the header '
             'X-Confirm-Delete: permanently-delete-my-account'
         )
@@ -151,10 +257,19 @@ def delete_account(
 
         stripe_sub_id = user.stripe_subscription_id
         stripe_cust_id = user.stripe_customer_id
+        saved_user_id = user.id
+        saved_clerk_user_id = user.clerk_user_id
 
         _cleanup_export_storage(db, user.id)
 
         try:
+            import hashlib as _hashlib
+
+            def _hash_pii(value: str | None) -> str | None:
+                if not value:
+                    return None
+                return _hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
             AuditService(db).record_always(
                 event_type="account.deleted",
                 subject_type="user",
@@ -164,11 +279,11 @@ def delete_account(
                 ip_address=metadata.ip_address,
                 metadata={
                     "deleted_user_id": str(user.id),
-                    "clerk_user_id": user.clerk_user_id,
-                    "email": user.email,
+                    "clerk_user_id_hash": _hash_pii(user.clerk_user_id),
+                    "email_hash": _hash_pii(user.email),
                     "plan_tier": user.plan_tier,
-                    "stripe_subscription_id": stripe_sub_id,
-                    "stripe_customer_id": stripe_cust_id,
+                    "had_stripe_subscription": stripe_sub_id is not None,
+                    "had_stripe_customer": stripe_cust_id is not None,
                 },
             )
             db.delete(user)
@@ -178,19 +293,19 @@ def delete_account(
             logger.exception("account.delete_failed", user_id=str(user.id))
             raise
 
-        stripe_cleanup = _cleanup_stripe(billing, stripe_sub_id, stripe_cust_id, user.id)
+        stripe_cleanup = _cleanup_stripe(billing, stripe_sub_id, stripe_cust_id, saved_user_id)
         ACCOUNT_DELETIONS_TOTAL.labels(stripe_cleanup_result=stripe_cleanup).inc()
 
         if stripe_cleanup in ("partial", "failed", "client_unavailable"):
-            _dispatch_stripe_cleanup_retry(stripe_sub_id, stripe_cust_id, user.id, stripe_cleanup)
+            _dispatch_stripe_cleanup_retry(stripe_sub_id, stripe_cust_id, saved_user_id, stripe_cleanup)
 
         if cancelled_ids:
             BillingService.publish_cancellation_events(cancelled_ids)
 
         logger.warning(
             "account.deleted",
-            user_id=str(user.id),
-            clerk_user_id=user.clerk_user_id,
+            user_id=str(saved_user_id),
+            clerk_user_id=saved_clerk_user_id,
             stripe_cleanup_result=stripe_cleanup,
         )
     finally:
@@ -198,17 +313,23 @@ def delete_account(
             billing.close()
 
 
-@router.get("/me/export")
+@router.get("/me/export", response_model=AccountDataExportResponse)
 def export_account_data(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(default=_EXPORT_PAGE_SIZE, ge=1, le=_EXPORT_PAGE_SIZE),
-    offset: int = Query(default=0, ge=0, le=100_000),
+    offset: int = Query(default=0, ge=0, le=100_000, description="Offset for backtests"),
+    templates_offset: int = Query(default=0, ge=0, le=100_000),
+    scans_offset: int = Query(default=0, ge=0, le=100_000),
+    sweeps_offset: int = Query(default=0, ge=0, le=100_000),
+    exports_offset: int = Query(default=0, ge=0, le=100_000),
+    analyses_offset: int = Query(default=0, ge=0, le=100_000),
+    audit_offset: int = Query(default=0, ge=0, le=100_000),
 ) -> dict[str, Any]:
     """Export all user data for GDPR data portability.
 
-    Returns a paginated JSON object. Each section is capped at ``limit``
-    rows (default 1000). Use ``offset`` to page through large datasets.
+    Each entity type has its own offset parameter for independent pagination.
+    Returns totals so the client can determine if additional pages exist.
     """
     get_rate_limiter().check(
         bucket="account:export",
@@ -217,6 +338,13 @@ def export_account_data(
         window_seconds=3600,
     )
 
+    try:
+        from sqlalchemy import text
+        db.execute(text("SET LOCAL statement_timeout = '15s'"))
+    except Exception:
+        pass
+
+    from backtestforecast.repositories.audit_events import AuditEventRepository
     from backtestforecast.repositories.backtest_runs import BacktestRunRepository
     from backtestforecast.repositories.export_jobs import ExportJobRepository
     from backtestforecast.repositories.scanner_jobs import ScannerJobRepository
@@ -230,13 +358,16 @@ def export_account_data(
     sweep_repo = SweepJobRepository(db)
     export_repo = ExportJobRepository(db)
     analysis_repo = SymbolAnalysisRepository(db)
+    audit_repo = AuditEventRepository(db)
 
-    runs = backtest_repo.list_for_user(user.id, limit=limit, offset=offset)
-    user_templates = template_repo.list_for_user(user.id, limit=limit, offset=offset)
-    scan_jobs = scanner_repo.list_for_user(user.id, limit=limit, offset=offset)
-    sweep_jobs = sweep_repo.list_for_user(user.id, limit=limit, offset=offset)
-    export_jobs = export_repo.list_for_user(user.id, limit=limit, offset=offset)
-    analyses = analysis_repo.list_for_user(user.id, limit=limit, offset=offset)
+    _gdpr_limit = min(limit, _EXPORT_PAGE_SIZE)
+    runs = backtest_repo.list_for_user(user.id, limit=_gdpr_limit, offset=offset)
+    user_templates = template_repo.list_for_user(user.id, limit=_gdpr_limit, offset=templates_offset)
+    scan_jobs = scanner_repo.list_for_user(user.id, limit=_gdpr_limit, offset=scans_offset)
+    sweep_jobs = sweep_repo.list_for_user(user.id, limit=_gdpr_limit, offset=sweeps_offset)
+    export_jobs = export_repo.list_for_user(user.id, limit=_gdpr_limit, offset=exports_offset)
+    analyses = analysis_repo.list_for_user(user.id, limit=_gdpr_limit, offset=analyses_offset)
+    audit_events = audit_repo.list_recent(user_id=user.id, limit=_gdpr_limit, offset=audit_offset)
 
     totals = _count_all_for_user(db, user.id)
 
@@ -248,7 +379,16 @@ def export_account_data(
             "plan_tier": user.plan_tier,
             "created_at": user.created_at.isoformat() if user.created_at else None,
         },
-        "pagination": {"limit": limit, "offset": offset},
+        "pagination": {
+            "limit": _gdpr_limit,
+            "backtests_offset": offset,
+            "templates_offset": templates_offset,
+            "scans_offset": scans_offset,
+            "sweeps_offset": sweeps_offset,
+            "exports_offset": exports_offset,
+            "analyses_offset": analyses_offset,
+            "audit_offset": audit_offset,
+        },
         "totals": totals,
         "backtests": [
             {
@@ -259,7 +399,7 @@ def export_account_data(
                 "date_from": r.date_from.isoformat() if r.date_from else None,
                 "date_to": r.date_to.isoformat() if r.date_to else None,
                 "trade_count": r.trade_count,
-                "total_net_pnl": str(r.total_net_pnl),
+                "total_net_pnl": str(r.total_net_pnl) if r.total_net_pnl is not None else None,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in runs
@@ -297,7 +437,7 @@ def export_account_data(
         "export_jobs": [
             {
                 "id": str(e.id),
-                "backtest_run_id": str(e.backtest_run_id),
+                "backtest_run_id": str(e.backtest_run_id) if e.backtest_run_id is not None else None,
                 "export_format": e.export_format,
                 "status": e.status,
                 "file_name": e.file_name,
@@ -316,6 +456,15 @@ def export_account_data(
                 "created_at": a.created_at.isoformat() if a.created_at else None,
             }
             for a in analyses
+        ],
+        "audit_events": [
+            {
+                "id": str(ae.id),
+                "event_type": ae.event_type,
+                "subject_type": ae.subject_type,
+                "created_at": ae.created_at.isoformat() if ae.created_at else None,
+            }
+            for ae in audit_events
         ],
     }
 

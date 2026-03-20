@@ -162,7 +162,7 @@ export function useSSE<T>({
         esRef.current = null;
         if (retryCountRef.current < MAX_RETRIES) {
           retryCountRef.current += 1;
-          const delay = 1000 * Math.pow(2, retryCountRef.current - 1);
+          const delay = 1000 * Math.pow(2, retryCountRef.current - 1) * (0.5 + Math.random());
           if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
           retryTimeoutRef.current = setTimeout(() => {
             if (!mountedRef.current) return;
