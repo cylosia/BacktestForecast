@@ -53,9 +53,12 @@ class BacktestExecutionService:
         resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
         from backtestforecast.backtests.types import estimate_risk_free_rate
 
-        rfr = settings.risk_free_rate
-        if rfr == 0.045:
-            rfr = estimate_risk_free_rate(request.start_date, request.end_date)
+        if request.risk_free_rate is not None:
+            rfr = float(request.risk_free_rate)
+        else:
+            rfr = settings.risk_free_rate
+            if rfr == 0.045:
+                rfr = estimate_risk_free_rate(request.start_date, request.end_date)
         div_yield = float(request.dividend_yield) if request.dividend_yield is not None else 0.0
         config = BacktestConfig(
             symbol=request.symbol,
