@@ -182,7 +182,7 @@ class ScannerRecommendationResponse(BaseModel):
     symbol: str
     strategy_type: str
     rule_set_name: str
-    request_snapshot: dict[str, Any]
+    request_snapshot: dict[str, Any] = Field(default_factory=dict, validation_alias="request_snapshot_json")
     summary: BacktestSummaryResponse
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     historical_performance: HistoricalPerformanceResponse
@@ -191,6 +191,8 @@ class ScannerRecommendationResponse(BaseModel):
     trades: list[TradeJsonResponse] = Field(default_factory=list, max_length=10000)
     equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list, max_length=10000)
     trades_truncated: bool = False
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class ScannerRecommendationListResponse(BaseModel):

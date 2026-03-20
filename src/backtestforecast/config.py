@@ -217,6 +217,7 @@ class Settings(BaseSettings):
     rate_limit_memory_max_keys: int = 10_000
     backtest_create_rate_limit: int = 10
     backtest_read_rate_limit: int = 60
+    me_read_rate_limit: int = 60
     scan_create_rate_limit: int = 6
     scan_read_rate_limit: int = 60
     sweep_create_rate_limit: int = 3
@@ -227,6 +228,7 @@ class Settings(BaseSettings):
     template_mutate_rate_limit: int = 20
     analysis_create_rate_limit: int = 10
     analysis_read_rate_limit: int = 60
+    delete_rate_limit: int = 60
     analysis_rate_limit_window_seconds: int = 3600
     forecast_rate_limit: int = 6
     daily_picks_rate_limit: int = 30
@@ -274,6 +276,7 @@ class Settings(BaseSettings):
 
     max_backtest_window_days: int = 1_825
     max_scanner_window_days: int = 730
+    max_sweep_window_days: int = 730
 
     s3_bucket: str | None = None
     s3_region: str | None = None
@@ -331,16 +334,16 @@ class Settings(BaseSettings):
         return normalized or "INFO"
 
     @field_validator(
-        "request_max_body_bytes", "max_backtest_window_days", "max_scanner_window_days",
+        "request_max_body_bytes", "max_backtest_window_days", "max_scanner_window_days", "max_sweep_window_days",
         "rate_limit_window_seconds", "db_pool_size", "db_pool_recycle",
         "analysis_rate_limit_window_seconds",
-        "backtest_create_rate_limit", "backtest_read_rate_limit",
+        "backtest_create_rate_limit", "backtest_read_rate_limit", "me_read_rate_limit",
         "scan_create_rate_limit", "scan_read_rate_limit",
         "sweep_create_rate_limit", "sweep_read_rate_limit",
         "export_create_rate_limit", "export_read_rate_limit",
         "billing_create_rate_limit",
         "template_mutate_rate_limit",
-        "analysis_create_rate_limit", "analysis_read_rate_limit",
+        "analysis_create_rate_limit", "analysis_read_rate_limit", "delete_rate_limit",
         "forecast_rate_limit", "daily_picks_rate_limit",
         "rate_limit_memory_max_keys",
         "sse_rate_limit", "sse_redis_max_connections", "sse_max_payload_bytes",

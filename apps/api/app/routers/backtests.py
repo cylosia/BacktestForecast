@@ -159,7 +159,7 @@ def delete_backtest(
     get_rate_limiter().check(
         bucket="backtests:delete",
         actor_key=str(user.id),
-        limit=60,
+        limit=settings.delete_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:

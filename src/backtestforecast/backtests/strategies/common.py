@@ -101,8 +101,8 @@ def choose_put_otm_strike(strikes: list[float], underlying_close: float) -> floa
     return min(strikes)
 
 
-def offset_strike(strikes: list[float], base_strike: float, steps: int) -> float | None:
-    ordered = sorted(strikes)
+def offset_strike(strikes: list[float], base_strike: float, steps: int, *, presorted: bool = False) -> float | None:
+    ordered = list(strikes) if presorted else sorted(strikes)
     insert_pos = bisect.bisect_left(ordered, base_strike)
     # WARNING: If base_strike is not in the listed strikes, we temporarily
     # insert it as a phantom to find the correct offset position. The
@@ -306,9 +306,9 @@ def resolve_strike(
         atm = choose_atm_strike(strikes, underlying_close)
         sorted_strikes = sorted(set(strikes))
         if contract_type == "call":
-            resolved = offset_strike(sorted_strikes, atm, steps)
+            resolved = offset_strike(sorted_strikes, atm, steps, presorted=True)
         else:
-            resolved = offset_strike(sorted_strikes, atm, -steps)
+            resolved = offset_strike(sorted_strikes, atm, -steps, presorted=True)
         if resolved is None:
             raise DataUnavailableError(f"Strike offset {steps} out of range for {contract_type}.")
         return resolved
@@ -382,10 +382,10 @@ def resolve_wing_strike(
     unique_sorted = sorted(set(strikes))
 
     if width_config is None:
-        result = offset_strike(unique_sorted, short_strike, direction)
+        result = offset_strike(unique_sorted, short_strike, direction, presorted=True)
     elif width_config.mode == SpreadWidthMode.STRIKE_STEPS:
         steps = int(float(width_config.value))
-        result = offset_strike(unique_sorted, short_strike, direction * steps)
+        result = offset_strike(unique_sorted, short_strike, direction * steps, presorted=True)
     elif width_config.mode == SpreadWidthMode.DOLLAR_WIDTH:
         val = float(width_config.value)
         target = short_strike + val if direction > 0 else short_strike - val
@@ -396,7 +396,7 @@ def resolve_wing_strike(
         target = short_strike + dollar_width if direction > 0 else short_strike - dollar_width
         result = _nearest_strike(strikes, target)
     else:
-        result = offset_strike(unique_sorted, short_strike, direction)
+        result = offset_strike(unique_sorted, short_strike, direction, presorted=True)
 
     if result is not None:
         wrong_side = (
@@ -405,7 +405,7 @@ def resolve_wing_strike(
             or (direction < 0 and result > short_strike)
         )
         if wrong_side:
-            fallback = offset_strike(unique_sorted, short_strike, direction)
+            fallback = offset_strike(unique_sorted, short_strike, direction, presorted=True)
             if fallback is not None and fallback != short_strike:
                 result = fallback
             else:

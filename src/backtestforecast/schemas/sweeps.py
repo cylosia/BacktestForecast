@@ -110,9 +110,9 @@ class CreateSweepRequest(BaseModel):
             raise ValueError("start_date must be earlier than end_date")
         if (self.end_date - self.start_date).days < 30:
             raise ValueError("Sweep window must be at least 30 days for meaningful results")
-        if (self.end_date - self.start_date).days > get_settings().max_backtest_window_days:
+        if (self.end_date - self.start_date).days > get_settings().max_sweep_window_days:
             raise ValueError(
-                f"sweep window exceeds the configured maximum of {get_settings().max_backtest_window_days} days"
+                f"sweep window exceeds the configured maximum of {get_settings().max_sweep_window_days} days"
             )
         if self.dte_tolerance_days >= self.target_dte:
             raise ValueError(

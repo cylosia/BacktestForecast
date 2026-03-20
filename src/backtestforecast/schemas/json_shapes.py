@@ -56,11 +56,23 @@ _REGIME_REQUIRED_KEYS: frozenset[str] = frozenset({"regimes", "close_price"})
 # ---------------------------------------------------------------------------
 
 class ForecastShape(TypedDict, total=False):
+    symbol: str
+    strategy_type: str | None
+    as_of_date: str
     horizon_days: int
+    trading_days_used: int | None
+    analog_count: int
+    analogs_used: int | None
+    expected_return_low_pct: float
     expected_return_median_pct: float
     expected_return_mean_pct: float
+    expected_return_high_pct: float
     positive_outcome_rate_pct: float
-    analog_count: int
+    summary: str
+    disclaimer: str
+    analog_dates: list[str]
+    analog_dates_shown: int | None
+    analog_dates_total: int | None
     percentile_5: float
     percentile_25: float
     percentile_75: float
@@ -76,17 +88,28 @@ _FORECAST_REQUIRED_KEYS: frozenset[str] = frozenset({"horizon_days"})
 
 class SummaryShape(TypedDict, total=False):
     trade_count: int
+    decided_trades: int
     win_rate: float
     total_roi_pct: float
     max_drawdown_pct: float
     total_net_pnl: float
+    total_commissions: float
     starting_equity: float
     ending_equity: float
+    average_win_amount: float
+    average_loss_amount: float
+    average_holding_period_days: float
+    average_dte_at_open: float
     sharpe_ratio: float | None
     sortino_ratio: float | None
     profit_factor: float | None
     expectancy: float
     cagr_pct: float | None
+    payoff_ratio: float | None
+    calmar_ratio: float | None
+    max_consecutive_wins: int
+    max_consecutive_losses: int
+    recovery_factor: float | None
 
 
 _SUMMARY_REQUIRED_KEYS: frozenset[str] = frozenset({

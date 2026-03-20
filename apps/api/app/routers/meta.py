@@ -87,7 +87,11 @@ def get_meta(request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
         "service": "backtestforecast-api",
         "version": API_VERSION,
     }
-    user = _try_authenticate(request, db)
+    try:
+        user = _try_authenticate(request, db)
+    except (DatabaseError, ConnectionError, OSError):
+        logger.warning("meta.auth_degraded_db_unavailable", exc_info=True)
+        user = None
     if user is not None:
         result["billing_enabled"] = settings.stripe_billing_enabled
         result["features"] = {
