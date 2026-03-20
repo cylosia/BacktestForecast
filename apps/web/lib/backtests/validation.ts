@@ -50,6 +50,7 @@ export interface BacktestFormValues {
   ivRankEnabled: boolean;
   ivRankOperator: ComparisonOperator;
   ivRankThreshold: string;
+  ivRankLookbackDays: string;
   avoidEarningsEnabled: boolean;
   avoidEarningsDaysBefore: string;
   avoidEarningsDaysAfter: string;
@@ -62,12 +63,15 @@ export interface BacktestFormValues {
   ivPercentileEnabled: boolean;
   ivPercentileOperator: ComparisonOperator;
   ivPercentileThreshold: string;
+  ivPercentileLookbackDays: string;
   volumeSpikeEnabled: boolean;
+  volumeSpikeOperator: ComparisonOperator;
   volumeSpikeMultiplier: string;
   volumeSpikePeriod: string;
   supportResistanceEnabled: boolean;
   supportResistanceMode: string;
   supportResistancePeriod: string;
+  supportResistanceTolerancePct: string;
 }
 
 export type BacktestFormErrors = Partial<Record<keyof BacktestFormValues | "form", string>>;
@@ -106,6 +110,7 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     ivRankEnabled: false,
     ivRankOperator: "gt",
     ivRankThreshold: "50",
+    ivRankLookbackDays: "252",
     avoidEarningsEnabled: false,
     avoidEarningsDaysBefore: "3",
     avoidEarningsDaysAfter: "1",
@@ -118,12 +123,15 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     ivPercentileEnabled: false,
     ivPercentileOperator: "gt",
     ivPercentileThreshold: "50",
+    ivPercentileLookbackDays: "252",
     volumeSpikeEnabled: false,
+    volumeSpikeOperator: "gte",
     volumeSpikeMultiplier: "2",
     volumeSpikePeriod: "20",
     supportResistanceEnabled: false,
-    supportResistanceMode: "support",
+    supportResistanceMode: "near_support",
     supportResistancePeriod: "20",
+    supportResistanceTolerancePct: "1",
   };
 }
 
@@ -323,6 +331,15 @@ export function validateBacktestForm(values: BacktestFormValues): {
     if (!isFiniteNumber(values.macdSignalPeriod) || mSignal < 2 || mSignal > 100) {
       errors.macdSignalPeriod = "MACD signal period must be between 2 and 100.";
     }
+    if (
+      !errors.macdFastPeriod &&
+      !errors.macdSlowPeriod &&
+      Number.isFinite(mFast) &&
+      Number.isFinite(mSlow) &&
+      mFast >= mSlow
+    ) {
+      errors.macdSlowPeriod = "MACD slow period must be greater than fast period.";
+    }
     if (!errors.macdFastPeriod && !errors.macdSlowPeriod && !errors.macdSignalPeriod) {
       entryRules.push({
         type: "macd",
@@ -347,7 +364,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
       entryRules.push({
         type: "bollinger_bands",
         period: bPeriod,
-        num_std_dev: bStdDev,
+        standard_deviations: bStdDev,
         band: values.bollingerBand,
         operator: values.bollingerOperator,
       } as any);
@@ -356,14 +373,19 @@ export function validateBacktestForm(values: BacktestFormValues): {
 
   if (values.ivRankEnabled) {
     const ivThreshold = parseNumber(values.ivRankThreshold);
+    const ivLookback = parseNumber(values.ivRankLookbackDays);
     if (!isFiniteNumber(values.ivRankThreshold) || ivThreshold < 0 || ivThreshold > 100) {
       errors.ivRankThreshold = "IV Rank threshold must be between 0 and 100.";
     }
-    if (!errors.ivRankThreshold) {
+    if (!isFiniteNumber(values.ivRankLookbackDays) || !Number.isInteger(ivLookback) || ivLookback < 20 || ivLookback > 756) {
+      errors.ivRankLookbackDays = "IV Rank lookback must be a whole number between 20 and 756.";
+    }
+    if (!errors.ivRankThreshold && !errors.ivRankLookbackDays) {
       entryRules.push({
         type: "iv_rank",
         operator: values.ivRankOperator,
         threshold: ivThreshold,
+        lookback_days: ivLookback,
       } as any);
     }
   }
@@ -377,6 +399,9 @@ export function validateBacktestForm(values: BacktestFormValues): {
     if (!isFiniteNumber(values.avoidEarningsDaysAfter) || daysAfter < 0 || daysAfter > 30) {
       errors.avoidEarningsDaysAfter = "Days after must be between 0 and 30.";
     }
+    if (!errors.avoidEarningsDaysBefore && !errors.avoidEarningsDaysAfter && daysBefore === 0 && daysAfter === 0) {
+      errors.avoidEarningsDaysAfter = "Set days before or days after greater than 0.";
+    }
     if (!errors.avoidEarningsDaysBefore && !errors.avoidEarningsDaysAfter) {
       entryRules.push({
         type: "avoid_earnings",
@@ -388,14 +413,19 @@ export function validateBacktestForm(values: BacktestFormValues): {
 
   if (values.ivPercentileEnabled) {
     const ivPctThreshold = parseNumber(values.ivPercentileThreshold);
+    const ivPctLookback = parseNumber(values.ivPercentileLookbackDays);
     if (!isFiniteNumber(values.ivPercentileThreshold) || ivPctThreshold < 0 || ivPctThreshold > 100) {
       errors.ivPercentileThreshold = "IV Percentile threshold must be between 0 and 100.";
     }
-    if (!errors.ivPercentileThreshold) {
+    if (!isFiniteNumber(values.ivPercentileLookbackDays) || !Number.isInteger(ivPctLookback) || ivPctLookback < 20 || ivPctLookback > 756) {
+      errors.ivPercentileLookbackDays = "IV Percentile lookback must be a whole number between 20 and 756.";
+    }
+    if (!errors.ivPercentileThreshold && !errors.ivPercentileLookbackDays) {
       entryRules.push({
         type: "iv_percentile",
         operator: values.ivPercentileOperator,
         threshold: ivPctThreshold,
+        lookback_days: ivPctLookback,
       } as any);
     }
   }
@@ -412,6 +442,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     if (!errors.volumeSpikeMultiplier && !errors.volumeSpikePeriod) {
       entryRules.push({
         type: "volume_spike",
+        operator: values.volumeSpikeOperator,
         multiplier: vsMultiplier,
         lookback_period: vsPeriod,
       } as any);
@@ -420,14 +451,19 @@ export function validateBacktestForm(values: BacktestFormValues): {
 
   if (values.supportResistanceEnabled) {
     const srPeriod = parseNumber(values.supportResistancePeriod);
+    const srTolerance = parseNumber(values.supportResistanceTolerancePct);
     if (!isFiniteNumber(values.supportResistancePeriod) || srPeriod < 5 || srPeriod > 200) {
       errors.supportResistancePeriod = "Support/resistance period must be between 5 and 200.";
     }
-    if (!errors.supportResistancePeriod) {
+    if (!isFiniteNumber(values.supportResistanceTolerancePct) || srTolerance <= 0 || srTolerance > 10) {
+      errors.supportResistanceTolerancePct = "Support/resistance tolerance must be greater than 0 and at most 10%.";
+    }
+    if (!errors.supportResistancePeriod && !errors.supportResistanceTolerancePct) {
       entryRules.push({
         type: "support_resistance",
         mode: values.supportResistanceMode,
         lookback_period: srPeriod,
+        tolerance_pct: srTolerance,
       } as any);
     }
   }

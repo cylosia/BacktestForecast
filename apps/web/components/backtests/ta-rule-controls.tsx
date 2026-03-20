@@ -31,15 +31,19 @@ interface TaRuleValues {
   ivRankEnabled: boolean;
   ivRankOperator: ComparisonOperator;
   ivRankThreshold: string;
+  ivRankLookbackDays: string;
   ivPercentileEnabled: boolean;
   ivPercentileOperator: ComparisonOperator;
   ivPercentileThreshold: string;
+  ivPercentileLookbackDays: string;
   volumeSpikeEnabled: boolean;
+  volumeSpikeOperator: ComparisonOperator;
   volumeSpikeMultiplier: string;
   volumeSpikePeriod: string;
   supportResistanceEnabled: boolean;
   supportResistanceMode: string;
   supportResistancePeriod: string;
+  supportResistanceTolerancePct: string;
   avoidEarningsEnabled: boolean;
   avoidEarningsDaysBefore: string;
   avoidEarningsDaysAfter: string;
@@ -56,10 +60,13 @@ interface TaRuleErrors {
   bollingerPeriod?: string;
   bollingerStdDev?: string;
   ivRankThreshold?: string;
+  ivRankLookbackDays?: string;
   ivPercentileThreshold?: string;
+  ivPercentileLookbackDays?: string;
   volumeSpikeMultiplier?: string;
   volumeSpikePeriod?: string;
   supportResistancePeriod?: string;
+  supportResistanceTolerancePct?: string;
   avoidEarningsDaysBefore?: string;
   avoidEarningsDaysAfter?: string;
 }
@@ -340,6 +347,7 @@ export function TaRuleControls({
                 value={values.bollingerBand}
                 options={[
                   { value: "lower", label: "Lower band" },
+                  { value: "middle", label: "Middle band" },
                   { value: "upper", label: "Upper band" },
                 ]}
                 onChange={(event) => onChange({ bollingerBand: event.target.value as BollingerBand })}
@@ -383,7 +391,7 @@ export function TaRuleControls({
         </div>
 
         {values.ivRankEnabled ? (
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="ivRankOperator">Operator</Label>
               <Select
@@ -409,6 +417,17 @@ export function TaRuleControls({
               />
               {errors.ivRankThreshold ? <p className="text-sm text-destructive">{errors.ivRankThreshold}</p> : null}
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="ivRankLookbackDays">Lookback days</Label>
+              <Input
+                id="ivRankLookbackDays"
+                inputMode="numeric"
+                value={values.ivRankLookbackDays}
+                aria-invalid={!!errors.ivRankLookbackDays}
+                onChange={(event) => onChange({ ivRankLookbackDays: event.target.value })}
+              />
+              {errors.ivRankLookbackDays ? <p className="text-sm text-destructive">{errors.ivRankLookbackDays}</p> : null}
+            </div>
           </div>
         ) : null}
       </div>
@@ -433,7 +452,7 @@ export function TaRuleControls({
         </div>
 
         {values.ivPercentileEnabled ? (
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="ivPercentileOperator">Operator</Label>
               <Select
@@ -459,6 +478,17 @@ export function TaRuleControls({
               />
               {errors.ivPercentileThreshold ? <p className="text-sm text-destructive">{errors.ivPercentileThreshold}</p> : null}
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="ivPercentileLookbackDays">Lookback days</Label>
+              <Input
+                id="ivPercentileLookbackDays"
+                inputMode="numeric"
+                value={values.ivPercentileLookbackDays}
+                aria-invalid={!!errors.ivPercentileLookbackDays}
+                onChange={(event) => onChange({ ivPercentileLookbackDays: event.target.value })}
+              />
+              {errors.ivPercentileLookbackDays ? <p className="text-sm text-destructive">{errors.ivPercentileLookbackDays}</p> : null}
+            </div>
           </div>
         ) : null}
       </div>
@@ -483,7 +513,21 @@ export function TaRuleControls({
         </div>
 
         {values.volumeSpikeEnabled ? (
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="volumeSpikeOperator">Operator</Label>
+              <Select
+                id="volumeSpikeOperator"
+                value={values.volumeSpikeOperator}
+                options={[
+                  { value: "gt", label: "Greater than" },
+                  { value: "gte", label: "Greater than or equal" },
+                  { value: "lt", label: "Less than" },
+                  { value: "lte", label: "Less than or equal" },
+                ]}
+                onChange={(event) => onChange({ volumeSpikeOperator: event.target.value as ComparisonOperator })}
+              />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="volumeSpikeMultiplier">Multiplier</Label>
               <Input
@@ -531,15 +575,17 @@ export function TaRuleControls({
         </div>
 
         {values.supportResistanceEnabled ? (
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="supportResistanceMode">Mode</Label>
               <Select
                 id="supportResistanceMode"
                 value={values.supportResistanceMode}
                 options={[
-                  { value: "support", label: "Near support" },
-                  { value: "resistance", label: "Near resistance" },
+                  { value: "near_support", label: "Near support" },
+                  { value: "near_resistance", label: "Near resistance" },
+                  { value: "breakout_above_resistance", label: "Breakout above resistance" },
+                  { value: "breakdown_below_support", label: "Breakdown below support" },
                 ]}
                 onChange={(event) => onChange({ supportResistanceMode: event.target.value })}
               />
@@ -554,6 +600,17 @@ export function TaRuleControls({
                 onChange={(event) => onChange({ supportResistancePeriod: event.target.value })}
               />
               {errors.supportResistancePeriod ? <p className="text-sm text-destructive">{errors.supportResistancePeriod}</p> : null}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="supportResistanceTolerancePct">Tolerance %</Label>
+              <Input
+                id="supportResistanceTolerancePct"
+                inputMode="decimal"
+                value={values.supportResistanceTolerancePct}
+                aria-invalid={!!errors.supportResistanceTolerancePct}
+                onChange={(event) => onChange({ supportResistanceTolerancePct: event.target.value })}
+              />
+              {errors.supportResistanceTolerancePct ? <p className="text-sm text-destructive">{errors.supportResistanceTolerancePct}</p> : null}
             </div>
           </div>
         ) : null}

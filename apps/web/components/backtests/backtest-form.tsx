@@ -244,7 +244,7 @@ export function BacktestForm({
         <CardHeader>
           <CardTitle>Technical analysis rules</CardTitle>
           <CardDescription>
-            This slice exposes RSI and SMA/EMA crossover controls only.
+            Configure any entry rules currently supported by the backend request schema.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -254,6 +254,21 @@ export function BacktestForm({
               rsiPeriod: errors.rsiPeriod,
               fastPeriod: errors.fastPeriod,
               slowPeriod: errors.slowPeriod,
+              macdFastPeriod: errors.macdFastPeriod,
+              macdSlowPeriod: errors.macdSlowPeriod,
+              macdSignalPeriod: errors.macdSignalPeriod,
+              bollingerPeriod: errors.bollingerPeriod,
+              bollingerStdDev: errors.bollingerStdDev,
+              ivRankThreshold: errors.ivRankThreshold,
+              ivRankLookbackDays: errors.ivRankLookbackDays,
+              ivPercentileThreshold: errors.ivPercentileThreshold,
+              ivPercentileLookbackDays: errors.ivPercentileLookbackDays,
+              volumeSpikeMultiplier: errors.volumeSpikeMultiplier,
+              volumeSpikePeriod: errors.volumeSpikePeriod,
+              supportResistancePeriod: errors.supportResistancePeriod,
+              supportResistanceTolerancePct: errors.supportResistanceTolerancePct,
+              avoidEarningsDaysBefore: errors.avoidEarningsDaysBefore,
+              avoidEarningsDaysAfter: errors.avoidEarningsDaysAfter,
             }}
             values={{
               rsiEnabled: values.rsiEnabled,
@@ -265,6 +280,35 @@ export function BacktestForm({
               fastPeriod: values.fastPeriod,
               slowPeriod: values.slowPeriod,
               crossoverDirection: values.crossoverDirection,
+              macdEnabled: values.macdEnabled,
+              macdFastPeriod: values.macdFastPeriod,
+              macdSlowPeriod: values.macdSlowPeriod,
+              macdSignalPeriod: values.macdSignalPeriod,
+              macdDirection: values.macdDirection,
+              bollingerEnabled: values.bollingerEnabled,
+              bollingerPeriod: values.bollingerPeriod,
+              bollingerStdDev: values.bollingerStdDev,
+              bollingerBand: values.bollingerBand as "lower" | "middle" | "upper",
+              bollingerOperator: values.bollingerOperator,
+              ivRankEnabled: values.ivRankEnabled,
+              ivRankOperator: values.ivRankOperator,
+              ivRankThreshold: values.ivRankThreshold,
+              ivRankLookbackDays: values.ivRankLookbackDays,
+              ivPercentileEnabled: values.ivPercentileEnabled,
+              ivPercentileOperator: values.ivPercentileOperator,
+              ivPercentileThreshold: values.ivPercentileThreshold,
+              ivPercentileLookbackDays: values.ivPercentileLookbackDays,
+              volumeSpikeEnabled: values.volumeSpikeEnabled,
+              volumeSpikeOperator: values.volumeSpikeOperator,
+              volumeSpikeMultiplier: values.volumeSpikeMultiplier,
+              volumeSpikePeriod: values.volumeSpikePeriod,
+              supportResistanceEnabled: values.supportResistanceEnabled,
+              supportResistanceMode: values.supportResistanceMode,
+              supportResistancePeriod: values.supportResistancePeriod,
+              supportResistanceTolerancePct: values.supportResistanceTolerancePct,
+              avoidEarningsEnabled: values.avoidEarningsEnabled,
+              avoidEarningsDaysBefore: values.avoidEarningsDaysBefore,
+              avoidEarningsDaysAfter: values.avoidEarningsDaysAfter,
             }}
             onChange={updateValues}
           />
@@ -275,7 +319,7 @@ export function BacktestForm({
         <CardHeader>
           <CardTitle>Risk and cost inputs</CardTitle>
           <CardDescription>
-            These values feed the existing backend contract directly.
+            These values map directly to backend pricing, exit, and performance-calculation inputs.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -284,11 +328,21 @@ export function BacktestForm({
               accountSize: errors.accountSize,
               riskPerTradePct: errors.riskPerTradePct,
               commissionPerContract: errors.commissionPerContract,
+              slippagePct: errors.slippagePct,
+              profitTargetPct: errors.profitTargetPct,
+              stopLossPct: errors.stopLossPct,
+              riskFreeRate: errors.riskFreeRate,
             }}
             values={{
               accountSize: values.accountSize,
               riskPerTradePct: values.riskPerTradePct,
               commissionPerContract: values.commissionPerContract,
+              slippagePct: values.slippagePct,
+              profitTargetEnabled: values.profitTargetEnabled,
+              profitTargetPct: values.profitTargetPct,
+              stopLossEnabled: values.stopLossEnabled,
+              stopLossPct: values.stopLossPct,
+              riskFreeRate: values.riskFreeRate,
             }}
             onChange={updateValues}
           />

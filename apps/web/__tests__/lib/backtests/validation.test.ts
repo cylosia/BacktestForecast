@@ -79,7 +79,7 @@ describe("validateBacktestForm – zero entry rules", () => {
 });
 
 describe("validateBacktestForm – enabled-but-invalid entry rules", () => {
-  it("does NOT show form error when RSI is enabled but has invalid values", () => {
+  it("shows a form error when RSI is enabled but no valid entry rule can be serialized", () => {
     const values = {
       ...getDefaultBacktestFormValues(),
       rsiEnabled: true,
@@ -88,10 +88,10 @@ describe("validateBacktestForm – enabled-but-invalid entry rules", () => {
     };
     const { errors } = validateBacktestForm(values);
     expect(errors.rsiThreshold).toBeDefined();
-    expect(errors.form).toBeUndefined();
+    expect(errors.form).toContain("entry rule");
   });
 
-  it("does NOT show form error when moving average is enabled but has invalid values", () => {
+  it("shows a form error when moving average is enabled but no valid entry rule can be serialized", () => {
     const values = {
       ...getDefaultBacktestFormValues(),
       rsiEnabled: false,
@@ -100,6 +100,76 @@ describe("validateBacktestForm – enabled-but-invalid entry rules", () => {
     };
     const { errors } = validateBacktestForm(values);
     expect(errors.fastPeriod).toBeDefined();
-    expect(errors.form).toBeUndefined();
+    expect(errors.form).toContain("entry rule");
+  });
+});
+
+describe("validateBacktestForm – extended rule and risk payloads", () => {
+  it("serializes backend-aligned TA and risk fields when enabled", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: false,
+      movingAverageEnabled: false,
+      macdEnabled: true,
+      bollingerEnabled: true,
+      bollingerBand: "middle",
+      ivRankEnabled: true,
+      ivRankLookbackDays: "300",
+      ivPercentileEnabled: true,
+      ivPercentileLookbackDays: "275",
+      volumeSpikeEnabled: true,
+      volumeSpikeOperator: "gt" as const,
+      supportResistanceEnabled: true,
+      supportResistanceMode: "breakout_above_resistance",
+      supportResistanceTolerancePct: "2.5",
+      avoidEarningsEnabled: true,
+      avoidEarningsDaysBefore: "5",
+      avoidEarningsDaysAfter: "0",
+      slippagePct: "1.2",
+      profitTargetEnabled: true,
+      profitTargetPct: "75",
+      stopLossEnabled: true,
+      stopLossPct: "25",
+      riskFreeRate: "0.05",
+    };
+
+    const { errors, payload } = validateBacktestForm(values);
+
+    expect(errors).toEqual({});
+    expect(payload).toBeDefined();
+    expect(payload).toMatchObject({
+      slippage_pct: 1.2,
+      profit_target_pct: 75,
+      stop_loss_pct: 25,
+      risk_free_rate: 0.05,
+      entry_rules: expect.arrayContaining([
+        { type: "macd", fast_period: 12, slow_period: 26, signal_period: 9, direction: "bullish" },
+        { type: "bollinger_bands", period: 20, standard_deviations: 2, band: "middle", operator: "lt" },
+        { type: "iv_rank", operator: "gt", threshold: 50, lookback_days: 300 },
+        { type: "iv_percentile", operator: "gt", threshold: 50, lookback_days: 275 },
+        { type: "volume_spike", operator: "gt", multiplier: 2, lookback_period: 20 },
+        { type: "support_resistance", mode: "breakout_above_resistance", lookback_period: 20, tolerance_pct: 2.5 },
+        { type: "avoid_earnings", days_before: 5, days_after: 0 },
+      ]),
+    });
+  });
+
+  it("requires avoid earnings windows to exclude at least one side", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: false,
+      movingAverageEnabled: false,
+      avoidEarningsEnabled: true,
+      avoidEarningsDaysBefore: "0",
+      avoidEarningsDaysAfter: "0",
+    };
+
+    const { errors } = validateBacktestForm(values);
+    expect(errors.avoidEarningsDaysAfter).toContain("greater than 0");
+  });
+
+  it("uses backend support/resistance enum values", () => {
+    const values = getDefaultBacktestFormValues();
+    expect(values.supportResistanceMode).toBe("near_support");
   });
 });
