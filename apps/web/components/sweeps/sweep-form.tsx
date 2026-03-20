@@ -31,6 +31,7 @@ const STRATEGY_OPTIONS = [
 ] as const;
 
 const LEG_COUNT_OPTIONS = [2, 3, 4, 5, 6, 7, 8] as const;
+const MAX_SWEEP_WINDOW_DAYS = 730;
 
 interface FormState {
   mode: SweepMode;
