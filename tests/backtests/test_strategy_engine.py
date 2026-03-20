@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import pytest
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
-from backtestforecast.backtests.types import BacktestConfig
+from backtestforecast.backtests.types import BacktestConfig, DividendRecord
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
 
@@ -15,6 +15,7 @@ from backtestforecast.market_data.types import DailyBar, OptionContractRecord, O
 class FakeGateway:
     contracts: dict[tuple[date, str], list[OptionContractRecord]]
     quotes: dict[tuple[str, date], OptionQuoteRecord]
+    dividends: dict[str, list[DividendRecord]] | None = None
 
     def list_contracts(
         self,
@@ -41,6 +42,13 @@ class FakeGateway:
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         return self.quotes.get((option_ticker, trade_date))
+
+    def get_dividends(self, symbol: str, start_date: date, end_date: date) -> list[DividendRecord]:
+        return [
+            dividend
+            for dividend in (self.dividends or {}).get(symbol, [])
+            if start_date < dividend.ex_date <= end_date
+        ]
 
     def get_chain_delta_lookup(self, contracts):
         return {}

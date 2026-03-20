@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
-from backtestforecast.backtests.types import BacktestConfig
+from backtestforecast.backtests.types import BacktestConfig, DividendRecord
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
 
 
@@ -28,12 +28,20 @@ def _quote(trade_date: date, mid: float) -> OptionQuoteRecord:
 class SimpleGateway:
     contracts: dict[tuple[date, str], list[OptionContractRecord]]
     quotes: dict[tuple[str, date], OptionQuoteRecord]
+    dividends: dict[str, list[DividendRecord]] | None = None
 
     def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
         return self.contracts.get((entry_date, contract_type), [])
 
     def get_quote(self, option_ticker, trade_date):
         return self.quotes.get((option_ticker, trade_date))
+
+    def get_dividends(self, symbol, start_date, end_date):
+        return [
+            dividend
+            for dividend in (self.dividends or {}).get(symbol, [])
+            if start_date < dividend.ex_date <= end_date
+        ]
 
     def get_chain_delta_lookup(self, contracts):
         return {}
@@ -1271,3 +1279,81 @@ class TestReverseConversionPnl:
         assert abs(t.gross_pnl - expected_gross) < 0.01
         assert abs(t.total_commissions - expected_comm) < 0.01
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
+
+
+def test_stock_carrying_strategies_include_dividends_in_net_pnl_and_summary() -> None:
+    ex_dividend_date = date(2025, 4, 4)
+    dividend_amount = 0.25
+    bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 100), _bar(ex_dividend_date, 100), _bar(_EXP, 100)]
+    dividends = {"AAPL": [DividendRecord(ex_dividend_date, dividend_amount)]}
+
+    scenarios = [
+        (
+            "covered_call",
+            {(_ENTRY, "call"): [OptionContractRecord("C105", "call", _EXP, 105, 100)]},
+            {
+                ("C105", _ENTRY): _quote(_ENTRY, 2.00),
+                ("C105", _MID): _quote(_MID, 1.00),
+                ("C105", ex_dividend_date): _quote(ex_dividend_date, 0.50),
+                ("C105", _EXP): _quote(_EXP, 0.0),
+            },
+            _COMM * 1 * 2,
+        ),
+        (
+            "collar",
+            {
+                (_ENTRY, "call"): [OptionContractRecord("C105", "call", _EXP, 105, 100)],
+                (_ENTRY, "put"): [OptionContractRecord("P95", "put", _EXP, 95, 100)],
+            },
+            {
+                ("C105", _ENTRY): _quote(_ENTRY, 2.00),
+                ("P95", _ENTRY): _quote(_ENTRY, 1.50),
+                ("C105", _MID): _quote(_MID, 1.00),
+                ("P95", _MID): _quote(_MID, 1.25),
+                ("C105", ex_dividend_date): _quote(ex_dividend_date, 0.50),
+                ("P95", ex_dividend_date): _quote(ex_dividend_date, 0.75),
+                ("C105", _EXP): _quote(_EXP, 0.0),
+                ("P95", _EXP): _quote(_EXP, 0.0),
+            },
+            _COMM * 2 * 2,
+        ),
+        (
+            "covered_strangle",
+            {
+                (_ENTRY, "call"): [OptionContractRecord("C105", "call", _EXP, 105, 100)],
+                (_ENTRY, "put"): [OptionContractRecord("P95", "put", _EXP, 95, 100)],
+            },
+            {
+                ("C105", _ENTRY): _quote(_ENTRY, 2.00),
+                ("P95", _ENTRY): _quote(_ENTRY, 1.50),
+                ("C105", _MID): _quote(_MID, 1.00),
+                ("P95", _MID): _quote(_MID, 1.25),
+                ("C105", ex_dividend_date): _quote(ex_dividend_date, 0.50),
+                ("P95", ex_dividend_date): _quote(ex_dividend_date, 0.75),
+                ("C105", _EXP): _quote(_EXP, 0.0),
+                ("P95", _EXP): _quote(_EXP, 0.0),
+            },
+            _COMM * 2 * 2,
+        ),
+    ]
+
+    for strategy_type, contracts, quotes, commission_per_unit in scenarios:
+        no_dividend = OptionsBacktestEngine().run(
+            _cfg(strategy_type), bars, set(),
+            SimpleGateway(contracts=contracts, quotes=quotes),
+        )
+        with_dividend = OptionsBacktestEngine().run(
+            _cfg(strategy_type), bars, set(),
+            SimpleGateway(contracts=contracts, quotes=quotes, dividends=dividends),
+        )
+
+        baseline_trade = no_dividend.trades[0]
+        dividend_trade = with_dividend.trades[0]
+        expected_dividend_total = dividend_amount * 100 * dividend_trade.quantity
+
+        assert abs(dividend_trade.net_pnl - baseline_trade.net_pnl - expected_dividend_total) < 0.01
+        assert abs(dividend_trade.gross_pnl - baseline_trade.gross_pnl - expected_dividend_total) < 0.01
+        assert abs(dividend_trade.detail_json["dividends_received"] - expected_dividend_total) < 0.01
+        assert abs(with_dividend.summary.total_dividends_received - expected_dividend_total) < 0.01
+        assert abs(with_dividend.summary.total_net_pnl - dividend_trade.net_pnl) < 0.01
+        assert abs(dividend_trade.total_commissions - commission_per_unit * dividend_trade.quantity) < 0.01

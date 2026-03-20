@@ -34,6 +34,12 @@ def estimate_risk_free_rate(start_date: date, end_date: date) -> float:
     return sum(rates) / len(rates) if rates else 0.045
 
 
+@dataclass(frozen=True, slots=True)
+class DividendRecord:
+    ex_date: date
+    cash_amount: float
+
+
 class OptionDataGateway(Protocol):
     """Gateway for option chain and quote data for a single underlying.
 
@@ -51,6 +57,8 @@ class OptionDataGateway(Protocol):
     ) -> Sequence[OptionContractRecord]: ...
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None: ...
+
+    def get_dividends(self, symbol: str, start_date: date, end_date: date) -> Sequence[DividendRecord]: ...
 
 
 class MultiUnderlyingGateway:  # noqa: vulture — planned extension point
@@ -100,6 +108,11 @@ class MultiUnderlyingGateway:  # noqa: vulture — planned extension point
         self, symbol: str, option_ticker: str, trade_date: date,
     ) -> OptionQuoteRecord | None:
         return self.get_gateway(symbol).get_quote(option_ticker, trade_date)
+
+    def get_dividends(
+        self, symbol: str, start_date: date, end_date: date,
+    ) -> Sequence[DividendRecord]:
+        return self.get_gateway(symbol).get_dividends(symbol, start_date, end_date)
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +185,7 @@ class BacktestSummary:
     total_net_pnl: float
     starting_equity: float
     ending_equity: float
+    total_dividends_received: float = 0.0
     profit_factor: float | None = None
     payoff_ratio: float | None = None
     expectancy: float = 0.0

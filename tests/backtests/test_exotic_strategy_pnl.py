@@ -42,6 +42,9 @@ class SimpleGateway:
     def get_quote(self, option_ticker, trade_date):
         return self.quotes.get((option_ticker, trade_date))
 
+    def get_dividends(self, symbol, start_date, end_date):
+        return []
+
     def get_chain_delta_lookup(self, contracts):
         return {}
 
