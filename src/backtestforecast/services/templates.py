@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 import structlog
@@ -22,6 +22,7 @@ from backtestforecast.schemas.templates import (
 )
 
 logger = structlog.get_logger("services.templates")
+UTC = timezone.utc
 
 TEMPLATE_LIMITS: dict[PlanTier, int | None] = {
     PlanTier.FREE: 3,

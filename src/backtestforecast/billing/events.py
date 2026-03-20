@@ -1,13 +1,14 @@
 """Billing event log for audit trail and replay capability."""
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
 
 logger = structlog.get_logger("billing.events")
+UTC = timezone.utc
 
 _BILLING_REDACT_KEYS = {
     "payment_method", "billing_address", "card", "bank_account",
