@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Self
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -20,6 +20,8 @@ from backtestforecast.billing.entitlements import (
     resolve_scanner_policy,
     validate_strategy_access,
 )
+
+UTC = timezone.utc
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError, QuotaExceededError
 from backtestforecast.schemas.json_shapes import _FORECAST_REQUIRED_KEYS, validate_json_shape
@@ -113,7 +115,7 @@ class ScanService:
         if self._execution_service is not None:
             self._execution_service.close()
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> "ScanService":
         return self
 
     def __exit__(self, *exc: object) -> None:

@@ -10,10 +10,13 @@ from backtestforecast.observability import REQUEST_ID_HEADER
 BODY_LIMIT_OVERRIDES: dict[str, int] = {
     # Stripe webhook payloads are typically 5-15 KB but can reach 50+ KB
     # for subscription events with large metadata or multi-item invoices.
-    # 128 KB provides headroom while limiting DoS surface.  The Stripe SDK
+    # 512 KB provides headroom while limiting DoS surface and matches the
+    # explicit route-level max_length on the webhook endpoint.  Keep these
+    # values in sync so operators, OpenAPI, and middleware all enforce the
+    # same contract.
     # needs the complete raw body for HMAC signature verification, so a
     # truncated payload would surface as "Invalid Stripe webhook signature."
-    "/v1/billing/webhook": 131_072,
+    "/v1/billing/webhook": 512_000,
     "/v1/events/backtests": 0,
     "/v1/events/scans": 0,
     "/v1/events/sweeps": 0,

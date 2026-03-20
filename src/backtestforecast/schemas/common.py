@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import re
-from enum import StrEnum
+from enum import Enum
 
 from pydantic import BaseModel, Field
+
+
+class StrEnum(str, Enum):
+    """Py3.10-compatible fallback for enum.StrEnum."""
 
 
 _SENSITIVE_PATTERNS = [

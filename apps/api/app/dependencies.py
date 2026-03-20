@@ -135,6 +135,8 @@ def _get_allowed_origins() -> list[str]:
     global _normalized_origins
     if _normalized_origins is not None:
         return _normalized_origins
+    # Normalize the configured get_settings().web_cors_origins values once so
+    # cookie-auth Origin/Referer checks compare against the exact CORS allowlist.
     _normalized_origins = [_normalize_origin(o) for o in get_settings().web_cors_origins]
     return _normalized_origins
 
@@ -192,6 +194,8 @@ def get_current_user(
                     "Cookie-based authentication requires the X-Requested-With: XMLHttpRequest header for state-changing requests."
                 )
         if token:
+            # Compare against the configured get_settings().web_cors_origins
+            # allowlist so cookie auth inherits the same trusted web origins.
             _allowed = _get_allowed_origins()
             origin = request.headers.get("origin")
             if origin:
@@ -237,14 +241,25 @@ def get_current_user(
 
     principal = get_token_verifier().verify_bearer_token(token)
     repository = UserRepository(db)
-    user = repository.get_or_create(principal.clerk_user_id, principal.email)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        user = repository.get_by_clerk_user_id(principal.clerk_user_id)
-        if user is None:
-            raise
-    db.refresh(user)
+    user = repository.get_by_clerk_user_id(principal.clerk_user_id)
+    if user is None:
+        user = repository.get_or_create(principal.clerk_user_id, principal.email)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            user = repository.get_by_clerk_user_id(principal.clerk_user_id)
+            if user is None:
+                raise
+        db.refresh(user)
+    elif repository.sync_email_if_needed(user, principal.email):
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            user = repository.get_by_clerk_user_id(principal.clerk_user_id)
+            if user is None:
+                raise
+        db.refresh(user)
     structlog.contextvars.bind_contextvars(user_id=str(user.id), clerk_user_id_hash=short_hash(user.clerk_user_id))
     return user
