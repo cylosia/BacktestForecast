@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.feature_gates import require_feature_enabled
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
@@ -31,9 +32,11 @@ def create_checkout_session(
     db: Session = Depends(get_db),
 ) -> CheckoutSessionResponse:
     settings = get_settings()
-    if not settings.feature_billing_enabled:
-        from backtestforecast.errors import FeatureLockedError
-        raise FeatureLockedError("Billing is temporarily disabled.", required_tier="free")
+    require_feature_enabled(
+        feature_name="billing",
+        user=user,
+        message="Billing is temporarily disabled.",
+    )
     get_rate_limiter().check(
         bucket="billing:checkout",
         actor_key=str(user.id),
@@ -57,9 +60,11 @@ def create_portal_session(
     db: Session = Depends(get_db),
 ) -> PortalSessionResponse:
     settings = get_settings()
-    if not settings.feature_billing_enabled:
-        from backtestforecast.errors import FeatureLockedError
-        raise FeatureLockedError("Billing is temporarily disabled.", required_tier="free")
+    require_feature_enabled(
+        feature_name="billing",
+        user=user,
+        message="Billing is temporarily disabled.",
+    )
     get_rate_limiter().check(
         bucket="billing:portal",
         actor_key=str(user.id),
@@ -120,9 +125,15 @@ def stripe_webhook(
             )
     except Exception as exc:
         from backtestforecast.errors import (
-            AuthenticationError as _AuthErr,
             AppError as _AppErr,
+        )
+        from backtestforecast.errors import (
+            AuthenticationError as _AuthErr,
+        )
+        from backtestforecast.errors import (
             ExternalServiceError as _ExtErr,
+        )
+        from backtestforecast.errors import (
             NotFoundError as _NotFoundErr,
         )
         if isinstance(exc, _AuthErr):
@@ -132,7 +143,7 @@ def stripe_webhook(
             raise HTTPException(
                 status_code=400,
                 detail={"code": "signature_verification_failed", "message": "Invalid webhook signature."},
-            )
+            ) from exc
         if isinstance(exc, _NotFoundErr):
             _webhook_logger.warning(
                 "webhook.user_not_found_will_retry",
@@ -142,7 +153,7 @@ def stripe_webhook(
             raise HTTPException(
                 status_code=500,
                 detail={"code": "user_not_found", "message": "User not yet provisioned; Stripe should retry."},
-            )
+            ) from exc
 
         if isinstance(exc, _ExtErr):
             _webhook_logger.exception(
@@ -151,7 +162,7 @@ def stripe_webhook(
             raise HTTPException(
                 status_code=500,
                 detail={"code": exc.code, "message": "Transient error; Stripe should retry."},
-            )
+            ) from exc
         if isinstance(exc, _AppErr):
             _webhook_logger.warning(
                 "webhook.deterministic_error", code=exc.code, ip=ip_address, request_id=request_id,

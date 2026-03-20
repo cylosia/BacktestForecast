@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Annotated, Any, Generator
+from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
@@ -10,10 +11,11 @@ from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
+from apps.api.app.feature_gates import require_feature_enabled
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import AppValidationError, FeatureLockedError
+from backtestforecast.errors import AppValidationError
 from backtestforecast.models import User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import (
@@ -50,8 +52,11 @@ def create_analysis(
     settings: Settings = Depends(get_settings),
 ) -> AnalysisSummaryResponse:
     """Create and enqueue a single-symbol deep analysis (Pro+ gated)."""
-    if not settings.feature_analysis_enabled:
-        raise FeatureLockedError("Analysis is temporarily disabled.", required_tier="free")
+    require_feature_enabled(
+        feature_name="analysis",
+        user=user,
+        message="Analysis is temporarily disabled.",
+    )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     get_rate_limiter().check(
         bucket="analysis:create",

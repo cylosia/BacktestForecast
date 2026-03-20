@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 import time as _time
-from typing import Annotated, Generator
+from collections.abc import Generator
+from typing import Annotated
 from uuid import UUID
 
 import structlog
@@ -13,6 +14,7 @@ from starlette.responses import StreamingResponse
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
+from apps.api.app.feature_gates import require_feature_enabled
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
@@ -78,9 +80,11 @@ def create_export(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> ExportJobResponse:
-    if not settings.feature_exports_enabled:
-        from backtestforecast.errors import FeatureLockedError
-        raise FeatureLockedError("Exports are temporarily disabled.", required_tier="free")
+    require_feature_enabled(
+        feature_name="exports",
+        user=user,
+        message="Exports are temporarily disabled.",
+    )
     get_rate_limiter().check(
         bucket="exports:create",
         actor_key=str(user.id),
@@ -205,7 +209,7 @@ def download_export(
 
         if storage_key and content is None:
             try:
-                from backtestforecast.exports.storage import get_storage, S3Storage
+                from backtestforecast.exports.storage import S3Storage, get_storage
 
                 s3_storage = get_storage(settings)
                 if not isinstance(s3_storage, S3Storage):
@@ -284,7 +288,7 @@ def download_export(
             except Exception:
                 logger.warning("export.s3_stream_unavailable", export_job_id=str(export_job_id), exc_info=True)
                 from backtestforecast.errors import ExternalServiceError
-                raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.")
+                raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.") from None
 
         # TODO: For large exports (>10MB), consider using StreamingResponse with chunked
         # reads from the database to avoid loading the full file into memory.

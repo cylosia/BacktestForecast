@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
+from apps.api.app.feature_gates import require_feature_enabled
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.schemas.sweeps import (
     CreateSweepRequest,
     SweepJobListResponse,
@@ -20,17 +22,11 @@ from backtestforecast.schemas.sweeps import (
     SweepJobStatusResponse,
     SweepResultListResponse,
 )
-from backtestforecast.errors import FeatureLockedError
-from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("api.sweeps")
 
-
-def _require_sweeps_enabled(settings: Settings = Depends(get_settings)) -> None:
-    if not settings.feature_sweeps_enabled:
-        raise FeatureLockedError("Sweeps are temporarily disabled.", required_tier="free")
 
 router = APIRouter(prefix="/sweeps", tags=["sweeps"])
 
@@ -59,11 +55,15 @@ def create_sweep(
     payload: CreateSweepRequest,
     request: Request,
     user: User = Depends(get_current_user),
-    _: None = Depends(_require_sweeps_enabled),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobResponse:
+    require_feature_enabled(
+        feature_name="sweeps",
+        user=user,
+        message="Sweeps are temporarily disabled.",
+    )
     get_rate_limiter().check(
         bucket="sweeps:create",
         actor_key=str(user.id),

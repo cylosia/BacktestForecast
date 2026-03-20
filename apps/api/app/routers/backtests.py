@@ -10,10 +10,9 @@ from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
+from apps.api.app.feature_gates import require_feature_enabled
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
-from backtestforecast.errors import FeatureLockedError, NotFoundError
-from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
@@ -23,6 +22,7 @@ from backtestforecast.schemas.backtests import (
     CompareBacktestsResponse,
     CreateBacktestRunRequest,
 )
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.backtests import BacktestService
 
@@ -58,8 +58,11 @@ def create_backtest(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunDetailResponse:
-    if not settings.feature_backtests_enabled:
-        raise FeatureLockedError("Backtesting is temporarily disabled.", required_tier="free")
+    require_feature_enabled(
+        feature_name="backtests",
+        user=user,
+        message="Backtesting is temporarily disabled.",
+    )
     get_rate_limiter().check(
         bucket="backtests:create",
         actor_key=str(user.id),
@@ -95,8 +98,11 @@ def compare_backtests(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> CompareBacktestsResponse:
-    if not settings.feature_backtests_enabled:
-        raise FeatureLockedError("Backtesting is temporarily disabled.", required_tier="free")
+    require_feature_enabled(
+        feature_name="backtests",
+        user=user,
+        message="Backtesting is temporarily disabled.",
+    )
     get_rate_limiter().check(
         bucket="backtests:compare",
         actor_key=str(user.id),
