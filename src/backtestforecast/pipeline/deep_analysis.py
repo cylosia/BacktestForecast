@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -28,6 +28,8 @@ from backtestforecast.schemas.json_shapes import (
     _REGIME_REQUIRED_KEYS,
     validate_json_shape,
 )
+
+UTC = timezone.utc
 from backtestforecast.models import SymbolAnalysis, User
 from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 from backtestforecast.pipeline.regime import classify_regime
