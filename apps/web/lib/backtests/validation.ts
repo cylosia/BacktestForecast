@@ -5,7 +5,7 @@ import type {
   MovingAverageRuleType,
   StrategyType,
 } from "@backtestforecast/api-client";
-import { daysAgoET } from "@/lib/utils";
+import { currentEasternDate, daysAgoET } from "@/lib/utils";
 import {
   ACCOUNT_SIZE_MAX,
   ACCOUNT_SIZE_MIN,
@@ -174,15 +174,8 @@ export function validateBacktestForm(values: BacktestFormValues): {
   }
 
   if (!errors.endDate) {
-    const [ey, em, ed] = values.endDate.split("-").map(Number);
-    const endDateUtc = Date.UTC(ey, em - 1, ed);
-    // Use US Eastern offset (UTC-5 standard, UTC-4 DST) to match backend
-    // validation. Adding 5 hours shifts the boundary so the frontend never
-    // accepts a date the backend would reject as "in the future (ET)".
-    const etOffsetMs = 5 * 60 * 60 * 1000;
-    const nowEt = new Date(Date.now() - etOffsetMs);
-    const todayEt = Date.UTC(nowEt.getUTCFullYear(), nowEt.getUTCMonth(), nowEt.getUTCDate());
-    if (endDateUtc > todayEt) {
+    const todayEt = currentEasternDate();
+    if (values.endDate > todayEt) {
       errors.endDate = "End date cannot be in the future (US Eastern time).";
     }
   }
