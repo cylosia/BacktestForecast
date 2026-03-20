@@ -1,4 +1,5 @@
 import type { PlanTier, ScannerMode } from "@backtestforecast/api-client";
+import { currentEasternDate } from "@/lib/utils";
 import { ACCOUNT_SIZE_MIN, TICKER_RE } from "@/lib/validation-constants";
 import {
   MAX_SCANNER_WINDOW_DAYS,
@@ -89,23 +90,12 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
   ) {
     errors.push("Start date must be before end date.");
   }
-  if (input.endDate) {
-    const [ey, em, ed] = input.endDate.split("-").map(Number);
-    const endDateUtc = Date.UTC(ey, em - 1, ed);
-    const now = new Date();
-    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    if (endDateUtc > todayUtc) {
-      errors.push("End date cannot be in the future.");
-    }
+  const todayEt = currentEasternDate();
+  if (input.endDate && input.endDate > todayEt) {
+    errors.push("End date cannot be in the future (US Eastern time).");
   }
-  if (input.startDate) {
-    const [sy, sm, sd] = input.startDate.split("-").map(Number);
-    const startDateUtc = Date.UTC(sy, sm - 1, sd);
-    const now = new Date();
-    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    if (startDateUtc > todayUtc) {
-      errors.push("Start date cannot be in the future.");
-    }
+  if (input.startDate && input.startDate > todayEt) {
+    errors.push("Start date cannot be in the future (US Eastern time).");
   }
   if (input.startDate && input.endDate && errors.length === 0) {
     const [sy, sm, sd] = input.startDate.split("-").map(Number);
