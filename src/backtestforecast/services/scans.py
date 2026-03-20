@@ -585,7 +585,7 @@ class ScanService:
         if has_next:
             jobs = jobs[:effective_limit]
         total = self.repository.count_for_user(user.id)
-        next_cursor = encode_cursor(jobs[-1].created_at) if has_next and jobs else None
+        next_cursor = encode_cursor(jobs[-1].created_at, jobs[-1].id) if has_next and jobs else None
         return ScannerJobListResponse(
             items=[self._to_job_response(job) for job in jobs],
             total=total,

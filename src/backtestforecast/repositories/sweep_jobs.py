@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session, noload, selectinload
 
 from backtestforecast.models import SweepJob, SweepResult
@@ -32,7 +32,7 @@ class SweepJobRepository:
         user_id: UUID,
         limit: int = 50,
         offset: int = 0,
-        cursor_before: datetime | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[SweepJob]:
         if offset > 0 and cursor_before is not None:
             raise ValueError("Cannot combine offset and cursor_before pagination.")
@@ -44,8 +44,14 @@ class SweepJobRepository:
             .options(noload(SweepJob.results))
         )
         if cursor_before is not None:
-            stmt = stmt.where(SweepJob.created_at < cursor_before)
-        stmt = stmt.order_by(desc(SweepJob.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+            cursor_dt, cursor_id = cursor_before
+            stmt = stmt.where(
+                or_(
+                    SweepJob.created_at < cursor_dt,
+                    and_(SweepJob.created_at == cursor_dt, SweepJob.id < cursor_id),
+                )
+            )
+        stmt = stmt.order_by(desc(SweepJob.created_at), desc(SweepJob.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 
     def count_for_user(self, user_id: UUID) -> int:

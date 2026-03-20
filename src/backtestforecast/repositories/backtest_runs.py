@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 import structlog
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session, defer, noload, selectinload
 
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade
@@ -65,7 +65,7 @@ class BacktestRunRepository:
         limit: int = 50,
         offset: int = 0,
         created_since: datetime | None = None,
-        cursor_before: datetime | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[BacktestRun]:
         if offset > 0 and cursor_before is not None:
             raise ValueError("Cannot combine offset and cursor_before pagination; use one or the other.")
@@ -83,8 +83,14 @@ class BacktestRunRepository:
         if created_since is not None:
             stmt = stmt.where(BacktestRun.created_at >= created_since)
         if cursor_before is not None:
-            stmt = stmt.where(BacktestRun.created_at < cursor_before)
-        stmt = stmt.order_by(desc(BacktestRun.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+            cursor_dt, cursor_id = cursor_before
+            stmt = stmt.where(
+                or_(
+                    BacktestRun.created_at < cursor_dt,
+                    and_(BacktestRun.created_at == cursor_dt, BacktestRun.id < cursor_id),
+                )
+            )
+        stmt = stmt.order_by(desc(BacktestRun.created_at), desc(BacktestRun.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 
     def count_for_user(
@@ -105,7 +111,7 @@ class BacktestRunRepository:
         limit: int = 50,
         offset: int = 0,
         created_since: datetime | None = None,
-        cursor_before: datetime | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
     ) -> tuple[list[BacktestRun], int]:
         """Return (runs, total_count) in a single DB round-trip using a window function."""
         if offset > 0 and cursor_before is not None:
@@ -128,8 +134,14 @@ class BacktestRunRepository:
             )
         )
         if cursor_before is not None:
-            stmt = stmt.where(BacktestRun.created_at < cursor_before)
-        stmt = stmt.order_by(desc(BacktestRun.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+            cursor_dt, cursor_id = cursor_before
+            stmt = stmt.where(
+                or_(
+                    BacktestRun.created_at < cursor_dt,
+                    and_(BacktestRun.created_at == cursor_dt, BacktestRun.id < cursor_id),
+                )
+            )
+        stmt = stmt.order_by(desc(BacktestRun.created_at), desc(BacktestRun.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
 
         rows = self.session.execute(stmt).all()
         if not rows:

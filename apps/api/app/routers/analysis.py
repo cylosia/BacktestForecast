@@ -189,7 +189,7 @@ def list_analyses(
         if has_next:
             analyses = analyses[:effective_limit]
         total = service.count_for_user(user)
-        next_cursor = encode_cursor(analyses[-1].created_at) if has_next and analyses else None
+        next_cursor = encode_cursor(analyses[-1].created_at, analyses[-1].id) if has_next and analyses else None
         return AnalysisListResponse(
             items=[_to_summary(a) for a in analyses],
             total=total,
