@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session, defer
 
 from backtestforecast.models import ExportJob
@@ -53,7 +53,7 @@ class ExportJobRepository:
         user_id: UUID,
         limit: int = 50,
         offset: int = 0,
-        cursor_before: datetime | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[ExportJob]:
         if offset > 0 and cursor_before is not None:
             raise ValueError("Cannot combine offset and cursor_before pagination.")
@@ -65,8 +65,14 @@ class ExportJobRepository:
             .options(defer(ExportJob.content_bytes))
         )
         if cursor_before is not None:
-            stmt = stmt.where(ExportJob.created_at < cursor_before)
-        stmt = stmt.order_by(desc(ExportJob.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+            cursor_dt, cursor_id = cursor_before
+            stmt = stmt.where(
+                or_(
+                    ExportJob.created_at < cursor_dt,
+                    and_(ExportJob.created_at == cursor_dt, ExportJob.id < cursor_id),
+                )
+            )
+        stmt = stmt.order_by(desc(ExportJob.created_at), desc(ExportJob.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 
     def count_for_user(self, user_id: UUID) -> int:
@@ -78,7 +84,7 @@ class ExportJobRepository:
         user_id: UUID,
         limit: int = 50,
         offset: int = 0,
-        cursor_before: datetime | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
     ) -> tuple[list[ExportJob], int]:
         """Return (items, total) in a single DB round-trip using a window function."""
         if offset > 0 and cursor_before is not None:
@@ -90,8 +96,14 @@ class ExportJobRepository:
             .options(defer(ExportJob.content_bytes))
         )
         if cursor_before is not None:
-            stmt = stmt.where(ExportJob.created_at < cursor_before)
-        stmt = stmt.order_by(desc(ExportJob.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+            cursor_dt, cursor_id = cursor_before
+            stmt = stmt.where(
+                or_(
+                    ExportJob.created_at < cursor_dt,
+                    and_(ExportJob.created_at == cursor_dt, ExportJob.id < cursor_id),
+                )
+            )
+        stmt = stmt.order_by(desc(ExportJob.created_at), desc(ExportJob.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         rows = list(self.session.execute(stmt))
         if not rows:
             total = int(self.session.scalar(

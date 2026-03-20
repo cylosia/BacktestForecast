@@ -377,7 +377,7 @@ class BacktestService:
             created_since = datetime.now(UTC) - timedelta(days=feature_policy.history_days)
         effective_limit = min(limit, feature_policy.history_item_limit, 200)
 
-        cursor_before = None
+        cursor_before: tuple[datetime, UUID] | None = None
         if cursor:
             cursor_before = _decode_cursor(cursor)
             if cursor_before is None:
@@ -400,7 +400,7 @@ class BacktestService:
 
         next_cursor = None
         if has_next and runs:
-            next_cursor = _encode_cursor(runs[-1].created_at)
+            next_cursor = _encode_cursor(runs[-1].created_at, runs[-1].id)
 
         return BacktestRunListResponse(
             items=[self._to_history_item(run) for run in runs],

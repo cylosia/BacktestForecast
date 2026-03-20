@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from backtestforecast.models import SymbolAnalysis
@@ -45,7 +45,7 @@ class SymbolAnalysisRepository:
         *,
         limit: int = 50,
         offset: int = 0,
-        cursor_before: datetime | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[SymbolAnalysis]:
         if offset > 0 and cursor_before is not None:
             raise ValueError("Cannot combine offset and cursor_before pagination.")
@@ -56,8 +56,14 @@ class SymbolAnalysisRepository:
             .where(SymbolAnalysis.user_id == user_id)
         )
         if cursor_before is not None:
-            stmt = stmt.where(SymbolAnalysis.created_at < cursor_before)
-        stmt = stmt.order_by(desc(SymbolAnalysis.created_at)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+            cursor_dt, cursor_id = cursor_before
+            stmt = stmt.where(
+                or_(
+                    SymbolAnalysis.created_at < cursor_dt,
+                    and_(SymbolAnalysis.created_at == cursor_dt, SymbolAnalysis.id < cursor_id),
+                )
+            )
+        stmt = stmt.order_by(desc(SymbolAnalysis.created_at), desc(SymbolAnalysis.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
 
     def count_for_user(self, user_id: UUID) -> int:

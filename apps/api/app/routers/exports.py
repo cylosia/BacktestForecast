@@ -59,7 +59,7 @@ def list_exports(
         has_next = len(jobs) > limit
         if has_next:
             jobs = jobs[:limit]
-        next_cursor = encode_cursor(jobs[-1].created_at) if has_next and jobs else None
+        next_cursor = encode_cursor(jobs[-1].created_at, jobs[-1].id) if has_next and jobs else None
         return ExportJobListResponse(
             items=[service.to_response(j) for j in jobs],
             total=total,

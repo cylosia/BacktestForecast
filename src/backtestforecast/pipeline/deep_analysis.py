@@ -479,7 +479,7 @@ class SymbolDeepAnalysisService:
         user: User,
         limit: int = 20,
         offset: int = 0,
-        cursor_before: datetime | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[SymbolAnalysis]:
         from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 

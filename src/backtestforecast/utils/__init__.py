@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import math
 from datetime import datetime
+from uuid import UUID
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 DECIMAL_QUANT = Decimal("0.0001")
@@ -41,16 +42,18 @@ def to_decimal(value: float | Decimal | None, *, allow_infinite: bool = False) -
     return Decimal(str(fval)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 
 
-def encode_cursor(dt: datetime) -> str:
-    """Encode a datetime as an opaque, URL-safe pagination cursor."""
-    return base64.urlsafe_b64encode(dt.isoformat().encode()).decode()
+def encode_cursor(dt: datetime, row_id: UUID) -> str:
+    """Encode a datetime and primary key as an opaque, URL-safe pagination cursor."""
+    raw = f"{dt.isoformat()}|{row_id}"
+    return base64.urlsafe_b64encode(raw.encode()).decode()
 
 
-def decode_cursor(cursor: str) -> datetime | None:
-    """Decode a pagination cursor back to a datetime. Returns None on invalid input."""
+def decode_cursor(cursor: str) -> tuple[datetime, UUID] | None:
+    """Decode a pagination cursor back to ``(created_at, id)``. Returns None on invalid input."""
     try:
         raw = base64.urlsafe_b64decode(cursor.encode()).decode()
-        return datetime.fromisoformat(raw)
+        created_at_raw, row_id_raw = raw.split("|", 1)
+        return datetime.fromisoformat(created_at_raw), UUID(row_id_raw)
     except (ValueError, UnicodeDecodeError, Exception):
         return None
 
