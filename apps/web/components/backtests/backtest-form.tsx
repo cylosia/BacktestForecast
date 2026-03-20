@@ -249,23 +249,8 @@ export function BacktestForm({
         </CardHeader>
         <CardContent>
           <TaRuleControls
-            errors={{
-              rsiThreshold: errors.rsiThreshold,
-              rsiPeriod: errors.rsiPeriod,
-              fastPeriod: errors.fastPeriod,
-              slowPeriod: errors.slowPeriod,
-            }}
-            values={{
-              rsiEnabled: values.rsiEnabled,
-              rsiOperator: values.rsiOperator,
-              rsiThreshold: values.rsiThreshold,
-              rsiPeriod: values.rsiPeriod,
-              movingAverageEnabled: values.movingAverageEnabled,
-              movingAverageType: values.movingAverageType,
-              fastPeriod: values.fastPeriod,
-              slowPeriod: values.slowPeriod,
-              crossoverDirection: values.crossoverDirection,
-            }}
+            errors={errors}
+            values={values}
             onChange={updateValues}
           />
         </CardContent>
@@ -280,16 +265,8 @@ export function BacktestForm({
         </CardHeader>
         <CardContent>
           <RiskControls
-            errors={{
-              accountSize: errors.accountSize,
-              riskPerTradePct: errors.riskPerTradePct,
-              commissionPerContract: errors.commissionPerContract,
-            }}
-            values={{
-              accountSize: values.accountSize,
-              riskPerTradePct: values.riskPerTradePct,
-              commissionPerContract: values.commissionPerContract,
-            }}
+            errors={errors}
+            values={values}
             onChange={updateValues}
           />
         </CardContent>

@@ -38,7 +38,7 @@ export function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
 }
 
 export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> | null {
-  const config = template.config_json;
+  const config = template.config;
   if (!isValidTemplateConfig(config)) return null;
   const typed = config;
 

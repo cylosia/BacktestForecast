@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import type { SweepResultResponse } from "@backtestforecast/api-client";
+import { toNumber } from "@/lib/backtests/format";
 import { getSweepJob, getSweepResults } from "@/lib/api/server";
 import { formatDateTime, isTerminalStatus, statusLabel } from "@/lib/backtests/format";
 import { Badge } from "@/components/ui/badge";
@@ -109,10 +110,10 @@ export default async function SweepDetailPage({
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-semibold tracking-tight">
-                  {job.prefetch_summary.quotes_fetched?.toLocaleString() ?? "—"}
+                  {(() => { const summary = (job.prefetch_summary ?? {}) as Record<string, unknown>; const quotesFetched = toNumber(summary.quotes_fetched as string | number | null | undefined); return Number.isNaN(quotesFetched) ? "—" : quotesFetched.toLocaleString(); })()}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Quotes cached across {job.prefetch_summary.dates_processed ?? 0} dates
+                  Quotes cached across {(() => { const summary = (job.prefetch_summary ?? {}) as Record<string, unknown>; const datesProcessed = toNumber(summary.dates_processed as string | number | null | undefined); return Number.isNaN(datesProcessed) ? 0 : datesProcessed; })()} dates
                 </p>
               </CardContent>
             </Card>

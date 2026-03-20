@@ -155,3 +155,6 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
 
   return errors;
 }
+
+
+export type { PlanTier };

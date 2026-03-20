@@ -74,10 +74,10 @@ export async function createCheckoutSession(
 
 export async function createPortalSession(
   token: string,
-  payload: Pick<CreatePortalSessionRequest, "return_path"> = {},
+  payload?: Pick<CreatePortalSessionRequest, "return_path">,
 ): Promise<PortalSessionResponse> {
   const body: Record<string, unknown> = {};
-  if (payload.return_path != null) {
+  if (payload?.return_path != null) {
     body.return_path = payload.return_path;
   }
   return apiRequest<PortalSessionResponse>("/v1/billing/portal-session", token, {

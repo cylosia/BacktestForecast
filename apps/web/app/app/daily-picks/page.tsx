@@ -1,6 +1,6 @@
 import { getCurrentUser, getDailyPicks, getDailyPicksHistory } from "@/lib/api/server";
 import { ApiError } from "@/lib/api/shared";
-import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
+import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import type { DailyPickItem, DailyPicksResponse } from "@backtestforecast/api-client";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { ScoreBar } from "@/components/shared/score-bar";
@@ -24,9 +24,9 @@ function regimeColor(regime: string): string {
   }
 }
 
-function asNumericRecord(value: unknown): Record<string, number | null | undefined> {
+function asNumericRecord(value: unknown): Record<string, number | string | null | undefined> {
   if (value != null && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, number | null | undefined>;
+    return value as Record<string, number | string | null | undefined>;
   }
   return {};
 }
@@ -60,7 +60,7 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
         </div>
 
         <div className="mt-3">
-          <ScoreBar score={Math.max(0, pick.score)} max={maxScore} />
+          <ScoreBar score={Math.max(0, toNumber(pick.score))} max={maxScore} />
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
@@ -163,7 +163,7 @@ export default async function DailyPicksPage() {
   }
 
   const items = data.items ?? [];
-  const maxScore = items.length > 0 ? Math.max(1, ...items.map((i) => i.score)) : 1;
+  const maxScore = items.length > 0 ? Math.max(1, ...items.map((i) => toNumber(i.score)).filter((score) => Number.isFinite(score))) : 1;
 
   return (
     <div className="space-y-6">
@@ -187,7 +187,7 @@ export default async function DailyPicksPage() {
             { label: "Pairs tested", value: data.pipeline_stats.pairs_generated },
             { label: "Quick backtests", value: data.pipeline_stats.quick_backtests_run },
             { label: "Full backtests", value: data.pipeline_stats.full_backtests_run },
-            { label: "Duration", value: data.pipeline_stats.duration_seconds ? `${Math.round(data.pipeline_stats.duration_seconds)}s` : "—" },
+            { label: "Duration", value: data.pipeline_stats.duration_seconds ? `${Math.round(Number(data.pipeline_stats.duration_seconds))}s` : "—" },
           ].map((stat) => (
             <div key={stat.label} className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{stat.label}</p>

@@ -1,4 +1,5 @@
 import type {
+  BollingerBand,
   ComparisonOperator,
   CreateBacktestRunRequest,
   CrossoverDirection,
@@ -45,7 +46,7 @@ export interface BacktestFormValues {
   bollingerEnabled: boolean;
   bollingerPeriod: string;
   bollingerStdDev: string;
-  bollingerBand: string;
+  bollingerBand: BollingerBand;
   bollingerOperator: ComparisonOperator;
   ivRankEnabled: boolean;
   ivRankOperator: ComparisonOperator;
@@ -457,7 +458,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     return { errors };
   }
 
-  const payload: Record<string, unknown> = {
+  const payload: CreateBacktestRunRequest & { profit_target_pct?: number; stop_loss_pct?: number } = {
     symbol: normalizedSymbol,
     strategy_type: values.strategyType,
     start_date: values.startDate,
@@ -470,7 +471,6 @@ export function validateBacktestForm(values: BacktestFormValues): {
     commission_per_contract: parseNumber(values.commissionPerContract),
     entry_rules: entryRules,
     slippage_pct: slippage,
-    risk_free_rate: rfr,
   };
   if (values.profitTargetEnabled) {
     payload.profit_target_pct = parseNumber(values.profitTargetPct);
