@@ -46,7 +46,7 @@ _LOOKS_NUMERIC = re.compile(
 _MAX_CSV_TRADES = 10_000
 _MAX_CSV_EQUITY_POINTS = 50_000
 _MAX_PDF_PAGES = 50
-_MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 class ExportService:
@@ -214,7 +214,7 @@ class ExportService:
             trade_count = run.trade_count or 0
             _bytes_per_trade = 500 if export_job.export_format == "csv" else 200
             estimated_size = trade_count * _bytes_per_trade
-            if estimated_size > _MAX_EXPORT_BYTES:
+            if estimated_size > MAX_EXPORT_BYTES:
                 self.session.execute(
                     sa_update(ExportJob)
                     .where(ExportJob.id == export_job_id, ExportJob.status == "running")
@@ -243,9 +243,9 @@ class ExportService:
                 content = self._build_csv(detail)
             else:
                 content = self._build_pdf(detail)
-            if len(content) > _MAX_EXPORT_BYTES:
+            if len(content) > MAX_EXPORT_BYTES:
                 raise ValueError(
-                    f"Generated export exceeds the {_MAX_EXPORT_BYTES // (1024 * 1024)} MB size limit."
+                    f"Generated export exceeds the {MAX_EXPORT_BYTES // (1024 * 1024)} MB size limit."
                 )
             # ORPHAN RISK: The storage write below happens outside the DB
             # transaction.  If the subsequent commit fails, the uploaded object
@@ -609,10 +609,10 @@ class ExportService:
     def _build_csv(self, detail: BacktestRunDetailResponse) -> bytes:
         estimated_rows = len(detail.trades) + len(detail.equity_curve) + 30
         estimated_bytes = estimated_rows * 200
-        if estimated_bytes > _MAX_EXPORT_BYTES:
+        if estimated_bytes > MAX_EXPORT_BYTES:
             raise ValueError(
                 f"Estimated CSV size ({estimated_bytes // (1024 * 1024)} MB) exceeds "
-                f"the {_MAX_EXPORT_BYTES // (1024 * 1024)} MB limit. "
+                f"the {MAX_EXPORT_BYTES // (1024 * 1024)} MB limit. "
                 f"Trades: {len(detail.trades)}, equity points: {len(detail.equity_curve)}."
             )
         buf = io.BytesIO()
@@ -623,9 +623,9 @@ class ExportService:
             return [self._sanitize_csv_cell(value) for value in values]
 
         def _check_size() -> None:
-            if buf.tell() > _MAX_EXPORT_BYTES:
+            if buf.tell() > MAX_EXPORT_BYTES:
                 raise ValueError(
-                    f"CSV export exceeded {_MAX_EXPORT_BYTES // (1024 * 1024)} MB during generation."
+                    f"CSV export exceeded {MAX_EXPORT_BYTES // (1024 * 1024)} MB during generation."
                 )
 
         writer.writerow(safe_row(["section", "field", "value"]))
