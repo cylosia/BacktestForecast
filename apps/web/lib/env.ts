@@ -31,7 +31,7 @@ function requireValue(
 export type ClientSafeEnv = {
   appUrl: string;
   apiBaseUrl: string;
-  clerkPublishableKey: string;
+  clerkPublishableKey: string | null;
 };
 
 export const env: ClientSafeEnv = {
@@ -47,7 +47,7 @@ export const env: ClientSafeEnv = {
   ),
   clerkPublishableKey: requireValue(
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
-    "",
+    isDev ? "pk_test_auth_optional_dev" : "",
     "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-  ),
+  ) || null,
 };

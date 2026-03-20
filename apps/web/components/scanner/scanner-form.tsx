@@ -101,6 +101,18 @@ const ADVANCED_STRATEGY_GROUPS: Array<{
       { value: "reverse_conversion", label: "Reverse Conversion" },
     ],
   },
+  {
+    category: "Custom N-Leg",
+    strategies: [
+      { value: "custom_2_leg", label: "Custom 2-Leg" },
+      { value: "custom_3_leg", label: "Custom 3-Leg" },
+      { value: "custom_4_leg", label: "Custom 4-Leg" },
+      { value: "custom_5_leg", label: "Custom 5-Leg" },
+      { value: "custom_6_leg", label: "Custom 6-Leg" },
+      { value: "custom_7_leg", label: "Custom 7-Leg" },
+      { value: "custom_8_leg", label: "Custom 8-Leg" },
+    ],
+  },
 ];
 
 const ADVANCED_STRATEGIES = ADVANCED_STRATEGY_GROUPS.flatMap((g) => g.strategies);

@@ -31,6 +31,7 @@ const STRATEGY_OPTIONS = [
 ] as const;
 
 const LEG_COUNT_OPTIONS = [2, 3, 4, 5, 6, 7, 8] as const;
+const MAX_SWEEP_WINDOW_DAYS = 730;
 
 interface FormState {
   mode: SweepMode;
@@ -136,9 +137,9 @@ export function SweepForm() {
         setErrorMessage("Date range must be at least 30 days for sweeps.");
         return;
       }
-      if (diffDays > 365 * 20) {
+      if (diffDays > MAX_SWEEP_WINDOW_DAYS) {
         setStatus("error");
-        setErrorMessage("Date range cannot exceed 20 years.");
+        setErrorMessage(`Date range cannot exceed ${MAX_SWEEP_WINDOW_DAYS} days.`);
         return;
       }
       const today = new Date();

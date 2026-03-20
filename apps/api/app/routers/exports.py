@@ -19,9 +19,7 @@ from backtestforecast.models import User
 from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobListResponse, ExportJobResponse
 from backtestforecast.security import get_rate_limiter
-from backtestforecast.services.exports import ExportService
-
-_MAX_EXPORT_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
+from backtestforecast.services.exports import ExportService, MAX_EXPORT_BYTES
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 logger = structlog.get_logger("api.exports")
@@ -225,18 +223,15 @@ def download_export(
                         "Export file integrity check failed. Please re-export."
                     )
 
-                if content_length is not None and content_length > _MAX_EXPORT_SIZE_BYTES:
+                if content_length is not None and content_length > MAX_EXPORT_BYTES:
                     logger.error(
                         "export.s3_size_exceeded",
                         export_job_id=str(export_job_id),
                         content_length=content_length,
-                        max_allowed=_MAX_EXPORT_SIZE_BYTES,
+                        max_allowed=MAX_EXPORT_BYTES,
                     )
-                    from fastapi import HTTPException
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Export file exceeds maximum allowed size.",
-                    )
+                    from backtestforecast.errors import AppValidationError
+                    raise AppValidationError("Export file exceeds maximum allowed size.")
 
                 headers = {
                     "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}',
@@ -308,7 +303,7 @@ def download_export(
             from backtestforecast.errors import NotFoundError
             raise NotFoundError("Export file is not available.")
 
-        if len(content) > _MAX_EXPORT_SIZE_BYTES:
+        if len(content) > MAX_EXPORT_BYTES:
             from backtestforecast.errors import AppValidationError
             raise AppValidationError("Export file exceeds maximum allowed size.")
 

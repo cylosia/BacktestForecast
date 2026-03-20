@@ -36,6 +36,7 @@ def _leg_multiplier(leg: object) -> float:
 
 _D0 = Decimal("0")
 _D100 = Decimal("100")
+_D365 = Decimal("365")
 
 
 _D_CACHE: dict[int | float, Decimal] = {
@@ -653,6 +654,10 @@ class OptionsBacktestEngine:
         cash_delta = exit_value - exit_commission - exit_slippage
         exit_value_per_unit = exit_value / _D(position.quantity) if position.quantity else _D0
         gross_pnl = (exit_value_per_unit - entry_value_per_unit) * _D(position.quantity)
+        dividends_received = self._estimate_dividends_received(position, config, exit_date)
+        if dividends_received:
+            gross_pnl += dividends_received
+            cash_delta += dividends_received
         total_commissions = position.entry_commission_total + exit_commission
         total_slippage = entry_slippage + exit_slippage
         net_pnl = gross_pnl - total_commissions - total_slippage
@@ -717,6 +722,7 @@ class OptionsBacktestEngine:
                 "total_slippage": float(total_slippage),
                 "entry_slippage": float(entry_slippage),
                 "exit_slippage": float(exit_slippage),
+                "dividends_received": float(dividends_received),
             },
             warnings=trade_warnings,
         )
@@ -728,6 +734,30 @@ class OptionsBacktestEngine:
                 assignment_detail["warning_message"],
             )
         return trade, cash_delta
+
+    def _estimate_dividends_received(
+        self,
+        position: OpenMultiLegPosition,
+        config: BacktestConfig,
+        exit_date: date,
+    ) -> Decimal:
+        """Approximate dividends for stock legs using annualized dividend_yield.
+
+        This is a pragmatic correction for stock-holding strategies until
+        per-ex-dividend cash amounts are available from market-data sources.
+        """
+        if not position.stock_legs or config.dividend_yield <= 0:
+            return _D0
+        holding_days = max((exit_date - position.entry_date).days, 0)
+        if holding_days == 0:
+            return _D0
+        annual_yield = _D(config.dividend_yield)
+        proration = _D(holding_days) / _D365
+        dividends = _D0
+        for leg in position.stock_legs:
+            notional = _D(leg.entry_price) * _D(leg.share_quantity_per_unit) * _D(position.quantity)
+            dividends += notional * annual_yield * proration * _D(leg.side)
+        return dividends
 
     @staticmethod
     def _entry_value_per_unit(position: OpenMultiLegPosition) -> Decimal:
