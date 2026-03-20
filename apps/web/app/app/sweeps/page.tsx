@@ -117,7 +117,8 @@ export default async function SweepsPage({
                 </Button>
               </div>
             ) : (
-              <Table>
+              <>
+                <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Symbol</TableHead>
@@ -144,13 +145,14 @@ export default async function SweepsPage({
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
-              <PaginationControls
-                basePath="/app/sweeps"
-                offset={offset}
-                limit={PAGE_SIZE}
-                total={jobs.total}
-              />
+                </Table>
+                <PaginationControls
+                  basePath="/app/sweeps"
+                  offset={offset}
+                  limit={PAGE_SIZE}
+                  total={jobs.total}
+                />
+              </>
             )}
           </CardContent>
         </Card>

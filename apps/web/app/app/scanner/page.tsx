@@ -136,7 +136,8 @@ export default async function ScannerPage({
                 </Button>
               </div>
             ) : (
-              <Table>
+              <>
+                <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Name</TableHead>
@@ -166,13 +167,14 @@ export default async function ScannerPage({
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
-              <PaginationControls
-                basePath="/app/scanner"
-                offset={offset}
-                limit={PAGE_SIZE}
-                total={jobs.total}
-              />
+                </Table>
+                <PaginationControls
+                  basePath="/app/scanner"
+                  offset={offset}
+                  limit={PAGE_SIZE}
+                  total={jobs.total}
+                />
+              </>
             )}
           </CardContent>
         </Card>

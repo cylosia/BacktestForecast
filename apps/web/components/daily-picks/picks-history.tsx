@@ -54,7 +54,7 @@ export function PicksHistory({ data }: { data: PipelineHistoryResponse }) {
                 </TableCell>
                 <TableCell>{item.recommendations_produced}</TableCell>
                 <TableCell className="text-muted-foreground">
-                  {item.duration_seconds != null ? (Math.round(item.duration_seconds) < 1 ? "<1s" : `${Math.round(item.duration_seconds)}s`) : "—"}
+                  {item.duration_seconds != null ? (Math.round(Number(item.duration_seconds)) < 1 ? "<1s" : `${Math.round(Number(item.duration_seconds))}s`) : "—"}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {formatDateTime(item.completed_at)}

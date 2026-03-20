@@ -10,14 +10,14 @@ const VALID_TEMPLATE: TemplateResponse = {
   name: "Conservative CSP",
   description: null,
   strategy_type: "cash_secured_put",
-  config_json: {
+  config: {
     strategy_type: "cash_secured_put",
     target_dte: 45,
     dte_tolerance_days: 10,
     max_holding_days: 30,
-    account_size: 50000,
-    risk_per_trade_pct: 2,
-    commission_per_contract: 0.65,
+    account_size: "50000",
+    risk_per_trade_pct: "2",
+    commission_per_contract: "0.65",
     entry_rules: [],
   },
   created_at: "2025-01-01T00:00:00Z",
@@ -26,7 +26,7 @@ const VALID_TEMPLATE: TemplateResponse = {
 
 describe("isValidTemplateConfig", () => {
   it("returns true for a valid config object", () => {
-    expect(isValidTemplateConfig(VALID_TEMPLATE.config_json)).toBe(true);
+    expect(isValidTemplateConfig(VALID_TEMPLATE.config)).toBe(true);
   });
 
   it("returns false for null", () => {
@@ -38,13 +38,13 @@ describe("isValidTemplateConfig", () => {
   });
 
   it("accepts string account_size (API returns Decimal as string)", () => {
-    const config = { ...VALID_TEMPLATE.config_json, account_size: "50000" };
+    const config = { ...VALID_TEMPLATE.config, account_size: "50000" };
     expect(isValidTemplateConfig(config)).toBe(true);
   });
 });
 
 describe("templateToFormValues", () => {
-  it("reads config from config_json key and maps to form values", () => {
+  it("reads config from config key and maps to form values", () => {
     const patch = templateToFormValues(VALID_TEMPLATE);
     expect(patch).not.toBeNull();
     expect(patch!.strategyType).toBe("cash_secured_put");
@@ -65,9 +65,9 @@ describe("templateToFormValues", () => {
   it("enables RSI when template has an RSI entry rule", () => {
     const template: TemplateResponse = {
       ...VALID_TEMPLATE,
-      config_json: {
-        ...VALID_TEMPLATE.config_json,
-        entry_rules: [{ type: "rsi", operator: "lt", threshold: 30, period: 14 }],
+      config: {
+        ...VALID_TEMPLATE.config,
+        entry_rules: [{ type: "rsi", operator: "lt", threshold: "30", period: 14 }],
       },
     };
     const patch = templateToFormValues(template);
@@ -82,8 +82,8 @@ describe("templateToFormValues", () => {
       ...VALID_TEMPLATE,
       id: "tmpl-2",
       strategy_type: "iron_condor",
-      config_json: {
-        ...VALID_TEMPLATE.config_json,
+      config: {
+        ...VALID_TEMPLATE.config,
         strategy_type: "iron_condor",
         target_dte: 21,
       },
@@ -95,8 +95,8 @@ describe("templateToFormValues", () => {
     expect(first!.targetDte).not.toBe(second!.targetDte);
   });
 
-  it("returns null for a template with invalid config_json", () => {
-    const bad = { ...VALID_TEMPLATE, config_json: {} as never };
+  it("returns null for a template with invalid config", () => {
+    const bad = { ...VALID_TEMPLATE, config: {} as never };
     const patch = templateToFormValues(bad);
     expect(patch).toBeNull();
   });

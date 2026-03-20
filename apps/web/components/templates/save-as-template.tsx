@@ -7,7 +7,7 @@ import { Bookmark, Loader2 } from "lucide-react";
 import { createTemplate } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { validateBacktestForm, type BacktestFormValues } from "@/lib/backtests/validation";
-import type { CreateTemplateRequest, EntryRule, StrategyType } from "@backtestforecast/api-client";
+import type { CreateTemplateRequest, StrategyType } from "@backtestforecast/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,10 +15,10 @@ import { Label } from "@/components/ui/label";
 function formValuesToTemplateConfig(
   values: BacktestFormValues,
 ): CreateTemplateRequest["config"] {
-  const entryRules: EntryRule[] = [];
+  const entryRules: NonNullable<CreateTemplateRequest["config"]["entry_rules"]> = [];
 
   if (values.rsiEnabled) {
-    const rsiRule: EntryRule = {
+    const rsiRule: NonNullable<CreateTemplateRequest["config"]["entry_rules"]>[number] = {
       type: "rsi" as const,
       operator: values.rsiOperator,
       threshold: Number(values.rsiThreshold),
@@ -28,7 +28,7 @@ function formValuesToTemplateConfig(
   }
 
   if (values.movingAverageEnabled) {
-    const maRule: EntryRule = {
+    const maRule: NonNullable<CreateTemplateRequest["config"]["entry_rules"]>[number] = {
       type: values.movingAverageType as "sma_crossover" | "ema_crossover",
       fast_period: Number(values.fastPeriod),
       slow_period: Number(values.slowPeriod),

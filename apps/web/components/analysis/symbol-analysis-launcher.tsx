@@ -11,7 +11,7 @@ import {
 import { ApiError } from "@/lib/api/shared";
 import { TICKER_RE } from "@/lib/validation-constants";
 import { usePolling } from "@/hooks/use-polling";
-import { formatCurrency, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
+import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import type {
   AnalysisTopResult,
   LandscapeCell,
@@ -452,7 +452,7 @@ export function SymbolAnalysisLauncher() {
             </div>
             <div className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Duration</p>
-              <p className="mt-1 text-xl font-semibold">{result.duration_seconds != null ? `${Math.round(result.duration_seconds)}s` : "—"}</p>
+              <p className="mt-1 text-xl font-semibold">{(() => { const durationSeconds = toNumber(result.duration_seconds); return Number.isNaN(durationSeconds) ? "—" : `${Math.round(durationSeconds)}s`; })()}</p>
             </div>
           </div>
 

@@ -284,11 +284,11 @@ export function SweepForm() {
         const deltas = deltaParts.map((s) => ({ value: Number(s) }));
         payload = {
           ...basePayload,
-          strategy_types: Array.from(selectedStrategies),
+          strategy_types: Array.from(selectedStrategies) as CreateSweepRequest["strategy_types"],
           ...(deltas.length > 0 ? { delta_grid: deltas } : {}),
         };
       } else {
-        const legType = `custom_${form.numLegs}_leg`;
+        const legType = `custom_${form.numLegs}_leg` as CreateSweepRequest["strategy_types"][number];
         payload = {
           ...basePayload,
           strategy_types: [legType],
@@ -298,8 +298,10 @@ export function SweepForm() {
             max_generations: Number(form.maxGenerations),
             mutation_rate: Number(form.mutationRate),
             crossover_rate: Number(form.crossoverRate),
-            // max_workers is intentionally omitted — the backend GeneticSweepConfig
-            // provides a validated default (10) that respects server-side limits.
+            elitism_count: 5,
+            max_stale_generations: 8,
+            max_workers: 10,
+            tournament_size: 3,
           },
         };
       }

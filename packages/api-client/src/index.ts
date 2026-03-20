@@ -7,7 +7,7 @@ import type { components } from "./schema";
 // ---------------------------------------------------------------------------
 
 export type StrategyType = components["schemas"]["StrategyType"];
-export type RunStatus = components["schemas"]["RunStatus"];
+export type RunStatus = components["schemas"]["RunJobStatus"];
 export type ComparisonOperator = components["schemas"]["ComparisonOperator"];
 export type CrossoverDirection = components["schemas"]["CrossoverDirection"];
 export type BillingInterval = components["schemas"]["BillingInterval"];

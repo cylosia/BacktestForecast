@@ -130,14 +130,14 @@ export default async function ScannerDetailPage({
           </Card>
         ) : null}
 
-        {(job.warnings_json ?? []).length > 0 ? (
+        {(job.warnings ?? []).length > 0 ? (
           <Card>
             <CardHeader>
               <CardTitle>Warnings</CardTitle>
-              <CardDescription>{(job.warnings_json ?? []).length} warning(s) from execution.</CardDescription>
+              <CardDescription>{(job.warnings ?? []).length} warning(s) from execution.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
-              {(job.warnings_json ?? []).map((warning: Record<string, unknown>, index: number) => (
+              {(job.warnings ?? []).map((warning: Record<string, unknown>, index: number) => (
                 <div key={`warn-${index}`} className="rounded-lg border border-border/70 p-3 text-sm">
                   <pre className="whitespace-pre-wrap break-words text-muted-foreground">
                     {JSON.stringify(warning, null, 2)}
