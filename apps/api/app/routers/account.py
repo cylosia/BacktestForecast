@@ -13,6 +13,7 @@ from apps.api.app.dependencies import get_current_user, get_request_metadata
 from backtestforecast.db.session import get_db
 from backtestforecast.errors import AppValidationError
 from backtestforecast.models import User
+from backtestforecast.observability.logging import short_hash
 from backtestforecast.observability.metrics import ACCOUNT_DELETIONS_TOTAL
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.audit import AuditService
@@ -258,18 +259,9 @@ def delete_account(
         stripe_sub_id = user.stripe_subscription_id
         stripe_cust_id = user.stripe_customer_id
         saved_user_id = user.id
-        saved_clerk_user_id = user.clerk_user_id
-
         _cleanup_export_storage(db, user.id)
 
         try:
-            import hashlib as _hashlib
-
-            def _hash_pii(value: str | None) -> str | None:
-                if not value:
-                    return None
-                return _hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
-
             AuditService(db).record_always(
                 event_type="account.deleted",
                 subject_type="user",
@@ -279,8 +271,8 @@ def delete_account(
                 ip_address=metadata.ip_address,
                 metadata={
                     "deleted_user_id": str(user.id),
-                    "clerk_user_id_hash": _hash_pii(user.clerk_user_id),
-                    "email_hash": _hash_pii(user.email),
+                    "clerk_user_id_hash": short_hash(user.clerk_user_id),
+                    "email_hash": short_hash(user.email),
                     "plan_tier": user.plan_tier,
                     "had_stripe_subscription": stripe_sub_id is not None,
                     "had_stripe_customer": stripe_cust_id is not None,
@@ -305,7 +297,6 @@ def delete_account(
         logger.warning(
             "account.deleted",
             user_id=str(saved_user_id),
-            clerk_user_id=saved_clerk_user_id,
             stripe_cleanup_result=stripe_cleanup,
         )
     finally:
@@ -494,24 +485,24 @@ def _cleanup_stripe(
     if subscription_id:
         try:
             client.subscriptions.cancel(subscription_id)
-            logger.info("account.stripe_subscription_cancelled", subscription_id=subscription_id)
+            logger.info("account.stripe_subscription_cancelled", subscription_id_hash=short_hash(subscription_id))
         except Exception:
             sub_ok = False
             logger.warning(
                 "account.stripe_subscription_cancel_failed",
-                subscription_id=subscription_id,
+                subscription_id_hash=short_hash(subscription_id),
                 exc_info=True,
             )
 
     if customer_id:
         try:
             client.customers.delete(customer_id)
-            logger.info("account.stripe_customer_deleted", customer_id=customer_id)
+            logger.info("account.stripe_customer_deleted", customer_id_hash=short_hash(customer_id))
         except Exception:
             cust_ok = False
             logger.warning(
                 "account.stripe_customer_delete_failed",
-                customer_id=customer_id,
+                customer_id_hash=short_hash(customer_id),
                 exc_info=True,
             )
 
@@ -551,15 +542,15 @@ def _dispatch_stripe_cleanup_retry(
             "account.stripe_cleanup_retry_dispatched",
             user_id=str(user_id),
             sync_result=sync_result,
-            subscription_id=subscription_id,
-            customer_id=customer_id,
+            subscription_id_hash=short_hash(subscription_id),
+            customer_id_hash=short_hash(customer_id),
         )
     except Exception:
         logger.error(
             "account.stripe_cleanup_retry_dispatch_failed",
             user_id=str(user_id),
             sync_result=sync_result,
-            subscription_id=subscription_id,
-            customer_id=customer_id,
+            subscription_id_hash=short_hash(subscription_id),
+            customer_id_hash=short_hash(customer_id),
             exc_info=True,
         )

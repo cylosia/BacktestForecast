@@ -51,7 +51,8 @@ class TestAccountDeletionStripeCleanup:
             __import__("apps.api.app.routers.account", fromlist=["delete_account"]).delete_account
         )
         assert "deleted_user_id" in source
-        assert "clerk_user_id" in source
+        assert "clerk_user_id_hash" in source
+        assert "clerk_user_id=saved_clerk_user_id" not in source
         assert "stripe_subscription_id" in source
         assert "stripe_customer_id" in source
         assert "stripe_cleanup_result" in source

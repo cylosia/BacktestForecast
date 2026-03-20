@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from backtestforecast.observability import metrics
-from backtestforecast.observability.logging import _sanitize_sensitive_keys
+from backtestforecast.observability.logging import _sanitize_sensitive_keys, short_hash
 from backtestforecast.observability.metrics import _normalize_path
 
 
@@ -76,3 +76,13 @@ def test_sensitive_key_redaction_preserves_non_sensitive():
     event_dict = {"user_id": "u123", "status": 200, "event": "request.completed"}
     sanitized = _sanitize_sensitive_keys(None, None, dict(event_dict))
     assert sanitized == event_dict
+
+
+def test_short_hash_matches_audit_convention():
+    """Sensitive identifiers should use the shared short irreversible hash."""
+    value = "clerk_test_user"
+    result = short_hash(value)
+    assert result is not None
+    assert len(result) == 16
+    assert result != value
+    assert short_hash(None) is None

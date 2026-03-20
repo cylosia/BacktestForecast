@@ -27,6 +27,13 @@ _SENSITIVE_FRAGMENTS = (
 _REDACTED = "[REDACTED]"
 
 
+def short_hash(value: str | None) -> str | None:
+    """Return a short irreversible hash for correlating sensitive identifiers."""
+    if not value:
+        return None
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
 def _is_sensitive_key(lower_key: str) -> bool:
     return any(fragment in lower_key for fragment in _SENSITIVE_FRAGMENTS)
 

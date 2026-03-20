@@ -21,6 +21,7 @@ from backtestforecast.errors import (
 )
 from backtestforecast.models import User
 from backtestforecast.observability import get_logger
+from backtestforecast.observability.logging import short_hash
 from backtestforecast.observability.metrics import STRIPE_WEBHOOK_EVENTS_TOTAL
 from backtestforecast.repositories.audit_events import AuditEventRepository
 from backtestforecast.repositories.stripe_events import StripeEventRepository
@@ -723,7 +724,7 @@ class BillingService:
             except Exception:
                 logger.warning(
                     "billing.orphan_customer_cleanup_failed",
-                    customer_id=customer.id,
+                    customer_id_hash=short_hash(customer.id),
                 )
                 try:
                     from apps.worker.app.celery_app import celery_app
@@ -734,7 +735,7 @@ class BillingService:
                         countdown=10,
                     )
                 except Exception:
-                    logger.warning("billing.orphan_customer_cleanup_dispatch_failed", customer_id=customer.id)
+                    logger.warning("billing.orphan_customer_cleanup_dispatch_failed", customer_id_hash=short_hash(customer.id))
             self.session.refresh(user)
             if user.stripe_customer_id is None:
                 raise ExternalServiceError(

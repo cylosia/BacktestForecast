@@ -8,6 +8,8 @@ from typing import Annotated
 import structlog
 from fastapi import Depends, Header, Request
 from sqlalchemy.exc import IntegrityError
+
+from backtestforecast.observability.logging import short_hash
 from sqlalchemy.orm import Session
 
 from backtestforecast.auth.verification import ClerkTokenVerifier
@@ -244,5 +246,5 @@ def get_current_user(
         if user is None:
             raise
     db.refresh(user)
-    structlog.contextvars.bind_contextvars(user_id=str(user.id), clerk_user_id=user.clerk_user_id)
+    structlog.contextvars.bind_contextvars(user_id=str(user.id), clerk_user_id_hash=short_hash(user.clerk_user_id))
     return user
