@@ -108,7 +108,10 @@ def stripe_webhook(
     )
 
     if signature is None:
-        raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "missing_signature", "message": "Missing Stripe-Signature header."},
+        )
 
     try:
         with BillingService(db) as service:
@@ -130,7 +133,7 @@ def stripe_webhook(
                 "webhook.signature_verification_failed", ip=ip_address, request_id=request_id,
             )
             raise HTTPException(
-                status_code=400,
+                status_code=401,
                 detail={"code": "signature_verification_failed", "message": "Invalid webhook signature."},
             )
         if isinstance(exc, _NotFoundErr):
@@ -156,7 +159,11 @@ def stripe_webhook(
             _webhook_logger.warning(
                 "webhook.deterministic_error", code=exc.code, ip=ip_address, request_id=request_id,
             )
-            return WebhookResponse(received=True, reason=f"Deterministic error ({exc.code}); will not retry.")
+            return WebhookResponse(
+                status="ignored",
+                reason=f"Deterministic error ({exc.code}); will not retry.",
+                code=exc.code,
+            )
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
         return JSONResponse(
             status_code=500,

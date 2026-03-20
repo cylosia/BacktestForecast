@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import time as _time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Self
 from uuid import UUID, uuid4
 
 import structlog
@@ -40,6 +39,8 @@ from backtestforecast.schemas.backtests import (
     FeatureAccessResponse,
     UsageSummaryResponse,
 )
+
+UTC = timezone.utc
 from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
@@ -73,7 +74,7 @@ class BacktestService:
         if self._execution_service is not None:
             self._execution_service.close()
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> "BacktestService":
         return self
 
     def __exit__(self, *exc: object) -> None:

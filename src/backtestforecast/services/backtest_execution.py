@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import structlog
-from typing import Self
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.types import BacktestConfig, BacktestExecutionResult
@@ -36,7 +35,7 @@ class BacktestExecutionService:
         if self._owns_client:
             self.market_data_service.client.close()
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> "BacktestExecutionService":
         return self
 
     def __exit__(self, *exc: object) -> None:

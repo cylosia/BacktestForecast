@@ -4,8 +4,8 @@ import asyncio
 import math
 import random
 import time
-from datetime import UTC, date, datetime
-from typing import Any, Self
+from datetime import date, datetime, timezone
+from typing import Any
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -23,6 +23,7 @@ from backtestforecast.market_data.types import (
 from backtestforecast.resilience.circuit_breaker import CircuitBreaker
 
 logger = structlog.get_logger("massive_client")
+UTC = timezone.utc
 
 MAX_PAGINATION_PAGES = 100
 
@@ -361,7 +362,7 @@ class MassiveClient(_MassiveClientCore):
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> "MassiveClient":
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -561,7 +562,7 @@ class AsyncMassiveClient(_MassiveClientCore):
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def __aenter__(self) -> Self:
+    async def __aenter__(self) -> "MassiveClient":
         return self
 
     async def __aexit__(self, *exc: object) -> None:

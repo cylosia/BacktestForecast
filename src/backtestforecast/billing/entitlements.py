@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 import structlog
@@ -11,6 +11,7 @@ from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.schemas.common import PlanTier
 
 _logger = structlog.get_logger("billing.entitlements")
+UTC = timezone.utc
 
 
 class BillingInterval(str, Enum):
