@@ -73,6 +73,7 @@ All environment variables recognised by BacktestForecast. Variables marked **req
 | `WEB_CORS_ORIGINS_RAW` | Comma-separated allowed CORS origins | `http://localhost:3000` | Production |
 | `API_ALLOWED_HOSTS_RAW` | Comma-separated allowed Host header values | `localhost,127.0.0.1` | Production |
 | `REQUEST_MAX_BODY_BYTES` | Maximum request body size in bytes | `1048576` | — |
+| `REQUEST_TIMEOUT_SECONDS` | End-to-end request timeout enforced by the API | `60` | — |
 | `TRUSTED_PROXY_CIDRS` | Comma-separated CIDRs for trusted reverse proxies | RFC 1918 ranges | — |
 | `IP_HASH_SALT` | Salt for hashing client IPs in logs/rate limiting (>= 16 chars) | Placeholder (must change in production) | Production |
 
@@ -91,7 +92,7 @@ Failure to set this in production will generate a startup warning.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RATE_LIMIT_PREFIX` | `bff:rate-limit` | Redis key prefix for rate limit counters |
-| `RATE_LIMIT_FAIL_CLOSED` | `false` | If true, block requests when Redis is unavailable |
+| `RATE_LIMIT_FAIL_CLOSED` | `true` | If true, block requests when Redis is unavailable |
 | `RATE_LIMIT_MEMORY_MAX_KEYS` | `10000` | Max in-memory rate limit keys when Redis is down |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Default sliding window for rate limits |
 | `BACKTEST_CREATE_RATE_LIMIT` | `10` | Max backtest creations per window |
@@ -100,7 +101,7 @@ Failure to set this in production will generate a startup warning.
 | `EXPORT_CREATE_RATE_LIMIT` | `20` | Max export creations per window |
 | `SSE_RATE_LIMIT` | `30` | Max SSE connection attempts per window |
 
-When `RATE_LIMIT_FAIL_CLOSED=true`, the API returns 503 if Redis is unreachable. When `false` (default), it falls back to in-memory counting which is per-process only.
+By default, `RATE_LIMIT_FAIL_CLOSED=true`, so the API returns 503 if Redis is unreachable. Set it to `false` only in environments where temporary fail-open behavior is an acceptable tradeoff, because the fallback in-memory counter is per-process only.
 
 | Variable | Description | Default | Required in |
 |---|---|---|---|
@@ -120,7 +121,8 @@ When `RATE_LIMIT_FAIL_CLOSED=true`, the API returns 503 if Redis is unreachable.
 |---|---|---|---|
 | `PIPELINE_MAX_WORKERS` | Thread pool size for nightly pipeline execution | `20` | — |
 | `PIPELINE_DEFAULT_SYMBOLS_CSV` | Comma-separated override for default nightly pipeline symbols | Built-in list of ~100 tickers | — |
-| `SCAN_TIMEOUT_SECONDS` | Maximum wall-clock time for a single scan job | `540` | — |
+| `SCAN_TIMEOUT_SECONDS` | Maximum wall-clock time for a single scan job | `480` | — |
+| `SWEEP_TIMEOUT_SECONDS` | Maximum wall-clock time for a single sweep job | `3600` | — |
 | `RISK_FREE_RATE` | Annual risk-free rate used in Sharpe/Sortino calculations | `0.045` | — |
 | `MAX_BACKTEST_WINDOW_DAYS` | Maximum backtest date range in days | `1825` | — |
 | `MAX_SCANNER_WINDOW_DAYS` | Maximum scanner date range in days | `730` | — |
