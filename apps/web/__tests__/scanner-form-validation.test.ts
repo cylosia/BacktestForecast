@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  getScannerSupportError,
   parseSymbols,
   validateScannerForm,
   type ScannerFormInput,
@@ -72,13 +73,13 @@ describe("validateScannerForm", () => {
     );
   });
 
-  it("fails closed for unsupported advanced mode combinations on the current plan", () => {
+  it("matches backend entitlement messaging for unsupported advanced mode combinations", () => {
     const symbols = Array.from({ length: 11 }, (_, i) => `SYM${i}`).join(",");
     const errors = validateScannerForm(
       validInput({ mode: "advanced", symbolsText: symbols }),
     );
     expect(errors).toContain(
-      "Advanced mode allows at most 5 symbols for your plan.",
+      "Advanced scanner access requires Premium.",
     );
   });
 
@@ -140,14 +141,21 @@ describe("validateScannerForm", () => {
     expect(errors).toContain("Target DTE must be a whole number.");
   });
 
-  it("accepts valid advanced mode input", () => {
+  it("accepts valid advanced mode input for premium", () => {
     const errors = validateScannerForm(
       validInput({
         mode: "advanced",
         symbolsText: "SPY, QQQ",
         selectedStrategies: new Set(["iron_condor"]),
       }),
+      "premium",
     );
     expect(errors).toEqual([]);
+  });
+
+  it("returns the backend-aligned free-tier support error", () => {
+    expect(getScannerSupportError("free", "basic")).toBe(
+      "Scanner access requires Pro or Premium.",
+    );
   });
 });
