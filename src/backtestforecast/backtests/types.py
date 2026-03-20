@@ -52,6 +52,8 @@ class OptionDataGateway(Protocol):
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None: ...
 
+    def get_ex_dividend_dates(self, start_date: date, end_date: date) -> set[date]: ...
+
 
 class MultiUnderlyingGateway:  # noqa: vulture — planned extension point
     """Gateway wrapper for strategies that trade options on multiple underlyings.
@@ -101,6 +103,9 @@ class MultiUnderlyingGateway:  # noqa: vulture — planned extension point
     ) -> OptionQuoteRecord | None:
         return self.get_gateway(symbol).get_quote(option_ticker, trade_date)
 
+    def get_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        return self.get_gateway(symbol).get_ex_dividend_dates(start_date, end_date)
+
 
 @dataclass(frozen=True, slots=True)
 class BacktestConfig:
@@ -146,6 +151,7 @@ class TradeResult:
     exit_reason: str
     detail_json: dict[str, Any] = field(default_factory=dict)
     holding_period_trading_days: int | None = None  # Trading days (bars) held; None for wheel strategy
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,3 +252,6 @@ class PositionSnapshot:
     position_value: Decimal
     position_missing_quote: bool
     missing_quote_tickers: tuple[str, ...]
+    assignment_exit_reason: str | None = None
+    assignment_detail: dict[str, Any] | None = None
+    warnings: tuple[str, ...] = ()

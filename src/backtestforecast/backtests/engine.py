@@ -76,6 +76,8 @@ class OptionsBacktestEngine:
         bars: list[DailyBar],
         earnings_dates: set[date],
         option_gateway: OptionDataGateway,
+        *,
+        ex_dividend_dates: set[date] | None = None,
     ) -> BacktestExecutionResult:
         if config.strategy_type == "wheel_strategy":
             return self.wheel_engine.run(
@@ -86,24 +88,6 @@ class OptionsBacktestEngine:
         if strategy is None:
             raise AppValidationError(f"Unsupported strategy_type: {config.strategy_type}")
 
-        # FIXME(#98): Model early assignment risk for American-style options.
-        # Deep ITM short legs near ex-dividend dates should be flagged.
-        #
-        # Scenarios where early assignment is likely:
-        # 1. Short call is deep ITM (intrinsic >> extrinsic) the day before
-        #    an ex-dividend date — the holder exercises to capture the dividend.
-        # 2. Short put is deep ITM near expiration with minimal time value.
-        # 3. Any short American-style option whose extrinsic value drops below
-        #    the cost of carry.
-        #
-        # Recommended approach:
-        # - Accept an `ex_dividend_dates` set alongside `earnings_dates`.
-        # - During `_mark_position`, check whether any short leg is deep ITM
-        #   (e.g., delta > 0.90) and the next trading day is an ex-div date.
-        # - If so, force-close the position with `exit_reason="early_assignment"`
-        #   and add a warning to the trade result.
-        # - For P&L accuracy, the assignment should use intrinsic value (not
-        #   mid-price) since assigned options settle at intrinsic.
         # Decimal precision: Phase 1 & 2 complete.
         #
         # Phase 1: `cash` uses Decimal throughout.
@@ -130,6 +114,14 @@ class OptionsBacktestEngine:
                 summary=build_summary(float(config.account_size), float(config.account_size), [], [], risk_free_rate=config.risk_free_rate),
                 trades=[], equity_curve=[]
             )
+        ex_dividend_dates = set(ex_dividend_dates or ())
+        if not ex_dividend_dates and hasattr(option_gateway, "get_ex_dividend_dates"):
+            try:
+                ex_dividend_dates = option_gateway.get_ex_dividend_dates(
+                    sorted_bars[0].trade_date, sorted_bars[-1].trade_date,
+                )
+            except Exception:
+                logger.warning("engine.ex_dividend_dates_unavailable", exc_info=True)
 
         warnings: list[dict[str, Any]] = []
         warning_codes: set[str] = set()
@@ -156,7 +148,9 @@ class OptionsBacktestEngine:
             exit_prices: dict[str, float] = {}
 
             if position is not None:
-                snapshot = self._mark_position(position, bar, option_gateway, warnings, warning_codes)
+                snapshot = self._mark_position(
+                    position, bar, option_gateway, warnings, warning_codes, ex_dividend_dates,
+                )
                 position_value = snapshot.position_value
                 exit_prices = {leg.ticker: leg.last_mid for leg in position.option_legs}
                 for stock_leg in position.stock_legs:
@@ -196,11 +190,17 @@ class OptionsBacktestEngine:
                     stop_loss_pct=config.stop_loss_pct,
                     current_bar_index=index,
                 )
+                assignment_detail = snapshot.assignment_detail
+                if snapshot.assignment_exit_reason is not None:
+                    should_exit = True
+                    exit_reason = snapshot.assignment_exit_reason
                 if should_exit:
                     trade, cash_delta = self._close_position(
                         position, config, snapshot.position_value, bar.trade_date, bar.close_price,
                         exit_prices, exit_reason, warnings, warning_codes,
                         current_bar_index=index,
+                        assignment_detail=assignment_detail,
+                        trade_warnings=snapshot.warnings,
                     )
                     cash += cash_delta
                     trades.append(trade)
@@ -344,7 +344,9 @@ class OptionsBacktestEngine:
                 break
 
         if position is not None:
-            snapshot = self._mark_position(position, sorted_bars[-1], option_gateway, warnings, warning_codes)
+            snapshot = self._mark_position(
+                position, sorted_bars[-1], option_gateway, warnings, warning_codes, ex_dividend_dates,
+            )
             exit_prices_fc = {leg.ticker: leg.last_mid for leg in position.option_legs}
             for stock_leg in position.stock_legs:
                 exit_prices_fc[stock_leg.symbol] = stock_leg.last_price
@@ -353,6 +355,7 @@ class OptionsBacktestEngine:
                 sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
                 warnings, warning_codes,
                 current_bar_index=len(sorted_bars) - 1,
+                trade_warnings=snapshot.warnings,
             )
             cash += cash_delta
             trades.append(trade)
@@ -394,6 +397,7 @@ class OptionsBacktestEngine:
         option_gateway: OptionDataGateway,
         warnings: list[dict[str, Any]],
         warning_codes: set[str],
+        ex_dividend_dates: set[date] | None = None,
     ) -> PositionSnapshot:
         """Re-price all legs at the current bar and return a value snapshot.
 
@@ -427,11 +431,102 @@ class OptionsBacktestEngine:
             leg.last_price = bar.close_price
             stock_value += _D(leg.side) * _D(leg.share_quantity_per_unit) * _D(bar.close_price) * _D(position.quantity)
 
+        assignment_exit_reason, assignment_detail = self._check_early_assignment(
+            position=position,
+            bar=bar,
+            ex_dividend_dates=ex_dividend_dates or set(),
+        )
+        if assignment_detail is not None:
+            assigned_leg = assignment_detail["assigned_leg"]
+            exit_mid = assignment_detail["settlement_price"]
+            for leg in position.option_legs:
+                if leg.ticker == assigned_leg:
+                    leg.last_mid = exit_mid
+            option_value = self._assignment_position_value(position, assignment_detail)
+
         return PositionSnapshot(
             position_value=option_value + stock_value,
             position_missing_quote=bool(missing_quote_tickers),
             missing_quote_tickers=tuple(missing_quote_tickers),
+            assignment_exit_reason=assignment_exit_reason,
+            assignment_detail=assignment_detail,
+            warnings=((assignment_detail["warning_message"],) if assignment_detail is not None else ()),
         )
+
+    @classmethod
+    def _assignment_position_value(
+        cls,
+        position: OpenMultiLegPosition,
+        assignment_detail: dict[str, Any],
+    ) -> Decimal:
+        assigned_ticker = assignment_detail["assigned_leg"]
+        settlement_price = _D(assignment_detail["settlement_price"])
+        option_value = _D0
+        for leg in position.option_legs:
+            leg_mid = settlement_price if leg.ticker == assigned_ticker else _D(leg.last_mid)
+            option_value += (
+                _D(leg.side)
+                * _D(leg.quantity_per_unit)
+                * leg_mid
+                * _D(_leg_multiplier(leg))
+                * _D(position.quantity)
+            )
+        return option_value
+
+    @classmethod
+    def _check_early_assignment(
+        cls,
+        *,
+        position: OpenMultiLegPosition,
+        bar: DailyBar,
+        ex_dividend_dates: set[date],
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        next_day = bar.trade_date + timedelta(days=1)
+        for leg in position.option_legs:
+            if leg.side >= 0:
+                continue
+            intrinsic = float(cls._intrinsic_value(leg.contract_type, leg.strike_price, bar.close_price))
+            if intrinsic <= 0:
+                continue
+            time_value = max(0.0, leg.last_mid - intrinsic)
+            dte = max(0, (leg.expiration_date - bar.trade_date).days)
+            moneyness = (bar.close_price / leg.strike_price) if leg.contract_type == "call" else (leg.strike_price / bar.close_price)
+
+            if leg.contract_type == "call" and next_day in ex_dividend_dates and intrinsic >= 2.0 and time_value <= 0.25:
+                return "early_assignment_call_ex_div", {
+                    "assignment": True,
+                    "assignment_trigger": "ex_dividend",
+                    "assigned_leg": leg.ticker,
+                    "contract_type": leg.contract_type,
+                    "intrinsic_value": intrinsic,
+                    "time_value": time_value,
+                    "days_to_expiration": dte,
+                    "next_ex_dividend_date": next_day.isoformat(),
+                    "settlement_price": intrinsic,
+                    "warning_message": (
+                        f"Short call {leg.ticker} was treated as early-assigned on "
+                        f"{bar.trade_date.isoformat()} before the {next_day.isoformat()} ex-dividend date."
+                    ),
+                }
+
+            if leg.contract_type == "put" and dte <= 3 and moneyness >= 1.05 and time_value <= 0.1:
+                return "early_assignment_put_deep_itm", {
+                    "assignment": True,
+                    "assignment_trigger": "deep_itm_put",
+                    "assigned_leg": leg.ticker,
+                    "contract_type": leg.contract_type,
+                    "intrinsic_value": intrinsic,
+                    "time_value": time_value,
+                    "days_to_expiration": dte,
+                    "moneyness_ratio": moneyness,
+                    "settlement_price": intrinsic,
+                    "warning_message": (
+                        f"Short put {leg.ticker} was treated as early-assigned on "
+                        f"{bar.trade_date.isoformat()} due to deep ITM intrinsic value near expiry."
+                    ),
+                }
+
+        return None, None
 
     def _resolve_option_mid(
         self,
@@ -524,6 +619,8 @@ class OptionsBacktestEngine:
         warnings: list[dict[str, Any]] | None = None,
         warning_codes: set[str] | None = None,
         current_bar_index: int | None = None,
+        assignment_detail: dict[str, Any] | None = None,
+        trade_warnings: tuple[str, ...] = (),
     ) -> tuple[TradeResult, Decimal]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
         exit_commission = self._option_commission_total(position, config.commission_per_contract)
@@ -615,13 +712,21 @@ class OptionsBacktestEngine:
             entry_reason=position.entry_reason,
             exit_reason=exit_reason,
             detail_json={
-                **self._build_trade_detail_json(position, exit_prices, float(exit_value_per_unit)),
+                **self._build_trade_detail_json(position, exit_prices, float(exit_value_per_unit), assignment_detail),
                 "unit_convention": "per_unit_divided_by_100",
                 "total_slippage": float(total_slippage),
                 "entry_slippage": float(entry_slippage),
                 "exit_slippage": float(exit_slippage),
             },
+            warnings=trade_warnings,
         )
+        if assignment_detail is not None and warnings is not None and warning_codes is not None:
+            self._add_warning_once(
+                warnings,
+                warning_codes,
+                assignment_detail["assignment_trigger"],
+                assignment_detail["warning_message"],
+            )
         return trade, cash_delta
 
     @staticmethod
@@ -666,6 +771,7 @@ class OptionsBacktestEngine:
         position: OpenMultiLegPosition,
         exit_prices: dict[str, float],
         exit_value_per_unit: float,
+        assignment_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         detail = dict(position.detail_json)
         legs = [dict(leg) for leg in detail.get("legs", [])]
@@ -696,6 +802,11 @@ class OptionsBacktestEngine:
             mp = position.max_profit_per_unit * position.quantity
             detail["max_profit_total"] = None if (isinstance(mp, float) and not math.isfinite(mp)) else mp
         detail["exit_package_market_value"] = exit_value_per_unit
+        if assignment_detail is not None:
+            detail["assignment"] = True
+            detail["assignment_detail"] = {
+                key: value for key, value in assignment_detail.items() if key != "warning_message"
+            }
         return detail
 
     @staticmethod

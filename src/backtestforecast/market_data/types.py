@@ -71,3 +71,9 @@ class OptionSnapshotRecord:
                 return None
             return result
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class ExDividendRecord:
+    ex_dividend_date: date
+    cash_amount: float | None = None
