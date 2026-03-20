@@ -29,6 +29,56 @@ def test_health_ready_returns_503_when_db_down(client):
     assert body["status"] == "degraded"
 
 
+def test_health_ready_returns_503_when_redis_down_and_fail_closed(client, monkeypatch):
+    monkeypatch.setattr("apps.api.app.routers.health.ping_redis", lambda: False)
+    monkeypatch.setattr("apps.api.app.routers.health._ping_broker_redis", lambda: True)
+    monkeypatch.setattr("apps.api.app.routers.health.ping_database", lambda: None)
+    monkeypatch.setattr("apps.api.app.routers.health.get_settings", lambda: type(
+        "S",
+        (),
+        {
+            "metrics_token": None,
+            "app_env": "test",
+            "rate_limit_fail_closed": True,
+            "rate_limit_degraded_memory_fallback": False,
+            "massive_api_key": None,
+            "sentry_dsn": None,
+        },
+    )())
+
+    resp = client.get("/health/ready")
+
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "unavailable"
+
+
+def test_health_ready_reports_degraded_memory_fallback_mode_with_details(client, monkeypatch):
+    settings = type(
+        "S",
+        (),
+        {
+            "metrics_token": "secret",
+            "app_env": "test",
+            "rate_limit_fail_closed": False,
+            "rate_limit_degraded_memory_fallback": True,
+            "massive_api_key": None,
+            "sentry_dsn": None,
+        },
+    )()
+    monkeypatch.setattr("apps.api.app.routers.health.ping_redis", lambda: False)
+    monkeypatch.setattr("apps.api.app.routers.health._ping_broker_redis", lambda: True)
+    monkeypatch.setattr("apps.api.app.routers.health.ping_database", lambda: None)
+    monkeypatch.setattr("apps.api.app.routers.health.get_settings", lambda: settings)
+
+    resp = client.get("/health/ready", headers={"x-metrics-token": "secret"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["redis"] == "down"
+    assert body["rate_limit_mode"] == "degraded_memory_fallback"
+
+
 def test_quota_counts_queued_and_running_runs(client, auth_headers, db_session, _fake_celery):
     from backtestforecast.models import BacktestRun, User
 

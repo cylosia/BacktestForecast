@@ -199,13 +199,13 @@ def test_s14_worker_timeout_300s():
     assert Settings.model_fields["db_worker_statement_timeout_ms"].default == 300_000
 
 
-# ---- S15: fail_closed now falls back to memory before rejecting ----
+# ---- S15: fail_closed rejects immediately when Redis is unavailable ----
 
-def test_s15_fail_closed_uses_memory_fallback():
+def test_s15_fail_closed_rejects_immediately():
     from backtestforecast.security.rate_limits import RateLimiter
     source = inspect.getsource(RateLimiter.check)
-    assert "fail_closed_memory_fallback" in source
-    assert "_check_memory" in source
+    assert "fail_closed_redis_unavailable" in source
+    assert "fail_closed_redis_error" in source
 
 
 # ---- S16: SSE connections separately managed — FALSE ALARM ----

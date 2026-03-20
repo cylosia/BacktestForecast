@@ -214,6 +214,7 @@ class Settings(BaseSettings):
 
     rate_limit_prefix: str = "bff:rate-limit"
     rate_limit_fail_closed: bool = True
+    rate_limit_degraded_memory_fallback: bool = False
     rate_limit_memory_max_keys: int = 10_000
     backtest_create_rate_limit: int = 10
     backtest_read_rate_limit: int = 60

@@ -9,6 +9,7 @@ def _make_limiter(*, fail_closed: bool = False) -> RateLimiter:
     settings.redis_cache_url = "redis://nonexistent:6379/0"
     settings.rate_limit_prefix = "test"
     settings.rate_limit_fail_closed = fail_closed
+    settings.rate_limit_degraded_memory_fallback = False
     settings.rate_limit_memory_max_keys = 1000
     limiter = RateLimiter.__new__(RateLimiter)
     limiter.settings = settings

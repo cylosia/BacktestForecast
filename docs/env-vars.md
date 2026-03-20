@@ -91,7 +91,8 @@ Failure to set this in production will generate a startup warning.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RATE_LIMIT_PREFIX` | `bff:rate-limit` | Redis key prefix for rate limit counters |
-| `RATE_LIMIT_FAIL_CLOSED` | `false` | If true, block requests when Redis is unavailable |
+| `RATE_LIMIT_FAIL_CLOSED` | `true` | If true, immediately return `503 Service Unavailable` when Redis is unavailable or a Redis rate-limit operation fails |
+| `RATE_LIMIT_DEGRADED_MEMORY_FALLBACK` | `false` | Optional degraded mode for `RATE_LIMIT_FAIL_CLOSED=false`: use per-process in-memory counters with a halved effective limit when Redis rate limiting is unavailable |
 | `RATE_LIMIT_MEMORY_MAX_KEYS` | `10000` | Max in-memory rate limit keys when Redis is down |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Default sliding window for rate limits |
 | `BACKTEST_CREATE_RATE_LIMIT` | `10` | Max backtest creations per window |

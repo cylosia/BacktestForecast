@@ -86,6 +86,16 @@ class RateLimiter:
         redis = self._get_redis()
         count: int | None = None
         current_bucket = int(time.time() // window_seconds)
+        degraded_memory_fallback = bool(
+            getattr(self.settings, "rate_limit_degraded_memory_fallback", False)
+        )
+        if redis is None and self._fail_closed:
+            logger.error(
+                "rate_limiter.fail_closed_redis_unavailable",
+                bucket=bucket,
+                msg="Redis unavailable while fail-closed mode is enabled; rejecting request.",
+            )
+            raise ServiceUnavailableError()
         try:
             if redis is not None:
                 count, current_bucket = self._check_redis(namespaced, window_seconds)
@@ -97,25 +107,25 @@ class RateLimiter:
             REDIS_RATE_LIMIT_FALLBACK_TOTAL.labels(bucket=bucket).inc()
             logger.warning("rate_limiter.redis_fallback", key=bucket, exc_info=True)
             if self._fail_closed:
+                logger.error(
+                    "rate_limiter.fail_closed_redis_error",
+                    bucket=bucket,
+                    msg="Redis rate-limit operation failed while fail-closed mode is enabled; rejecting request.",
+                )
+                raise ServiceUnavailableError()
+            if degraded_memory_fallback:
                 fallback_limit = max(limit // 2, 1)
                 mem_count, _ = self._check_memory(namespaced, window_seconds)
-                if mem_count > fallback_limit:
-                    logger.error(
-                        "rate_limiter.fail_closed_enforced",
-                        bucket=bucket,
-                        mem_count=mem_count,
-                        fallback_limit=fallback_limit,
-                    )
-                    raise ServiceUnavailableError()
                 logger.warning(
-                    "rate_limiter.fail_closed_memory_fallback",
+                    "rate_limiter.degraded_memory_fallback",
                     bucket=bucket,
                     mem_count=mem_count,
                     fallback_limit=fallback_limit,
-                    msg="Redis unavailable; using in-memory rate limiting as fallback. "
-                        "Limits are halved and per-process only (not shared across workers).",
+                    msg="Redis unavailable; using degraded in-memory rate limiting fallback. "
+                    "Limits are halved and per-process only (not shared across workers).",
                 )
                 count = mem_count
+                limit = fallback_limit
         if count is None:
             mem_count, current_bucket = self._check_memory(namespaced, window_seconds)
             count = mem_count

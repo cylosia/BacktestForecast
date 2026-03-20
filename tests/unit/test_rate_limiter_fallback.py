@@ -16,6 +16,7 @@ def _make_settings(**overrides) -> Settings:
     defaults = {
         "redis_cache_url": "redis://localhost:6379/0",
         "rate_limit_fail_closed": False,
+        "rate_limit_degraded_memory_fallback": False,
         "rate_limit_prefix": "test:rl",
         "rate_limit_memory_max_keys": 100,
         "feature_backtests_enabled": False,
@@ -152,6 +153,15 @@ class TestFailClosedMode:
         with pytest.raises(ServiceUnavailableError):
             limiter.check(bucket="api", actor_key="user1", limit=10, window_seconds=60)
 
+    def test_fail_closed_raises_when_redis_is_unavailable_before_operation(self):
+        settings = _make_settings(rate_limit_fail_closed=True)
+        limiter = RateLimiter(settings=settings)
+        limiter._redis = None
+        limiter._redis_retry_after = time.monotonic() + 9999
+
+        with pytest.raises(ServiceUnavailableError):
+            limiter.check(bucket="api", actor_key="user1", limit=10, window_seconds=60)
+
     def test_fail_open_succeeds_when_redis_down(self):
         settings = _make_settings(rate_limit_fail_closed=False)
         limiter = RateLimiter(settings=settings)
@@ -163,6 +173,26 @@ class TestFailClosedMode:
 
         info = limiter.check(bucket="api", actor_key="user1", limit=10, window_seconds=60)
         assert info.remaining == 9
+
+    def test_degraded_memory_fallback_halves_effective_limit(self):
+        settings = _make_settings(
+            rate_limit_fail_closed=False,
+            rate_limit_degraded_memory_fallback=True,
+        )
+        limiter = RateLimiter(settings=settings)
+        mock_redis = MagicMock()
+        limiter._redis = mock_redis
+        limiter._lua_sha = "fakeSHA"
+        mock_redis.evalsha.side_effect = RedisError("Connection lost")
+        mock_redis.script_load.side_effect = RedisError("Connection lost")
+
+        for _ in range(5):
+            limiter.check(bucket="api", actor_key="user1", limit=10, window_seconds=60)
+
+        with pytest.raises(RateLimitError) as exc_info:
+            limiter.check(bucket="api", actor_key="user1", limit=10, window_seconds=60)
+
+        assert exc_info.value.rate_limit_info.limit == 5
 
 
 class TestMemoryCapEviction:
