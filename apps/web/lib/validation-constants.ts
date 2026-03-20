@@ -12,3 +12,6 @@ export const MAX_HOLDING_DAYS_MAX = 120;
 export const DTE_TOLERANCE_MAX = 60;
 export const RISK_PCT_MAX = 100;
 export const TICKER_MAX_LENGTH = 16;
+
+export const MAX_BACKTEST_WINDOW_DAYS = 1_825;
+export const SWEEP_MIN_WINDOW_DAYS = 30;

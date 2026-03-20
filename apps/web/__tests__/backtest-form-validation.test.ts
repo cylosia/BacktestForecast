@@ -43,13 +43,16 @@ describe("scanner form status lifecycle", () => {
   });
 
   it("validates numeric bounds on target DTE", () => {
-    const values = { ...getDefaultBacktestFormValues(), targetDte: "3" };
+    const values = { ...getDefaultBacktestFormValues(), targetDte: "0" };
     const { errors } = validateBacktestForm(values);
     expect(errors.targetDte).toBeDefined();
   });
 
   it("rejects non-integer DTE tolerance", () => {
-    const values = { ...getDefaultBacktestFormValues(), dteToleranceDays: "5.5" };
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      dteToleranceDays: "5.5",
+    };
     const { errors } = validateBacktestForm(values);
     expect(errors.dteToleranceDays).toContain("whole number");
   });
@@ -83,7 +86,7 @@ describe("backtest form submission edge cases", () => {
     expect(errors.endDate).toContain("later");
   });
 
-  it("rejects date range exceeding 20 years", () => {
+  it("rejects date range exceeding the shared max backtest window", () => {
     const values = {
       ...getDefaultBacktestFormValues(),
       startDate: "2000-01-01",
@@ -91,7 +94,7 @@ describe("backtest form submission edge cases", () => {
     };
     const { errors } = validateBacktestForm(values);
     expect(errors.endDate).toBeDefined();
-    expect(errors.endDate).toContain("20 years");
+    expect(errors.endDate).toContain("5 years");
   });
 
   it("rejects non-numeric account size", () => {

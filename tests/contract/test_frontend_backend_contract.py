@@ -179,3 +179,13 @@ def test_backtest_window_max_days():
         "max_backtest_window_days exceeds 1825 (5 years). "
         "If this is intentional, update frontend validation.ts to match."
     )
+
+
+def test_frontend_max_backtest_window_days_constant_matches_backend():
+    """Frontend validation constant must stay aligned with backend settings."""
+    from backtestforecast.config import get_settings
+
+    constants_path = PROJECT_ROOT / "apps" / "web" / "lib" / "validation-constants.ts"
+    text = constants_path.read_text(encoding="utf-8")
+    assert "export const MAX_BACKTEST_WINDOW_DAYS = 1_825;" in text
+    assert get_settings().max_backtest_window_days == 1825
