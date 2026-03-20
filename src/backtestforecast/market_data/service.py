@@ -33,6 +33,7 @@ logger = structlog.get_logger("market_data")
 class HistoricalDataBundle:
     bars: list[DailyBar]
     earnings_dates: set[date]
+    ex_dividend_dates: set[date]
     option_gateway: "MassiveOptionGateway"
 
 
@@ -68,6 +69,7 @@ class MassiveOptionGateway:
         self._chain_snapshot_loaded: bool = False
         self._lock = threading.RLock()
         self._tracked_entries = 0
+        self._ex_dividend_dates: set[date] = set()
 
     def _track_add(self, count: int = 1) -> None:
         global _global_cache_entries
@@ -209,6 +211,15 @@ class MassiveOptionGateway:
 
         self._store_quote_in_memory(cache_key, quote)
         return quote
+
+    def set_ex_dividend_dates(self, ex_dividend_dates: set[date]) -> None:
+        self._ex_dividend_dates = set(ex_dividend_dates)
+
+    def get_ex_dividend_dates(self, start_date: date, end_date: date) -> set[date]:
+        return {
+            ex_date for ex_date in self._ex_dividend_dates
+            if start_date <= ex_date <= end_date
+        }
 
     def _store_quote_in_memory(
         self,
@@ -432,6 +443,7 @@ class MarketDataService:
         return HistoricalDataBundle(
             bars=bars,
             earnings_dates=earnings_dates,
+            ex_dividend_dates=set(),
             option_gateway=option_gateway,
         )
 
