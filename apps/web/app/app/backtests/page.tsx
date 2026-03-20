@@ -13,14 +13,15 @@ const PAGE_SIZE = 20;
 export default async function BacktestsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ offset?: string; limit?: string }>;
+  searchParams: Promise<{ offset?: string; limit?: string; cursor?: string }>;
 }) {
   const params = await searchParams;
   const offset = Math.max(0, parseInt(params.offset ?? "0", 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(params.limit ?? String(PAGE_SIZE), 10) || PAGE_SIZE));
+  const cursor = params.cursor?.trim() || undefined;
 
   try {
-    const [user, history] = await Promise.all([getCurrentUser(), getBacktestHistory(limit, offset)]);
+    const [user, history] = await Promise.all([getCurrentUser(), getBacktestHistory(limit, offset, cursor)]);
     const quota = buildBacktestQuota(user);
 
     return (
@@ -85,6 +86,8 @@ export default async function BacktestsPage({
               offset={offset}
               limit={limit}
               total={history.total}
+              cursor={cursor}
+              nextCursor={history.next_cursor}
             />
           </CardContent>
         </Card>
