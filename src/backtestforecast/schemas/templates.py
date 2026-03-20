@@ -8,7 +8,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
+from backtestforecast.schemas.backtests import (
+    CustomLegDefinition,
+    EntryRule,
+    StrategyOverrides,
+    StrategyType,
+    CUSTOM_LEG_COUNT,
+    CUSTOM_STRATEGY_TYPES,
+    validate_entry_rule_collection,
+)
 
 TEMPLATE_SCHEMA_VERSION = 1
 
@@ -36,6 +44,12 @@ class TemplateConfig(BaseModel):
     # No min_length: empty entry_rules are intentional for template drafts
     # and sweep-style templates that enter on every eligible date.
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
+    custom_legs: list[CustomLegDefinition] | None = Field(default=None, max_length=8)
+    slippage_pct: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("5"))
+    profit_target_pct: Decimal | None = Field(default=None, ge=Decimal("1"), le=Decimal("500"))
+    stop_loss_pct: Decimal | None = Field(default=None, ge=Decimal("1"), le=Decimal("100"))
+    strategy_overrides: StrategyOverrides | None = None
+    risk_free_rate: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("0.20"))
 
     # Optional pre-fill hints — not required, but useful if the user always tests the same symbol/window
     default_symbol: str | None = Field(default=None, max_length=16, pattern=r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
@@ -53,6 +67,20 @@ class TemplateConfig(BaseModel):
             raise ValueError("dte_tolerance_days must be less than target_dte")
         if self.entry_rules:
             validate_entry_rule_collection(self.entry_rules)
+        if self.strategy_type in CUSTOM_STRATEGY_TYPES:
+            expected = CUSTOM_LEG_COUNT[self.strategy_type]
+            if not self.custom_legs:
+                raise ValueError(f"{self.strategy_type.value} requires exactly {expected} custom_legs definitions")
+            if len(self.custom_legs) != expected:
+                raise ValueError(f"{self.strategy_type.value} requires exactly {expected} legs, got {len(self.custom_legs)}")
+        elif self.custom_legs:
+            raise ValueError("custom_legs should only be provided for custom_N_leg strategy types")
+
+        if self.custom_legs:
+            long_count = sum(1 for leg in self.custom_legs if leg.side == "long")
+            short_count = sum(1 for leg in self.custom_legs if leg.side == "short")
+            if long_count == 0 or short_count == 0:
+                raise ValueError("custom_legs must contain at least one long and one short leg")
         return self
 
 

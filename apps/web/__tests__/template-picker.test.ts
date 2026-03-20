@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
+  formValuesToTemplateConfig,
   templateToFormValues,
   isValidTemplateConfig,
 } from "@/lib/templates/parse";
+import {
+  getDefaultBacktestFormValues,
+  type BacktestFormValues,
+} from "@/lib/backtests/validation";
 import type { TemplateResponse } from "@backtestforecast/api-client";
 
 const VALID_TEMPLATE: TemplateResponse = {
@@ -23,6 +28,18 @@ const VALID_TEMPLATE: TemplateResponse = {
   created_at: "2025-01-01T00:00:00Z",
   updated_at: "2025-01-01T00:00:00Z",
 };
+
+function toTemplateResponse(values: BacktestFormValues, name = "Round-trip"): TemplateResponse {
+  return {
+    id: `${name.toLowerCase()}-id`,
+    name,
+    description: null,
+    strategy_type: values.strategyType,
+    config_json: formValuesToTemplateConfig(values),
+    created_at: "2025-01-01T00:00:00Z",
+    updated_at: "2025-01-01T00:00:00Z",
+  };
+}
 
 describe("isValidTemplateConfig", () => {
   it("returns true for a valid config object", () => {
@@ -99,5 +116,116 @@ describe("templateToFormValues", () => {
     const bad = { ...VALID_TEMPLATE, config_json: {} as never };
     const patch = templateToFormValues(bad);
     expect(patch).toBeNull();
+  });
+});
+
+describe("template save/apply round-trips", () => {
+  it("round-trips advanced strategy risk controls and optional exits", () => {
+    const values: BacktestFormValues = {
+      ...getDefaultBacktestFormValues(),
+      symbol: "QQQ",
+      strategyType: "iron_condor",
+      targetDte: "45",
+      dteToleranceDays: "7",
+      maxHoldingDays: "15",
+      accountSize: "25000",
+      riskPerTradePct: "1.5",
+      commissionPerContract: "0.5",
+      slippagePct: "0.25",
+      riskFreeRate: "0.038",
+      profitTargetEnabled: true,
+      profitTargetPct: "35",
+      stopLossEnabled: true,
+      stopLossPct: "18",
+      movingAverageEnabled: true,
+      movingAverageType: "ema_crossover",
+      fastPeriod: "21",
+      slowPeriod: "55",
+      crossoverDirection: "bullish",
+      macdEnabled: true,
+      macdFastPeriod: "8",
+      macdSlowPeriod: "21",
+      macdSignalPeriod: "5",
+      macdDirection: "bullish",
+      bollingerEnabled: true,
+      bollingerPeriod: "18",
+      bollingerStdDev: "2.5",
+      bollingerBand: "lower",
+      bollingerOperator: "lt",
+      ivPercentileEnabled: true,
+      ivPercentileOperator: "gt",
+      ivPercentileThreshold: "70",
+      volumeSpikeEnabled: true,
+      volumeSpikeMultiplier: "3",
+      volumeSpikePeriod: "25",
+      avoidEarningsEnabled: true,
+      avoidEarningsDaysBefore: "5",
+      avoidEarningsDaysAfter: "2",
+      strategyOverrides: {
+        short_call_strike: { mode: "delta_target", value: 20 },
+        short_put_strike: { mode: "delta_target", value: 18 },
+        spread_width: { mode: "dollar_width", value: 10 },
+      },
+    };
+
+    const template = toTemplateResponse(values, "Advanced");
+    const patch = templateToFormValues(template);
+
+    expect(template.config_json.profit_target_pct).toBe(35);
+    expect(template.config_json.stop_loss_pct).toBe(18);
+    expect(template.config_json.slippage_pct).toBe(0.25);
+    expect(template.config_json.risk_free_rate).toBe(0.038);
+    expect(template.config_json.strategy_overrides).toEqual(values.strategyOverrides);
+    expect(patch).toMatchObject({
+      symbol: "QQQ",
+      strategyType: "iron_condor",
+      slippagePct: "0.25",
+      riskFreeRate: "0.038",
+      profitTargetEnabled: true,
+      profitTargetPct: "35",
+      stopLossEnabled: true,
+      stopLossPct: "18",
+      movingAverageEnabled: true,
+      macdEnabled: true,
+      bollingerEnabled: true,
+      ivPercentileEnabled: true,
+      volumeSpikeEnabled: true,
+      avoidEarningsEnabled: true,
+      strategyOverrides: values.strategyOverrides,
+    });
+  });
+
+  it("round-trips custom-leg strategies without dropping leg definitions", () => {
+    const values: BacktestFormValues = {
+      ...getDefaultBacktestFormValues(),
+      symbol: "SPY",
+      strategyType: "custom_3_leg",
+      targetDte: "60",
+      dteToleranceDays: "4",
+      maxHoldingDays: "20",
+      slippagePct: "0.1",
+      riskFreeRate: "0.04",
+      rsiEnabled: true,
+      rsiOperator: "lt",
+      rsiThreshold: "30",
+      rsiPeriod: "10",
+      customLegs: [
+        { asset_type: "option", contract_type: "call", side: "long", strike_offset: -1, expiration_offset: 1, quantity_ratio: 1 },
+        { asset_type: "option", contract_type: "call", side: "short", strike_offset: 0, expiration_offset: 0, quantity_ratio: 2 },
+        { asset_type: "stock", contract_type: null, side: "long", strike_offset: 0, expiration_offset: 0, quantity_ratio: 0.5 },
+      ],
+    };
+
+    const template = toTemplateResponse(values, "Custom Legs");
+    const patch = templateToFormValues(template);
+
+    expect(template.config_json.custom_legs).toEqual(values.customLegs);
+    expect(patch).toMatchObject({
+      strategyType: "custom_3_leg",
+      slippagePct: "0.1",
+      riskFreeRate: "0.04",
+      rsiEnabled: true,
+      customLegs: values.customLegs,
+    });
   });
 });

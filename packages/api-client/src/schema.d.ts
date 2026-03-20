@@ -2842,6 +2842,8 @@ export interface components {
             account_size: number | string;
             /** Commission Per Contract */
             commission_per_contract: number | string;
+            /** Custom Legs */
+            custom_legs?: components["schemas"]["CustomLegDefinition"][] | null;
             /** Default Symbol */
             default_symbol?: string | null;
             /**
@@ -2853,8 +2855,18 @@ export interface components {
             entry_rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"])[];
             /** Max Holding Days */
             max_holding_days: number;
+            /** Profit Target Pct */
+            profit_target_pct?: number | string | null;
+            /** Risk Free Rate */
+            risk_free_rate?: number | string | null;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: number | string;
+            /** Slippage Pct */
+            slippage_pct?: number | string;
+            /** Stop Loss Pct */
+            stop_loss_pct?: number | string | null;
+            /** @description Optional overrides for strike placement and spread width */
+            strategy_overrides?: components["schemas"]["StrategyOverrides"] | null;
             strategy_type: components["schemas"]["StrategyType"];
             /** Target Dte */
             target_dte: number;
@@ -2868,6 +2880,8 @@ export interface components {
             account_size: string;
             /** Commission Per Contract */
             commission_per_contract: string;
+            /** Custom Legs */
+            custom_legs?: components["schemas"]["CustomLegDefinition"][] | null;
             /** Default Symbol */
             default_symbol?: string | null;
             /**
@@ -2879,8 +2893,18 @@ export interface components {
             entry_rules?: (components["schemas"]["RsiRule-Output"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Output"] | components["schemas"]["IvRankRule-Output"] | components["schemas"]["IvPercentileRule-Output"] | components["schemas"]["VolumeSpikeRule-Output"] | components["schemas"]["SupportResistanceRule-Output"] | components["schemas"]["AvoidEarningsRule"])[];
             /** Max Holding Days */
             max_holding_days: number;
+            /** Profit Target Pct */
+            profit_target_pct?: string | null;
+            /** Risk Free Rate */
+            risk_free_rate?: string | null;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: string;
+            /** Slippage Pct */
+            slippage_pct?: string;
+            /** Stop Loss Pct */
+            stop_loss_pct?: string | null;
+            /** @description Optional overrides for strike placement and spread width */
+            strategy_overrides?: components["schemas"]["StrategyOverrides"] | null;
             strategy_type: components["schemas"]["StrategyType"];
             /** Target Dte */
             target_dte: number;

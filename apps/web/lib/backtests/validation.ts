@@ -3,7 +3,9 @@ import type {
   CreateBacktestRunRequest,
   CrossoverDirection,
   MovingAverageRuleType,
+  StrategyOverrides,
   StrategyType,
+  CustomLegDefinition,
 } from "@backtestforecast/api-client";
 import { daysAgoET } from "@/lib/utils";
 import {
@@ -68,6 +70,8 @@ export interface BacktestFormValues {
   supportResistanceEnabled: boolean;
   supportResistanceMode: string;
   supportResistancePeriod: string;
+  strategyOverrides?: StrategyOverrides | null;
+  customLegs?: CustomLegDefinition[] | null;
 }
 
 export type BacktestFormErrors = Partial<Record<keyof BacktestFormValues | "form", string>>;
@@ -124,6 +128,8 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     supportResistanceEnabled: false,
     supportResistanceMode: "support",
     supportResistancePeriod: "20",
+    strategyOverrides: null,
+    customLegs: null,
   };
 }
 
@@ -484,6 +490,12 @@ export function validateBacktestForm(values: BacktestFormValues): {
   }
   if (values.stopLossEnabled) {
     payload.stop_loss_pct = parseNumber(values.stopLossPct);
+  }
+  if (values.strategyOverrides != null) {
+    payload.strategy_overrides = values.strategyOverrides;
+  }
+  if (values.customLegs != null) {
+    payload.custom_legs = values.customLegs;
   }
 
   return { errors, payload };
