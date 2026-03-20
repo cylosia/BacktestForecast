@@ -33,10 +33,11 @@ def test_concurrent_user_creation_does_not_duplicate(
         try:
             with session_factory() as session:
                 repo = UserRepository(session)
-                user = repo.get_or_create(clerk_id, email)
-                session.commit()
-                session.refresh(user)
-                results.append(user.id)
+                result = repo.get_or_create(clerk_id, email)
+                if result.was_persisted:
+                    session.commit()
+                    session.refresh(result.user)
+                results.append(result.user.id)
         except Exception as exc:
             errors.append(exc)
 
