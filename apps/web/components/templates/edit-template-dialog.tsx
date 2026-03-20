@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { updateTemplate } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/shared";
+import { mapTemplateFieldErrors } from "@/lib/templates/validation";
 import { Button } from "@/components/ui/button";
 
 export function EditTemplateDialog({
@@ -27,6 +29,7 @@ export function EditTemplateDialog({
   const [description, setDescription] = useState(initialDescription);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; description?: string }>({});
   const abortRef = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<Element | null>(null);
@@ -38,6 +41,7 @@ export function EditTemplateDialog({
       setName(initialName);
       setDescription(initialDescription);
       setError(null);
+      setFieldErrors({});
     } else if (triggerRef.current instanceof HTMLElement) {
       triggerRef.current.focus();
       triggerRef.current = null;
@@ -88,6 +92,7 @@ export function EditTemplateDialog({
 
   const handleSave = useCallback(async () => {
     if (!name.trim()) {
+      setFieldErrors({ name: "Name is required." });
       setError("Name is required.");
       return;
     }
@@ -100,6 +105,7 @@ export function EditTemplateDialog({
 
     setSaving(true);
     setError(null);
+    setFieldErrors({});
     try {
       const token = await getToken();
       if (!token) {
@@ -127,6 +133,8 @@ export function EditTemplateDialog({
       if (controller.signal.aborted) return;
       console.error("[EditTemplateDialog] update failed:", err);
       const message = err instanceof Error ? err.message : "Failed to update template. Please try again.";
+      const mapped = err instanceof ApiError ? mapTemplateFieldErrors(err.fieldErrors) : {};
+      setFieldErrors({ name: mapped.name, description: mapped.description });
       setError(message);
       savingRef.current = false;
       setSaving(false);
@@ -154,7 +162,9 @@ export function EditTemplateDialog({
               className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               placeholder="Template name"
               maxLength={120}
+              aria-invalid={fieldErrors.name ? true : undefined}
             />
+            {fieldErrors.name ? <p className="mt-1 text-sm text-destructive">{fieldErrors.name}</p> : null}
           </div>
           <div>
             <label htmlFor="template-description" className="text-sm font-medium">
@@ -168,7 +178,9 @@ export function EditTemplateDialog({
               maxLength={500}
               className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
               placeholder="Optional description"
+              aria-invalid={fieldErrors.description ? true : undefined}
             />
+            {fieldErrors.description ? <p className="mt-1 text-sm text-destructive">{fieldErrors.description}</p> : null}
           </div>
         </div>
 

@@ -827,6 +827,8 @@ export interface components {
              * @default 0
              */
             total: number;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** AnalysisSummaryResponse */
         AnalysisSummaryResponse: {
@@ -2385,6 +2387,8 @@ export interface components {
              * @default 0
              */
             total: number;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** ScannerJobResponse */
         ScannerJobResponse: {
@@ -2688,6 +2692,8 @@ export interface components {
              * @default 0
              */
             total: number;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** SweepJobResponse */
         SweepJobResponse: {

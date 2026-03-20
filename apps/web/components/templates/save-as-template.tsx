@@ -7,6 +7,7 @@ import { Bookmark, Loader2 } from "lucide-react";
 import { createTemplate } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { validateBacktestForm, type BacktestFormValues } from "@/lib/backtests/validation";
+import { mapTemplateFieldErrors } from "@/lib/templates/validation";
 import type { CreateTemplateRequest, StrategyType } from "@backtestforecast/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +60,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; description?: string }>({});
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -71,6 +73,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
 
   async function handleSave() {
     if (!name.trim()) {
+      setFieldErrors({ name: "Template name is required." });
       setIsError(true);
       setMessage("Template name is required.");
       return;
@@ -92,6 +95,7 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
 
     setSaving(true);
     setMessage(null);
+    setFieldErrors({});
 
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -129,6 +133,8 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
       if (abortRef.current?.signal.aborted) return;
       const msg =
         error instanceof ApiError ? error.message : "Could not save template.";
+      const mapped = error instanceof ApiError ? mapTemplateFieldErrors(error.fieldErrors) : {};
+      setFieldErrors({ name: mapped.name, description: mapped.description });
       setIsError(true);
       setMessage(msg);
       setSaving(false);
@@ -157,7 +163,9 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !saving) { e.preventDefault(); handleSave(); } }}
+          aria-invalid={fieldErrors.name ? true : undefined}
         />
+        {fieldErrors.name ? <p className="text-sm text-destructive">{fieldErrors.name}</p> : null}
       </div>
 
       <div className="space-y-2">
@@ -169,7 +177,9 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+          aria-invalid={fieldErrors.description ? true : undefined}
         />
+        {fieldErrors.description ? <p className="text-sm text-destructive">{fieldErrors.description}</p> : null}
       </div>
 
       {message ? (

@@ -5,6 +5,7 @@ import { useAuth } from "@clerk/nextjs";
 import { Download, FileText, Loader2, Sheet } from "lucide-react";
 import { createExport, downloadExport, fetchExportStatus } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
+import { getOrCreatePendingIdempotencyKey } from "@/lib/idempotency";
 import type { ExportFormat } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Button } from "@/components/ui/button";
@@ -62,6 +63,7 @@ export function ExportActions({
   const [requiredTier, setRequiredTier] = useState<string | undefined>();
   const mountedRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
+  const pendingIdempotencyKeysRef = useRef<Record<string, string | null>>({});
   const revokeTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const blobUrlsRef = useRef<string[]>([]);
 
@@ -162,10 +164,15 @@ export function ExportActions({
         throw new Error("Your session token could not be loaded. Please sign in again.");
       }
 
+      const idempotencyKey = getOrCreatePendingIdempotencyKey(
+        pendingIdempotencyKeysRef.current[format],
+        `export-${format}`,
+      );
+      pendingIdempotencyKeysRef.current[format] = idempotencyKey;
       const exportJob = await createExport(token, {
         run_id: runId,
         format,
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: idempotencyKey,
       }, controller.signal);
 
       if (controller.signal.aborted) return;
@@ -175,6 +182,7 @@ export function ExportActions({
       } else {
         await pollAndDownload(token, exportJob.id, exportJob.file_name ?? "export", controller.signal);
       }
+      pendingIdempotencyKeysRef.current[format] = null;
     } catch (error) {
       if (controller.signal.aborted) return;
       const nextMessage =

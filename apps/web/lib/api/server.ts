@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { apiRequest } from "@/lib/api/shared";
+import { buildPaginatedListPath } from "@/lib/api/pagination";
 import type {
   AnalysisListResponse,
   BacktestRunDetailResponse,
@@ -44,11 +45,13 @@ export async function getCurrentUser(): Promise<CurrentUserResponse> {
   return user;
 }
 
-export async function getBacktestHistory(limit = 50, offset = 0): Promise<BacktestRunListResponse> {
+export async function getBacktestHistory(limit = 50, offset = 0, cursor?: string | null): Promise<BacktestRunListResponse> {
   const token = await getServerToken();
-  const safeLimit = Math.max(1, Math.min(limit, 100));
-  const safeOffset = Math.max(0, offset);
-  return apiRequest<BacktestRunListResponse>(`/v1/backtests?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
+  return apiRequest<BacktestRunListResponse>(
+    buildPaginatedListPath("/v1/backtests", limit, offset, 100, cursor),
+    token,
+    { cache: "no-store" },
+  );
 }
 
 export async function getBacktestRun(runId: string): Promise<BacktestRunDetailResponse> {
@@ -76,11 +79,13 @@ export async function compareBacktests(runIds: string[]): Promise<CompareBacktes
   });
 }
 
-export async function getScannerJobs(limit = 50, offset = 0): Promise<ScannerJobListResponse> {
-  const safeLimit = Math.max(1, Math.min(limit, 50));
-  const safeOffset = Math.max(0, offset);
+export async function getScannerJobs(limit = 50, offset = 0, cursor?: string | null): Promise<ScannerJobListResponse> {
   const token = await getServerToken();
-  return apiRequest<ScannerJobListResponse>(`/v1/scans?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
+  return apiRequest<ScannerJobListResponse>(
+    buildPaginatedListPath("/v1/scans", limit, offset, 50, cursor),
+    token,
+    { cache: "no-store" },
+  );
 }
 
 export async function getScannerJob(jobId: string): Promise<ScannerJobResponse> {
@@ -93,11 +98,13 @@ export async function getScannerRecommendations(jobId: string): Promise<ScannerR
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, { cache: "no-store" });
 }
 
-export async function getSweepJobs(limit = 50, offset = 0): Promise<SweepJobListResponse> {
-  const safeLimit = Math.max(1, Math.min(limit, 50));
-  const safeOffset = Math.max(0, offset);
+export async function getSweepJobs(limit = 50, offset = 0, cursor?: string | null): Promise<SweepJobListResponse> {
   const token = await getServerToken();
-  return apiRequest<SweepJobListResponse>(`/v1/sweeps?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
+  return apiRequest<SweepJobListResponse>(
+    buildPaginatedListPath("/v1/sweeps", limit, offset, 50, cursor),
+    token,
+    { cache: "no-store" },
+  );
 }
 
 export async function getSweepJob(jobId: string): Promise<SweepJobResponse> {
@@ -120,11 +127,13 @@ export async function getDailyPicks(): Promise<DailyPicksResponse> {
   return apiRequest<DailyPicksResponse>("/v1/daily-picks", token, { cache: "no-store" });
 }
 
-export async function getAnalysisHistory(limit = 10, offset = 0) {
+export async function getAnalysisHistory(limit = 10, offset = 0, cursor?: string | null) {
   const token = await getServerToken();
-  const safeLimit = Math.max(1, Math.min(limit, 50));
-  const safeOffset = Math.max(0, offset);
-  return apiRequest<AnalysisListResponse>(`/v1/analysis?limit=${safeLimit}&offset=${safeOffset}`, token, { cache: "no-store" });
+  return apiRequest<AnalysisListResponse>(
+    buildPaginatedListPath("/v1/analysis", limit, offset, 50, cursor),
+    token,
+    { cache: "no-store" },
+  );
 }
 
 export async function getDailyPicksHistory(limit = 10) {

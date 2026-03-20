@@ -203,6 +203,22 @@ export default async function BacktestDetailPage({
           </Card>
         ) : null}
 
+        {run.equity_curve_truncated ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Equity curve truncated</CardTitle>
+              <CardDescription>
+                The backend returned a partial equity curve for this run.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                This chart does not include every equity point. Use exports for a fuller data extract when available.
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
+
         <EquityCurveChart points={run.equity_curve} />
         <TradeListTable trades={run.trades} />
           </>
