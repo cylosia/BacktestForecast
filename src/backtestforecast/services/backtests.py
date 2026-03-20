@@ -500,17 +500,20 @@ class BacktestService:
         num_runs = len(ordered)
         trade_limit = min(_DEFAULT_COMPARE_TRADE_LIMIT, _MAX_TOTAL_COMPARE_TRADES // max(num_runs, 1))
         all_run_ids = [r.id for r in ordered]
-        trades_by_run = self.run_repository.get_trades_for_runs(all_run_ids, limit_per_run=trade_limit, user_id=user.id)
+        trade_batches_by_run = self.run_repository.get_trades_for_runs(
+            all_run_ids, limit_per_run=trade_limit, user_id=user.id,
+        )
         equity_by_run = self.run_repository.get_equity_points_for_runs(all_run_ids, limit_per_run=EQUITY_CURVE_LIMIT, user_id=user.id)
         truncated = any(
-            len(trades_by_run.get(run.id, [])) > trade_limit
+            trade_batches_by_run.get(run.id) is not None
+            and trade_batches_by_run[run.id].exceeded_limit
             for run in ordered
         )
         return CompareBacktestsResponse(
             items=[
                 self._to_detail_response(
                     run,
-                    trades=trades_by_run.get(run.id, []),
+                    trades=(trade_batches_by_run[run.id].trades if run.id in trade_batches_by_run else []),
                     equity_points=equity_by_run.get(run.id, []),
                 )
                 for run in ordered
