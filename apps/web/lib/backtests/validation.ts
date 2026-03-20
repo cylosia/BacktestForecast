@@ -6,6 +6,7 @@ import type {
   MovingAverageRuleType,
   StrategyType,
 } from "@backtestforecast/api-client";
+import type { ValidationFieldError } from "@/lib/api/shared";
 import { currentEasternDate, daysAgoET } from "@/lib/utils";
 import {
   ACCOUNT_SIZE_MAX,
@@ -72,6 +73,44 @@ export interface BacktestFormValues {
 }
 
 export type BacktestFormErrors = Partial<Record<keyof BacktestFormValues | "form", string>>;
+
+const BACKTEST_FIELD_NAME_MAP: Record<string, keyof BacktestFormValues> = {
+  symbol: "symbol",
+  strategy_type: "strategyType",
+  start_date: "startDate",
+  end_date: "endDate",
+  target_dte: "targetDte",
+  dte_tolerance_days: "dteToleranceDays",
+  max_holding_days: "maxHoldingDays",
+  account_size: "accountSize",
+  risk_per_trade_pct: "riskPerTradePct",
+  commission_per_contract: "commissionPerContract",
+  slippage_pct: "slippagePct",
+  profit_target_pct: "profitTargetPct",
+  stop_loss_pct: "stopLossPct",
+  risk_free_rate: "riskFreeRate",
+};
+
+export function mapBacktestFieldErrors(fieldErrors: ValidationFieldError[] | undefined): BacktestFormErrors {
+  if (!fieldErrors || fieldErrors.length === 0) {
+    return {};
+  }
+
+  const mapped: BacktestFormErrors = {};
+  for (const fieldError of fieldErrors) {
+    const loc = fieldError.loc ?? [];
+    const candidate = [...loc].reverse().find((part) => part !== "body");
+    if (!candidate) {
+      continue;
+    }
+    const field = BACKTEST_FIELD_NAME_MAP[candidate];
+    if (!field || mapped[field]) {
+      continue;
+    }
+    mapped[field] = fieldError.msg ?? "Invalid value.";
+  }
+  return mapped;
+}
 
 export function getDefaultBacktestFormValues(): BacktestFormValues {
   return {
