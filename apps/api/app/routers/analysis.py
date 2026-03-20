@@ -8,11 +8,11 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db
+from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.models import User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
@@ -90,8 +90,8 @@ def create_analysis(
 @router.get("/{analysis_id}", response_model=AnalysisDetailResponse)
 def get_analysis(
     analysis_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisDetailResponse:
     """Get full analysis results (for polling and display)."""
@@ -119,8 +119,8 @@ def get_analysis(
 @router.get("/{analysis_id}/status", response_model=AnalysisSummaryResponse)
 def get_analysis_status(
     analysis_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisSummaryResponse:
     """Lightweight status endpoint for polling."""
@@ -155,8 +155,8 @@ def delete_analysis(
 
 @router.get("", response_model=AnalysisListResponse)
 def list_analyses(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     limit: int = Query(default=10, ge=1, le=50),
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,

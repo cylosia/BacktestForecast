@@ -11,10 +11,10 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db
+from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.models import User
 from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobListResponse, ExportJobResponse
@@ -29,8 +29,8 @@ logger = structlog.get_logger("api.exports")
 
 @router.get("", response_model=ExportJobListResponse)
 def list_exports(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     cursor: Annotated[str | None, Query(max_length=200)] = None,
@@ -123,8 +123,8 @@ def create_export(
 @router.get("/{export_job_id}/status", response_model=ExportJobResponse)
 def get_export_status(
     export_job_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> ExportJobResponse:
     get_rate_limiter().check(

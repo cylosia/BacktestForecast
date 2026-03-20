@@ -7,11 +7,11 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db
+from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.models import User
 from backtestforecast.schemas.scans import (
     CreateScannerJobRequest,
@@ -37,8 +37,8 @@ router = APIRouter(prefix="/scans", tags=["scans"])
 
 @router.get("", response_model=ScannerJobListResponse)
 def list_scans(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,
@@ -93,8 +93,8 @@ def create_scan(
 @router.get("/{job_id}/status", response_model=ScannerJobStatusResponse)
 def get_scan_status(
     job_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> ScannerJobStatusResponse:
     get_rate_limiter().check(
@@ -117,8 +117,8 @@ def get_scan_status(
 @router.get("/{job_id}", response_model=ScannerJobResponse)
 def get_scan(
     job_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> ScannerJobResponse:
     get_rate_limiter().check(
@@ -152,8 +152,8 @@ def delete_scan(
 @router.get("/{job_id}/recommendations", response_model=ScannerRecommendationListResponse)
 def get_scan_recommendations(
     job_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     settings: Settings = Depends(get_settings),
