@@ -19,6 +19,7 @@ def test_rate_limiter_raises_service_unavailable_when_redis_fails_and_fail_close
     settings = MagicMock()
     settings.rate_limit_prefix = "test"
     settings.rate_limit_fail_closed = True
+    settings.rate_limit_degraded_memory_fallback = False
     settings.rate_limit_memory_max_keys = 10_000
     settings.redis_cache_url = "redis://localhost:6379/0"
 

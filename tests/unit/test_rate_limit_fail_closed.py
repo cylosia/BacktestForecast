@@ -16,6 +16,7 @@ def test_rate_limit_fail_closed_defaults_true():
             redis_url="redis://localhost:6379/0",
         )
     assert settings.rate_limit_fail_closed is True
+    assert settings.rate_limit_degraded_memory_fallback is False
 
 
 def test_production_rejects_fail_open():

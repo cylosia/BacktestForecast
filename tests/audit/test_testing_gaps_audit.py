@@ -126,13 +126,13 @@ def test_tg3_pipeline_lock_exceeds_soft_time_limit():
 # TG4: Redis failover — rate limiter fallback behavior
 # ============================================================================
 
-def test_tg4_rate_limiter_memory_fallback_halves_limit():
-    """When Redis is down with fail_closed, memory fallback should use half the limit."""
+def test_tg4_rate_limiter_degraded_memory_fallback_halves_limit():
+    """Degraded memory fallback should use half the limit when explicitly enabled."""
     source = inspect.getsource(
         __import__("backtestforecast.security.rate_limits", fromlist=["RateLimiter"]).RateLimiter.check
     )
-    assert "limit // 2" in source, (
-        "Rate limiter memory fallback must halve the limit to compensate "
+    assert "degraded_memory_fallback" in source and "limit = fallback_limit" in source, (
+        "Degraded memory fallback must halve the limit to compensate "
         "for per-process (not shared) counting."
     )
 

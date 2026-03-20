@@ -199,6 +199,10 @@ def ready(request: Request) -> JSONResponse:
             content["broker"] = "down"
         return JSONResponse(status_code=503, content=content)
 
+    degraded_memory_fallback = bool(
+        getattr(settings, "rate_limit_degraded_memory_fallback", False)
+    )
+
     if not redis_up and settings.rate_limit_fail_closed:
         content = {"status": "unavailable"}
         if _SHOW_VERSION_IN_HEALTH:
@@ -213,6 +217,8 @@ def ready(request: Request) -> JSONResponse:
 
     if redis_up:
         rl_mode = "redis"
+    elif degraded_memory_fallback:
+        rl_mode = "degraded_memory_fallback"
     else:
         rl_mode = "in_memory_fallback"
 
@@ -227,7 +233,7 @@ def ready(request: Request) -> JSONResponse:
     if show_details:
         payload["environment"] = settings.app_env
         payload["database"] = "up"
-        payload["redis"] = "up" if redis_up else "degraded"
+        payload["redis"] = "up" if redis_up else "down"
         payload["broker"] = "up" if broker_up else "down"
         payload["rate_limit_mode"] = rl_mode
         payload["massive_api"] = massive_status
