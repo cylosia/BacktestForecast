@@ -73,8 +73,8 @@ STRIPE_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset({
 
 class QuotaErrorDetail(BaseModel):
     """Extra fields attached to 403 quota_exceeded / feature_locked errors."""
-    current_tier: str | None = None
-    required_tier: str | None = None
+    current_tier: PlanTier | None = None
+    required_tier: PlanTier | None = None
 
 
 class ErrorDetail(BaseModel):

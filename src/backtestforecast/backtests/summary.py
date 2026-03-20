@@ -204,8 +204,17 @@ def _compute_sharpe_sortino(
         return None, None
 
     equities = [float(point.equity) for point in equity_curve]
-    if any(eq <= 0 for eq in equities):
-        return None, None
+    first_nonpositive = next((idx for idx, eq in enumerate(equities) if eq <= 0), None)
+    if first_nonpositive is not None:
+        if first_nonpositive < 2:
+            return None, None
+        equity_curve = equity_curve[:first_nonpositive]
+        equities = equities[:first_nonpositive]
+        if len(equity_curve) < _MIN_EQUITY_POINTS_FOR_RATIOS:
+            return None, None
+        calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
+        if calendar_days < _MIN_CALENDAR_DAYS_FOR_RATIOS:
+            return None, None
     daily_rf = risk_free_rate / 252.0
     excess: list[float] = []
     for i in range(1, len(equities)):

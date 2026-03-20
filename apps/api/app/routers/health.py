@@ -1,6 +1,7 @@
 import hmac
 import time
 from collections import deque
+from time import monotonic
 from threading import Lock
 
 from fastapi import APIRouter, Request
@@ -97,6 +98,13 @@ def _check_massive_health(settings) -> str:
 
 def _check_migration_drift() -> bool:
     """Return True if DB migration version matches the code's Alembic head."""
+    global _migration_check_cache
+
+    now = monotonic()
+    if _migration_check_cache is not None:
+        checked_at, cached_match = _migration_check_cache
+        if now - checked_at < _MIGRATION_CHECK_TTL_SECONDS:
+            return cached_match
     try:
         from alembic.config import Config
         from alembic.runtime.migration import MigrationContext
@@ -112,16 +120,22 @@ def _check_migration_drift() -> bool:
             current = context.get_current_revision()
         match = current == head
         MIGRATION_HEAD_MATCH.set(1 if match else 0)
+        _migration_check_cache = (now, match)
         return match
     except (ImportError, FileNotFoundError):
         import structlog
         structlog.get_logger("health").debug("health.migration_check_unavailable", exc_info=True)
+        _migration_check_cache = (now, False)
         return False
     except Exception:
         import structlog
         structlog.get_logger("health").warning("health.migration_check_failed", exc_info=True)
+        _migration_check_cache = (now, False)
         return False
 
+
+_MIGRATION_CHECK_TTL_SECONDS = 60.0
+_migration_check_cache: tuple[float, bool] | None = None
 
 _HEALTH_MAX_RPM = 120
 _health_window: deque[float] = deque(maxlen=_HEALTH_MAX_RPM + 50)

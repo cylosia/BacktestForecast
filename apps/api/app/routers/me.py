@@ -23,7 +23,7 @@ def get_me(
     get_rate_limiter().check(
         bucket="me:read",
         actor_key=str(user.id),
-        limit=settings.backtest_read_rate_limit,
+        limit=settings.me_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:

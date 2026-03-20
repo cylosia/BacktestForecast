@@ -148,7 +148,7 @@ def delete_export(
     get_rate_limiter().check(
         bucket="exports:delete",
         actor_key=str(user.id),
-        limit=60,
+        limit=settings.delete_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ExportService(db) as service:

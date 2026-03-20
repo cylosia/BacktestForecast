@@ -99,7 +99,8 @@ class AuditEventRepository:
 
         When *user_id* is provided the results are scoped to that user.
         """
-        limit = min(limit, _MAX_PAGE_SIZE)
+        limit = max(min(limit, _MAX_PAGE_SIZE), 1)
+        offset = max(offset, 0)
         stmt = select(AuditEvent)
         if user_id is not None:
             stmt = stmt.where(AuditEvent.user_id == user_id)
