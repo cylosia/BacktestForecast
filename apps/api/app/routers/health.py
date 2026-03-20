@@ -1,6 +1,4 @@
 import hmac
-import time
-from collections import deque
 from time import monotonic
 from threading import Lock
 
@@ -137,28 +135,12 @@ def _check_migration_drift() -> bool:
 _MIGRATION_CHECK_TTL_SECONDS = 60.0
 _migration_check_cache: tuple[float, bool] | None = None
 
-_HEALTH_MAX_RPM = 120
-_health_window: deque[float] = deque(maxlen=_HEALTH_MAX_RPM + 50)
-_health_lock = Lock()
-
 HEALTH_VERSION = "0.1.0"
 _SHOW_VERSION_IN_HEALTH = get_settings().app_env not in ("production", "staging")
 
 
-_LIVE_MAX_RPM = 300
-_live_window: deque[float] = deque(maxlen=_LIVE_MAX_RPM + 50)
-_live_lock = Lock()
-
-
 @router.get("/health/live", response_model=None)
 def live() -> dict[str, str] | JSONResponse:
-    now = time.monotonic()
-    with _live_lock:
-        while _live_window and _live_window[0] < now - 60:
-            _live_window.popleft()
-        if len(_live_window) >= _LIVE_MAX_RPM:
-            return JSONResponse(status_code=429, content={"status": "rate_limited"})
-        _live_window.append(now)
     resp: dict[str, str] = {"status": "ok", "service": "api"}
     if _SHOW_VERSION_IN_HEALTH:
         resp["version"] = HEALTH_VERSION
@@ -167,13 +149,6 @@ def live() -> dict[str, str] | JSONResponse:
 
 @router.get("/health/ready")
 def ready(request: Request) -> JSONResponse:
-    now = time.monotonic()
-    with _health_lock:
-        while _health_window and _health_window[0] < now - 60:
-            _health_window.popleft()
-        if len(_health_window) >= _HEALTH_MAX_RPM:
-            return JSONResponse(status_code=429, content={"status": "rate_limited"})
-        _health_window.append(now)
     settings = get_settings()
 
     show_details = False
@@ -237,6 +212,40 @@ def ready(request: Request) -> JSONResponse:
         rl_mode = "in_memory_fallback"
 
     massive_status = _check_massive_health(settings)
+    migration_aligned = True
+    if settings.app_env not in ("development",):
+        migration_aligned = _check_migration_drift()
+        if not migration_aligned:
+            payload: dict[str, object] = {"status": "degraded"}
+            if _SHOW_VERSION_IN_HEALTH:
+                payload["version"] = HEALTH_VERSION
+            if show_details:
+                payload["environment"] = settings.app_env
+                payload["database"] = "up"
+                payload["redis"] = "up" if redis_up else "down"
+                payload["broker"] = "up" if broker_up else "down"
+                payload["rate_limit_mode"] = rl_mode
+                payload["massive_api"] = massive_status
+                payload["migration_aligned"] = False
+                payload["outbox"] = _check_outbox_health()
+            return JSONResponse(status_code=503, content=payload)
+
+    outbox = _check_outbox_health()
+    outbox_status = str(outbox.get("status", "unknown"))
+    if outbox_status == "stale":
+        payload = {"status": "degraded"}
+        if _SHOW_VERSION_IN_HEALTH:
+            payload["version"] = HEALTH_VERSION
+        if show_details:
+            payload["environment"] = settings.app_env
+            payload["database"] = "up"
+            payload["redis"] = "up" if redis_up else "down"
+            payload["broker"] = "up" if broker_up else "down"
+            payload["rate_limit_mode"] = rl_mode
+            payload["massive_api"] = massive_status
+            payload["migration_aligned"] = migration_aligned
+            payload["outbox"] = outbox
+        return JSONResponse(status_code=503, content=payload)
 
     all_ok = redis_up and broker_up and massive_status in ("ok", "unconfigured")
     payload: dict[str, object] = {
@@ -276,8 +285,8 @@ def ready(request: Request) -> JSONResponse:
             except Exception:
                 payload["sentry"] = "unavailable"
         if settings.app_env not in ("development",):
-            payload["migration_aligned"] = _check_migration_drift()
-        payload["outbox"] = _check_outbox_health()
+            payload["migration_aligned"] = migration_aligned
+        payload["outbox"] = outbox
     return JSONResponse(status_code=200, content=payload)
 
 
