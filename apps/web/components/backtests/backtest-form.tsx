@@ -6,10 +6,12 @@ import { useAuth } from "@clerk/nextjs";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { createBacktestRun } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
+import { getOrCreatePendingIdempotencyKey } from "@/lib/idempotency";
 import type { BacktestQuota } from "@/lib/backtests/quota";
 import type { StrategyCatalogGroup, TemplateResponse } from "@backtestforecast/api-client";
 import {
   getDefaultBacktestFormValues,
+  mapBacktestFieldErrors,
   type BacktestFormErrors,
   type BacktestFormValues,
   validateBacktestForm,
@@ -47,6 +49,7 @@ export function BacktestForm({
   const [submittedCount, setSubmittedCount] = useState(0);
   const submitAbortRef = useRef<AbortController | null>(null);
   const submittingRef = useRef(false);
+  const pendingIdempotencyKeyRef = useRef<string | null>(null);
   const valuesRef = useRef(values);
   valuesRef.current = values;
 
@@ -112,11 +115,16 @@ export function BacktestForm({
 
       submitAbortRef.current?.abort();
       submitAbortRef.current = new AbortController();
-      const payloadWithKey = { ...validation.payload, idempotency_key: crypto.randomUUID() };
+      const payloadWithKey = {
+        ...validation.payload,
+        idempotency_key: getOrCreatePendingIdempotencyKey(pendingIdempotencyKeyRef.current, "backtest"),
+      };
+      pendingIdempotencyKeyRef.current = payloadWithKey.idempotency_key;
       const run = await createBacktestRun(token, payloadWithKey, submitAbortRef.current.signal);
       setStatus("success");
       setServerMessage("Backtest queued. Opening run details...");
       setSubmittedCount((prev) => prev + 1);
+      pendingIdempotencyKeyRef.current = null;
       router.push(`/app/backtests/${run.id}`);
       router.refresh();
     } catch (error) {
@@ -128,11 +136,15 @@ export function BacktestForm({
             : "The backtest could not be created.";
       const code = error instanceof ApiError ? error.code : undefined;
       const reqTier = error instanceof ApiError ? error.requiredTier : undefined;
+      const fieldErrors = error instanceof ApiError ? mapBacktestFieldErrors(error.fieldErrors) : {};
 
       setStatus("error");
       setServerMessage(message);
       setErrorCode(code);
       setRequiredTier(reqTier);
+      if (Object.keys(fieldErrors).length > 0) {
+        setErrors((current) => ({ ...current, ...fieldErrors }));
+      }
     } finally {
       submittingRef.current = false;
     }
@@ -195,6 +207,15 @@ export function BacktestForm({
           }`}
         >
           {serverMessage}
+        </div>
+      ) : null}
+
+      {errors.form && !serverMessage ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
+        >
+          {errors.form}
         </div>
       ) : null}
 

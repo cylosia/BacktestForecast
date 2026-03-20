@@ -194,6 +194,16 @@ export default async function ComparePage({
                 Only the first 10 run IDs were used. Extra IDs were ignored.
               </p>
             ) : null}
+            {data.trades_truncated ? (
+              <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
+                Trade lists were truncated by the API for at least one run in this comparison. Metrics still reflect the full stored runs.
+              </p>
+            ) : null}
+            {runs.some((run) => run.equity_curve_truncated) ? (
+              <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
+                One or more equity curves were truncated by the API, so the overlaid chart is only a partial visual sample.
+              </p>
+            ) : null}
           </div>
         </div>
 
