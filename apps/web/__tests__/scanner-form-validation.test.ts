@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { MAX_SCANNER_WINDOW_DAYS, getScannerWindowTooLongError } from "@/lib/scanner/constants";
 import {
   parseSymbols,
   validateScannerForm,
@@ -68,17 +69,17 @@ describe("validateScannerForm", () => {
       validInput({ symbolsText: "SPY, QQQ, AAPL, MSFT, GOOG, AMZN" }),
     );
     expect(errors).toContain(
-      "Basic mode allows at most 5 symbols.",
+      "Basic mode allows at most 5 symbols for your plan.",
     );
   });
 
-  it("enforces advanced mode symbol limit of 25", () => {
-    const symbols = Array.from({ length: 26 }, (_, i) => `SYM${i}`).join(",");
+  it("enforces advanced mode symbol limit for the current plan", () => {
+    const symbols = Array.from({ length: 11 }, (_, i) => `SYM${i}`).join(",");
     const errors = validateScannerForm(
       validInput({ mode: "advanced", symbolsText: symbols }),
     );
     expect(errors).toContain(
-      "Advanced mode allows at most 25 symbols.",
+      "Advanced mode allows at most 10 symbols for your plan.",
     );
   });
 
@@ -87,6 +88,13 @@ describe("validateScannerForm", () => {
       validInput({ startDate: "2025-01-01", endDate: "2024-01-01" }),
     );
     expect(errors).toContain("Start date must be before end date.");
+  });
+
+  it("rejects a scanner window longer than the backend maximum before submit", () => {
+    const errors = validateScannerForm(
+      validInput({ startDate: "2023-01-01", endDate: "2025-01-01" }),
+    );
+    expect(errors).toContain(getScannerWindowTooLongError(MAX_SCANNER_WINDOW_DAYS));
   });
 
   it("rejects same start and end date", () => {
@@ -113,13 +121,13 @@ describe("validateScannerForm", () => {
     expect(errors.some((e) => e.includes("Account size"))).toBe(true);
   });
 
-  it("validates target DTE range (7-365)", () => {
-    const errors = validateScannerForm(validInput({ targetDte: "3" }));
+  it("validates target DTE range (1-365)", () => {
+    const errors = validateScannerForm(validInput({ targetDte: "0" }));
     expect(errors.some((e) => e.includes("Target DTE"))).toBe(true);
   });
 
-  it("validates risk percent minimum of 0.1", () => {
-    const errors = validateScannerForm(validInput({ riskPct: "0.05" }));
+  it("validates risk percent must be greater than 0", () => {
+    const errors = validateScannerForm(validInput({ riskPct: "0" }));
     expect(errors.some((e) => e.includes("Risk %"))).toBe(true);
   });
 

@@ -1,5 +1,11 @@
 import type { PlanTier, ScannerMode } from "@backtestforecast/api-client";
 import { ACCOUNT_SIZE_MIN, TICKER_RE } from "@/lib/validation-constants";
+import {
+  MAX_SCANNER_WINDOW_DAYS,
+  MIN_SCANNER_WINDOW_DAYS,
+  getScannerWindowTooLongError,
+  getScannerWindowTooShortError,
+} from "@/lib/scanner/constants";
 
 export interface ScannerFormInput {
   mode: ScannerMode;
@@ -102,14 +108,17 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
     }
   }
   if (input.startDate && input.endDate && errors.length === 0) {
-    const start = new Date(input.startDate);
-    const end = new Date(input.endDate);
-    const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
-    if (diffDays < 30) {
-      errors.push("Date range must be at least 30 days for scans.");
+    const [sy, sm, sd] = input.startDate.split("-").map(Number);
+    const [ey, em, ed] = input.endDate.split("-").map(Number);
+    const startUtc = Date.UTC(sy, sm - 1, sd);
+    const endUtc = Date.UTC(ey, em - 1, ed);
+    const diffDays = (endUtc - startUtc) / (1000 * 60 * 60 * 24);
+
+    if (diffDays < MIN_SCANNER_WINDOW_DAYS) {
+      errors.push(getScannerWindowTooShortError());
     }
-    if (diffDays > 365 * 20) {
-      errors.push("Date range cannot exceed 20 years.");
+    if (diffDays > MAX_SCANNER_WINDOW_DAYS) {
+      errors.push(getScannerWindowTooLongError());
     }
   }
 

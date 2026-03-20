@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api/shared";
 import type { CreateScannerJobRequest, ScannerMode, StrategyType } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { getScannerLimits, parseSymbols, validateScannerForm, type PlanTier } from "@/lib/scanner/validation";
+import { getScannerWindowHelpText } from "@/lib/scanner/constants";
 import { daysAgoET } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -443,6 +444,7 @@ export function ScannerForm({
           <CardTitle>Timeframe and risk</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">{getScannerWindowHelpText()}</p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="scanStart">Start date</Label>
