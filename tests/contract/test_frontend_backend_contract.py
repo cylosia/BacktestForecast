@@ -179,3 +179,25 @@ def test_backtest_window_max_days():
         "max_backtest_window_days exceeds 1825 (5 years). "
         "If this is intentional, update frontend validation.ts to match."
     )
+
+
+def test_calendar_contract_type_schema_alignment():
+    """Calendar contract type must exist in backend schemas and TS client types."""
+    from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+    from backtestforecast.schemas.templates import TemplateConfig
+
+    ts = _read_ts_schema()
+    assert "calendar_contract_type" in ts
+    assert "calendar_contract_type" in CreateBacktestRunRequest.model_fields
+    assert "calendar_contract_type" in TemplateConfig.model_fields
+
+
+def test_strategy_catalog_contract_metadata_alignment():
+    """Strategy catalog contract-type metadata must exist in backend and TS types."""
+    from backtestforecast.schemas.catalog import StrategyCatalogItemResponse
+
+    ts = _read_ts_schema()
+    assert "supported_contract_types" in ts
+    assert "default_contract_type" in ts
+    assert "supported_contract_types" in StrategyCatalogItemResponse.model_fields
+    assert "default_contract_type" in StrategyCatalogItemResponse.model_fields

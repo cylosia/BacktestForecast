@@ -1,7 +1,4 @@
-import type {
-  RunStatus,
-  StrategyType,
-} from "@backtestforecast/api-client";
+import type { RunStatus, StrategyType } from "@backtestforecast/api-client";
 
 export type NumericValue = number | string;
 
@@ -100,7 +97,7 @@ export function strategyLabel(strategy: string | StrategyType): string {
     case "long_strangle":
       return "Long Strangle";
     case "calendar_spread":
-      return "Calendar Spread";
+      return "Calendar Spread (Call/Put)";
     case "butterfly":
       return "Butterfly Spread";
     case "wheel_strategy":
@@ -173,13 +170,27 @@ export function statusLabel(status: RunStatus | string): string {
   }
 }
 
-const KNOWN_STATUSES = new Set<string>(["queued", "running", "succeeded", "failed", "cancelled", "expired"]);
-const TERMINAL_STATUSES = new Set<string>(["succeeded", "failed", "cancelled", "expired"]);
+const KNOWN_STATUSES = new Set<string>([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "expired",
+]);
+const TERMINAL_STATUSES = new Set<string>([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "expired",
+]);
 
 export function isTerminalStatus(status: RunStatus | string): boolean {
   if (!KNOWN_STATUSES.has(status)) {
     if (process.env.NODE_ENV === "development") {
-      console.warn(`[isTerminalStatus] Unknown status: "${status}". Treating as non-terminal.`);
+      console.warn(
+        `[isTerminalStatus] Unknown status: "${status}". Treating as non-terminal.`,
+      );
     }
   }
   return TERMINAL_STATUSES.has(status);

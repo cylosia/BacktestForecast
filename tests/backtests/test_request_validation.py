@@ -62,3 +62,21 @@ def test_extended_indicator_payload_is_accepted() -> None:
     assert request.strategy_type.value == "iron_condor"
     assert len(request.entry_rules) == 3
     assert request.entry_rules[0].type == "iv_rank"
+
+
+def test_put_calendar_request_is_accepted() -> None:
+    request = CreateBacktestRunRequest(
+        **{**COMMON_PAYLOAD, "strategy_type": "calendar_spread", "calendar_contract_type": "put"},
+        entry_rules=[{"type": "rsi", "operator": "lt", "threshold": Decimal("30"), "period": 14}],
+    )
+
+    assert request.strategy_type.value == "calendar_spread"
+    assert request.calendar_contract_type.value == "put"
+
+
+def test_non_calendar_request_rejects_calendar_contract_override() -> None:
+    with pytest.raises(PydanticValidationError):
+        CreateBacktestRunRequest(
+            **{**COMMON_PAYLOAD, "strategy_type": "long_call", "calendar_contract_type": "put"},
+            entry_rules=[{"type": "rsi", "operator": "lt", "threshold": Decimal("30"), "period": 14}],
+        )

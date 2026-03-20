@@ -45,6 +45,8 @@ class StrategyCatalogEntry:
     max_loss_description: str
     notes: str = ""
     tags: tuple[str, ...] = field(default_factory=tuple)
+    supported_contract_types: tuple[str, ...] = field(default_factory=tuple)
+    default_contract_type: str | None = None
 
 
 STRATEGY_CATALOG: dict[str, StrategyCatalogEntry] = {}
@@ -228,7 +230,10 @@ _register(
         leg_count=2,
         min_tier=StrategyTier.PREMIUM,
         max_loss_description="Net debit paid",
-        tags=("time-decay", "defined-risk"),
+        notes="Choose call or put calendars explicitly in the backtest form and templates.",
+        tags=("time-decay", "defined-risk", "call-put-selectable"),
+        supported_contract_types=("call", "put"),
+        default_contract_type="call",
     ),
     StrategyCatalogEntry(
         strategy_type=StrategyType.BUTTERFLY.value,

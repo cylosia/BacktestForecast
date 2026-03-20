@@ -8,3 +8,9 @@ def test_template_config_has_strategy_type():
     fields = TemplateConfig.model_fields
     assert "strategy_type" in fields
     assert "target_dte" in fields
+
+
+def test_template_config_has_calendar_contract_type():
+    from backtestforecast.schemas.templates import TemplateConfig
+    fields = TemplateConfig.model_fields
+    assert "calendar_contract_type" in fields

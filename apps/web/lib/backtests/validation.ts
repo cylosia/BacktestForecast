@@ -28,6 +28,7 @@ export interface BacktestFormValues {
   accountSize: string;
   riskPerTradePct: string;
   commissionPerContract: string;
+  calendarContractType: "call" | "put";
   rsiEnabled: boolean;
   rsiOperator: ComparisonOperator;
   rsiThreshold: string;
@@ -70,7 +71,9 @@ export interface BacktestFormValues {
   supportResistancePeriod: string;
 }
 
-export type BacktestFormErrors = Partial<Record<keyof BacktestFormValues | "form", string>>;
+export type BacktestFormErrors = Partial<
+  Record<keyof BacktestFormValues | "form", string>
+>;
 
 export function getDefaultBacktestFormValues(): BacktestFormValues {
   return {
@@ -84,6 +87,7 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     accountSize: "10000",
     riskPerTradePct: "2",
     commissionPerContract: "0.65",
+    calendarContractType: "call",
     rsiEnabled: true,
     rsiOperator: "lt",
     rsiThreshold: "35",
@@ -152,24 +156,35 @@ export function validateBacktestForm(values: BacktestFormValues): {
   } else if (normalizedSymbol.length > 16) {
     errors.symbol = "Symbol must be 16 characters or fewer.";
   } else if (!TICKER_RE.test(normalizedSymbol)) {
-    errors.symbol = "Symbol must start with a letter and may contain letters, digits, dots, slashes, ^ or -.";
+    errors.symbol =
+      "Symbol must start with a letter and may contain letters, digits, dots, slashes, ^ or -.";
   }
 
   const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
   if (!values.startDate || !values.startDate.trim()) {
     errors.startDate = "Start date is required.";
-  } else if (!datePattern.test(values.startDate) || Number.isNaN(Date.parse(values.startDate))) {
+  } else if (
+    !datePattern.test(values.startDate) ||
+    Number.isNaN(Date.parse(values.startDate))
+  ) {
     errors.startDate = "Start date must be a valid date (YYYY-MM-DD).";
   }
 
   if (!values.endDate || !values.endDate.trim()) {
     errors.endDate = "End date is required.";
-  } else if (!datePattern.test(values.endDate) || Number.isNaN(Date.parse(values.endDate))) {
+  } else if (
+    !datePattern.test(values.endDate) ||
+    Number.isNaN(Date.parse(values.endDate))
+  ) {
     errors.endDate = "End date must be a valid date (YYYY-MM-DD).";
   }
 
-  if (!errors.startDate && !errors.endDate && new Date(values.startDate) >= new Date(values.endDate)) {
+  if (
+    !errors.startDate &&
+    !errors.endDate &&
+    new Date(values.startDate) >= new Date(values.endDate)
+  ) {
     errors.endDate = "End date must be later than start date.";
   }
 
@@ -181,7 +196,11 @@ export function validateBacktestForm(values: BacktestFormValues): {
     // accepts a date the backend would reject as "in the future (ET)".
     const etOffsetMs = 5 * 60 * 60 * 1000;
     const nowEt = new Date(Date.now() - etOffsetMs);
-    const todayEt = Date.UTC(nowEt.getUTCFullYear(), nowEt.getUTCMonth(), nowEt.getUTCDate());
+    const todayEt = Date.UTC(
+      nowEt.getUTCFullYear(),
+      nowEt.getUTCMonth(),
+      nowEt.getUTCDate(),
+    );
     if (endDateUtc > todayEt) {
       errors.endDate = "End date cannot be in the future (US Eastern time).";
     }
@@ -204,12 +223,46 @@ export function validateBacktestForm(values: BacktestFormValues): {
     integer?: boolean;
     label: string;
   }> = [
-    { key: "targetDte", min: TARGET_DTE_MIN, max: TARGET_DTE_MAX, integer: true, label: "Target DTE" },
-    { key: "dteToleranceDays", min: 0, max: DTE_TOLERANCE_MAX, integer: true, label: "DTE tolerance" },
-    { key: "maxHoldingDays", min: MAX_HOLDING_DAYS_MIN, max: MAX_HOLDING_DAYS_MAX, integer: true, label: "Max holding days" },
-    { key: "accountSize", min: ACCOUNT_SIZE_MIN, max: ACCOUNT_SIZE_MAX, label: "Account size" },
-    { key: "riskPerTradePct", min: 0, max: 100, exclusiveMin: true, label: "Risk per trade" },
-    { key: "commissionPerContract", min: 0, max: 100, label: "Commission per contract" },
+    {
+      key: "targetDte",
+      min: TARGET_DTE_MIN,
+      max: TARGET_DTE_MAX,
+      integer: true,
+      label: "Target DTE",
+    },
+    {
+      key: "dteToleranceDays",
+      min: 0,
+      max: DTE_TOLERANCE_MAX,
+      integer: true,
+      label: "DTE tolerance",
+    },
+    {
+      key: "maxHoldingDays",
+      min: MAX_HOLDING_DAYS_MIN,
+      max: MAX_HOLDING_DAYS_MAX,
+      integer: true,
+      label: "Max holding days",
+    },
+    {
+      key: "accountSize",
+      min: ACCOUNT_SIZE_MIN,
+      max: ACCOUNT_SIZE_MAX,
+      label: "Account size",
+    },
+    {
+      key: "riskPerTradePct",
+      min: 0,
+      max: 100,
+      exclusiveMin: true,
+      label: "Risk per trade",
+    },
+    {
+      key: "commissionPerContract",
+      min: 0,
+      max: 100,
+      label: "Commission per contract",
+    },
   ];
 
   for (const check of numericChecks) {
@@ -225,9 +278,12 @@ export function validateBacktestForm(values: BacktestFormValues): {
       continue;
     }
     if (typeof check.min === "number") {
-      const tooLow = check.exclusiveMin ? parsed <= check.min : parsed < check.min;
+      const tooLow = check.exclusiveMin
+        ? parsed <= check.min
+        : parsed < check.min;
       if (tooLow) {
-        errors[check.key] = `${check.label} must be ${check.exclusiveMin ? "greater than" : "at least"} ${check.min}.`;
+        errors[check.key] =
+          `${check.label} must be ${check.exclusiveMin ? "greater than" : "at least"} ${check.min}.`;
       }
     }
 
@@ -238,7 +294,12 @@ export function validateBacktestForm(values: BacktestFormValues): {
 
   const targetDte = parseNumber(values.targetDte);
   const dteTol = parseNumber(values.dteToleranceDays);
-  if (!errors.dteToleranceDays && !errors.targetDte && targetDte > 0 && dteTol >= targetDte) {
+  if (
+    !errors.dteToleranceDays &&
+    !errors.targetDte &&
+    targetDte > 0 &&
+    dteTol >= targetDte
+  ) {
     errors.dteToleranceDays = "DTE tolerance must be less than target DTE.";
   }
 
@@ -296,7 +357,11 @@ export function validateBacktestForm(values: BacktestFormValues): {
       errors.slowPeriod = "Slow period must be between 3 and 400.";
     }
 
-    if (Number.isFinite(fastPeriod) && Number.isFinite(slowPeriod) && fastPeriod >= slowPeriod) {
+    if (
+      Number.isFinite(fastPeriod) &&
+      Number.isFinite(slowPeriod) &&
+      fastPeriod >= slowPeriod
+    ) {
       errors.slowPeriod = "Slow period must be greater than fast period.";
     }
 
@@ -320,10 +385,18 @@ export function validateBacktestForm(values: BacktestFormValues): {
     if (!isFiniteNumber(values.macdSlowPeriod) || mSlow < 3 || mSlow > 200) {
       errors.macdSlowPeriod = "MACD slow period must be between 3 and 200.";
     }
-    if (!isFiniteNumber(values.macdSignalPeriod) || mSignal < 2 || mSignal > 100) {
+    if (
+      !isFiniteNumber(values.macdSignalPeriod) ||
+      mSignal < 2 ||
+      mSignal > 100
+    ) {
       errors.macdSignalPeriod = "MACD signal period must be between 2 and 100.";
     }
-    if (!errors.macdFastPeriod && !errors.macdSlowPeriod && !errors.macdSignalPeriod) {
+    if (
+      !errors.macdFastPeriod &&
+      !errors.macdSlowPeriod &&
+      !errors.macdSignalPeriod
+    ) {
       entryRules.push({
         type: "macd",
         fast_period: mFast,
@@ -337,10 +410,18 @@ export function validateBacktestForm(values: BacktestFormValues): {
   if (values.bollingerEnabled) {
     const bPeriod = parseNumber(values.bollingerPeriod);
     const bStdDev = parseNumber(values.bollingerStdDev);
-    if (!isFiniteNumber(values.bollingerPeriod) || bPeriod < 5 || bPeriod > 200) {
+    if (
+      !isFiniteNumber(values.bollingerPeriod) ||
+      bPeriod < 5 ||
+      bPeriod > 200
+    ) {
       errors.bollingerPeriod = "Bollinger period must be between 5 and 200.";
     }
-    if (!isFiniteNumber(values.bollingerStdDev) || bStdDev < 0.5 || bStdDev > 5) {
+    if (
+      !isFiniteNumber(values.bollingerStdDev) ||
+      bStdDev < 0.5 ||
+      bStdDev > 5
+    ) {
       errors.bollingerStdDev = "Std deviations must be between 0.5 and 5.";
     }
     if (!errors.bollingerPeriod && !errors.bollingerStdDev) {
@@ -356,7 +437,11 @@ export function validateBacktestForm(values: BacktestFormValues): {
 
   if (values.ivRankEnabled) {
     const ivThreshold = parseNumber(values.ivRankThreshold);
-    if (!isFiniteNumber(values.ivRankThreshold) || ivThreshold < 0 || ivThreshold > 100) {
+    if (
+      !isFiniteNumber(values.ivRankThreshold) ||
+      ivThreshold < 0 ||
+      ivThreshold > 100
+    ) {
       errors.ivRankThreshold = "IV Rank threshold must be between 0 and 100.";
     }
     if (!errors.ivRankThreshold) {
@@ -371,10 +456,18 @@ export function validateBacktestForm(values: BacktestFormValues): {
   if (values.avoidEarningsEnabled) {
     const daysBefore = parseNumber(values.avoidEarningsDaysBefore);
     const daysAfter = parseNumber(values.avoidEarningsDaysAfter);
-    if (!isFiniteNumber(values.avoidEarningsDaysBefore) || daysBefore < 0 || daysBefore > 30) {
+    if (
+      !isFiniteNumber(values.avoidEarningsDaysBefore) ||
+      daysBefore < 0 ||
+      daysBefore > 30
+    ) {
       errors.avoidEarningsDaysBefore = "Days before must be between 0 and 30.";
     }
-    if (!isFiniteNumber(values.avoidEarningsDaysAfter) || daysAfter < 0 || daysAfter > 30) {
+    if (
+      !isFiniteNumber(values.avoidEarningsDaysAfter) ||
+      daysAfter < 0 ||
+      daysAfter > 30
+    ) {
       errors.avoidEarningsDaysAfter = "Days after must be between 0 and 30.";
     }
     if (!errors.avoidEarningsDaysBefore && !errors.avoidEarningsDaysAfter) {
@@ -388,8 +481,13 @@ export function validateBacktestForm(values: BacktestFormValues): {
 
   if (values.ivPercentileEnabled) {
     const ivPctThreshold = parseNumber(values.ivPercentileThreshold);
-    if (!isFiniteNumber(values.ivPercentileThreshold) || ivPctThreshold < 0 || ivPctThreshold > 100) {
-      errors.ivPercentileThreshold = "IV Percentile threshold must be between 0 and 100.";
+    if (
+      !isFiniteNumber(values.ivPercentileThreshold) ||
+      ivPctThreshold < 0 ||
+      ivPctThreshold > 100
+    ) {
+      errors.ivPercentileThreshold =
+        "IV Percentile threshold must be between 0 and 100.";
     }
     if (!errors.ivPercentileThreshold) {
       entryRules.push({
@@ -403,11 +501,21 @@ export function validateBacktestForm(values: BacktestFormValues): {
   if (values.volumeSpikeEnabled) {
     const vsMultiplier = parseNumber(values.volumeSpikeMultiplier);
     const vsPeriod = parseNumber(values.volumeSpikePeriod);
-    if (!isFiniteNumber(values.volumeSpikeMultiplier) || vsMultiplier < 1 || vsMultiplier > 20) {
-      errors.volumeSpikeMultiplier = "Volume spike multiplier must be between 1 and 20.";
+    if (
+      !isFiniteNumber(values.volumeSpikeMultiplier) ||
+      vsMultiplier < 1 ||
+      vsMultiplier > 20
+    ) {
+      errors.volumeSpikeMultiplier =
+        "Volume spike multiplier must be between 1 and 20.";
     }
-    if (!isFiniteNumber(values.volumeSpikePeriod) || vsPeriod < 5 || vsPeriod > 100) {
-      errors.volumeSpikePeriod = "Volume spike period must be between 5 and 100.";
+    if (
+      !isFiniteNumber(values.volumeSpikePeriod) ||
+      vsPeriod < 5 ||
+      vsPeriod > 100
+    ) {
+      errors.volumeSpikePeriod =
+        "Volume spike period must be between 5 and 100.";
     }
     if (!errors.volumeSpikeMultiplier && !errors.volumeSpikePeriod) {
       entryRules.push({
@@ -420,8 +528,13 @@ export function validateBacktestForm(values: BacktestFormValues): {
 
   if (values.supportResistanceEnabled) {
     const srPeriod = parseNumber(values.supportResistancePeriod);
-    if (!isFiniteNumber(values.supportResistancePeriod) || srPeriod < 5 || srPeriod > 200) {
-      errors.supportResistancePeriod = "Support/resistance period must be between 5 and 200.";
+    if (
+      !isFiniteNumber(values.supportResistancePeriod) ||
+      srPeriod < 5 ||
+      srPeriod > 200
+    ) {
+      errors.supportResistancePeriod =
+        "Support/resistance period must be between 5 and 200.";
     }
     if (!errors.supportResistancePeriod) {
       entryRules.push({
@@ -456,7 +569,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
   }
 
   const rfr = parseNumber(values.riskFreeRate);
-  if (!isFiniteNumber(values.riskFreeRate) || rfr < 0 || rfr > 0.20) {
+  if (!isFiniteNumber(values.riskFreeRate) || rfr < 0 || rfr > 0.2) {
     errors.riskFreeRate = "Risk-free rate must be between 0 and 0.20 (20%).";
   }
 
@@ -475,6 +588,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     account_size: parseNumber(values.accountSize),
     risk_per_trade_pct: parseNumber(values.riskPerTradePct),
     commission_per_contract: parseNumber(values.commissionPerContract),
+    calendar_contract_type: values.calendarContractType,
     entry_rules: entryRules,
     slippage_pct: slippage,
     risk_free_rate: rfr,

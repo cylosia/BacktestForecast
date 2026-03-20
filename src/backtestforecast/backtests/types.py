@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any, Protocol, Sequence
 
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
-from backtestforecast.schemas.backtests import CustomLegDefinition, EntryRule, StrategyOverrides
+from backtestforecast.schemas.backtests import CalendarContractType, CustomLegDefinition, EntryRule, StrategyOverrides
 
 DEFAULT_CONTRACT_MULTIPLIER: float = 100.0
 
@@ -114,6 +114,7 @@ class BacktestConfig:
     account_size: Decimal
     risk_per_trade_pct: Decimal
     commission_per_contract: Decimal
+    calendar_contract_type: CalendarContractType = CalendarContractType.CALL
     entry_rules: Sequence[EntryRule]
     risk_free_rate: float = 0.045
     dividend_yield: float = 0.0

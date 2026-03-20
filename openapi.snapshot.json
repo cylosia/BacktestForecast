@@ -1648,6 +1648,16 @@
             "minimum": 1.0,
             "title": "Target Dte",
             "type": "integer"
+          },
+          "calendar_contract_type": {
+            "type": "string",
+            "enum": [
+              "call",
+              "put"
+            ],
+            "default": "call",
+            "title": "Calendar Contract Type",
+            "description": "Contract type for calendar_spread: call (default) or put."
           }
         },
         "required": [
@@ -4539,6 +4549,24 @@
             },
             "title": "Tags",
             "type": "array"
+          },
+          "supported_contract_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Contract Types"
+          },
+          "default_contract_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Contract Type"
           }
         },
         "required": [
@@ -5347,6 +5375,15 @@
             "minimum": 1.0,
             "title": "Target Dte",
             "type": "integer"
+          },
+          "calendar_contract_type": {
+            "type": "string",
+            "enum": [
+              "call",
+              "put"
+            ],
+            "default": "call",
+            "title": "Calendar Contract Type"
           }
         },
         "required": [
@@ -5464,6 +5501,15 @@
             "minimum": 1.0,
             "title": "Target Dte",
             "type": "integer"
+          },
+          "calendar_contract_type": {
+            "type": "string",
+            "enum": [
+              "call",
+              "put"
+            ],
+            "default": "call",
+            "title": "Calendar Contract Type"
           }
         },
         "required": [

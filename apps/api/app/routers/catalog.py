@@ -51,6 +51,8 @@ def get_strategy_catalog(
                         max_loss_description=e.max_loss_description,
                         notes=e.notes,
                         tags=list(e.tags),
+                        supported_contract_types=list(e.supported_contract_types),
+                        default_contract_type=e.default_contract_type,
                     )
                     for e in entries
                 ],

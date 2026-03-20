@@ -68,6 +68,7 @@ class BacktestExecutionService:
             account_size=request.account_size,
             risk_per_trade_pct=request.risk_per_trade_pct,
             commission_per_contract=request.commission_per_contract,
+            calendar_contract_type=request.calendar_contract_type,
             entry_rules=request.entry_rules,
             risk_free_rate=rfr,
             dividend_yield=div_yield,

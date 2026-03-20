@@ -385,6 +385,11 @@ class SpreadWidthConfig(BaseModel):
         return self
 
 
+class CalendarContractType(str, Enum):
+    CALL = "call"
+    PUT = "put"
+
+
 class StrategyOverrides(BaseModel):
     """Optional overrides for how a strategy selects strikes and widths.
 
@@ -417,6 +422,10 @@ class CreateBacktestRunRequest(BaseModel):
     account_size: Decimal = Field(ge=Decimal("100"), le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
+    calendar_contract_type: CalendarContractType = Field(
+        default=CalendarContractType.CALL,
+        description="Contract type for calendar_spread: call (default) or put.",
+    )
     entry_rules: list[EntryRule] = Field(min_length=1, max_length=8)
     idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
     custom_legs: list[CustomLegDefinition] | None = Field(default=None, max_length=8)
@@ -469,6 +478,9 @@ class CreateBacktestRunRequest(BaseModel):
                 f"backtest window exceeds the configured maximum of {get_settings().max_backtest_window_days} days"
             )
         validate_entry_rule_collection(self.entry_rules)
+
+        if self.strategy_type != StrategyType.CALENDAR_SPREAD and self.calendar_contract_type != CalendarContractType.CALL:
+            raise ValueError("calendar_contract_type is only supported for calendar_spread")
 
         if self.strategy_type in CUSTOM_STRATEGY_TYPES:
             expected = CUSTOM_LEG_COUNT[self.strategy_type]

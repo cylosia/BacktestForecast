@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
 import { ChevronDown } from "lucide-react";
-import type { StrategyCatalogGroup, StrategyType } from "@backtestforecast/api-client";
+import type {
+  StrategyCatalogGroup,
+  StrategyType,
+} from "@backtestforecast/api-client";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
@@ -26,7 +29,7 @@ const FALLBACK_LABELS: Record<string, string> = {
   iron_condor: "Iron Condor",
   long_straddle: "Long Straddle",
   long_strangle: "Long Strangle",
-  calendar_spread: "Calendar Spread",
+  calendar_spread: "Calendar Spread (Call/Put)",
   butterfly: "Butterfly Spread",
   short_straddle: "Short Straddle",
   short_strangle: "Short Strangle",
@@ -126,7 +129,7 @@ export function StrategySelector({
       warnedRef.current = true;
       console.warn(
         "[StrategySelector] Backend catalog unavailable; using label-only fallback. " +
-        "Strategy descriptions, bias, and tier metadata are not displayed.",
+          "Strategy descriptions, bias, and tier metadata are not displayed.",
       );
     }
   }, [usingFallback]);
@@ -146,9 +149,14 @@ export function StrategySelector({
           {groups.map((group) => (
             <optgroup key={group.category} label={group.category_label}>
               {group.strategies.map((strategy) => (
-                <option key={strategy.strategy_type} value={strategy.strategy_type}>
+                <option
+                  key={strategy.strategy_type}
+                  value={strategy.strategy_type}
+                >
                   {strategy.label}
-                  {(strategy.min_tier ?? "free") !== "free" ? ` (${strategy.min_tier})` : ""}
+                  {(strategy.min_tier ?? "free") !== "free"
+                    ? ` (${strategy.min_tier})`
+                    : ""}
                 </option>
               ))}
             </optgroup>
@@ -186,7 +194,11 @@ export function StrategySelector({
           );
         })()}
 
-      {error ? <p id="strategyType-error" className="text-sm text-destructive">{error}</p> : null}
+      {error ? (
+        <p id="strategyType-error" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

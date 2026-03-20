@@ -571,6 +571,62 @@ class TestCalendarSpreadCapitalFloor:
         )
 
 
+    def test_put_calendar_uses_put_margin_and_contract_metadata(self):
+        from backtestforecast.backtests.margin import naked_put_margin
+        from backtestforecast.backtests.strategies.calendar import CalendarSpreadStrategy
+        from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+        from backtestforecast.backtests.types import BacktestConfig
+        from backtestforecast.schemas.backtests import CalendarContractType
+        from datetime import date
+
+        bar = DailyBar(
+            trade_date=date(2025, 6, 1),
+            open_price=100.0,
+            high_price=100.0,
+            low_price=100.0,
+            close_price=100.0,
+            volume=1_000_000,
+        )
+        near_exp = date(2025, 6, 15)
+        far_exp = date(2025, 7, 1)
+
+        class StubGW:
+            def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+                assert contract_type == "put"
+                return [
+                    OptionContractRecord("NEAR100P", "put", near_exp, 100.0, 100),
+                    OptionContractRecord("FAR100P", "put", far_exp, 100.0, 100),
+                ]
+
+            def get_quote(self, ticker, trade_date):
+                mid = 4.0 if ticker == "FAR100P" else 2.0
+                return OptionQuoteRecord(trade_date=trade_date, bid_price=mid, ask_price=mid, participant_timestamp=None)
+
+        config = BacktestConfig(
+            symbol="TEST",
+            strategy_type="calendar_spread",
+            start_date=date(2025, 5, 1),
+            end_date=date(2025, 6, 30),
+            target_dte=14,
+            dte_tolerance_days=5,
+            max_holding_days=30,
+            account_size=10_000,
+            risk_per_trade_pct=5,
+            commission_per_contract=0,
+            entry_rules=[],
+            calendar_contract_type=CalendarContractType.PUT,
+        )
+
+        position = CalendarSpreadStrategy().build_position(config, bar, 0, StubGW())
+        assert position is not None
+        assert all(leg.contract_type == "put" for leg in position.option_legs)
+        assert [leg["contract_type"] for leg in position.detail_json["legs"]] == ["put", "put"]
+        assert position.detail_json["assumptions"][0] == "Calendar spread is modeled as a put calendar."
+        assert position.capital_required_per_unit == pytest.approx(200.0)
+        assert position.max_loss_per_unit == pytest.approx(200.0)
+        assert naked_put_margin(100.0, 100.0, 2.0) > 0
+
+
 # ---------------------------------------------------------------------------
 # Item 100: Jade lizard margin formula is correct
 # ---------------------------------------------------------------------------

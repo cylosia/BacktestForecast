@@ -18,6 +18,7 @@ const VALID_TEMPLATE: TemplateResponse = {
     account_size: 50000,
     risk_per_trade_pct: 2,
     commission_per_contract: 0.65,
+    calendar_contract_type: "call",
     entry_rules: [],
   },
   created_at: "2025-01-01T00:00:00Z",
@@ -67,7 +68,9 @@ describe("templateToFormValues", () => {
       ...VALID_TEMPLATE,
       config_json: {
         ...VALID_TEMPLATE.config_json,
-        entry_rules: [{ type: "rsi", operator: "lt", threshold: 30, period: 14 }],
+        entry_rules: [
+          { type: "rsi", operator: "lt", threshold: 30, period: 14 },
+        ],
       },
     };
     const patch = templateToFormValues(template);
@@ -93,6 +96,21 @@ describe("templateToFormValues", () => {
     expect(first!.strategyType).toBe("cash_secured_put");
     expect(second!.strategyType).toBe("iron_condor");
     expect(first!.targetDte).not.toBe(second!.targetDte);
+  });
+
+  it("maps calendar contract type from template config", () => {
+    const template: TemplateResponse = {
+      ...VALID_TEMPLATE,
+      strategy_type: "calendar_spread",
+      config_json: {
+        ...VALID_TEMPLATE.config_json,
+        strategy_type: "calendar_spread",
+        calendar_contract_type: "put",
+      },
+    };
+    const patch = templateToFormValues(template);
+    expect(patch!.strategyType).toBe("calendar_spread");
+    expect(patch!.calendarContractType).toBe("put");
   });
 
   it("returns null for a template with invalid config_json", () => {

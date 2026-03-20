@@ -16,6 +16,8 @@ class StrategyCatalogItemResponse(BaseModel):
     max_loss_description: str
     notes: str = ""
     tags: list[str] = Field(default_factory=list)
+    supported_contract_types: list[str] = Field(default_factory=list)
+    default_contract_type: str | None = None
 
 
 class StrategyCatalogGroupResponse(BaseModel):

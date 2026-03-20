@@ -6,8 +6,15 @@ import { useAuth } from "@clerk/nextjs";
 import { Bookmark, Loader2 } from "lucide-react";
 import { createTemplate } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
-import { validateBacktestForm, type BacktestFormValues } from "@/lib/backtests/validation";
-import type { CreateTemplateRequest, EntryRule, StrategyType } from "@backtestforecast/api-client";
+import {
+  validateBacktestForm,
+  type BacktestFormValues,
+} from "@/lib/backtests/validation";
+import type {
+  CreateTemplateRequest,
+  EntryRule,
+  StrategyType,
+} from "@backtestforecast/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,6 +52,7 @@ function formValuesToTemplateConfig(
     account_size: Number(values.accountSize),
     risk_per_trade_pct: Number(values.riskPerTradePct),
     commission_per_contract: Number(values.commissionPerContract),
+    calendar_contract_type: values.calendarContractType,
     entry_rules: entryRules,
     default_symbol: values.symbol || null,
   };
@@ -83,7 +91,9 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
     }
 
     const { errors } = validateBacktestForm(values);
-    const allErrors = Object.entries(errors).filter(([k, v]) => k !== "form" && v != null);
+    const allErrors = Object.entries(errors).filter(
+      ([k, v]) => k !== "form" && v != null,
+    );
     if (allErrors.length > 0) {
       setIsError(true);
       setMessage(allErrors[0][1]!);
@@ -137,7 +147,15 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
 
   if (!open) {
     return (
-      <Button type="button" variant="outline" size="sm" onClick={() => { setOpen(true); setMessage(null); }}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          setOpen(true);
+          setMessage(null);
+        }}
+      >
         <Bookmark className="h-4 w-4" />
         Save as template
       </Button>
@@ -156,7 +174,12 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
           placeholder="e.g. Conservative SPY Long Call"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !saving) { e.preventDefault(); handleSave(); } }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !saving) {
+              e.preventDefault();
+              handleSave();
+            }
+          }}
         />
       </div>
 
@@ -168,12 +191,18 @@ export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
           placeholder="Brief note about this configuration"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.preventDefault();
+          }}
         />
       </div>
 
       {message ? (
-        <p className={`text-sm ${isError ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>{message}</p>
+        <p
+          className={`text-sm ${isError ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}
+        >
+          {message}
+        </p>
       ) : null}
 
       <div className="flex items-center gap-2">

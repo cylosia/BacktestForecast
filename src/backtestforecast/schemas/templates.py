@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
+from backtestforecast.schemas.backtests import CalendarContractType, EntryRule, StrategyType, validate_entry_rule_collection
 
 TEMPLATE_SCHEMA_VERSION = 1
 
@@ -33,6 +33,7 @@ class TemplateConfig(BaseModel):
     account_size: Decimal = Field(ge=Decimal("100"), le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
+    calendar_contract_type: CalendarContractType = Field(default=CalendarContractType.CALL)
     # No min_length: empty entry_rules are intentional for template drafts
     # and sweep-style templates that enter on every eligible date.
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
@@ -49,6 +50,8 @@ class TemplateConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_template_rules(self) -> "TemplateConfig":
+        if self.strategy_type != StrategyType.CALENDAR_SPREAD and self.calendar_contract_type != CalendarContractType.CALL:
+            raise ValueError("calendar_contract_type is only supported for calendar_spread templates")
         if self.dte_tolerance_days >= self.target_dte:
             raise ValueError("dte_tolerance_days must be less than target_dte")
         if self.entry_rules:
