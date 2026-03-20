@@ -118,8 +118,38 @@ def test_to_detail_response_receives_preloaded_data(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Item 68: compare_runs uses get_trades_for_run with limit parameter
+# Legacy risk_free_rate serialization
 # ---------------------------------------------------------------------------
+
+def test_to_detail_response_uses_snapshot_risk_free_rate_for_legacy_runs(db_session):
+    """Legacy runs with NULL column values should serialize the snapshotted request risk_free_rate."""
+    user = _create_user(db_session)
+    run = _create_run(db_session, user, "succeeded")
+    run.risk_free_rate = None
+    run.input_snapshot_json = {"risk_free_rate": 0.0125}
+    db_session.commit()
+    db_session.refresh(run)
+
+    service = BacktestService(db_session)
+
+    response = service._to_detail_response(run, trades=[], equity_points=[])
+
+    assert response.risk_free_rate == Decimal("0.0125")
+
+
+def test_get_run_for_owner_uses_snapshot_risk_free_rate_for_legacy_runs(db_session):
+    """Repository-backed detail fetches should preserve snapshotted risk_free_rate for legacy rows."""
+    user = _create_user(db_session)
+    run = _create_run(db_session, user, "succeeded")
+    run.risk_free_rate = None
+    run.input_snapshot_json = {"risk_free_rate": 0.0175}
+    db_session.commit()
+
+    service = BacktestService(db_session)
+
+    response = service.get_run_for_owner(user_id=user.id, run_id=run.id)
+
+    assert response.risk_free_rate == Decimal("0.0175")
 
 
 def test_compare_runs_calls_get_trades_with_limit(db_session):

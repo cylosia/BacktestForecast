@@ -800,5 +800,5 @@ class BacktestService:
             trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
             equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
             equity_curve_truncated=len(equity_points) >= EQUITY_CURVE_LIMIT,
-            risk_free_rate=float(run.risk_free_rate) if run.risk_free_rate is not None else get_settings().risk_free_rate,
+            risk_free_rate=self._resolve_risk_free_rate(run),
         )
