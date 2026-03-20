@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -7,6 +8,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.models import User
+
+
+@dataclass(frozen=True, slots=True)
+class GetOrCreateUserResult:
+    user: User
+    was_persisted: bool
 
 
 class UserRepository:
@@ -28,22 +35,24 @@ class UserRepository:
         stmt = select(User).where(User.stripe_subscription_id == stripe_subscription_id)
         return self.session.scalar(stmt)
 
-    def get_or_create(self, clerk_user_id: str, email: str | None) -> User:
+    def get_or_create(self, clerk_user_id: str, email: str | None) -> GetOrCreateUserResult:
         existing = self.get_by_clerk_user_id(clerk_user_id)
         if existing is not None:
             if email and existing.email != email:
                 nested = self.session.begin_nested()
                 try:
-                    self.session.execute(
+                    result = self.session.execute(
                         update(User)
                         .where(User.id == existing.id, User.email != email)
                         .values(email=email)
                     )
                     nested.commit()
-                    self.session.refresh(existing)
+                    if result.rowcount:
+                        self.session.refresh(existing)
+                        return GetOrCreateUserResult(user=existing, was_persisted=True)
                 except Exception:
                     nested.rollback()
-            return existing
+            return GetOrCreateUserResult(user=existing, was_persisted=False)
 
         user = User(clerk_user_id=clerk_user_id, email=email)
         nested = self.session.begin_nested()
@@ -55,12 +64,12 @@ class UserRepository:
             self.session.expire_all()
             existing = self.get_by_clerk_user_id(clerk_user_id)
             if existing is not None:
-                return existing
+                return GetOrCreateUserResult(user=existing, was_persisted=False)
             import time as _time
             _time.sleep(0.01)
             self.session.expire_all()
             existing = self.get_by_clerk_user_id(clerk_user_id)
             if existing is not None:
-                return existing
+                return GetOrCreateUserResult(user=existing, was_persisted=False)
             raise
-        return user
+        return GetOrCreateUserResult(user=user, was_persisted=True)

@@ -33,7 +33,8 @@ def _ensure_user(db_session: Session, *, plan_tier: str = "pro") -> User:
     from backtestforecast.repositories.users import UserRepository
 
     repo = UserRepository(db_session)
-    user = repo.get_or_create(f"clerk_smoke_{plan_tier}", f"smoke_{plan_tier}@test.com")
+    result = repo.get_or_create(f"clerk_smoke_{plan_tier}", f"smoke_{plan_tier}@test.com")
+    user = result.user
     user.plan_tier = plan_tier
     user.subscription_status = "active" if plan_tier != "free" else None
     db_session.commit()
