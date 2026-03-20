@@ -154,7 +154,9 @@ export type PipelineHistoryResponse = components["schemas"]["PipelineHistoryResp
 
 export type SymbolAnalysisSummary = components["schemas"]["AnalysisSummaryResponse"];
 export type AnalysisDetailResponse = components["schemas"]["AnalysisDetailResponse"];
-export type AnalysisListResponse = components["schemas"]["AnalysisListResponse"];
+export type AnalysisListResponse = components["schemas"]["AnalysisListResponse"] & {
+  next_cursor?: string | null;
+};
 
 export type RegimeDetail = components["schemas"]["RegimeDetail"];
 export type LandscapeCell = components["schemas"]["LandscapeCell"];
