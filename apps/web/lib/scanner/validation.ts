@@ -28,16 +28,28 @@ interface ScannerLimits {
 }
 
 const SCANNER_LIMITS: Record<string, ScannerLimits> = {
-  "free:basic":       { maxSymbols: 3,  maxStrategies: 2,  maxRecommendations: 5  },
-  "free:advanced":    { maxSymbols: 3,  maxStrategies: 2,  maxRecommendations: 5  },
   "pro:basic":        { maxSymbols: 5,  maxStrategies: 4,  maxRecommendations: 10 },
-  "pro:advanced":     { maxSymbols: 10, maxStrategies: 8,  maxRecommendations: 20 },
   "premium:basic":    { maxSymbols: 10, maxStrategies: 6,  maxRecommendations: 15 },
   "premium:advanced": { maxSymbols: 25, maxStrategies: 14, maxRecommendations: 30 },
 };
 
+export function getScannerSupportError(planTier: PlanTier, mode: ScannerMode): string | null {
+  if (SCANNER_LIMITS[`${planTier}:${mode}`]) {
+    return null;
+  }
+  if (planTier === "free") {
+    return "Scanner access requires Pro or Premium.";
+  }
+  if (planTier === "pro" && mode === "advanced") {
+    return "Advanced scanner access requires Premium.";
+  }
+  return "Scanner access is not available for the current entitlement.";
+}
+
 export function getScannerLimits(planTier: PlanTier, mode: ScannerMode): ScannerLimits {
-  return SCANNER_LIMITS[`${planTier}:${mode}`] ?? { maxSymbols: 5, maxStrategies: 4, maxRecommendations: 10 };
+  const direct = SCANNER_LIMITS[`${planTier}:${mode}`];
+  if (direct) return direct;
+  return SCANNER_LIMITS["pro:basic"];
 }
 
 export function parseSymbols(text: string): string[] {
@@ -51,6 +63,7 @@ export function parseSymbols(text: string): string[] {
 export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier = "pro"): string[] {
   const symbols = parseSymbols(input.symbolsText);
   const errors: string[] = [];
+  const supportError = getScannerSupportError(planTier, input.mode);
 
   if (symbols.length === 0) {
     errors.push("At least one symbol is required.");
@@ -61,6 +74,9 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
   }
   if (input.selectedStrategies.size === 0) {
     errors.push("At least one strategy type is required.");
+  }
+  if (supportError) {
+    errors.push(supportError);
   }
 
   const limits = getScannerLimits(planTier, input.mode);

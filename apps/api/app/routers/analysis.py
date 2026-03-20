@@ -12,8 +12,9 @@ from apps.api.app.dependencies import get_current_user, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db
+from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import AppValidationError, FeatureLockedError
+from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import (
@@ -52,6 +53,8 @@ def create_analysis(
     """Create and enqueue a single-symbol deep analysis (Pro+ gated)."""
     if not settings.feature_analysis_enabled:
         raise FeatureLockedError("Analysis is temporarily disabled.", required_tier="free")
+    if not is_feature_enabled("analysis", user_id=user.id, plan_tier=user.plan_tier):
+        raise FeatureLockedError("Analysis is temporarily disabled for this account.", required_tier="free")
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     get_rate_limiter().check(
         bucket="analysis:create",
@@ -91,7 +94,7 @@ def create_analysis(
 def get_analysis(
     analysis_id: UUID,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisDetailResponse:
     """Get full analysis results (for polling and display)."""
@@ -120,7 +123,7 @@ def get_analysis(
 def get_analysis_status(
     analysis_id: UUID,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisSummaryResponse:
     """Lightweight status endpoint for polling."""
@@ -156,7 +159,7 @@ def delete_analysis(
 @router.get("", response_model=AnalysisListResponse)
 def list_analyses(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     limit: int = Query(default=10, ge=1, le=50),
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,

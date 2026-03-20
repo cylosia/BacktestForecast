@@ -21,6 +21,7 @@ from backtestforecast.schemas.sweeps import (
     SweepResultListResponse,
 )
 from backtestforecast.errors import FeatureLockedError
+from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.sweeps import SweepService
@@ -64,6 +65,8 @@ def create_sweep(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobResponse:
+    if not is_feature_enabled("sweeps", user_id=user.id, plan_tier=user.plan_tier):
+        raise FeatureLockedError("Sweeps are temporarily disabled for this account.", required_tier="free")
     get_rate_limiter().check(
         bucket="sweeps:create",
         actor_key=str(user.id),
