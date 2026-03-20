@@ -58,7 +58,7 @@ The backend now supports:
 - Nightly scan pipeline: 5-stage funnel (universe screen → regime-strategy matching → quick backtest → full backtest → forecast+rank) producing top daily trade recommendations
 - `GET /v1/daily-picks` and `GET /v1/daily-picks/history` for pipeline results (Pro+ gated)
 - Daily Picks page at `/app/daily-picks` with ranked recommendation cards, pipeline stats, regime badges, and forecast overlays
-- Pipeline runs nightly at 4:00 AM UTC via Celery beat on the `pipeline` queue
+- Pipeline runs nightly at 6:00 AM UTC via Celery beat on the `pipeline` queue
 - Default universe: 100 optionable symbols across tech, finance, healthcare, energy, industrials, consumer, media, and high-volatility names
 - Single-symbol deep analysis: exhaustive testing of 27 strategies × 36 parameter configs (972 quick backtests), regime classification, top-10 full backtests with forecast overlay
 - `POST /v1/analysis`, `GET /v1/analysis/{id}`, `GET /v1/analysis/{id}/status`, `GET /v1/analysis` for deep analysis CRUD + polling
