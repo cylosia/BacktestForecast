@@ -54,7 +54,7 @@ interface FormState {
   maxResults: string;
 }
 
-export function SweepForm() {
+export function SweepForm({ maxSweepWindowDays = 730 }: { maxSweepWindowDays?: number }) {
   const router = useRouter();
   const { getToken } = useAuth();
   const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
@@ -137,9 +137,9 @@ export function SweepForm() {
         setErrorMessage("Date range must be at least 30 days for sweeps.");
         return;
       }
-      if (diffDays > MAX_SWEEP_WINDOW_DAYS) {
+      if (diffDays > maxSweepWindowDays) {
         setStatus("error");
-        setErrorMessage(`Date range cannot exceed ${MAX_SWEEP_WINDOW_DAYS} days.`);
+        setErrorMessage(`Date range cannot exceed ${maxSweepWindowDays} days.`);
         return;
       }
       const today = new Date();
@@ -328,7 +328,7 @@ export function SweepForm() {
     } finally {
       submittingRef.current = false;
     }
-  }, [form, selectedStrategies, getToken, router]);
+  }, [form, selectedStrategies, getToken, maxSweepWindowDays, router]);
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-6" aria-label="Parameter sweep configuration">

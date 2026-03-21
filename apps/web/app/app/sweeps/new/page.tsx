@@ -33,7 +33,7 @@ export default async function NewSweepPage() {
           Configure a grid or genetic sweep to find optimal strategy parameters for a symbol.
         </p>
       </div>
-      <SweepForm />
+      <SweepForm maxSweepWindowDays={user.features.max_sweep_window_days} />
     </div>
   );
 }

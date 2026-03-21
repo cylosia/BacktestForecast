@@ -97,6 +97,7 @@ class RequestBodyLimitMiddleware:
 
         await self.app(scope, receive, send)
 
+
     @staticmethod
     async def _send_413(scope: Scope, send: Send) -> None:
         request_id = None

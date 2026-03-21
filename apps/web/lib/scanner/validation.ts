@@ -10,6 +10,7 @@ export interface ScannerFormInput {
   mode: ScannerMode;
   symbolsText: string;
   selectedStrategies: Set<string>;
+  maxScannerWindowDays?: number;
   startDate: string;
   endDate: string;
   targetDte: string;
@@ -121,8 +122,9 @@ export function validateScannerForm(input: ScannerFormInput, planTier: PlanTier 
     if (diffDays < MIN_SCANNER_WINDOW_DAYS) {
       errors.push(getScannerWindowTooShortError());
     }
-    // Do not hard-block on a duplicated client-side max window value here.
-    // The backend limit is configuration-driven and remains authoritative.
+    if (input.maxScannerWindowDays !== undefined && diffDays > input.maxScannerWindowDays) {
+      errors.push(`Scanner window cannot exceed ${input.maxScannerWindowDays} days.`);
+    }
   }
 
   const numericChecks: Array<{
