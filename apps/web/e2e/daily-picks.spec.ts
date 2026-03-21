@@ -29,6 +29,20 @@ test.describe("Daily picks", () => {
     expect(hasCards || hasMessage).toBeTruthy();
   });
 
+  test("SSE proxy forwards authenticated requests to the API backend", async ({ page }) => {
+    await page.goto("/app/daily-picks");
+    const result = await page.evaluate(async () => {
+      const response = await fetch("/api/events/backtests/00000000-0000-0000-0000-000000000000", {
+        headers: { Origin: window.location.origin },
+        cache: "no-store",
+      });
+      return { status: response.status, text: await response.text() };
+    });
+
+    expect([401, 403, 404]).toContain(result.status);
+    expect(result.text.length).toBeGreaterThan(0);
+  });
+
   test("history pagination surfaces next_cursor in the page URL when a next page exists", async ({ page }) => {
     await page.goto("/app/daily-picks");
     await expect(page.getByRole("heading", { name: /today'?s top trades|daily picks|picks for/i })).toBeVisible();

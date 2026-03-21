@@ -21,6 +21,7 @@ import type {
   TemplateListResponse,
 } from "@backtestforecast/api-client";
 
+
 const getServerToken = cache(async (): Promise<string> => {
   const { isAuthenticated, getToken, redirectToSignIn } = await auth();
 
@@ -45,6 +46,20 @@ export const getCurrentUser = cache(async (): Promise<CurrentUserResponse> => {
     throw new Error("Invalid user response shape from API");
   }
   return user;
+});
+
+export interface RuntimeMetaResponse {
+  service: string;
+  version: string;
+  billing_enabled?: boolean | null;
+  environment?: string | null;
+  daily_picks_schedule_utc?: string | null;
+  features?: CurrentUserResponse["features"] extends infer _T ? Record<string, boolean> | null : Record<string, boolean> | null;
+}
+
+export const getMeta = cache(async (): Promise<RuntimeMetaResponse> => {
+  const token = await getServerToken();
+  return apiRequest<RuntimeMetaResponse>("/v1/meta", token, { cache: "no-store" });
 });
 
 export const getBacktestHistory = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<BacktestRunListResponse> => {

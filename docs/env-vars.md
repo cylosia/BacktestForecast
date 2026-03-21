@@ -123,6 +123,8 @@ When `RATE_LIMIT_FAIL_CLOSED=true`, the API returns 503 if Redis is unreachable.
 | `ANALYSIS_RATE_LIMIT_WINDOW_SECONDS` | Window for analysis rate limit | `3600` | — |
 | `FORECAST_RATE_LIMIT` | Max forecast requests per window | `6` | — |
 | `DAILY_PICKS_RATE_LIMIT` | Max daily picks requests per window | `30` | — |
+| `DAILY_PICKS_PIPELINE_HOUR_UTC` | UTC hour for the nightly daily-picks pipeline schedule | `6` | — |
+| `DAILY_PICKS_PIPELINE_MINUTE_UTC` | UTC minute for the nightly daily-picks pipeline schedule | `0` | — |
 | `SSE_REDIS_MAX_CONNECTIONS` | Maximum Redis connections for SSE pub/sub pool | `50` | — |
 | `SSE_REDIS_SOCKET_TIMEOUT` | Socket timeout (seconds) for SSE Redis connections | `10.0` | — |
 | `SSE_REDIS_CONNECT_TIMEOUT` | Connect timeout (seconds) for SSE Redis connections | `5.0` | — |

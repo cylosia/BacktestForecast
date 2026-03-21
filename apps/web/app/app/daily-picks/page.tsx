@@ -1,4 +1,4 @@
-import { getCurrentUser, getDailyPicks, getDailyPicksHistory } from "@/lib/api/server";
+import { getCurrentUser, getDailyPicks, getDailyPicksHistory, getMeta } from "@/lib/api/server";
 import { ApiError } from "@/lib/api/shared";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import type { DailyPickItem, DailyPicksResponse } from "@backtestforecast/api-client";
@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PicksHistory } from "@/components/daily-picks/picks-history";
 import type { PipelineHistoryResponse } from "@backtestforecast/api-client";
 import { PaginationControls } from "@/components/shared/pagination-controls";
+import { getDailyPicksScheduleLabel } from "@/lib/daily-picks-schedule";
 
 const HISTORY_PAGE_SIZE = 25;
 
@@ -116,6 +117,7 @@ export default async function DailyPicksPage({
 }) {
   const params = await searchParams;
   const cursor = params.next_cursor?.trim() || params.cursor?.trim() || undefined;
+  const scheduleLabel = (await getMeta().catch(() => null))?.daily_picks_schedule_utc ?? getDailyPicksScheduleLabel();
   let user;
   try {
     user = await getCurrentUser();
@@ -144,7 +146,7 @@ export default async function DailyPicksPage({
     const status = isApiError ? err.status : 0;
     const message =
       status === 404
-        ? "No pipeline data available yet. The nightly scan runs at 6:00 AM UTC."
+        ? `No pipeline data available yet. The nightly scan runs at ${scheduleLabel}.`
         : err instanceof Error
           ? err.message
           : "Daily picks could not be loaded. Please try again later.";
@@ -210,7 +212,7 @@ export default async function DailyPicksPage({
         <Card>
           <CardContent className="p-6 text-center text-muted-foreground">
             {data.status === "no_data"
-              ? "No pipeline data available yet. The nightly scan runs at 6:00 AM UTC."
+              ? `No pipeline data available yet. The nightly scan runs at ${scheduleLabel}.`
               : "No recommendations were produced for this date."}
           </CardContent>
         </Card>
