@@ -211,6 +211,33 @@ class ScanService:
             raise
         return job
 
+    def create_and_dispatch_job(
+        self,
+        user: User,
+        payload: CreateScannerJobRequest,
+        *,
+        request_id: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> ScannerJob:
+        """Create a scan job and persist dispatch state transactionally."""
+        from apps.api.app.dispatch import dispatch_celery_task
+
+        job = self.create_job(user, payload)
+        dispatch_celery_task(
+            db=self.session,
+            job=job,
+            task_name="scans.run_job",
+            task_kwargs={"job_id": str(job.id)},
+            queue="research",
+            log_event="scan",
+            logger=dispatch_logger or logger,
+            request_id=request_id,
+            traceparent=traceparent,
+        )
+        self.session.refresh(job)
+        return job
+
     def run_job(self, job_id: UUID) -> ScannerJob:
         job = self.repository.get(job_id, for_update=True)
         if job is None:

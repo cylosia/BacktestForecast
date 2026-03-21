@@ -219,6 +219,33 @@ class SweepService:
             raise
         return job
 
+    def create_and_dispatch_job(
+        self,
+        user: User,
+        payload: CreateSweepRequest,
+        *,
+        request_id: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> SweepJob:
+        """Create a sweep job and persist dispatch state transactionally."""
+        from apps.api.app.dispatch import dispatch_celery_task
+
+        job = self.create_job(user, payload)
+        dispatch_celery_task(
+            db=self.session,
+            job=job,
+            task_name="sweeps.run",
+            task_kwargs={"job_id": str(job.id)},
+            queue="research",
+            log_event="sweep",
+            logger=dispatch_logger or logger,
+            request_id=request_id,
+            traceparent=traceparent,
+        )
+        self.session.refresh(job)
+        return job
+
     def run_job(self, job_id: UUID) -> SweepJob:
         job = self.repository.get(job_id, for_update=True)
         if job is None:
