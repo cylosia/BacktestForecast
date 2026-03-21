@@ -145,7 +145,7 @@ class BacktestService:
             metadata={"symbol": run.symbol, "strategy_type": run.strategy_type},
         )
         try:
-            self.session.commit()
+            self.session.flush()
         except IntegrityError:
             self.session.rollback()
             if request.idempotency_key:
@@ -157,7 +157,6 @@ class BacktestService:
                 if existing is not None:
                     return existing
             raise
-        self.session.refresh(run)
         return run
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:

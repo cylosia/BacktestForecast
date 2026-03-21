@@ -111,7 +111,7 @@ def compare_backtests(
 def get_backtest_status(
     run_id: UUID,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunStatusResponse:
     # Feature flag not checked on read: users may view past results even when creation is disabled.
@@ -130,7 +130,7 @@ def get_backtest(
     run_id: UUID,
     response: Response,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     trade_limit: int = Query(default=10_000, ge=0, le=20_000),
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunDetailResponse:

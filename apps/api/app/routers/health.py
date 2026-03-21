@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from backtestforecast import __version__ as HEALTH_VERSION
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.db.session import ping_database
 from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
@@ -135,7 +136,6 @@ def _check_migration_drift() -> bool:
 _MIGRATION_CHECK_TTL_SECONDS = 60.0
 _migration_check_cache: tuple[float, bool] | None = None
 
-HEALTH_VERSION = "0.1.0"
 _SHOW_VERSION_IN_HEALTH = get_settings().app_env not in ("production", "staging")
 
 
