@@ -142,8 +142,13 @@ export default async function DailyPicksPage({
   } catch (err) {
     const isApiError = err instanceof ApiError;
     const status = isApiError ? err.status : 0;
+<<<<<<< codex/conduct-comprehensive-codebase-audit-6pp5s5
     const message =
       status === 404
+=======
+      const message =
+        status === 404
+>>>>>>> main
         ? "No pipeline data available yet. The nightly scan runs at 6:00 AM UTC."
         : err instanceof Error
           ? err.message
@@ -224,7 +229,11 @@ export default async function DailyPicksPage({
 
       <div className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground space-y-2">
         <p className="font-medium text-foreground">How the pipeline works</p>
+<<<<<<< codex/conduct-comprehensive-codebase-audit-6pp5s5
         <p>
+=======
+          <p>
+>>>>>>> main
           Every night at 6:00 AM UTC, the pipeline screens ~100 optionable symbols for
           technical signals, matches each to compatible strategies based on its current
           regime (bullish/bearish/neutral × high/low IV), runs quick 90-day backtests
