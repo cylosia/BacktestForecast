@@ -57,6 +57,7 @@ from backtestforecast.schemas.scans import (
 )
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 from backtestforecast.utils import to_decimal
 from backtestforecast.services.serialization import (
     downsample_equity_curve,
@@ -151,7 +152,16 @@ class ScanService:
         if payload.idempotency_key:
             existing_by_key = self.repository.get_by_idempotency_key(user.id, payload.idempotency_key)
             if existing_by_key is not None:
-                return existing_by_key
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing_by_key,
+                    model_name="ScannerJob",
+                    task_name="scans.run_job",
+                    task_kwargs={"job_id": str(existing_by_key.id)},
+                    queue="research",
+                    log_event="scan",
+                    logger=logger,
+                )
 
         recent_duplicate = self.repository.find_recent_duplicate(
             user.id,
@@ -160,7 +170,16 @@ class ScanService:
             since=datetime.now(UTC) - timedelta(minutes=10),
         )
         if recent_duplicate is not None:
-            return recent_duplicate
+            return redispatch_if_stale_queued(
+                self.session,
+                recent_duplicate,
+                model_name="ScannerJob",
+                task_name="scans.run_job",
+                task_kwargs={"job_id": str(recent_duplicate.id)},
+                queue="research",
+                log_event="scan",
+                logger=logger,
+            )
 
         job = ScannerJob(
             user_id=user.id,
@@ -209,6 +228,33 @@ class ScanService:
             if recent is not None:
                 return recent
             raise
+        return job
+
+    def create_and_dispatch_job(
+        self,
+        user: User,
+        payload: CreateScannerJobRequest,
+        *,
+        request_id: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> ScannerJob:
+        """Create a scan job and persist dispatch state transactionally."""
+        from apps.api.app.dispatch import dispatch_celery_task
+
+        job = self.create_job(user, payload)
+        dispatch_celery_task(
+            db=self.session,
+            job=job,
+            task_name="scans.run_job",
+            task_kwargs={"job_id": str(job.id)},
+            queue="research",
+            log_event="scan",
+            logger=dispatch_logger or logger,
+            request_id=request_id,
+            traceparent=traceparent,
+        )
+        self.session.refresh(job)
         return job
 
     def run_job(self, job_id: UUID) -> ScannerJob:
