@@ -101,6 +101,13 @@ export function usePolling<T>({
           if (mountedRef.current && !controller.signal.aborted) {
             setStatus("done");
           }
+          await Promise.resolve(onCompleteRef.current(result));
+        } catch (err) {
+          console.error("[usePolling] onComplete failed:", err);
+        } finally {
+          if (mountedRef.current && !controller.signal.aborted) {
+            setStatus("done");
+          }
         }
         return;
       }
