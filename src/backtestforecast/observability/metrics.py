@@ -92,6 +92,12 @@ JOBS_STUCK_REDISPATCHED_TOTAL = Counter(
     ["model"],
 )
 
+ORPHAN_DETECTIONS_TOTAL = Counter(
+    "orphan_detections_total",
+    "Detected orphaned or stranded resources that require cleanup or redispatch",
+    ["kind", "source", "model"],
+)
+
 DUPLICATE_NIGHTLY_RUNS_TOTAL = Counter(
     "duplicate_nightly_runs_total",
     "Nightly pipeline runs rejected as duplicates for an already-succeeded trade_date",

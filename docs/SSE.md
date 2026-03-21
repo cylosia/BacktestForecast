@@ -1,5 +1,3 @@
-> **Current Status:** SSE endpoints are fully implemented on the backend but the frontend uses polling (`usePolling` hook) exclusively. SSE exists as an upgrade path to reduce polling overhead.
-
 # Server-Sent Events (SSE) Middleware Buffering
 
 ## Limitation

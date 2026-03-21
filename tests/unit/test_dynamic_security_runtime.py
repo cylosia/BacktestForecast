@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi.responses import PlainTextResponse
 
 from apps.api.app.main import _RequestTimeoutMiddleware
-from backtestforecast.security.http import ApiSecurityHeadersMiddleware, DynamicCORSMiddleware
+from backtestforecast.security.http import ApiSecurityHeadersMiddleware, DynamicCORSMiddleware, RequestBodyLimitMiddleware
 
 
 def _run_asgi(app, scope: dict, body: bytes = b"") -> tuple[int, dict[str, str]]:
@@ -122,3 +122,26 @@ def test_request_timeout_middleware_reloads_timeout_per_request() -> None:
     )
     assert status == 504
     assert headers.get("x-debug-timeout") == "0"
+
+
+def test_request_body_limit_middleware_reloads_per_request() -> None:
+    state = {"limit": 4}
+
+    async def ok_app(scope, receive, send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app = RequestBodyLimitMiddleware(ok_app, max_body_bytes=lambda: state["limit"])
+
+    status, _ = _run_asgi(
+        app,
+        {"type": "http", "method": "POST", "path": "/v1/me", "headers": [(b"content-length", b"5")]},
+    )
+    assert status == 413
+
+    state["limit"] = 5
+    status, _ = _run_asgi(
+        app,
+        {"type": "http", "method": "POST", "path": "/v1/me", "headers": [(b"content-length", b"5")]},
+    )
+    assert status == 200
