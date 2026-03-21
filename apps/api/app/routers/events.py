@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
+from contextlib import suppress
 from uuid import UUID
 
 import structlog
@@ -9,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
-from apps.api.app.dependencies import get_current_user
+from apps.api.app.dependencies import get_current_user_readonly
 from backtestforecast.config import get_settings
 from backtestforecast.errors import NotFoundError
 from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis, User
@@ -30,7 +31,7 @@ SSE_TIMEOUT_SECONDS = 300
 SSE_HEARTBEAT_SECONDS = 15
 SSE_MAX_CONNECTIONS_PER_USER = 10
 # Per-process limit on simultaneous SSE connections. With N uvicorn workers,
-# the effective server-wide limit is N × SSE_MAX_CONNECTIONS_PROCESS.
+# the effective server-wide limit is N x SSE_MAX_CONNECTIONS_PROCESS.
 # Per-user limits are enforced via Redis (see _acquire_sse_slot).
 #
 # IMPORTANT: Each SSE connection holds a Redis Pub/Sub subscription for its
@@ -72,9 +73,9 @@ async def _get_async_redis():
     Validates pool health via ``ping()`` at most once every 60 s; recreates on
     failure.
     """
-    from redis.exceptions import RedisError
-
     import time as _time
+
+    from redis.exceptions import RedisError
 
     global _async_redis_pool, _async_redis_last_ping
     now = _time.monotonic()
@@ -95,10 +96,8 @@ async def _get_async_redis():
                 return _async_redis_pool
             except (RedisError, OSError):
                 logger.warning("sse.redis_pool_stale", action="recreating")
-                try:
+                with suppress(Exception):
                     await _async_redis_pool.aclose()
-                except Exception:
-                    pass
                 _async_redis_pool = None
         import redis.asyncio as aioredis
 
@@ -161,9 +160,9 @@ def _verify_ownership(model: type, resource_id: UUID, user_id: UUID) -> bool:
     during the HTTP request phase, not inside the async generator. Uses the
     shared session factory to benefit from connection pooling.
     """
-    from backtestforecast.db.session import create_session
+    from backtestforecast.db.session import create_readonly_session
 
-    with create_session() as db:
+    with create_readonly_session() as db:
         stmt = select(model.id).where(model.id == resource_id, model.user_id == user_id)
         if db.execute(stmt).first() is None:
             raise NotFoundError("Resource not found.")
@@ -241,15 +240,11 @@ async def _subscribe_redis(channel: str, *, max_reconnects: int = 2) -> AsyncGen
                 continue
             raise
         finally:
-            try:
+            with suppress(Exception):
                 await pubsub.unsubscribe(channel)
                 await pubsub.close()
-            except Exception:
-                pass
-            try:
+            with suppress(Exception):
                 await client.aclose()
-            except Exception:
-                pass
 
 
 _SSE_SLOT_ACQUIRE_LUA = """
@@ -395,7 +390,7 @@ async def _event_stream(
 async def backtest_events(
     run_id: UUID,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
 ) -> EventSourceResponse:
     await asyncio.to_thread(_check_sse_rate, user.id)
     await asyncio.to_thread(_verify_ownership, BacktestRun, run_id, user.id)
@@ -412,7 +407,7 @@ async def backtest_events(
 async def scan_events(
     job_id: UUID,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
 ) -> EventSourceResponse:
     await asyncio.to_thread(_check_sse_rate, user.id)
     await asyncio.to_thread(_verify_ownership, ScannerJob, job_id, user.id)
@@ -429,7 +424,7 @@ async def scan_events(
 async def sweep_events(
     job_id: UUID,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
 ) -> EventSourceResponse:
     await asyncio.to_thread(_check_sse_rate, user.id)
     await asyncio.to_thread(_verify_ownership, SweepJob, job_id, user.id)
@@ -446,7 +441,7 @@ async def sweep_events(
 async def export_events(
     export_job_id: UUID,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
 ) -> EventSourceResponse:
     await asyncio.to_thread(_check_sse_rate, user.id)
     await asyncio.to_thread(_verify_ownership, ExportJob, export_job_id, user.id)
@@ -463,7 +458,7 @@ async def export_events(
 async def analysis_events(
     analysis_id: UUID,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
 ) -> EventSourceResponse:
     await asyncio.to_thread(_check_sse_rate, user.id)
     await asyncio.to_thread(_verify_ownership, SymbolAnalysis, analysis_id, user.id)

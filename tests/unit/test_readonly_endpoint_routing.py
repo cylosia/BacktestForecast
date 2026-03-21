@@ -74,6 +74,7 @@ def test_read_heavy_routers_use_readonly_auth_dependency() -> None:
         "apps/api/app/routers/daily_picks.py",
         "apps/api/app/routers/analysis.py",
         "apps/api/app/routers/templates.py",
+        "apps/api/app/routers/events.py",
         "apps/api/app/routers/forecasts.py",
     ):
         source = _router_source(path)
@@ -83,3 +84,9 @@ def test_read_heavy_routers_use_readonly_auth_dependency() -> None:
 def test_readonly_auth_dependency_does_not_enable_write_fallback() -> None:
     source = _router_source("apps/api/app/dependencies.py")
     assert "allow_write_fallback=False" in source
+
+
+def test_events_router_uses_readonly_auth_for_sse() -> None:
+    source = _router_source("apps/api/app/routers/events.py")
+    assert source.count("Depends(get_current_user_readonly)") >= 5
+    assert "create_readonly_session" in source

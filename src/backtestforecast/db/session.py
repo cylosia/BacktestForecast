@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import structlog
 from collections.abc import Generator
+from contextlib import suppress
 from functools import lru_cache
 
+import structlog
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from backtestforecast.config import Settings, get_settings, register_invalidation_callback
-
 
 # Monitor query performance via pg_stat_statements or application-level
 # timing. The statement_timeout protects against runaway queries but does
@@ -117,17 +117,22 @@ def _get_readonly_session_factory() -> sessionmaker[Session] | None:
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=True)
 
 
+
+
+def create_readonly_session() -> Session:
+    """Create a read-only session, preferring the read replica when configured."""
+    factory = _get_readonly_session_factory()
+    if factory is None:
+        return create_session()
+    return factory()
+
 def get_readonly_db() -> Generator[Session, None, None]:
     """Yield a read-only session, preferring the read replica if configured.
 
     Falls back to the primary database when no replica URL is set.
     Use this for list/detail/compare endpoints that don't mutate data.
     """
-    factory = _get_readonly_session_factory()
-    if factory is None:
-        yield from get_db()
-        return
-    db = factory()
+    db = create_readonly_session()
     try:
         yield db
     except Exception:
@@ -169,10 +174,9 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def ping_database() -> None:
-    with _get_engine().connect() as connection:
-        with connection.begin():
-            connection.execute(text("SET LOCAL statement_timeout = '2s'"))
-            connection.execute(text("SELECT 1"))
+    with _get_engine().connect() as connection, connection.begin():
+        connection.execute(text("SET LOCAL statement_timeout = '2s'"))
+        connection.execute(text("SELECT 1"))
 
 
 def _invalidate_db_caches() -> None:
@@ -185,17 +189,13 @@ def _invalidate_db_caches() -> None:
     ]:
         engine_ref = None
         if engine_fn.cache_info().currsize > 0:
-            try:
+            with suppress(Exception):
                 engine_ref = engine_fn()
-            except Exception:
-                pass
         engine_fn.cache_clear()
         factory_fn.cache_clear()
         if engine_ref is not None:
-            try:
+            with suppress(Exception):
                 engine_ref.dispose()
-            except Exception:
-                pass
 
 
 register_invalidation_callback(_invalidate_db_caches)
