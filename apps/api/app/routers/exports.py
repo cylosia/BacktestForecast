@@ -86,36 +86,27 @@ def create_export(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ExportService(db) as service:
-        job_response = service.enqueue_export(
+        export_job = service.enqueue_export(
             user,
             payload,
             request_id=metadata.request_id,
             ip_address=metadata.ip_address,
         )
-
-        export_job = service.exports.get_for_user(job_response.id, user.id)
-        if export_job is not None:
-            dispatch_celery_task(
-                db=db,
-                job=export_job,
-                task_name="exports.generate",
-                task_kwargs={"export_job_id": str(job_response.id)},
-                queue="exports",
-                log_event="export",
-                logger=logger,
-                request_id=metadata.request_id,
-                traceparent=request.headers.get("traceparent"),
-            )
-        else:
-            logger.error("export.post_enqueue_missing", export_job_id=str(job_response.id))
-            from backtestforecast.errors import AppError
-            raise AppError(code="enqueue_failed", message="Export job could not be verified after creation.")
-
-        if export_job is not None:
-            db.refresh(export_job)
-            if export_job.status == "failed":
-                raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(export_job.error_message) or "Unable to dispatch job."})
-        return service.get_export_status(user, job_response.id)
+        dispatch_celery_task(
+            db=db,
+            job=export_job,
+            task_name="exports.generate",
+            task_kwargs={"export_job_id": str(export_job.id)},
+            queue="exports",
+            log_event="export",
+            logger=logger,
+            request_id=metadata.request_id,
+            traceparent=request.headers.get("traceparent"),
+        )
+        db.refresh(export_job)
+        if export_job.status == "failed":
+            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(export_job.error_message) or "Unable to dispatch job."})
+        return service.get_export_status(user, export_job.id)
 
 
 @router.get("/{export_job_id}/status", response_model=ExportJobResponse)

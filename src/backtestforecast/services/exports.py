@@ -83,7 +83,7 @@ class ExportService:
         *,
         request_id: str | None = None,
         ip_address: str | None = None,
-    ) -> ExportJobResponse:
+    ) -> ExportJob:
         """Create a queued export job. Caller dispatches to Celery."""
         ensure_export_access(
             user.plan_tier, user.subscription_status, payload.export_format,
@@ -127,7 +127,7 @@ class ExportService:
             },
         )
         try:
-            self.session.commit()
+            self.session.flush()
         except IntegrityError:
             self.session.rollback()
             if payload.idempotency_key:
@@ -138,10 +138,9 @@ class ExportService:
                 )
                 existing = self.session.scalar(stmt)
                 if existing is not None:
-                    return self.to_response(existing)
+                    return existing
             raise
-        self.session.refresh(export_job)
-        return self.to_response(export_job)
+        return export_job
 
     def execute_export_by_id(self, export_job_id: UUID) -> ExportJob:
         """Generate the export content. Called by the Celery worker."""
@@ -549,6 +548,7 @@ class ExportService:
                 "create_export is for tests only; use enqueue_export + Celery in production"
             )
         enqueued = self.enqueue_export(user, payload, request_id=request_id, ip_address=ip_address)
+        self.session.commit()
         export_job = self.execute_export_by_id(enqueued.id)
         return self.to_response(export_job)
 
