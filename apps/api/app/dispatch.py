@@ -9,7 +9,7 @@ beat task will pick it up within 60 seconds.
 from __future__ import annotations
 
 import enum
-from datetime import UTC, datetime
+import datetime as dt
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -34,7 +34,10 @@ class Dispatchable(Protocol):
     celery_task_id: str | None
     error_code: str | None
     error_message: str | None
-    completed_at: datetime | None
+    completed_at: dt.datetime | None
+
+
+UTC = getattr(dt, "UTC", dt.timezone.utc)
 
 
 def dispatch_celery_task(
@@ -163,7 +166,7 @@ def dispatch_celery_task(
         if outbox_msg is not None:
             try:
                 outbox_msg.status = "sent"
-                outbox_msg.completed_at = datetime.now(UTC)
+                outbox_msg.completed_at = dt.datetime.now(UTC)
                 db.commit()
             except Exception:
                 db.rollback()
@@ -210,7 +213,7 @@ def dispatch_celery_task(
         job.status = RunJobStatus.FAILED
         job.error_code = "enqueue_failed"
         job.error_message = "Unable to dispatch task to broker."
-        job.completed_at = datetime.now(UTC)
+        job.completed_at = dt.datetime.now(UTC)
         try:
             db.commit()
         except Exception:

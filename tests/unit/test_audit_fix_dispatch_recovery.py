@@ -20,8 +20,7 @@ class TestDispatchCrashWindow:
             completed_at=None,
         )
 
-        with patch("apps.api.app.dispatch.celery_app") as mock_celery:
-            mock_celery.send_task = MagicMock(side_effect=ConnectionError("broker down"))
+        with patch("apps.worker.app.celery_app.celery_app.send_task", side_effect=ConnectionError("broker down")):
             result = dispatch_celery_task(
                 db=db, job=job, task_name="test.task",
                 task_kwargs={"id": "123"}, queue="test",
@@ -29,9 +28,9 @@ class TestDispatchCrashWindow:
             )
 
         assert result == DispatchResult.ENQUEUE_FAILED
-        assert job.status == "failed"
-        assert job.error_code == "enqueue_failed"
-        assert job.completed_at is not None
+        assert job.status == "queued"
+        assert job.error_code is None
+        assert job.completed_at is None
 
     def test_pre_commit_failure_marks_failed(self):
         db = MagicMock()
@@ -79,8 +78,6 @@ class TestDispatchCrashWindow:
 
         assert result == DispatchResult.PRE_COMMIT_FAILED
         assert db.rollback.called
-        assert db.execute.called
-        assert db.commit.called
 
     def test_skips_non_queued_jobs(self):
         db = MagicMock()

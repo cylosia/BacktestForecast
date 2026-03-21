@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy.exc import DatabaseError
 from starlette.requests import Request
 
 from apps.api.app.routers import health as health_router
@@ -197,7 +196,7 @@ class TestMetaGracefulDegradation:
             feature_sweeps_enabled=True,
             app_env="production",
         ))
-        monkeypatch.setattr(meta_router, "_try_authenticate", lambda _request, _db: (_ for _ in ()).throw(DatabaseError("db down")))
+        monkeypatch.setattr(meta_router, "_try_authenticate", lambda _request, _db: (_ for _ in ()).throw(ConnectionError("db down")))
 
         payload = meta_router.get_meta(request, db=MagicMock())
 
