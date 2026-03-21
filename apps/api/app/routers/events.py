@@ -336,13 +336,7 @@ async def _event_stream(
     request: Request,
     user_id: UUID,
 ) -> AsyncGenerator[dict[str, str], None]:
-    """Wrap Redis subscription in SSE event format with heartbeats and timeout.
-
-    NOTE: The frontend currently uses polling (``usePolling``) exclusively for
-    real-time updates.  This SSE infrastructure exists as a future upgrade path
-    to reduce polling overhead.  It is fully functional but has no active
-    frontend consumers.
-    """
+    """Wrap Redis subscription in SSE event format with heartbeats and timeout."""
     from redis.exceptions import RedisError
 
     global _sse_process_connections

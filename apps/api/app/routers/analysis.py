@@ -8,7 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
@@ -45,7 +45,7 @@ def _analysis_service(db: Session) -> Generator[SymbolDeepAnalysisService, None,
 def create_analysis(
     payload: CreateAnalysisRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -93,7 +93,7 @@ def create_analysis(
 @router.get("/{analysis_id}", response_model=AnalysisDetailResponse)
 def get_analysis(
     analysis_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisDetailResponse:
@@ -122,7 +122,7 @@ def get_analysis(
 @router.get("/{analysis_id}/status", response_model=AnalysisSummaryResponse)
 def get_analysis_status(
     analysis_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisSummaryResponse:
@@ -141,7 +141,7 @@ def get_analysis_status(
 @router.delete("/{analysis_id}", status_code=204)
 def delete_analysis(
     analysis_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> None:
@@ -158,7 +158,7 @@ def delete_analysis(
 
 @router.get("", response_model=AnalysisListResponse)
 def list_analyses(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     limit: int = Query(default=10, ge=1, le=50),
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
