@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backtestforecast.observability import REQUEST_ID_HEADER
+from backtestforecast.version import get_public_version
 
 BODY_LIMIT_OVERRIDES: dict[str, int] = {
     # Stripe webhook payloads are typically 5-15 KB but can reach 50+ KB
@@ -30,7 +32,7 @@ class _BodyTooLarge(Exception):
 
 
 # NOTE: Response body size is not limited at the middleware level.
-# Large responses (e.g., compare endpoint with 10 runs × 10K trades)
+# Large responses (e.g., compare endpoint with 10 runs x 10K trades)
 # are bounded by trade_limit parameters at the service layer.
 # GZipMiddleware (min_size=1000, level=6) is enabled in main.py.
 
@@ -39,9 +41,13 @@ class RequestBodyLimitMiddleware:
     """Pure ASGI middleware that rejects oversized request bodies without
     buffering the response, preserving SSE (EventSourceResponse) streaming."""
 
-    def __init__(self, app: ASGIApp, max_body_bytes: int) -> None:
+    def __init__(self, app: ASGIApp, max_body_bytes: int | Callable[[], int]) -> None:
         self.app = app
-        self.max_body_bytes = max(1, int(max_body_bytes))
+        self._max_body_bytes = max_body_bytes
+
+    def _resolve_max_body_bytes(self) -> int:
+        raw = self._max_body_bytes() if callable(self._max_body_bytes) else self._max_body_bytes
+        return max(1, int(raw))
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -50,7 +56,7 @@ class RequestBodyLimitMiddleware:
 
         headers = Headers(scope=scope)
         path = scope.get("path", "/").rstrip("/") or "/"
-        effective_limit = BODY_LIMIT_OVERRIDES.get(path, self.max_body_bytes)
+        effective_limit = BODY_LIMIT_OVERRIDES.get(path, self._resolve_max_body_bytes())
         content_length_str = headers.get("content-length")
 
         if content_length_str is not None:
@@ -92,6 +98,7 @@ class RequestBodyLimitMiddleware:
 
         await self.app(scope, receive, send)
 
+
     @staticmethod
     async def _send_413(scope: Scope, send: Send) -> None:
         request_id = None
@@ -112,19 +119,53 @@ class RequestBodyLimitMiddleware:
             (b"content-length", str(len(body)).encode()),
         ]
         if request_id:
-            resp_headers.append(
-                (REQUEST_ID_HEADER.encode(), request_id.encode())
-            )
+            resp_headers.append((REQUEST_ID_HEADER.encode(), request_id.encode()))
 
-        await send({
-            "type": "http.response.start",
-            "status": 413,
-            "headers": resp_headers,
-        })
-        await send({
-            "type": "http.response.body",
-            "body": body,
-        })
+        await send({"type": "http.response.start", "status": 413, "headers": resp_headers})
+        await send({"type": "http.response.body", "body": body})
+
+
+class DynamicTrustedHostMiddleware:
+    """Validate Host against the current settings on every request.
+
+    Unlike Starlette's TrustedHostMiddleware, this middleware re-reads
+    `API_ALLOWED_HOSTS_RAW` via `get_settings()` so config invalidation can
+    take effect without a process restart.
+    """
+
+    def __init__(self, app: ASGIApp, allowed_hosts: Callable[[], list[str]]) -> None:
+        self.app = app
+        self._allowed_hosts = allowed_hosts
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
+        host_header = headers.get("host", "")
+        host = host_header.split(":", 1)[0].lower()
+        allowed_hosts = [entry.lower() for entry in self._allowed_hosts()]
+
+        if "*" in allowed_hosts or host in allowed_hosts:
+            await self.app(scope, receive, send)
+            return
+
+        body = json.dumps(
+            {"error": {"code": "invalid_host", "message": "Invalid host header."}}
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
 
 
 def normalize_origin(value: str) -> str:
@@ -140,9 +181,6 @@ def normalize_origin(value: str) -> str:
     elif v.startswith("http://") and v.endswith(":80"):
         v = v[:-3]
     return v
-
-
-from backtestforecast import __version__ as API_VERSION
 
 
 class ApiSecurityHeadersMiddleware:
@@ -190,7 +228,7 @@ class ApiSecurityHeadersMiddleware:
                         "max-age=31536000; includeSubDomains",
                     )
                 if self._show_version:
-                    headers["X-API-Version"] = API_VERSION
+                    headers["X-API-Version"] = get_public_version()
             await send(message)
 
         await self.app(scope, receive, send_with_headers)

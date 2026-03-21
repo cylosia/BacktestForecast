@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, Header, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
-from backtestforecast.db.session import get_db
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
+from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import AppValidationError
 from backtestforecast.models import User
 from backtestforecast.observability.logging import short_hash
@@ -225,7 +225,7 @@ def _cleanup_export_storage(db: Session, user_id: uuid.UUID) -> None:
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     x_confirm_delete: str | None = Header(default=None),
@@ -311,8 +311,8 @@ def delete_account(
 
 @router.get("/me/export", response_model=AccountDataExportResponse)
 def export_account_data(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     limit: int = Query(default=_EXPORT_PAGE_SIZE, ge=1, le=_EXPORT_PAGE_SIZE),
     offset: int = Query(default=0, ge=0, le=100_000, description="Offset for backtests"),
     templates_offset: int = Query(default=0, ge=0, le=100_000),

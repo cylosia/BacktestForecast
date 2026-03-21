@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -99,7 +100,7 @@ _register(
         bias=StrategyBias.BULLISH,
         leg_count=1,
         min_tier=StrategyTier.PREMIUM,
-        max_loss_description="Strike price × 100 minus premium received",
+        max_loss_description="Strike price x 100 minus premium received",
         notes="Requires margin approval. Risk to zero on the underlying.",
         tags=("credit", "margin-required"),
     ),
@@ -513,9 +514,7 @@ def get_catalog_entries_grouped() -> list[tuple[StrategyCategory, list[StrategyC
 _all_strategy_types = {st.value for st in StrategyType}
 _missing = _all_strategy_types - set(STRATEGY_CATALOG.keys())
 if _missing:
-    import warnings
-    warnings.warn(
-        f"Strategy catalog is missing entries for: {sorted(_missing)}. "
-        "Add StrategyCatalogEntry instances in catalog.py.",
-        stacklevel=1,
+    logging.getLogger("backtestforecast.strategy_catalog").warning(
+        "Strategy catalog is missing entries for %s. Add StrategyCatalogEntry instances in catalog.py.",
+        sorted(_missing),
     )
