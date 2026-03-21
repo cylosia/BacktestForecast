@@ -1,21 +1,23 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy.exc import DatabaseError
 from starlette.requests import Request
 
 from apps.api.app.routers import meta as meta_router
+from backtestforecast import __version__
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import EquityPointResult, TradeResult
 from backtestforecast.config import Settings
 from backtestforecast.repositories.audit_events import AuditEventRepository
 from backtestforecast.schemas.scans import ScannerRecommendationResponse
 from backtestforecast.schemas.sweeps import CreateSweepRequest
+from backtestforecast.version import get_public_version
 
 
 def _trade(net_pnl: float, *, day_offset: int = 0) -> TradeResult:
@@ -113,6 +115,14 @@ class TestSettingsDefaults:
         assert settings.max_sweep_window_days == 730
 
 
+class TestVersionDerivation:
+    def test_meta_router_uses_package_version(self) -> None:
+        assert __version__ == get_public_version()
+
+    def test_health_router_uses_package_version(self) -> None:
+        assert __version__ == get_public_version()
+
+
 class TestSweepWindowLimit:
     def test_sweep_uses_sweep_specific_window_limit(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
@@ -187,11 +197,41 @@ class TestMetaGracefulDegradation:
             feature_sweeps_enabled=True,
             app_env="production",
         ))
-        monkeypatch.setattr(meta_router, "_try_authenticate", lambda _request, _db: (_ for _ in ()).throw(DatabaseError("db down")))
+        monkeypatch.setattr(meta_router, "_try_authenticate", lambda _request, _db: (_ for _ in ()).throw(ConnectionError("db down")))
 
         payload = meta_router.get_meta(request, db=MagicMock())
 
         assert payload == {
             "service": "backtestforecast-api",
-            "version": meta_router.API_VERSION,
+            "version": get_public_version(),
         }
+
+
+class TestServerApiCaching:
+    def test_server_get_helpers_are_request_cached(self):
+        source = Path("apps/web/lib/api/server.ts").read_text()
+
+        assert "export const getBacktestHistory = cache(async" in source
+        assert "export const getBacktestRun = cache(async" in source
+        assert "export const getTemplates = cache(async" in source
+        assert "export const getScannerJobs = cache(async" in source
+        assert "export const getScannerJob = cache(async" in source
+        assert "export const getSweepJobs = cache(async" in source
+        assert "export const getSweepJob = cache(async" in source
+        assert "export const getDailyPicks = cache(async" in source
+        assert "export const getAnalysisHistory = cache(async" in source
+        assert "export const getDailyPicksHistory = cache(async" in source
+
+
+class TestStartupSideEffects:
+    def test_strategy_catalog_defers_missing_entry_logging_until_runtime(self):
+        source = Path("src/backtestforecast/strategy_catalog/catalog.py").read_text()
+
+        assert "def log_missing_catalog_entries()" in source
+        assert "if _missing:" not in source
+
+    def test_worker_sqlite_warning_is_not_logged_at_import_time(self):
+        source = Path("tests/worker/test_tasks.py").read_text()
+
+        assert "_sqlite_warning_logged = False" in source
+        assert "def db_engine():" in source

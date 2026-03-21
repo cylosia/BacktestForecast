@@ -1,19 +1,20 @@
 from fastapi import APIRouter, Depends, Response
 
-from apps.api.app.dependencies import get_current_user
+from apps.api.app.dependencies import get_current_user_readonly
 from backtestforecast.billing.entitlements import normalize_plan_tier
 from backtestforecast.config import get_settings
 from backtestforecast.models import User
-from backtestforecast.security import get_rate_limiter
 from backtestforecast.schemas.catalog import (
     StrategyCatalogGroupResponse,
     StrategyCatalogItemResponse,
     StrategyCatalogResponse,
 )
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.strategy_catalog.catalog import (
     CATEGORY_LABELS,
     STRATEGY_CATALOG,
     get_catalog_entries_grouped,
+    log_missing_catalog_entries,
 )
 
 router = APIRouter(tags=["catalog"])
@@ -22,7 +23,7 @@ router = APIRouter(tags=["catalog"])
 @router.get("/strategy-catalog", response_model=StrategyCatalogResponse)
 def get_strategy_catalog(
     response: Response,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
 ) -> StrategyCatalogResponse:
     settings = get_settings()
     get_rate_limiter().check(
@@ -32,6 +33,7 @@ def get_strategy_catalog(
         window_seconds=settings.rate_limit_window_seconds,
     )
     response.headers["Cache-Control"] = "private, max-age=3600"
+    log_missing_catalog_entries()
     grouped = get_catalog_entries_grouped()
     groups = []
     for category, entries in grouped:

@@ -9,18 +9,16 @@ beat task will pick it up within 60 seconds.
 from __future__ import annotations
 
 import enum
-import time
-from datetime import datetime, timezone
+import datetime as dt
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
 import structlog
 from sqlalchemy.orm import Session
 
-from backtestforecast.schemas.common import RunJobStatus
 from backtestforecast.observability.metrics import DISPATCH_RESULTS_TOTAL
+from backtestforecast.schemas.common import RunJobStatus
 
-UTC = timezone.utc
 
 class DispatchResult(enum.Enum):
     """Outcome of a dispatch attempt."""
@@ -36,7 +34,10 @@ class Dispatchable(Protocol):
     celery_task_id: str | None
     error_code: str | None
     error_message: str | None
-    completed_at: datetime | None
+    completed_at: dt.datetime | None
+
+
+UTC = getattr(dt, "UTC", dt.timezone.utc)
 
 
 def dispatch_celery_task(
@@ -93,7 +94,6 @@ def dispatch_celery_task(
     # Write an OutboxMessage in the same transaction as the job update so
     # that if the process crashes after commit but before send_task, the
     # poll_outbox beat task will pick up the pending message.
-    outbox_msg = None
     try:
         from backtestforecast.models import OutboxMessage
         job_id = getattr(job, "id", None)
@@ -105,8 +105,29 @@ def dispatch_celery_task(
             correlation_id=job_id,
         )
         db.add(outbox_msg)
+        db.flush()
     except Exception:
-        logger.warning("dispatch.outbox_write_skipped", exc_info=True)
+        db.rollback()
+        logger.exception("dispatch.outbox_write_failed", log_event=log_event, **task_kwargs)
+        try:
+            from sqlalchemy import update as _sa_update
+            job_id = getattr(job, "id", None)
+            if job_id is not None:
+                model_cls = type(job)
+                db.execute(
+                    _sa_update(model_cls)
+                    .where(model_cls.id == job_id)
+                    .values(
+                        status=RunJobStatus.FAILED,
+                        error_code="enqueue_failed",
+                        error_message="Unable to persist outbox state before dispatch.",
+                    )
+                )
+                db.commit()
+        except Exception:
+            db.rollback()
+        DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.PRE_COMMIT_FAILED.value, task_name=task_name).inc()
+        return DispatchResult.PRE_COMMIT_FAILED
 
     try:
         db.commit()
@@ -144,10 +165,8 @@ def dispatch_celery_task(
         )
         if outbox_msg is not None:
             try:
-                from datetime import datetime, timezone
-                UTC = timezone.utc
                 outbox_msg.status = "sent"
-                outbox_msg.completed_at = datetime.now(UTC)
+                outbox_msg.completed_at = dt.datetime.now(UTC)
                 db.commit()
             except Exception:
                 db.rollback()
@@ -194,7 +213,7 @@ def dispatch_celery_task(
         job.status = RunJobStatus.FAILED
         job.error_code = "enqueue_failed"
         job.error_message = "Unable to dispatch task to broker."
-        job.completed_at = datetime.now(UTC)
+        job.completed_at = dt.datetime.now(UTC)
         try:
             db.commit()
         except Exception:
