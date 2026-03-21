@@ -833,10 +833,9 @@ class Settings(BaseSettings):
             or self.feature_analysis_enabled
         )
         if _data_features and not self.massive_api_key and self.app_env not in ("production", "staging"):
-            import warnings
-            warnings.warn(
-                "MASSIVE_API_KEY is not set. Data-fetching features will fail at runtime.",
-                stacklevel=2,
+            logger.warning(
+                "config.massive_api_key_missing",
+                msg="MASSIVE_API_KEY is not set. Data-fetching features will fail at runtime.",
             )
 
         return self

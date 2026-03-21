@@ -6,10 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy.exc import DatabaseError
 from starlette.requests import Request
 
+from apps.api.app.routers import health as health_router
 from apps.api.app.routers import meta as meta_router
+from backtestforecast import __version__
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import EquityPointResult, TradeResult
 from backtestforecast.config import Settings
@@ -113,6 +114,14 @@ class TestSettingsDefaults:
         assert settings.max_sweep_window_days == 730
 
 
+class TestVersionDerivation:
+    def test_meta_router_uses_package_version(self) -> None:
+        assert __version__ == meta_router.API_VERSION
+
+    def test_health_router_uses_package_version(self) -> None:
+        assert __version__ == health_router.HEALTH_VERSION
+
+
 class TestSweepWindowLimit:
     def test_sweep_uses_sweep_specific_window_limit(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
@@ -187,7 +196,7 @@ class TestMetaGracefulDegradation:
             feature_sweeps_enabled=True,
             app_env="production",
         ))
-        monkeypatch.setattr(meta_router, "_try_authenticate", lambda _request, _db: (_ for _ in ()).throw(DatabaseError("db down")))
+        monkeypatch.setattr(meta_router, "_try_authenticate", lambda _request, _db: (_ for _ in ()).throw(ConnectionError("db down")))
 
         payload = meta_router.get_meta(request, db=MagicMock())
 

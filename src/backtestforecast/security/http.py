@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -39,9 +40,13 @@ class RequestBodyLimitMiddleware:
     """Pure ASGI middleware that rejects oversized request bodies without
     buffering the response, preserving SSE (EventSourceResponse) streaming."""
 
-    def __init__(self, app: ASGIApp, max_body_bytes: int) -> None:
+    def __init__(self, app: ASGIApp, max_body_bytes: int | Callable[[], int]) -> None:
         self.app = app
-        self.max_body_bytes = max(1, int(max_body_bytes))
+        self._max_body_bytes = max_body_bytes
+
+    def _resolve_max_body_bytes(self) -> int:
+        raw = self._max_body_bytes() if callable(self._max_body_bytes) else self._max_body_bytes
+        return max(1, int(raw))
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -50,7 +55,7 @@ class RequestBodyLimitMiddleware:
 
         headers = Headers(scope=scope)
         path = scope.get("path", "/").rstrip("/") or "/"
-        effective_limit = BODY_LIMIT_OVERRIDES.get(path, self.max_body_bytes)
+        effective_limit = BODY_LIMIT_OVERRIDES.get(path, self._resolve_max_body_bytes())
         content_length_str = headers.get("content-length")
 
         if content_length_str is not None:
@@ -91,6 +96,48 @@ class RequestBodyLimitMiddleware:
             return
 
         await self.app(scope, receive, send)
+
+
+class DynamicTrustedHostMiddleware:
+    """Validate Host against the current settings on every request.
+
+    Unlike Starlette's TrustedHostMiddleware, this middleware re-reads
+    `API_ALLOWED_HOSTS_RAW` via `get_settings()` so config invalidation can
+    take effect without a process restart.
+    """
+
+    def __init__(self, app: ASGIApp, allowed_hosts: Callable[[], list[str]]) -> None:
+        self.app = app
+        self._allowed_hosts = allowed_hosts
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
+        host_header = headers.get("host", "")
+        host = host_header.split(":", 1)[0].lower()
+        allowed_hosts = [entry.lower() for entry in self._allowed_hosts()]
+
+        if "*" in allowed_hosts or host in allowed_hosts:
+            await self.app(scope, receive, send)
+            return
+
+        body = json.dumps(
+            {"error": {"code": "invalid_host", "message": "Invalid host header."}}
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
     @staticmethod
     async def _send_413(scope: Scope, send: Send) -> None:
