@@ -2,24 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import time
-
-import structlog
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
+
+import structlog
 
 if TYPE_CHECKING:
     from redis import Redis
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import Response
 
+from apps.api.app.dependencies import _extract_client_ip, reset_token_verifier, reset_trusted_networks
 from apps.api.app.routers import (
     account,
     analysis,
@@ -37,18 +38,18 @@ from apps.api.app.routers import (
     sweeps,
     templates,
 )
-from apps.api.app.dependencies import _extract_client_ip, reset_trusted_networks, reset_token_verifier
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.errors import AppError, FeatureLockedError, QuotaExceededError, RateLimitError
-from backtestforecast.security import get_rate_limiter
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
 from backtestforecast.observability.logging import RequestContextMiddleware
 from backtestforecast.observability.metrics import API_ERRORS_TOTAL, PrometheusMiddleware, metrics_response
+from backtestforecast.security import get_rate_limiter
 from backtestforecast.security.http import (
     ApiSecurityHeadersMiddleware,
     DynamicTrustedHostMiddleware,
     RequestBodyLimitMiddleware,
 )
+from backtestforecast.version import get_public_version
 
 _startup_settings = get_settings()
 configure_logging(_startup_settings)
@@ -200,11 +201,9 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("lifespan.shutdown_complete")
 
 
-from backtestforecast import __version__ as _app_version
-
 app = FastAPI(
     title=settings.app_name,
-    version=_app_version,
+    version=get_public_version(),
     description="BacktestForecast API — options backtesting, scanning, forecasting, and portfolio analysis.",
     openapi_url="/openapi.json" if settings.app_env in ("development", "test") else None,
     docs_url="/docs" if settings.app_env in ("development", "test") else None,
@@ -330,7 +329,7 @@ class _CancelledErrorMiddleware:
                     )
                     await response(scope, receive, original_send)
                 except Exception:
-                    pass
+                    logger.debug("client_disconnect.response_send_failed", exc_info=True)
 
 
 # Middleware execution order (outermost to innermost):
@@ -389,7 +388,7 @@ class _RequestTimeoutMiddleware:
 
         try:
             await asyncio.wait_for(self.app(scope, receive, guarded_send), timeout=self.timeout_seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if not response_started:
                 from starlette.responses import JSONResponse as _JR
 

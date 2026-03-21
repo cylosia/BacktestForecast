@@ -66,6 +66,7 @@ def test_account_export_uses_readonly_db() -> None:
 
 def test_read_heavy_routers_use_readonly_auth_dependency() -> None:
     for path in (
+        "apps/api/app/routers/catalog.py",
         "apps/api/app/routers/backtests.py",
         "apps/api/app/routers/scans.py",
         "apps/api/app/routers/sweeps.py",

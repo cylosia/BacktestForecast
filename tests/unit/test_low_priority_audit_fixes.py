@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -205,3 +206,19 @@ class TestMetaGracefulDegradation:
             "service": "backtestforecast-api",
             "version": get_public_version(),
         }
+
+
+class TestServerApiCaching:
+    def test_server_get_helpers_are_request_cached(self):
+        source = Path("apps/web/lib/api/server.ts").read_text()
+
+        assert "export const getBacktestHistory = cache(async" in source
+        assert "export const getBacktestRun = cache(async" in source
+        assert "export const getTemplates = cache(async" in source
+        assert "export const getScannerJobs = cache(async" in source
+        assert "export const getScannerJob = cache(async" in source
+        assert "export const getSweepJobs = cache(async" in source
+        assert "export const getSweepJob = cache(async" in source
+        assert "export const getDailyPicks = cache(async" in source
+        assert "export const getAnalysisHistory = cache(async" in source
+        assert "export const getDailyPicksHistory = cache(async" in source
