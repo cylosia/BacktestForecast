@@ -1,28 +1,43 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
 
+import { env } from "@/lib/env";
+
 const API_BASE = (process.env.API_INTERNAL_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
-function isAllowedOrigin(req: NextRequest): boolean {
-  const allowed = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+function getAllowedOrigin(): string {
+  return new URL(env.appUrl).origin;
+}
+
+function resolveRequestOrigin(req: NextRequest): string | null {
   const origin = req.headers.get("origin");
-  const referer = req.headers.get("referer");
-  let candidate: string | null = null;
   if (origin) {
-    candidate = origin;
-  } else if (referer) {
     try {
-      candidate = new URL(referer).origin;
+      return new URL(origin).origin;
     } catch {
-      return false; // Malformed Referer: treat as not allowed
+      return null;
     }
   }
-  // Non-browser clients (e.g., curl, server-to-server) may omit Origin and
-  // Referer headers. Since the primary security mechanism is the Bearer token
-  // (verified server-side before proxying), this is acceptable. The origin
-  // check is defense-in-depth, not the primary auth gate.
-  if (!candidate) return true;
-  const allowedOrigin = new URL(allowed).origin;
+
+  const referer = req.headers.get("referer");
+  if (!referer) {
+    return null;
+  }
+
+  try {
+    return new URL(referer).origin;
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedOrigin(req: NextRequest): boolean {
+  const candidate = resolveRequestOrigin(req);
+  // This proxy is only used by browser EventSource requests from the web app.
+  // Require explicit Origin/Referer evidence so a future auth or cookie change
+  // cannot silently widen who may open authenticated streams through this route.
+  if (!candidate) return false;
+  const allowedOrigin = getAllowedOrigin();
   return candidate === allowedOrigin;
 }
 

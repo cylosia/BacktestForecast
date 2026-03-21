@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from apps.api.app.dependencies import get_db, get_token_verifier as _get_token_verifier
+from apps.api.app.dependencies import get_db
+from apps.api.app.dependencies import get_token_verifier as _get_token_verifier
 from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 from backtestforecast.security.rate_limits import get_rate_limiter
@@ -107,11 +108,10 @@ class _FakeCeleryApp:
 
         handler = self._handlers.get(name)
         if handler is None:
-            import warnings
-            warnings.warn(
-                f"FakeCeleryApp: task '{name}' dispatched but no handler registered. "
-                "Register it with _fake_celery.register() if you need inline execution.",
-                stacklevel=2,
+            import logging
+            logging.getLogger("tests.integration.fake_celery").warning(
+                "FakeCeleryApp dispatched unregistered task %s; register a handler for inline execution if needed.",
+                name,
             )
             return types.SimpleNamespace(id=f"noop-{name}")
         handler(name, kwargs)  # type: ignore[operator]
@@ -129,10 +129,9 @@ def _fake_celery(monkeypatch: pytest.MonkeyPatch) -> _FakeCeleryApp:
 
 @pytest.fixture()
 def stub_execution(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tests.integration.fakes import FakeExecutionService, FakeForecaster
-
     import backtestforecast.services.backtests as bs
     import backtestforecast.services.scans as ss
+    from tests.integration.fakes import FakeExecutionService, FakeForecaster
 
     monkeypatch.setattr(bs, "BacktestExecutionService", FakeExecutionService)
     monkeypatch.setattr(ss, "BacktestExecutionService", FakeExecutionService)
