@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/lib/api/server";
+import { getCurrentUser, getStrategyCatalog } from "@/lib/api/server";
 import { ScannerForm } from "@/components/scanner/scanner-form";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 
@@ -12,6 +12,7 @@ export default async function NewScanPage() {
     return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
   }
   const scannerModes = (user.features.scanner_modes ?? []) as ("basic" | "advanced")[];
+  const catalog = await getStrategyCatalog();
 
   if (scannerModes.length === 0) {
     return (
@@ -36,7 +37,14 @@ export default async function NewScanPage() {
         </p>
       </div>
 
-      <ScannerForm scannerModes={scannerModes} planTier={user.plan_tier as "free" | "pro" | "premium"} />
+      <ScannerForm
+        scannerModes={scannerModes}
+        planTier={user.plan_tier as "free" | "pro" | "premium"}
+        catalogGroups={catalog.groups}
+        basicAllowedStrategyTypes={user.features.scanner_basic_allowed_strategy_types ?? []}
+        advancedAllowedStrategyTypes={user.features.scanner_advanced_allowed_strategy_types ?? []}
+        maxScannerWindowDays={user.features.max_scanner_window_days}
+      />
     </div>
   );
 }

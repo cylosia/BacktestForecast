@@ -2,8 +2,17 @@
   "components": {
     "schemas": {
       "AccountDataExportResponse": {
+        "additionalProperties": true,
         "description": "GDPR data portability export containing all user data.",
         "properties": {
+          "audit_events": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/_GdprAuditEvent"
+            },
+            "title": "Audit Events",
+            "type": "array"
+          },
           "backtests": {
             "items": {
               "$ref": "#/components/schemas/_GdprBacktest"
@@ -260,6 +269,17 @@
             "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
           },
           "offset": {
             "default": 0,
@@ -529,6 +549,11 @@
             "type": "string"
           },
           "data_source": {
+            "default": "massive",
+            "enum": [
+              "massive",
+              "manual"
+            ],
             "title": "Data Source",
             "type": "string"
           },
@@ -547,6 +572,11 @@
             "type": "integer"
           },
           "engine_version": {
+            "default": "options-multileg-v2",
+            "enum": [
+              "options-multileg-v1",
+              "options-multileg-v2"
+            ],
             "title": "Engine Version",
             "type": "string"
           },
@@ -673,8 +703,6 @@
           "account_size",
           "risk_per_trade_pct",
           "commission_per_contract",
-          "engine_version",
-          "data_source",
           "created_at",
           "warnings",
           "summary",
@@ -1465,6 +1493,24 @@
             ],
             "title": "Custom Legs"
           },
+          "dividend_yield": {
+            "anyOf": [
+              {
+                "maximum": 0.15,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Annualized dividend yield for BSM IV estimation (e.g. 0.03 = 3%). Improves IV accuracy for high-yield stocks. Defaults to 0.0.",
+            "title": "Dividend Yield"
+          },
           "dte_tolerance_days": {
             "default": 5,
             "maximum": 60.0,
@@ -1567,6 +1613,24 @@
             ],
             "description": "Close position when unrealized profit reaches this percentage of capital at risk. None disables.",
             "title": "Profit Target Pct"
+          },
+          "risk_free_rate": {
+            "anyOf": [
+              {
+                "maximum": 0.2,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Annualized risk-free rate for Sharpe/Sortino calculations. If not provided, uses the server default (see /v1/meta). Set to 0.0 for ZIRP-era backtests.",
+            "title": "Risk Free Rate"
           },
           "risk_per_trade_pct": {
             "anyOf": [
@@ -2100,7 +2164,7 @@
           "description": {
             "anyOf": [
               {
-                "maxLength": 500,
+                "maxLength": 2000,
                 "type": "string"
               },
               {
@@ -2695,6 +2759,17 @@
             "title": "Limit",
             "type": "integer"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
           "offset": {
             "default": 0,
             "title": "Offset",
@@ -2863,6 +2938,14 @@
             "title": "History Item Limit",
             "type": "integer"
           },
+          "max_scanner_window_days": {
+            "title": "Max Scanner Window Days",
+            "type": "integer"
+          },
+          "max_sweep_window_days": {
+            "title": "Max Sweep Window Days",
+            "type": "integer"
+          },
           "monthly_backtest_quota": {
             "anyOf": [
               {
@@ -2876,6 +2959,20 @@
           },
           "plan_tier": {
             "$ref": "#/components/schemas/PlanTier"
+          },
+          "scanner_advanced_allowed_strategy_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scanner Advanced Allowed Strategy Types",
+            "type": "array"
+          },
+          "scanner_basic_allowed_strategy_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scanner Basic Allowed Strategy Types",
+            "type": "array"
           },
           "scanner_modes": {
             "items": {
@@ -2893,7 +2990,9 @@
           "plan_tier",
           "history_item_limit",
           "side_by_side_comparison_limit",
-          "forecasting_access"
+          "forecasting_access",
+          "max_scanner_window_days",
+          "max_sweep_window_days"
         ],
         "title": "FeatureAccessResponse",
         "type": "object"
@@ -4084,6 +4183,18 @@
             "title": "Limit",
             "type": "integer"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque cursor for keyset pagination.",
+            "title": "Next Cursor"
+          },
           "offset": {
             "default": 0,
             "title": "Offset",
@@ -4126,6 +4237,10 @@
           },
           "engine_version": {
             "default": "options-multileg-v2",
+            "enum": [
+              "options-multileg-v1",
+              "options-multileg-v2"
+            ],
             "title": "Engine Version",
             "type": "string"
           },
@@ -4161,6 +4276,11 @@
             "type": "string"
           },
           "job_kind": {
+            "enum": [
+              "manual",
+              "refresh",
+              "nightly"
+            ],
             "title": "Job Kind",
             "type": "string"
           },
@@ -4195,6 +4315,10 @@
           },
           "ranking_version": {
             "default": "scanner-ranking-v1",
+            "enum": [
+              "scanner-ranking-v1",
+              "scanner-ranking-v2"
+            ],
             "title": "Ranking Version",
             "type": "string"
           },
@@ -4424,7 +4548,6 @@
           "symbol",
           "strategy_type",
           "rule_set_name",
-          "request_snapshot",
           "summary",
           "historical_performance",
           "forecast",
@@ -4826,6 +4949,17 @@
             "title": "Limit",
             "type": "integer"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
           "offset": {
             "default": 0,
             "title": "Offset",
@@ -4868,6 +5002,10 @@
           },
           "engine_version": {
             "default": "options-multileg-v2",
+            "enum": [
+              "options-multileg-v1",
+              "options-multileg-v2"
+            ],
             "title": "Engine Version",
             "type": "string"
           },
@@ -5715,7 +5853,7 @@
                     "$ref": "#/components/schemas/_Unset"
                   }
                 ],
-                "maxLength": 500
+                "maxLength": 2000
               },
               {
                 "type": "null"
@@ -6008,6 +6146,41 @@
         "title": "_GdprAnalysis",
         "type": "object"
       },
+      "_GdprAuditEvent": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_type",
+          "subject_type",
+          "created_at"
+        ],
+        "title": "_GdprAuditEvent",
+        "type": "object"
+      },
       "_GdprBacktest": {
         "properties": {
           "created_at": {
@@ -6148,23 +6321,48 @@
       },
       "_GdprPagination": {
         "properties": {
+          "analyses_offset": {
+            "title": "Analyses Offset",
+            "type": "integer"
+          },
+          "audit_offset": {
+            "title": "Audit Offset",
+            "type": "integer"
+          },
           "backtests_offset": {
             "title": "Backtests Offset",
             "type": "integer"
           },
-          "hint": {
-            "title": "Hint",
-            "type": "string"
+          "exports_offset": {
+            "title": "Exports Offset",
+            "type": "integer"
           },
           "limit": {
             "title": "Limit",
+            "type": "integer"
+          },
+          "scans_offset": {
+            "title": "Scans Offset",
+            "type": "integer"
+          },
+          "sweeps_offset": {
+            "title": "Sweeps Offset",
+            "type": "integer"
+          },
+          "templates_offset": {
+            "title": "Templates Offset",
             "type": "integer"
           }
         },
         "required": [
           "limit",
           "backtests_offset",
-          "hint"
+          "templates_offset",
+          "scans_offset",
+          "sweeps_offset",
+          "exports_offset",
+          "analyses_offset",
+          "audit_offset"
         ],
         "title": "_GdprPagination",
         "type": "object"
@@ -6749,7 +6947,7 @@
     },
     "/v1/account/me/export": {
       "get": {
-        "description": "Export all user data for GDPR data portability.\n\nReturns a paginated JSON object. Each section is capped at ``limit``\nrows (default 1000). Use ``offset`` to page through large datasets.",
+        "description": "Export all user data for GDPR data portability.\n\nEach entity type has its own offset parameter for independent pagination.\nReturns totals so the client can determine if additional pages exist.",
         "operationId": "export_account_data_v1_account_me_export_get",
         "parameters": [
           {
@@ -6765,14 +6963,88 @@
             }
           },
           {
+            "description": "Offset for backtests",
             "in": "query",
             "name": "offset",
             "required": false,
             "schema": {
               "default": 0,
+              "description": "Offset for backtests",
               "maximum": 100000,
               "minimum": 0,
               "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "templates_offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Templates Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scans_offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Scans Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sweeps_offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Sweeps Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "exports_offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Exports Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "analyses_offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Analyses Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "audit_offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Audit Offset",
               "type": "integer"
             }
           },
@@ -6898,6 +7170,25 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.",
+              "title": "Cursor"
             }
           },
           {
@@ -9244,6 +9535,23 @@
             }
           },
           {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
@@ -10123,6 +10431,25 @@
             }
           },
           {
+            "description": "Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.",
+              "title": "Cursor"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
@@ -10891,6 +11218,25 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.",
+              "title": "Cursor"
             }
           },
           {
