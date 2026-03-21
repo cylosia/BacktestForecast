@@ -1,44 +1,15 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
 
-import { env } from "@/lib/env";
+import { isAllowedSseProxyOrigin } from "@/lib/api/sse-origin";
 
 const API_BASE = (process.env.API_INTERNAL_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
-function getAllowedOrigin(): string {
-  return new URL(env.appUrl).origin;
-}
-
-function resolveRequestOrigin(req: NextRequest): string | null {
-  const origin = req.headers.get("origin");
-  if (origin) {
-    try {
-      return new URL(origin).origin;
-    } catch {
-      return null;
-    }
-  }
-
-  const referer = req.headers.get("referer");
-  if (!referer) {
-    return null;
-  }
-
-  try {
-    return new URL(referer).origin;
-  } catch {
-    return null;
-  }
-}
-
 function isAllowedOrigin(req: NextRequest): boolean {
-  const candidate = resolveRequestOrigin(req);
   // This proxy is only used by browser EventSource requests from the web app.
   // Require explicit Origin/Referer evidence so a future auth or cookie change
   // cannot silently widen who may open authenticated streams through this route.
-  if (!candidate) return false;
-  const allowedOrigin = getAllowedOrigin();
-  return candidate === allowedOrigin;
+  return isAllowedSseProxyOrigin(req.headers);
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {

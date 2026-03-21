@@ -65,9 +65,8 @@ def test_dynamic_cors_middleware_reloads_origins_per_request() -> None:
 def test_sse_proxy_requires_origin_or_referer() -> None:
     source = Path("apps/web/app/api/events/[...path]/route.ts").read_text()
 
-    assert "resolveRequestOrigin" in source
-    assert "if (!candidate) return false;" in source
-    assert 'from "@/lib/env"' in source
+    assert "isAllowedSseProxyOrigin" in source
+    assert 'from "@/lib/api/sse-origin"' in source
 
 
 def test_api_security_headers_reload_app_env_per_request() -> None:
