@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel
 from starlette.requests import Request
 
+from apps.api.app.routers import health as health_router
 from apps.api.app.routers import meta as meta_router
 from backtestforecast import __version__
 from backtestforecast.backtests.summary import build_summary
