@@ -1,10 +1,10 @@
 """Verify dispatch failure marking and reaper recovery patterns."""
 from __future__ import annotations
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from datetime import UTC, datetime
 
-from apps.api.app.dispatch import dispatch_celery_task, DispatchResult
+from apps.api.app.dispatch import DispatchResult, dispatch_celery_task
 
 
 class TestDispatchCrashWindow:
@@ -36,6 +36,7 @@ class TestDispatchCrashWindow:
     def test_pre_commit_failure_marks_failed(self):
         db = MagicMock()
         db.commit = MagicMock(side_effect=Exception("DB error"))
+        db.flush = MagicMock()
         db.rollback = MagicMock()
 
         job = SimpleNamespace(
@@ -53,6 +54,33 @@ class TestDispatchCrashWindow:
         )
 
         assert result == DispatchResult.PRE_COMMIT_FAILED
+
+    def test_outbox_flush_failure_marks_failed(self):
+        db = MagicMock()
+        db.flush = MagicMock(side_effect=Exception("flush error"))
+        db.rollback = MagicMock()
+        db.commit = MagicMock()
+        db.execute = MagicMock()
+
+        job = SimpleNamespace(
+            id="job-1",
+            status="queued",
+            celery_task_id=None,
+            error_code=None,
+            error_message=None,
+            completed_at=None,
+        )
+
+        result = dispatch_celery_task(
+            db=db, job=job, task_name="test.task",
+            task_kwargs={"id": "123"}, queue="test",
+            log_event="test", logger=MagicMock(),
+        )
+
+        assert result == DispatchResult.PRE_COMMIT_FAILED
+        assert db.rollback.called
+        assert db.execute.called
+        assert db.commit.called
 
     def test_skips_non_queued_jobs(self):
         db = MagicMock()
