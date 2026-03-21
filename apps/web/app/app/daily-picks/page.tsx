@@ -112,10 +112,10 @@ export const dynamic = "force-dynamic";
 export default async function DailyPicksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string }>;
+  searchParams: Promise<{ next_cursor?: string; cursor?: string }>;
 }) {
   const params = await searchParams;
-  const cursor = params.cursor?.trim() || undefined;
+  const cursor = params.next_cursor?.trim() || params.cursor?.trim() || undefined;
   let user;
   try {
     user = await getCurrentUser();
@@ -247,6 +247,7 @@ export default async function DailyPicksPage({
             total={history.items.length + (history.next_cursor ? HISTORY_PAGE_SIZE : 0)}
             cursor={cursor}
             nextCursor={history.next_cursor}
+            cursorParamName="next_cursor"
           />
         </div>
       ) : null}

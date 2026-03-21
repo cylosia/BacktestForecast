@@ -66,6 +66,18 @@ All environment variables recognised by BacktestForecast. Variables marked **req
 | `MASSIVE_RETRY_BACKOFF_SECONDS` | Backoff between retries | `0.5` | — |
 | `EARNINGS_API_KEY` | API key for the earnings calendar provider | — | — |
 
+
+### Data-fetching feature preconditions
+
+The following product features all depend on external market-data access at runtime:
+
+- backtest creation
+- scanner job creation
+- sweep job creation
+- symbol analysis creation
+
+If any of those features are enabled, set `MASSIVE_API_KEY` in every environment where the API or worker will execute those jobs. Without it, history/read endpoints can still work, but new launches will fail when they try to fetch provider data. `EARNINGS_API_KEY` is additionally required for earnings-aware rules to use live earnings-calendar data; when it is unset, earnings-specific behavior is degraded rather than fully unavailable.
+
 ## CORS / Security
 
 | Variable | Description | Default | Required in |
