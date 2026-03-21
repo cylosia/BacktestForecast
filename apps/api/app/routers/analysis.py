@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
-from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
@@ -70,21 +69,14 @@ def create_analysis(
     idempotency_key = payload.idempotency_key
 
     with _analysis_service(db) as service:
-        analysis = service.create_analysis(user, symbol, idempotency_key=idempotency_key)
-
-        dispatch_celery_task(
-            db=db,
-            job=analysis,
-            task_name="analysis.deep_symbol",
-            task_kwargs={"analysis_id": str(analysis.id)},
-            queue="research",
-            log_event="analysis",
-            logger=logger,
+        analysis = service.create_and_dispatch_analysis(
+            user,
+            symbol,
+            idempotency_key=idempotency_key,
             request_id=metadata.request_id,
             traceparent=request.headers.get("traceparent"),
+            dispatch_logger=logger,
         )
-
-        db.refresh(analysis)
         if analysis.status == "failed":
             raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(analysis.error_message) or "Unable to dispatch job."})
         return _to_summary(analysis)
