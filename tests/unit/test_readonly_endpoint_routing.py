@@ -47,6 +47,7 @@ def test_templates_router_uses_readonly_db_for_list_and_get() -> None:
 def test_me_router_uses_readonly_db() -> None:
     source = _router_source("apps/api/app/routers/me.py")
     assert "get_readonly_db" in source
+    assert "get_current_user_readonly" in source
     assert "db: Session = Depends(get_readonly_db)" in source
 
 
@@ -59,4 +60,20 @@ def test_meta_router_uses_readonly_db() -> None:
 def test_account_export_uses_readonly_db() -> None:
     source = _router_source("apps/api/app/routers/account.py")
     assert "get_readonly_db" in source
+    assert "get_current_user_readonly" in source
     assert "db: Session = Depends(get_readonly_db)" in source
+
+
+def test_read_heavy_routers_use_readonly_auth_dependency() -> None:
+    for path in (
+        "apps/api/app/routers/backtests.py",
+        "apps/api/app/routers/scans.py",
+        "apps/api/app/routers/sweeps.py",
+        "apps/api/app/routers/exports.py",
+        "apps/api/app/routers/daily_picks.py",
+        "apps/api/app/routers/analysis.py",
+        "apps/api/app/routers/templates.py",
+        "apps/api/app/routers/forecasts.py",
+    ):
+        source = _router_source(path)
+        assert "get_current_user_readonly" in source, path

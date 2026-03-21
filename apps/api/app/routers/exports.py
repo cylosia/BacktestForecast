@@ -11,7 +11,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
@@ -27,7 +27,7 @@ logger = structlog.get_logger("api.exports")
 
 @router.get("", response_model=ExportJobListResponse)
 def list_exports(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
@@ -71,7 +71,7 @@ def list_exports(
 def create_export(
     payload: CreateExportRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -112,7 +112,7 @@ def create_export(
 @router.get("/{export_job_id}/status", response_model=ExportJobResponse)
 def get_export_status(
     export_job_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> ExportJobResponse:

@@ -5,7 +5,7 @@ import re
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user
+from apps.api.app.dependencies import get_current_user_readonly
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_readonly_db
@@ -29,7 +29,7 @@ _TICKER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9./^-]{0,15}$")
 @router.get("/{ticker}", response_model=ForecastEnvelopeResponse)
 def get_forecast(
     ticker: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     _: None = Depends(_require_forecasts_enabled),
     db: Session = Depends(get_readonly_db),
     strategy_type: StrategyType | None = Query(default=None),

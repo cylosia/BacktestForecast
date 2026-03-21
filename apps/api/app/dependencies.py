@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.auth.verification import ClerkTokenVerifier
 from backtestforecast.config import get_settings
-from backtestforecast.db.session import get_db
+from backtestforecast.db.session import create_session, get_db, get_readonly_db
 from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
@@ -141,10 +141,12 @@ def _get_allowed_origins() -> list[str]:
     return _normalized_origins
 
 
-def get_current_user(
+def _resolve_current_user(
     request: Request,
-    authorization: Annotated[str | None, Header()] = None,
-    db: Session = Depends(get_db),
+    *,
+    authorization: str | None,
+    db: Session,
+    allow_write_fallback: bool,
 ) -> User:
     """Authenticate via Bearer token (primary) or ``__session`` cookie (fallback).
 
@@ -242,24 +244,53 @@ def get_current_user(
     principal = get_token_verifier().verify_bearer_token(token)
     repository = UserRepository(db)
     user = repository.get_by_clerk_user_id(principal.clerk_user_id)
-    if user is None:
-        user = repository.get_or_create(principal.clerk_user_id, principal.email)
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            user = repository.get_by_clerk_user_id(principal.clerk_user_id)
+    if user is None or repository.sync_email_if_needed(user, principal.email):
+        if not allow_write_fallback and user is None:
+            raise AuthenticationError("User account not initialized.")
+        with create_session() as write_db:
+            write_repository = UserRepository(write_db)
+            user = write_repository.get_by_clerk_user_id(principal.clerk_user_id)
             if user is None:
-                raise
-        db.refresh(user)
-    elif repository.sync_email_if_needed(user, principal.email):
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            user = repository.get_by_clerk_user_id(principal.clerk_user_id)
-            if user is None:
-                raise
-        db.refresh(user)
+                user = write_repository.get_or_create(principal.clerk_user_id, principal.email)
+            elif not write_repository.sync_email_if_needed(user, principal.email):
+                structlog.contextvars.bind_contextvars(
+                    user_id=str(user.id),
+                    clerk_user_id_hash=short_hash(user.clerk_user_id),
+                )
+                return user
+            try:
+                write_db.commit()
+            except IntegrityError:
+                write_db.rollback()
+                user = write_repository.get_by_clerk_user_id(principal.clerk_user_id)
+                if user is None:
+                    raise
+            write_db.refresh(user)
     structlog.contextvars.bind_contextvars(user_id=str(user.id), clerk_user_id_hash=short_hash(user.clerk_user_id))
     return user
+
+
+def get_current_user(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> User:
+    return _resolve_current_user(
+        request,
+        authorization=authorization,
+        db=db,
+        allow_write_fallback=True,
+    )
+
+
+def get_current_user_readonly(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_readonly_db),
+) -> User:
+    return _resolve_current_user(
+        request,
+        authorization=authorization,
+        db=db,
+        allow_write_fallback=True,
+    )
