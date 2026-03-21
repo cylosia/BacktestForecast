@@ -1,5 +1,4 @@
 import Link from "next/link";
-import type { TemplateConfig } from "@backtestforecast/api-client";
 import { getTemplates } from "@/lib/api/server";
 import { formatCurrency, formatNumber, formatDateTime, strategyLabel } from "@/lib/backtests/format";
 import { Button } from "@/components/ui/button";
@@ -82,7 +81,7 @@ export default async function TemplatesPage() {
                 </TableHeader>
                 <TableBody>
                   {data.items.map((template) => {
-                    const cfg = (template as any).config_json ?? template.config;
+                    const cfg = template.config;
                     return (
                     <TableRow key={template.id}>
                       <TableCell>

@@ -100,7 +100,7 @@ def create_sweep(
 def get_sweep_status(
     job_id: UUID,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobStatusResponse:
     get_rate_limiter().check(
@@ -124,7 +124,7 @@ def get_sweep_status(
 def get_sweep(
     job_id: UUID,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobResponse:
     get_rate_limiter().check(

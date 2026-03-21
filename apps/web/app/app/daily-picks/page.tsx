@@ -8,6 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PicksHistory } from "@/components/daily-picks/picks-history";
 import type { PipelineHistoryResponse } from "@backtestforecast/api-client";
+import { PaginationControls } from "@/components/shared/pagination-controls";
+
+const HISTORY_PAGE_SIZE = 25;
 
 function regimeColor(regime: string): string {
   switch (regime) {
@@ -106,7 +109,13 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
 
 export const dynamic = "force-dynamic";
 
-export default async function DailyPicksPage() {
+export default async function DailyPicksPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string }>;
+}) {
+  const params = await searchParams;
+  const cursor = params.cursor?.trim() || undefined;
   let user;
   try {
     user = await getCurrentUser();
@@ -133,9 +142,9 @@ export default async function DailyPicksPage() {
   } catch (err) {
     const isApiError = err instanceof ApiError;
     const status = isApiError ? err.status : 0;
-    const message =
-      status === 404
-        ? "No pipeline data available yet. The nightly scan runs at 4:00 AM UTC."
+      const message =
+        status === 404
+        ? "No pipeline data available yet. The nightly scan runs at 6:00 AM UTC."
         : err instanceof Error
           ? err.message
           : "Daily picks could not be loaded. Please try again later.";
@@ -157,7 +166,7 @@ export default async function DailyPicksPage() {
 
   let history: PipelineHistoryResponse | null = null;
   try {
-    history = await getDailyPicksHistory();
+    history = await getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor);
   } catch {
     // Don't break the page if history fails to load
   }
@@ -201,7 +210,7 @@ export default async function DailyPicksPage() {
         <Card>
           <CardContent className="p-6 text-center text-muted-foreground">
             {data.status === "no_data"
-              ? "No pipeline data available yet. The nightly scan runs at 4:00 AM UTC."
+              ? "No pipeline data available yet. The nightly scan runs at 6:00 AM UTC."
               : "No recommendations were produced for this date."}
           </CardContent>
         </Card>
@@ -215,8 +224,8 @@ export default async function DailyPicksPage() {
 
       <div className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground space-y-2">
         <p className="font-medium text-foreground">How the pipeline works</p>
-        <p>
-          Every night at 4:00 AM UTC, the pipeline screens ~100 optionable symbols for
+          <p>
+          Every night at 6:00 AM UTC, the pipeline screens ~100 optionable symbols for
           technical signals, matches each to compatible strategies based on its current
           regime (bullish/bearish/neutral × high/low IV), runs quick 90-day backtests
           across a parameter grid, refines the top candidates with full 1-year backtests,
@@ -228,7 +237,19 @@ export default async function DailyPicksPage() {
         </p>
       </div>
 
-      {history ? <PicksHistory data={history} /> : null}
+      {history ? (
+        <div className="space-y-4">
+          <PicksHistory data={history} />
+          <PaginationControls
+            basePath="/app/daily-picks"
+            offset={0}
+            limit={HISTORY_PAGE_SIZE}
+            total={history.items.length + (history.next_cursor ? HISTORY_PAGE_SIZE : 0)}
+            cursor={cursor}
+            nextCursor={history.next_cursor}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
