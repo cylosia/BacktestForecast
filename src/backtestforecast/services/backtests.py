@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from backtestforecast.backtests.types import BacktestExecutionResult
 from backtestforecast.config import get_settings
 from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
-from backtestforecast.billing.entitlements import resolve_feature_policy
+from backtestforecast.billing.entitlements import POLICIES, ScannerMode, resolve_feature_policy
 from backtestforecast.errors import (
     AppError,
     AppValidationError,
@@ -533,10 +533,15 @@ class BacktestService:
         if feature_policy.monthly_backtest_quota is not None:
             remaining = max(feature_policy.monthly_backtest_quota - used_this_month, 0)
         scanner_modes: list[str] = []
+        basic_scanner_strategies: list[str] = []
+        advanced_scanner_strategies: list[str] = []
         if feature_policy.basic_scanner_access:
             scanner_modes.append("basic")
+            basic_scanner_strategies = sorted(POLICIES[(feature_policy.tier, ScannerMode.BASIC)].allowed_strategies)
         if feature_policy.advanced_scanner_access:
             scanner_modes.append("advanced")
+            advanced_scanner_strategies = sorted(POLICIES[(feature_policy.tier, ScannerMode.ADVANCED)].allowed_strategies)
+        settings = get_settings()
         return CurrentUserResponse(
             id=user.id,
             clerk_user_id=user.clerk_user_id,
@@ -558,6 +563,10 @@ class BacktestService:
                     fmt.value for fmt in sorted(feature_policy.export_formats, key=lambda item: item.value)
                 ],
                 scanner_modes=scanner_modes,
+                scanner_basic_allowed_strategy_types=basic_scanner_strategies,
+                scanner_advanced_allowed_strategy_types=advanced_scanner_strategies,
+                max_scanner_window_days=settings.max_scanner_window_days,
+                max_sweep_window_days=settings.max_sweep_window_days,
                 cancel_at_period_end=user.cancel_at_period_end,
             ),
             usage=UsageSummaryResponse(
