@@ -190,7 +190,7 @@ class ScanService:
             metadata={"mode": job.mode, "candidate_count": job.candidate_count},
         )
         try:
-            self.session.commit()
+            self.session.flush()
         except IntegrityError:
             self.session.rollback()
             if payload.idempotency_key:
@@ -209,7 +209,6 @@ class ScanService:
             if recent is not None:
                 return recent
             raise
-        self.session.refresh(job)
         return job
 
     def run_job(self, job_id: UUID) -> ScannerJob:

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-
-import structlog
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
+
+import structlog
 
 if TYPE_CHECKING:
     from redis import Redis
@@ -14,13 +14,12 @@ if TYPE_CHECKING:
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
+from apps.api.app.dependencies import _extract_client_ip, reset_token_verifier, reset_trusted_networks
 from apps.api.app.routers import (
     account,
     analysis,
@@ -38,83 +37,97 @@ from apps.api.app.routers import (
     sweeps,
     templates,
 )
-from apps.api.app.dependencies import _extract_client_ip, reset_trusted_networks, reset_token_verifier
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.errors import AppError, FeatureLockedError, QuotaExceededError, RateLimitError
-from backtestforecast.security import get_rate_limiter
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
 from backtestforecast.observability.logging import RequestContextMiddleware
 from backtestforecast.observability.metrics import API_ERRORS_TOTAL, PrometheusMiddleware, metrics_response
-from backtestforecast.security.http import ApiSecurityHeadersMiddleware, RequestBodyLimitMiddleware
+from backtestforecast.security import get_rate_limiter
+from backtestforecast.security.http import (
+    ApiSecurityHeadersMiddleware,
+    DynamicCORSMiddleware,
+    DynamicTrustedHostMiddleware,
+    RequestBodyLimitMiddleware,
+    RuntimeHTTPPolicy,
+)
+from backtestforecast.version import get_public_version
 
 _startup_settings = get_settings()
 configure_logging(_startup_settings)
 logger = get_logger("api")
 
-# WARNING: _startup_settings captures configuration at import time.  Values
-# used in middleware constructor args (CORS origins, allowed hosts, body
-# limits) are fixed for the process lifetime.  Per-request code paths
-# (e.g., /metrics auth, /admin/dlq auth) must call get_settings() to pick
-# up post-invalidation changes.
-settings = _startup_settings
+# _startup_settings is reserved for process-start concerns like logging, docs
+# exposure, and FastAPI metadata. Request-time HTTP policy is resolved
+# separately so host/CORS/body-limit/security-header behavior tracks
+# invalidate_settings() without relying on another module-level alias.
 
-if settings.sentry_dsn:
+
+def _get_runtime_http_policy() -> RuntimeHTTPPolicy:
+    runtime_settings = get_settings()
+    return RuntimeHTTPPolicy(
+        app_env=runtime_settings.app_env,
+        request_max_body_bytes=runtime_settings.request_max_body_bytes,
+        trusted_hosts=runtime_settings.api_allowed_hosts,
+        cors_origins=runtime_settings.web_cors_origins,
+    )
+
+if _startup_settings.sentry_dsn:
     try:
         import sentry_sdk
 
         sentry_sdk.init(
-            dsn=settings.sentry_dsn,
-            environment=settings.app_env,
-            traces_sample_rate=settings.sentry_traces_sample_rate,
+            dsn=_startup_settings.sentry_dsn,
+            environment=_startup_settings.app_env,
+            traces_sample_rate=_startup_settings.sentry_traces_sample_rate,
             send_default_pii=False,
         )
-        logger.info("sentry.initialized", environment=settings.app_env)
+        logger.info("sentry.initialized", environment=_startup_settings.app_env)
     except Exception:
         logger.warning("sentry.init_failed", exc_info=True)
 
 @asynccontextmanager
 async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
-    if settings.app_env in ("production", "staging"):
-        if not settings.clerk_audience or not settings.clerk_audience.strip():
+    if _startup_settings.app_env in ("production", "staging"):
+        if not _startup_settings.clerk_audience or not settings.clerk_audience.strip():
             raise RuntimeError(
                 "CLERK_AUDIENCE must be set to a non-empty value in production/staging. "
                 "JWT audience verification will not work without it."
             )
-        if not settings.clerk_issuer or not settings.clerk_issuer.strip():
+        if not _startup_settings.clerk_issuer or not settings.clerk_issuer.strip():
             raise RuntimeError(
                 "CLERK_ISSUER must be set to a non-empty value in production/staging. "
                 "JWT issuer verification will not work without it."
             )
-        if not settings.admin_token or not settings.admin_token.strip():
+        if not _startup_settings.admin_token or not settings.admin_token.strip():
             raise RuntimeError(
                 "ADMIN_TOKEN must be set to a non-empty value in production/staging. "
                 "The /admin/dlq endpoint will fall back to metrics_token without it."
             )
-        if not settings.clerk_authorized_parties:
+        if not _startup_settings.clerk_authorized_parties:
             raise RuntimeError(
                 "CLERK_AUTHORIZED_PARTIES must be set in production/staging. "
                 "Without it, any Clerk application sharing the same JWKS endpoint "
                 "could generate valid tokens. Set it to your frontend app's client ID."
             )
     else:
-        if not settings.clerk_audience:
+        if not _startup_settings.clerk_audience:
             logger.warning(
                 "startup.clerk_audience_missing",
                 hint="CLERK_AUDIENCE is not set; JWT audience verification is disabled in development. "
                      "Tokens from any Clerk app sharing the same key pair will be accepted.",
             )
-        if not settings.clerk_issuer:
+        if not _startup_settings.clerk_issuer:
             logger.warning(
                 "startup.clerk_issuer_missing",
                 hint="CLERK_ISSUER is not set; JWT issuer verification is disabled in development.",
             )
-        if not settings.clerk_authorized_parties:
+        if not _startup_settings.clerk_authorized_parties:
             logger.warning(
                 "startup.clerk_authorized_parties_missing",
                 hint="CLERK_AUTHORIZED_PARTIES is empty; the azp claim will not be checked.",
             )
 
-    if "*" in settings.web_cors_origins and settings.app_env in ("production", "staging"):
+    if "*" in _startup_settings.web_cors_origins and _startup_settings.app_env in ("production", "staging"):
         raise RuntimeError(
             "WEB_CORS_ORIGINS must not contain '*' in production/staging when "
             "allow_credentials=True. This would allow any origin to make "
@@ -122,13 +135,13 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     _cors_hosts = set()
-    for origin in settings.web_cors_origins:
+    for origin in _startup_settings.web_cors_origins:
         if origin != "*":
             from urllib.parse import urlparse as _parse_origin
             parsed = _parse_origin(origin)
             if parsed.hostname:
                 _cors_hosts.add(parsed.hostname)
-    _allowed_set = set(settings.api_allowed_hosts)
+    _allowed_set = set(_startup_settings.api_allowed_hosts)
     if "*" not in _allowed_set:
         _missing_hosts = _cors_hosts - _allowed_set
         if _missing_hosts:
@@ -147,7 +160,7 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 
     register_invalidation_callback(_invalidate_dlq_redis)
 
-    if settings.clerk_jwks_url or settings.clerk_issuer:
+    if _startup_settings.clerk_jwks_url or _startup_settings.clerk_issuer:
         try:
             from apps.api.app.dependencies import get_token_verifier
             verifier = get_token_verifier()
@@ -196,15 +209,13 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("lifespan.shutdown_complete")
 
 
-from backtestforecast import __version__ as _app_version
-
 app = FastAPI(
-    title=settings.app_name,
-    version=_app_version,
+    title=_startup_settings.app_name,
+    version=get_public_version(),
     description="BacktestForecast API — options backtesting, scanning, forecasting, and portfolio analysis.",
-    openapi_url="/openapi.json" if settings.app_env in ("development", "test") else None,
-    docs_url="/docs" if settings.app_env in ("development", "test") else None,
-    redoc_url="/redoc" if settings.app_env in ("development", "test") else None,
+    openapi_url="/openapi.json" if _startup_settings.app_env in ("development", "test") else None,
+    docs_url="/docs" if _startup_settings.app_env in ("development", "test") else None,
+    redoc_url="/redoc" if _startup_settings.app_env in ("development", "test") else None,
     lifespan=_lifespan,
 )
 
@@ -326,25 +337,25 @@ class _CancelledErrorMiddleware:
                     )
                     await response(scope, receive, original_send)
                 except Exception:
-                    pass
+                    logger.debug("client_disconnect.response_send_failed", exc_info=True)
 
 
 # Middleware execution order (outermost to innermost):
 # 1. PrometheusMiddleware — records request metrics (including 499s)
 # 2. _CancelledErrorMiddleware — converts CancelledError to 499
 # 3. RequestContextMiddleware — binds request_id to structlog context
-# 4. TrustedHostMiddleware — rejects requests with invalid Host headers
-# 5. CORSMiddleware — handles cross-origin preflight and response headers
+# 4. DynamicTrustedHostMiddleware — rejects requests with invalid Host headers
+# 5. DynamicCORSMiddleware — handles cross-origin preflight and response headers
 # 6. RequestBodyLimitMiddleware — enforces max request body size
 # 7. ApiSecurityHeadersMiddleware — adds security response headers
 #
 # Starlette builds middleware LIFO: the last add_middleware call is outermost.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
-app.add_middleware(ApiSecurityHeadersMiddleware)
-app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
+app.add_middleware(ApiSecurityHeadersMiddleware, app_env_resolver=lambda: _get_runtime_http_policy().app_env)
+app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=lambda: _get_runtime_http_policy().request_max_body_bytes)
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.web_cors_origins,
+    DynamicCORSMiddleware,
+    allow_origins=lambda: _get_runtime_http_policy().cors_origins,
     allow_credentials=True,
     # PUT intentionally excluded: no API endpoints use PUT. All updates use PATCH.
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
@@ -352,11 +363,9 @@ app.add_middleware(
     expose_headers=["X-Request-ID", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
     max_age=600,
 )
-# Note: TrustedHostMiddleware runs BEFORE CORSMiddleware. If a CORS preflight
-# request has a Host header not in api_allowed_hosts, it will be rejected with
-# 400 before CORS headers are attached. Ensure api_allowed_hosts includes all
-# domains that legitimate CORS requests target.
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
+# Trusted host validation runs before CORS handling, so every browser-facing
+# API hostname still needs to be present in API_ALLOWED_HOSTS_RAW.
+app.add_middleware(DynamicTrustedHostMiddleware, allowed_hosts=lambda: _get_runtime_http_policy().trusted_hosts)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(_CancelledErrorMiddleware)
 
@@ -366,9 +375,21 @@ class _RequestTimeoutMiddleware:
 
     _EXEMPT_PREFIXES = ("/v1/events/",)
 
-    def __init__(self, app: object, *, timeout_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        app: object,
+        *,
+        timeout_seconds: int = 60,
+        timeout_seconds_resolver: Callable[[], int] | None = None,
+    ) -> None:
         self.app = app
         self.timeout_seconds = timeout_seconds
+        self._timeout_seconds_resolver = timeout_seconds_resolver
+
+    def _resolve_timeout_seconds(self) -> int:
+        if self._timeout_seconds_resolver is None:
+            return self.timeout_seconds
+        return int(self._timeout_seconds_resolver())
 
     async def __call__(self, scope, receive, send) -> None:  # type: ignore[no-untyped-def]
         if scope["type"] != "http" or any(scope["path"].startswith(p) for p in self._EXEMPT_PREFIXES):
@@ -384,25 +405,30 @@ class _RequestTimeoutMiddleware:
             await send(message)
 
         try:
-            await asyncio.wait_for(self.app(scope, receive, guarded_send), timeout=self.timeout_seconds)
-        except asyncio.TimeoutError:
+            timeout_seconds = self._resolve_timeout_seconds()
+            await asyncio.wait_for(self.app(scope, receive, guarded_send), timeout=timeout_seconds)
+        except TimeoutError:
             if not response_started:
                 from starlette.responses import JSONResponse as _JR
 
                 headers = {}
                 if get_settings().app_env not in ("production", "staging"):
-                    headers["X-Debug-Timeout"] = str(self.timeout_seconds)
+                    headers["X-Debug-Timeout"] = str(timeout_seconds)
                 resp = _JR(status_code=504, content={"error": {"code": "request_timeout", "message": "Request timed out."}}, headers=headers)
                 await resp(scope, receive, send)
             else:
                 structlog.get_logger("api.timeout").warning(
                     "request.timeout_after_headers_sent",
                     path=scope.get("path", "/unknown"),
-                    timeout_seconds=self.timeout_seconds,
+                    timeout_seconds=timeout_seconds,
                 )
 
 
-app.add_middleware(_RequestTimeoutMiddleware, timeout_seconds=settings.request_timeout_seconds)
+app.add_middleware(
+    _RequestTimeoutMiddleware,
+    timeout_seconds=_startup_settings.request_timeout_seconds,
+    timeout_seconds_resolver=lambda: get_settings().request_timeout_seconds,
+)
 app.add_middleware(PrometheusMiddleware)
 
 app.include_router(health.router)

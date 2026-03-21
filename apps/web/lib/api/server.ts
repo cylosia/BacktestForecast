@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import { cache } from "react";
 import { apiRequest } from "@/lib/api/shared";
 import { buildPaginatedListPath } from "@/lib/api/pagination";
 import type {
@@ -19,7 +20,7 @@ import type {
   TemplateListResponse,
 } from "@backtestforecast/api-client";
 
-async function getServerToken(): Promise<string> {
+const getServerToken = cache(async (): Promise<string> => {
   const { isAuthenticated, getToken, redirectToSignIn } = await auth();
 
   if (!isAuthenticated) {
@@ -34,35 +35,35 @@ async function getServerToken(): Promise<string> {
   }
 
   return token;
-}
+});
 
-export async function getCurrentUser(): Promise<CurrentUserResponse> {
+export const getCurrentUser = cache(async (): Promise<CurrentUserResponse> => {
   const token = await getServerToken();
   const user = await apiRequest<CurrentUserResponse>("/v1/me", token, { cache: "no-store" });
   if (!user || typeof user.id !== "string" || typeof user.plan_tier !== "string") {
     throw new Error("Invalid user response shape from API");
   }
   return user;
-}
+});
 
-export async function getBacktestHistory(limit = 50, offset = 0, cursor?: string | null): Promise<BacktestRunListResponse> {
+export const getBacktestHistory = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<BacktestRunListResponse> => {
   const token = await getServerToken();
   return apiRequest<BacktestRunListResponse>(
     buildPaginatedListPath("/v1/backtests", limit, offset, 100, cursor),
     token,
     { cache: "no-store" },
   );
-}
+});
 
-export async function getBacktestRun(runId: string): Promise<BacktestRunDetailResponse> {
+export const getBacktestRun = cache(async (runId: string): Promise<BacktestRunDetailResponse> => {
   const token = await getServerToken();
   return apiRequest<BacktestRunDetailResponse>(`/v1/backtests/${encodeURIComponent(runId)}`, token, { cache: "no-store" });
-}
+});
 
-export async function getTemplates(): Promise<TemplateListResponse> {
+export const getTemplates = cache(async (): Promise<TemplateListResponse> => {
   const token = await getServerToken();
   return apiRequest<TemplateListResponse>("/v1/templates", token, { cache: "no-store" });
-}
+});
 
 export async function compareBacktests(runIds: string[]): Promise<CompareBacktestsResponse> {
   if (runIds.length < 2 || runIds.length > 8) {
@@ -79,65 +80,69 @@ export async function compareBacktests(runIds: string[]): Promise<CompareBacktes
   });
 }
 
-export async function getScannerJobs(limit = 50, offset = 0, cursor?: string | null): Promise<ScannerJobListResponse> {
+export const getScannerJobs = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<ScannerJobListResponse> => {
   const token = await getServerToken();
   return apiRequest<ScannerJobListResponse>(
     buildPaginatedListPath("/v1/scans", limit, offset, 50, cursor),
     token,
     { cache: "no-store" },
   );
-}
+});
 
-export async function getScannerJob(jobId: string): Promise<ScannerJobResponse> {
+export const getScannerJob = cache(async (jobId: string): Promise<ScannerJobResponse> => {
   const token = await getServerToken();
   return apiRequest<ScannerJobResponse>(`/v1/scans/${encodeURIComponent(jobId)}`, token, { cache: "no-store" });
-}
+});
 
-export async function getScannerRecommendations(jobId: string): Promise<ScannerRecommendationListResponse> {
+export const getScannerRecommendations = cache(async (jobId: string): Promise<ScannerRecommendationListResponse> => {
   const token = await getServerToken();
   return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, { cache: "no-store" });
-}
+});
 
-export async function getSweepJobs(limit = 50, offset = 0, cursor?: string | null): Promise<SweepJobListResponse> {
+export const getSweepJobs = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<SweepJobListResponse> => {
   const token = await getServerToken();
   return apiRequest<SweepJobListResponse>(
     buildPaginatedListPath("/v1/sweeps", limit, offset, 50, cursor),
     token,
     { cache: "no-store" },
   );
-}
+});
 
-export async function getSweepJob(jobId: string): Promise<SweepJobResponse> {
+export const getSweepJob = cache(async (jobId: string): Promise<SweepJobResponse> => {
   const token = await getServerToken();
   return apiRequest<SweepJobResponse>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, { cache: "no-store" });
-}
+});
 
-export async function getSweepResults(jobId: string): Promise<SweepResultListResponse> {
+export const getSweepResults = cache(async (jobId: string): Promise<SweepResultListResponse> => {
   const token = await getServerToken();
   return apiRequest<SweepResultListResponse>(`/v1/sweeps/${encodeURIComponent(jobId)}/results`, token, { cache: "no-store" });
-}
+});
 
-export async function getStrategyCatalog(): Promise<StrategyCatalogResponse> {
+export const getStrategyCatalog = cache(async (): Promise<StrategyCatalogResponse> => {
   const token = await getServerToken();
   return apiRequest<StrategyCatalogResponse>("/v1/strategy-catalog", token, { cache: "no-store" });
-}
+});
 
-export async function getDailyPicks(): Promise<DailyPicksResponse> {
+export const getDailyPicks = cache(async (): Promise<DailyPicksResponse> => {
   const token = await getServerToken();
   return apiRequest<DailyPicksResponse>("/v1/daily-picks", token, { cache: "no-store" });
-}
+});
 
-export async function getAnalysisHistory(limit = 10, offset = 0, cursor?: string | null) {
+export const getAnalysisHistory = cache(async (limit = 10, offset = 0, cursor?: string | null) => {
   const token = await getServerToken();
   return apiRequest<AnalysisListResponse>(
     buildPaginatedListPath("/v1/analysis", limit, offset, 50, cursor),
     token,
     { cache: "no-store" },
   );
-}
+});
 
-export async function getDailyPicksHistory(limit = 10) {
+export const getDailyPicksHistory = cache(async (limit = 10, cursor?: string | null) => {
   const token = await getServerToken();
   const safeLimit = Math.max(1, Math.min(limit, 30));
-  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?limit=${safeLimit}`, token, { cache: "no-store" });
-}
+  const params = new URLSearchParams({ limit: String(safeLimit) });
+  if (cursor && cursor.trim().length > 0) {
+    params.set("cursor", cursor);
+  }
+  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?${params.toString()}`, token, { cache: "no-store" });
+});
