@@ -15,6 +15,7 @@ from apps.api.app.dependencies import get_db
 from apps.api.app.dependencies import get_token_verifier as _get_token_verifier
 from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
+from backtestforecast.db.session import get_readonly_db
 from backtestforecast.security.rate_limits import get_rate_limiter
 
 
@@ -82,6 +83,7 @@ def client(
     _verifier = _get_token_verifier()
     monkeypatch.setattr(_verifier, "verify_bearer_token", fake_verify)
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_readonly_db] = override_get_db
     # NOTE: Resetting the rate limiter here means integration tests never
     # exercise rate-limit enforcement. See test_rate_limit_enforcement.py
     # for dedicated coverage of the 429 path.
