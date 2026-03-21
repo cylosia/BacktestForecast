@@ -56,10 +56,10 @@ _startup_settings = get_settings()
 configure_logging(_startup_settings)
 logger = get_logger("api")
 
-# _startup_settings configures process-start concerns like logging, docs exposure,
-# and the FastAPI metadata. Request-time HTTP policy is resolved separately so
-# host/CORS/body-limit/security-header behavior tracks invalidate_settings().
-settings = _startup_settings
+# _startup_settings is reserved for process-start concerns like logging, docs
+# exposure, and FastAPI metadata. Request-time HTTP policy is resolved
+# separately so host/CORS/body-limit/security-header behavior tracks
+# invalidate_settings() without relying on another module-level alias.
 
 
 def _get_runtime_http_policy() -> RuntimeHTTPPolicy:
@@ -71,63 +71,63 @@ def _get_runtime_http_policy() -> RuntimeHTTPPolicy:
         cors_origins=runtime_settings.web_cors_origins,
     )
 
-if settings.sentry_dsn:
+if _startup_settings.sentry_dsn:
     try:
         import sentry_sdk
 
         sentry_sdk.init(
-            dsn=settings.sentry_dsn,
-            environment=settings.app_env,
-            traces_sample_rate=settings.sentry_traces_sample_rate,
+            dsn=_startup_settings.sentry_dsn,
+            environment=_startup_settings.app_env,
+            traces_sample_rate=_startup_settings.sentry_traces_sample_rate,
             send_default_pii=False,
         )
-        logger.info("sentry.initialized", environment=settings.app_env)
+        logger.info("sentry.initialized", environment=_startup_settings.app_env)
     except Exception:
         logger.warning("sentry.init_failed", exc_info=True)
 
 @asynccontextmanager
 async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
-    if settings.app_env in ("production", "staging"):
-        if not settings.clerk_audience or not settings.clerk_audience.strip():
+    if _startup_settings.app_env in ("production", "staging"):
+        if not _startup_settings.clerk_audience or not settings.clerk_audience.strip():
             raise RuntimeError(
                 "CLERK_AUDIENCE must be set to a non-empty value in production/staging. "
                 "JWT audience verification will not work without it."
             )
-        if not settings.clerk_issuer or not settings.clerk_issuer.strip():
+        if not _startup_settings.clerk_issuer or not settings.clerk_issuer.strip():
             raise RuntimeError(
                 "CLERK_ISSUER must be set to a non-empty value in production/staging. "
                 "JWT issuer verification will not work without it."
             )
-        if not settings.admin_token or not settings.admin_token.strip():
+        if not _startup_settings.admin_token or not settings.admin_token.strip():
             raise RuntimeError(
                 "ADMIN_TOKEN must be set to a non-empty value in production/staging. "
                 "The /admin/dlq endpoint will fall back to metrics_token without it."
             )
-        if not settings.clerk_authorized_parties:
+        if not _startup_settings.clerk_authorized_parties:
             raise RuntimeError(
                 "CLERK_AUTHORIZED_PARTIES must be set in production/staging. "
                 "Without it, any Clerk application sharing the same JWKS endpoint "
                 "could generate valid tokens. Set it to your frontend app's client ID."
             )
     else:
-        if not settings.clerk_audience:
+        if not _startup_settings.clerk_audience:
             logger.warning(
                 "startup.clerk_audience_missing",
                 hint="CLERK_AUDIENCE is not set; JWT audience verification is disabled in development. "
                      "Tokens from any Clerk app sharing the same key pair will be accepted.",
             )
-        if not settings.clerk_issuer:
+        if not _startup_settings.clerk_issuer:
             logger.warning(
                 "startup.clerk_issuer_missing",
                 hint="CLERK_ISSUER is not set; JWT issuer verification is disabled in development.",
             )
-        if not settings.clerk_authorized_parties:
+        if not _startup_settings.clerk_authorized_parties:
             logger.warning(
                 "startup.clerk_authorized_parties_missing",
                 hint="CLERK_AUTHORIZED_PARTIES is empty; the azp claim will not be checked.",
             )
 
-    if "*" in settings.web_cors_origins and settings.app_env in ("production", "staging"):
+    if "*" in _startup_settings.web_cors_origins and _startup_settings.app_env in ("production", "staging"):
         raise RuntimeError(
             "WEB_CORS_ORIGINS must not contain '*' in production/staging when "
             "allow_credentials=True. This would allow any origin to make "
@@ -135,13 +135,13 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     _cors_hosts = set()
-    for origin in settings.web_cors_origins:
+    for origin in _startup_settings.web_cors_origins:
         if origin != "*":
             from urllib.parse import urlparse as _parse_origin
             parsed = _parse_origin(origin)
             if parsed.hostname:
                 _cors_hosts.add(parsed.hostname)
-    _allowed_set = set(settings.api_allowed_hosts)
+    _allowed_set = set(_startup_settings.api_allowed_hosts)
     if "*" not in _allowed_set:
         _missing_hosts = _cors_hosts - _allowed_set
         if _missing_hosts:
@@ -160,7 +160,7 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 
     register_invalidation_callback(_invalidate_dlq_redis)
 
-    if settings.clerk_jwks_url or settings.clerk_issuer:
+    if _startup_settings.clerk_jwks_url or _startup_settings.clerk_issuer:
         try:
             from apps.api.app.dependencies import get_token_verifier
             verifier = get_token_verifier()
@@ -210,12 +210,12 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title=settings.app_name,
+    title=_startup_settings.app_name,
     version=get_public_version(),
     description="BacktestForecast API — options backtesting, scanning, forecasting, and portfolio analysis.",
-    openapi_url="/openapi.json" if settings.app_env in ("development", "test") else None,
-    docs_url="/docs" if settings.app_env in ("development", "test") else None,
-    redoc_url="/redoc" if settings.app_env in ("development", "test") else None,
+    openapi_url="/openapi.json" if _startup_settings.app_env in ("development", "test") else None,
+    docs_url="/docs" if _startup_settings.app_env in ("development", "test") else None,
+    redoc_url="/redoc" if _startup_settings.app_env in ("development", "test") else None,
     lifespan=_lifespan,
 )
 
@@ -426,7 +426,7 @@ class _RequestTimeoutMiddleware:
 
 app.add_middleware(
     _RequestTimeoutMiddleware,
-    timeout_seconds=settings.request_timeout_seconds,
+    timeout_seconds=_startup_settings.request_timeout_seconds,
     timeout_seconds_resolver=lambda: get_settings().request_timeout_seconds,
 )
 app.add_middleware(PrometheusMiddleware)
@@ -487,7 +487,7 @@ def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         if info is not None:
             response.headers["Retry-After"] = str(max(info.reset_at - int(time.time()), 1))
             response.headers["X-RateLimit-Limit"] = str(info.limit)
-            response.headers["X-RateLimit-Remaining"] = str(info.remaining)
+            response.headers["X-RateLimit-Renning"] = str(info.remaining)
             response.headers["X-RateLimit-Reset"] = str(info.reset_at)
     return response
 
