@@ -83,42 +83,42 @@ export default async function TemplatesPage() {
                   {data.items.map((template) => {
                     const cfg = template.config;
                     return (
-                    <TableRow key={template.id}>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <p className="font-medium">{template.name}</p>
-                          {template.description ? (
-                            <p className="text-xs text-muted-foreground">{template.description}</p>
-                          ) : null}
-                          {cfg.default_symbol ? (
-                            <Badge variant="secondary">{cfg.default_symbol}</Badge>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell>{strategyLabel(template.strategy_type)}</TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <p>{cfg.target_dte} DTE</p>
-                          <p className="text-xs text-muted-foreground">
-                            Max hold {cfg.max_holding_days}d
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <p>{formatCurrency(cfg.account_size ?? 0)}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatNumber(cfg.risk_per_trade_pct ?? 0)}% risk
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {formatDateTime(template.updated_at)}
-                      </TableCell>
-                      <TableCell>
-                        <TemplateActions templateId={template.id} templateName={template.name} templateDescription={template.description ?? ""} templateUpdatedAt={template.updated_at} />
-                      </TableCell>
-                    </TableRow>
+                      <TableRow key={template.id}>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="font-medium">{template.name}</p>
+                            {template.description ? (
+                              <p className="text-xs text-muted-foreground">{template.description}</p>
+                            ) : null}
+                            {cfg.default_symbol ? (
+                              <Badge variant="secondary">{cfg.default_symbol}</Badge>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell>{strategyLabel(template.strategy_type)}</TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p>{cfg.target_dte} DTE</p>
+                            <p className="text-xs text-muted-foreground">
+                              Max hold {cfg.max_holding_days}d
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p>{formatCurrency(cfg.account_size ?? 0)}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatNumber(cfg.risk_per_trade_pct ?? 0)}% risk
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {formatDateTime(template.updated_at)}
+                        </TableCell>
+                        <TableCell>
+                          <TemplateActions templateId={template.id} templateName={template.name} templateDescription={template.description ?? ""} templateUpdatedAt={template.updated_at} />
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
                 </TableBody>

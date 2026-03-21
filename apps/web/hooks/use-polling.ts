@@ -93,13 +93,22 @@ export function usePolling<T>({
       onProgressRef.current?.(result);
 
       if (isCompleteRef.current(result)) {
-        if (mountedRef.current) setStatus("done");
         try {
+<<<<<<< codex/conduct-comprehensive-codebase-audit-6pp5s5
+          await Promise.resolve(onCompleteRef.current(result));
+        } catch (err) {
+          console.error("[usePolling] onComplete failed:", err);
+        } finally {
+          if (mountedRef.current && !controller.signal.aborted) {
+            setStatus("done");
+          }
+=======
           Promise.resolve(onCompleteRef.current(result)).catch((err) => {
             console.error("[usePolling] onComplete failed:", err);
           });
         } catch (err) {
           console.error("[usePolling] onComplete threw synchronously:", err);
+>>>>>>> main
         }
         return;
       }

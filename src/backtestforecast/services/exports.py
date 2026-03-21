@@ -92,7 +92,7 @@ class ExportService:
         if payload.idempotency_key:
             existing = self.exports.get_by_idempotency_key(user.id, payload.idempotency_key)
             if existing is not None:
-                return self.to_response(existing)
+                return existing
 
         run = self.backtests.get_lightweight_for_user(payload.run_id, user.id)
         if run is None:
