@@ -8,15 +8,14 @@ from typing import Annotated
 import structlog
 from fastapi import Depends, Header, Request
 from sqlalchemy.exc import IntegrityError
-
-from backtestforecast.observability.logging import short_hash
 from sqlalchemy.orm import Session
 
 from backtestforecast.auth.verification import ClerkTokenVerifier
 from backtestforecast.config import get_settings
-from backtestforecast.db.session import get_db
+from backtestforecast.db.session import create_session, get_db, get_readonly_db
 from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
+from backtestforecast.observability.logging import short_hash
 from backtestforecast.repositories.users import UserRepository
 
 _token_verifier: ClerkTokenVerifier | None = None
@@ -39,27 +38,15 @@ def reset_token_verifier() -> None:
         _token_verifier = None
 
 
-_trusted_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] | None = None
-_trusted_networks_lock = threading.Lock()
-
-
 def _get_trusted_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
-    global _trusted_networks
-    if _trusted_networks is None:
-        with _trusted_networks_lock:
-            if _trusted_networks is None:
-                raw = get_settings().trusted_proxy_cidrs
-                entries = [cidr.strip() for cidr in raw.split(",") if cidr.strip()]
-                _trusted_networks = [ipaddress.ip_network(cidr, strict=False) for cidr in entries]
-    return _trusted_networks
+    raw = get_settings().trusted_proxy_cidrs
+    entries = [cidr.strip() for cidr in raw.split(",") if cidr.strip()]
+    return [ipaddress.ip_network(cidr, strict=False) for cidr in entries]
 
 
 def reset_trusted_networks() -> None:
-    """Clear cached networks so they are re-read from settings on next call."""
-    global _trusted_networks, _normalized_origins
-    with _trusted_networks_lock:
-        _trusted_networks = None
-    _normalized_origins = None
+    """Compatibility hook for config invalidation callbacks."""
+    return None
 
 
 def _is_trusted_proxy(host: str | None) -> bool:
@@ -91,8 +78,8 @@ def _extract_client_ip(request: Request) -> str | None:
     """Extract the real client IP using the rightmost-untrusted approach.
 
     Walks the X-Forwarded-For chain from right to left, skipping entries
-    that belong to trusted proxies.  The first non-trusted entry is the
-    actual client IP.  This prevents spoofing via a forged leftmost entry.
+    that belong to trusted proxies. The first non-trusted entry is the
+    actual client IP. This prevents spoofing via a forged leftmost entry.
     """
     direct_host = request.client.host if request.client is not None else None
     if _is_trusted_proxy(direct_host):
@@ -124,34 +111,35 @@ def _normalize_origin(value: str) -> str:
     Delegates to the canonical implementation in the security module.
     """
     from backtestforecast.security.http import normalize_origin
+
     return normalize_origin(value)
 
 
-_normalized_origins: list[str] | None = None
-
-
 def _get_allowed_origins() -> list[str]:
-    """Return the list of normalized allowed origins, caching across requests."""
-    global _normalized_origins
-    if _normalized_origins is not None:
-        return _normalized_origins
-    # Normalize the configured get_settings().web_cors_origins values once so
-    # cookie-auth Origin/Referer checks compare against the exact CORS allowlist.
-    _normalized_origins = [_normalize_origin(o) for o in get_settings().web_cors_origins]
-    return _normalized_origins
+    """Return the current normalized CORS-origin allowlist."""
+    return [_normalize_origin(origin) for origin in get_settings().web_cors_origins]
 
 
-def get_current_user(
+def _bind_user_context(user: User) -> None:
+    structlog.contextvars.bind_contextvars(
+        user_id=str(user.id),
+        clerk_user_id_hash=short_hash(user.clerk_user_id),
+    )
+
+
+def _resolve_current_user(
     request: Request,
-    authorization: Annotated[str | None, Header()] = None,
-    db: Session = Depends(get_db),
+    *,
+    authorization: str | None,
+    db: Session,
+    allow_write_fallback: bool,
 ) -> User:
     """Authenticate via Bearer token (primary) or ``__session`` cookie (fallback).
 
     Cookie auth exists for Clerk's server-side rendering flow, where the JWT
     is placed in the ``__session`` cookie rather than an Authorization header.
     State-changing methods require ``X-Requested-With`` to mitigate CSRF when
-    using cookie auth.  This is intentional and should not be removed without
+    using cookie auth. This is intentional and should not be removed without
     replacing the SSR auth flow.
     """
     token: str | None = None
@@ -161,10 +149,6 @@ def get_current_user(
             raise AuthenticationError("Bearer token is required.")
         token = candidate
     else:
-        # The __session cookie is set by Clerk with SameSite=Lax by default.
-        # If Clerk configuration changes, verify SameSite is at least Lax
-        # to prevent cross-site cookie attachment in sub-requests.
-        # See: https://clerk.com/docs/backend-requests/handling/manual-jwt
         token = request.cookies.get("__session")
         if token:
             fetch_site = request.headers.get("sec-fetch-site")
@@ -194,12 +178,10 @@ def get_current_user(
                     "Cookie-based authentication requires the X-Requested-With: XMLHttpRequest header for state-changing requests."
                 )
         if token:
-            # Compare against the configured get_settings().web_cors_origins
-            # allowlist so cookie auth inherits the same trusted web origins.
-            _allowed = _get_allowed_origins()
+            allowed_origins = _get_allowed_origins()
             origin = request.headers.get("origin")
             if origin:
-                if _normalize_origin(origin) not in _allowed:
+                if _normalize_origin(origin) not in allowed_origins:
                     structlog.get_logger("security").warning(
                         "auth.cookie_origin_rejected",
                         origin=_normalize_origin(origin),
@@ -211,10 +193,11 @@ def get_current_user(
                 referer = request.headers.get("referer")
                 if referer:
                     from urllib.parse import urlparse as _urlparse
+
                     referer_origin = _normalize_origin(
                         f"{_urlparse(referer).scheme}://{_urlparse(referer).netloc}"
                     )
-                    if referer_origin and referer_origin not in _allowed:
+                    if referer_origin and referer_origin not in allowed_origins:
                         structlog.get_logger("security").warning(
                             "auth.cookie_referer_rejected",
                             referer_origin=referer_origin,
@@ -242,24 +225,58 @@ def get_current_user(
     principal = get_token_verifier().verify_bearer_token(token)
     repository = UserRepository(db)
     user = repository.get_by_clerk_user_id(principal.clerk_user_id)
-    if user is None:
-        user = repository.get_or_create(principal.clerk_user_id, principal.email)
+    email_needs_sync = bool(user is not None and repository.sync_email_if_needed(user, principal.email))
+    if user is not None and not email_needs_sync:
+        _bind_user_context(user)
+        return user
+
+    if not allow_write_fallback:
+        if user is None:
+            raise AuthenticationError("User account not initialized.")
+        _bind_user_context(user)
+        return user
+
+    with create_session() as write_db:
+        write_repository = UserRepository(write_db)
+        user = write_repository.get_by_clerk_user_id(principal.clerk_user_id)
+        if user is None:
+            user = write_repository.get_or_create(principal.clerk_user_id, principal.email)
+        elif not write_repository.sync_email_if_needed(user, principal.email):
+            _bind_user_context(user)
+            return user
         try:
-            db.commit()
+            write_db.commit()
         except IntegrityError:
-            db.rollback()
-            user = repository.get_by_clerk_user_id(principal.clerk_user_id)
+            write_db.rollback()
+            user = write_repository.get_by_clerk_user_id(principal.clerk_user_id)
             if user is None:
                 raise
-        db.refresh(user)
-    elif repository.sync_email_if_needed(user, principal.email):
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            user = repository.get_by_clerk_user_id(principal.clerk_user_id)
-            if user is None:
-                raise
-        db.refresh(user)
-    structlog.contextvars.bind_contextvars(user_id=str(user.id), clerk_user_id_hash=short_hash(user.clerk_user_id))
+        write_db.refresh(user)
+    _bind_user_context(user)
     return user
+
+
+def get_current_user(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> User:
+    return _resolve_current_user(
+        request,
+        authorization=authorization,
+        db=db,
+        allow_write_fallback=True,
+    )
+
+
+def get_current_user_readonly(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_readonly_db),
+) -> User:
+    return _resolve_current_user(
+        request,
+        authorization=authorization,
+        db=db,
+        allow_write_fallback=False,
+    )

@@ -79,8 +79,9 @@ def init_tracing(
 
     if service_version is None:
         try:
-            from backtestforecast import __version__
-            service_version = __version__
+            from backtestforecast.version import get_public_version
+
+            service_version = get_public_version()
         except Exception:
             service_version = "unknown"
 

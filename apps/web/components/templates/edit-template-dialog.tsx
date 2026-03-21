@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import type { UpdateTemplateRequest } from "@backtestforecast/api-client";
 import { updateTemplate } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { mapTemplateFieldErrors } from "@/lib/templates/validation";
@@ -113,17 +114,15 @@ export function EditTemplateDialog({
         setSaving(false);
         return;
       }
-      const payload: Record<string, unknown> = { name: name.trim() };
       const trimmed = description.trim();
-      if (trimmed) {
-        payload.description = trimmed;
-      } else if (initialDescription) {
-        payload.description = null;
-      }
+      const payload: UpdateTemplateRequest = {
+        name: name.trim(),
+        description: trimmed || null,
+      };
       if (initialUpdatedAt) {
         payload.expected_updated_at = initialUpdatedAt;
       }
-      await updateTemplate(token, templateId, payload as any, controller.signal);
+      await updateTemplate(token, templateId, payload, controller.signal);
       if (controller.signal.aborted) return;
       savingRef.current = false;
       setSaving(false);
@@ -139,7 +138,7 @@ export function EditTemplateDialog({
       savingRef.current = false;
       setSaving(false);
     }
-  }, [name, description, saving, templateId, getToken, onClose, router]);
+  }, [name, description, saving, templateId, getToken, initialUpdatedAt, onClose, router]);
 
   if (!open) return null;
 

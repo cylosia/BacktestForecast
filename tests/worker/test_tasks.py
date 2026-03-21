@@ -1,7 +1,7 @@
 """Unit tests for Celery worker tasks."""
 from __future__ import annotations
 
-import warnings
+import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -17,25 +17,15 @@ from backtestforecast.db.base import Base
 from backtestforecast.errors import AppError
 from backtestforecast.models import (
     BacktestRun,
-    ExportJob,
-    ScannerJob,
-    SymbolAnalysis,
     User,
 )
+from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
-warnings.warn(
-    "Worker tests use SQLite which silently ignores Postgres-specific features like "
-    "skip_locked and FOR UPDATE. Run with DATABASE_URL pointing to Postgres for "
-    "full coverage.",
-    stacklevel=1,
-)
+_sqlite_warning_logged = False
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
 @pytest.fixture()
@@ -47,6 +37,12 @@ def db_engine():
     For full coverage run these tests against Postgres in CI using the
     ``postgres-integration`` job configuration.
     """
+    global _sqlite_warning_logged
+    if not _sqlite_warning_logged:
+        logging.getLogger("tests.worker.sqlite").warning(
+            "Worker tests use SQLite which silently ignores Postgres-specific features like skip_locked and FOR UPDATE. Run with DATABASE_URL pointing to Postgres for full coverage.",
+        )
+        _sqlite_warning_logged = True
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -233,7 +229,7 @@ def test_reap_stale_jobs_redispatches(db_session, db_session_factory, monkeypatc
     result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
     assert result["backtest_runs"] == 1
-    assert any("backtests.run" == t[0] for t in dispatched_tasks)
+    assert any(t[0] == "backtests.run" for t in dispatched_tasks)
 
     db_session.expire_all()
     refreshed = db_session.get(BacktestRun, run_id)
@@ -278,7 +274,7 @@ def test_reap_stale_jobs_skips_dispatched(db_session, db_session_factory, monkey
     result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
     assert result["backtest_runs"] == 0
-    assert not any("backtests.run" == t[0] for t in dispatched_tasks)
+    assert not any(t[0] == "backtests.run" for t in dispatched_tasks)
 
 
 def test_reap_stale_jobs_skips_recent(db_session, db_session_factory, monkeypatch):
@@ -401,9 +397,10 @@ def test_generate_export_value_error_propagates(mock_session_local, mock_publish
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service):
-        with pytest.raises(ValueError, match="bad value in export data"):
-            generate_export(str(uuid4()))
+    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service), pytest.raises(
+        ValueError, match="bad value in export data"
+    ):
+        generate_export(str(uuid4()))
 
     mock_service.close.assert_called_once()
 
@@ -1230,6 +1227,7 @@ def test_reaper_stale_running_queries_use_skip_locked():
     locked by other workers. We inspect the source code of
     _reap_stale_jobs_inner to confirm."""
     import inspect
+
     import apps.worker.app.tasks as tasks_module
 
     source = inspect.getsource(tasks_module._reap_stale_jobs_inner)
