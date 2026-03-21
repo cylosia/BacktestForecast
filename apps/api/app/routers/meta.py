@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api.app.dependencies import _extract_client_ip, get_token_verifier
+from backtestforecast import __version__ as API_VERSION
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_readonly_db
 from backtestforecast.errors import AuthenticationError
