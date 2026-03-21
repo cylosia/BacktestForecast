@@ -93,8 +93,8 @@ export interface paths {
          * Export Account Data
          * @description Export all user data for GDPR data portability.
          *
-         *     Returns a paginated JSON object. Each section is capped at ``limit``
-         *     rows (default 1000). Use ``offset`` to page through large datasets.
+         *     Each entity type has its own offset parameter for independent pagination.
+         *     Returns totals so the client can determine if additional pages exist.
          */
         get: operations["export_account_data_v1_account_me_export_get"];
         put?: never;
@@ -744,6 +744,11 @@ export interface components {
          * @description GDPR data portability export containing all user data.
          */
         AccountDataExportResponse: {
+            /**
+             * Audit Events
+             * @default []
+             */
+            audit_events: components["schemas"]["_GdprAuditEvent"][];
             /** Backtests */
             backtests: components["schemas"]["_GdprBacktest"][];
             /** Export Jobs */
@@ -759,6 +764,8 @@ export interface components {
             templates: components["schemas"]["_GdprTemplate"][];
             totals: components["schemas"]["_GdprTotals"];
             user: components["schemas"]["_GdprUserSummary"];
+        } & {
+            [key: string]: unknown;
         };
         /** AnalysisDetailResponse */
         AnalysisDetailResponse: {
@@ -817,6 +824,8 @@ export interface components {
              * @default 50
              */
             limit: number;
+            /** Next Cursor */
+            next_cursor?: string | null;
             /**
              * Offset
              * @default 0
@@ -827,8 +836,6 @@ export interface components {
              * @default 0
              */
             total: number;
-            /** Next Cursor */
-            next_cursor?: string | null;
         };
         /** AnalysisSummaryResponse */
         AnalysisSummaryResponse: {
@@ -948,8 +955,12 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /** Data Source */
-            data_source: string;
+            /**
+             * Data Source
+             * @default massive
+             * @enum {string}
+             */
+            data_source: "massive" | "manual";
             /**
              * Date From
              * Format: date
@@ -962,8 +973,12 @@ export interface components {
             date_to: string;
             /** Dte Tolerance Days */
             dte_tolerance_days: number;
-            /** Engine Version */
-            engine_version: string;
+            /**
+             * Engine Version
+             * @default options-multileg-v2
+             * @enum {string}
+             */
+            engine_version: "options-multileg-v1" | "options-multileg-v2";
             /** Equity Curve */
             equity_curve: components["schemas"]["EquityCurvePointResponse"][];
             /**
@@ -1358,6 +1373,11 @@ export interface components {
             /** Custom Legs */
             custom_legs?: components["schemas"]["CustomLegDefinition"][] | null;
             /**
+             * Dividend Yield
+             * @description Annualized dividend yield for BSM IV estimation (e.g. 0.03 = 3%). Improves IV accuracy for high-yield stocks. Defaults to 0.0.
+             */
+            dividend_yield?: number | string | null;
+            /**
              * Dte Tolerance Days
              * @default 5
              */
@@ -1382,6 +1402,11 @@ export interface components {
              * @description Close position when unrealized profit reaches this percentage of capital at risk. None disables.
              */
             profit_target_pct?: number | string | null;
+            /**
+             * Risk Free Rate
+             * @description Annualized risk-free rate for Sharpe/Sortino calculations. If not provided, uses the server default (see /v1/meta). Set to 0.0 for ZIRP-era backtests.
+             */
+            risk_free_rate?: number | string | null;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: number | string;
             /**
@@ -1793,6 +1818,8 @@ export interface components {
              * @default 50
              */
             limit: number;
+            /** Next Cursor */
+            next_cursor?: string | null;
             /**
              * Offset
              * @default 0
@@ -1860,9 +1887,17 @@ export interface components {
             history_days?: number | null;
             /** History Item Limit */
             history_item_limit: number;
+            /** Max Scanner Window Days */
+            max_scanner_window_days: number;
+            /** Max Sweep Window Days */
+            max_sweep_window_days: number;
             /** Monthly Backtest Quota */
             monthly_backtest_quota?: number | null;
             plan_tier: components["schemas"]["PlanTier"];
+            /** Scanner Advanced Allowed Strategy Types */
+            scanner_advanced_allowed_strategy_types?: string[];
+            /** Scanner Basic Allowed Strategy Types */
+            scanner_basic_allowed_strategy_types?: string[];
             /** Scanner Modes */
             scanner_modes?: string[];
             /** Side By Side Comparison Limit */
@@ -2378,6 +2413,11 @@ export interface components {
              */
             limit: number;
             /**
+             * Next Cursor
+             * @description Opaque cursor for keyset pagination.
+             */
+            next_cursor?: string | null;
+            /**
              * Offset
              * @default 0
              */
@@ -2387,8 +2427,6 @@ export interface components {
              * @default 0
              */
             total: number;
-            /** Next Cursor */
-            next_cursor?: string | null;
         };
         /** ScannerJobResponse */
         ScannerJobResponse: {
@@ -2404,8 +2442,9 @@ export interface components {
             /**
              * Engine Version
              * @default options-multileg-v2
+             * @enum {string}
              */
-            engine_version: string;
+            engine_version: "options-multileg-v1" | "options-multileg-v2";
             /** Error Code */
             error_code?: string | null;
             /** Error Message */
@@ -2417,8 +2456,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Job Kind */
-            job_kind: string;
+            /**
+             * Job Kind
+             * @enum {string}
+             */
+            job_kind: "manual" | "refresh" | "nightly";
             mode: components["schemas"]["ScannerMode"];
             /** Name */
             name: string | null;
@@ -2428,8 +2470,9 @@ export interface components {
             /**
              * Ranking Version
              * @default scanner-ranking-v1
+             * @enum {string}
              */
-            ranking_version: string;
+            ranking_version: "scanner-ranking-v1" | "scanner-ranking-v2";
             /** Recommendation Count */
             recommendation_count: number;
             /** Refresh Daily */
@@ -2502,7 +2545,7 @@ export interface components {
             rank: number;
             ranking_breakdown: components["schemas"]["RankingBreakdownResponse"];
             /** Request Snapshot */
-            request_snapshot: {
+            request_snapshot?: {
                 [key: string]: unknown;
             };
             /** Rule Set Name */
@@ -2682,6 +2725,8 @@ export interface components {
              * @default 50
              */
             limit: number;
+            /** Next Cursor */
+            next_cursor?: string | null;
             /**
              * Offset
              * @default 0
@@ -2692,8 +2737,6 @@ export interface components {
              * @default 0
              */
             total: number;
-            /** Next Cursor */
-            next_cursor?: string | null;
         };
         /** SweepJobResponse */
         SweepJobResponse: {
@@ -2709,8 +2752,9 @@ export interface components {
             /**
              * Engine Version
              * @default options-multileg-v2
+             * @enum {string}
              */
-            engine_version: string;
+            engine_version: "options-multileg-v1" | "options-multileg-v2";
             /** Error Code */
             error_code?: string | null;
             /** Error Message */
@@ -3112,6 +3156,17 @@ export interface components {
             /** Top Results Count */
             top_results_count: number;
         };
+        /** _GdprAuditEvent */
+        _GdprAuditEvent: {
+            /** Created At */
+            created_at: string | null;
+            /** Event Type */
+            event_type: string;
+            /** Id */
+            id: string;
+            /** Subject Type */
+            subject_type: string;
+        };
         /** _GdprBacktest */
         _GdprBacktest: {
             /** Created At */
@@ -3152,12 +3207,22 @@ export interface components {
         };
         /** _GdprPagination */
         _GdprPagination: {
+            /** Analyses Offset */
+            analyses_offset: number;
+            /** Audit Offset */
+            audit_offset: number;
             /** Backtests Offset */
             backtests_offset: number;
-            /** Hint */
-            hint: string;
+            /** Exports Offset */
+            exports_offset: number;
             /** Limit */
             limit: number;
+            /** Scans Offset */
+            scans_offset: number;
+            /** Sweeps Offset */
+            sweeps_offset: number;
+            /** Templates Offset */
+            templates_offset: number;
         };
         /** _GdprScannerJob */
         _GdprScannerJob: {
@@ -3545,7 +3610,14 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description Offset for backtests */
                 offset?: number;
+                templates_offset?: number;
+                scans_offset?: number;
+                sweeps_offset?: number;
+                exports_offset?: number;
+                analyses_offset?: number;
+                audit_offset?: number;
             };
             header?: {
                 authorization?: string | null;
@@ -3625,6 +3697,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                /** @description Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored. */
+                cursor?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -5232,6 +5306,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                cursor?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -5850,6 +5925,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                /** @description Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored. */
+                cursor?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -6389,6 +6466,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                /** @description Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored. */
+                cursor?: string | null;
             };
             header?: {
                 authorization?: string | null;
