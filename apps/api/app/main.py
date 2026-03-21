@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -48,6 +48,7 @@ from backtestforecast.security.http import (
     DynamicCORSMiddleware,
     DynamicTrustedHostMiddleware,
     RequestBodyLimitMiddleware,
+    RuntimeHTTPPolicy,
 )
 from backtestforecast.version import get_public_version
 
@@ -55,11 +56,20 @@ _startup_settings = get_settings()
 configure_logging(_startup_settings)
 logger = get_logger("api")
 
-# WARNING: _startup_settings still captures configuration used to build the
-# FastAPI app itself (notably docs exposure). Middleware that enforces host,
-# CORS, and body-size limits now re-reads settings per request, but docs/openapi
-# visibility still requires a process restart after config changes.
+# _startup_settings configures process-start concerns like logging, docs exposure,
+# and the FastAPI metadata. Request-time HTTP policy is resolved separately so
+# host/CORS/body-limit/security-header behavior tracks invalidate_settings().
 settings = _startup_settings
+
+
+def _get_runtime_http_policy() -> RuntimeHTTPPolicy:
+    runtime_settings = get_settings()
+    return RuntimeHTTPPolicy(
+        app_env=runtime_settings.app_env,
+        request_max_body_bytes=runtime_settings.request_max_body_bytes,
+        trusted_hosts=runtime_settings.api_allowed_hosts,
+        cors_origins=runtime_settings.web_cors_origins,
+    )
 
 if settings.sentry_dsn:
     try:
@@ -341,11 +351,11 @@ class _CancelledErrorMiddleware:
 #
 # Starlette builds middleware LIFO: the last add_middleware call is outermost.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
-app.add_middleware(ApiSecurityHeadersMiddleware)
-app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=lambda: get_settings().request_max_body_bytes)
+app.add_middleware(ApiSecurityHeadersMiddleware, app_env_resolver=lambda: _get_runtime_http_policy().app_env)
+app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=lambda: _get_runtime_http_policy().request_max_body_bytes)
 app.add_middleware(
     DynamicCORSMiddleware,
-    allow_origins=lambda: get_settings().web_cors_origins,
+    allow_origins=lambda: _get_runtime_http_policy().cors_origins,
     allow_credentials=True,
     # PUT intentionally excluded: no API endpoints use PUT. All updates use PATCH.
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
@@ -353,11 +363,9 @@ app.add_middleware(
     expose_headers=["X-Request-ID", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
     max_age=600,
 )
-# Note: DynamicTrustedHostMiddleware runs BEFORE DynamicCORSMiddleware. If a CORS preflight
-# request has a Host header not in api_allowed_hosts, it will be rejected with
-# 400 before CORS headers are attached. Ensure api_allowed_hosts includes all
-# domains that legitimate CORS requests target.
-app.add_middleware(DynamicTrustedHostMiddleware, allowed_hosts=lambda: get_settings().api_allowed_hosts)
+# Trusted host validation runs before CORS handling, so every browser-facing
+# API hostname still needs to be present in API_ALLOWED_HOSTS_RAW.
+app.add_middleware(DynamicTrustedHostMiddleware, allowed_hosts=lambda: _get_runtime_http_policy().trusted_hosts)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(_CancelledErrorMiddleware)
 
@@ -367,9 +375,21 @@ class _RequestTimeoutMiddleware:
 
     _EXEMPT_PREFIXES = ("/v1/events/",)
 
-    def __init__(self, app: object, *, timeout_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        app: object,
+        *,
+        timeout_seconds: int = 60,
+        timeout_seconds_resolver: Callable[[], int] | None = None,
+    ) -> None:
         self.app = app
         self.timeout_seconds = timeout_seconds
+        self._timeout_seconds_resolver = timeout_seconds_resolver
+
+    def _resolve_timeout_seconds(self) -> int:
+        if self._timeout_seconds_resolver is None:
+            return self.timeout_seconds
+        return int(self._timeout_seconds_resolver())
 
     async def __call__(self, scope, receive, send) -> None:  # type: ignore[no-untyped-def]
         if scope["type"] != "http" or any(scope["path"].startswith(p) for p in self._EXEMPT_PREFIXES):
@@ -385,25 +405,30 @@ class _RequestTimeoutMiddleware:
             await send(message)
 
         try:
-            await asyncio.wait_for(self.app(scope, receive, guarded_send), timeout=self.timeout_seconds)
+            timeout_seconds = self._resolve_timeout_seconds()
+            await asyncio.wait_for(self.app(scope, receive, guarded_send), timeout=timeout_seconds)
         except TimeoutError:
             if not response_started:
                 from starlette.responses import JSONResponse as _JR
 
                 headers = {}
                 if get_settings().app_env not in ("production", "staging"):
-                    headers["X-Debug-Timeout"] = str(self.timeout_seconds)
+                    headers["X-Debug-Timeout"] = str(timeout_seconds)
                 resp = _JR(status_code=504, content={"error": {"code": "request_timeout", "message": "Request timed out."}}, headers=headers)
                 await resp(scope, receive, send)
             else:
                 structlog.get_logger("api.timeout").warning(
                     "request.timeout_after_headers_sent",
                     path=scope.get("path", "/unknown"),
-                    timeout_seconds=self.timeout_seconds,
+                    timeout_seconds=timeout_seconds,
                 )
 
 
-app.add_middleware(_RequestTimeoutMiddleware, timeout_seconds=settings.request_timeout_seconds)
+app.add_middleware(
+    _RequestTimeoutMiddleware,
+    timeout_seconds=settings.request_timeout_seconds,
+    timeout_seconds_resolver=lambda: get_settings().request_timeout_seconds,
+)
 app.add_middleware(PrometheusMiddleware)
 
 app.include_router(health.router)

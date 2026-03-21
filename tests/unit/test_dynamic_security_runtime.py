@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from backtestforecast.security.http import DynamicCORSMiddleware
+from fastapi.responses import PlainTextResponse
+
+from apps.api.app.main import _RequestTimeoutMiddleware
+from backtestforecast.security.http import ApiSecurityHeadersMiddleware, DynamicCORSMiddleware
 
 
 def _run_asgi(app, scope: dict, body: bytes = b"") -> tuple[int, dict[str, str]]:
@@ -64,3 +67,58 @@ def test_sse_proxy_requires_origin_or_referer() -> None:
 
     assert "if (!candidate) return false;" in source
     assert "future auth or cookie change" in source
+
+
+def test_api_security_headers_reload_app_env_per_request() -> None:
+    state = {"app_env": "development"}
+
+    async def ok_app(scope, receive, send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app = ApiSecurityHeadersMiddleware(ok_app, app_env_resolver=lambda: state["app_env"])
+
+    _, dev_headers = _run_asgi(
+        app,
+        {"type": "http", "method": "GET", "path": "/v1/health", "headers": []},
+    )
+    assert dev_headers.get("x-api-version")
+    assert "strict-transport-security" not in dev_headers
+
+    state["app_env"] = "production"
+    _, prod_headers = _run_asgi(
+        app,
+        {"type": "http", "method": "GET", "path": "/v1/health", "headers": []},
+    )
+    assert "x-api-version" not in prod_headers
+    assert prod_headers.get("strict-transport-security") == "max-age=31536000; includeSubDomains"
+
+
+def test_request_timeout_middleware_reloads_timeout_per_request() -> None:
+    state = {"timeout": 1}
+
+    async def slow_app(scope, receive, send) -> None:
+        await asyncio.sleep(0.01)
+        response = PlainTextResponse("ok")
+        await response(scope, receive, send)
+
+    app = _RequestTimeoutMiddleware(
+        slow_app,
+        timeout_seconds=1,
+        timeout_seconds_resolver=lambda: state["timeout"],
+    )
+
+    status, headers = _run_asgi(
+        app,
+        {"type": "http", "method": "GET", "path": "/v1/me", "headers": []},
+    )
+    assert status == 200
+    assert "x-debug-timeout" not in headers
+
+    state["timeout"] = 0
+    status, headers = _run_asgi(
+        app,
+        {"type": "http", "method": "GET", "path": "/v1/me", "headers": []},
+    )
+    assert status == 504
+    assert headers.get("x-debug-timeout") == "0"

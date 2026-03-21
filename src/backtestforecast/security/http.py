@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backtestforecast.observability import REQUEST_ID_HEADER
 from backtestforecast.version import get_public_version
+
+
+
+@dataclass(frozen=True)
+class RuntimeHTTPPolicy:
+    app_env: str
+    request_max_body_bytes: int
+    trusted_hosts: list[str]
+    cors_origins: list[str]
+
 
 BODY_LIMIT_OVERRIDES: dict[str, int] = {
     "/v1/billing/webhook": 512_000,
@@ -251,14 +262,21 @@ def normalize_origin(value: str) -> str:
 
 
 class ApiSecurityHeadersMiddleware:
-    def __init__(self, app: ASGIApp, app_env: str | None = None) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        app_env: str | None = None,
+        app_env_resolver: Callable[[], str] | None = None,
+    ) -> None:
         self.app = app
-        if app_env is None:
-            from backtestforecast.config import get_settings
+        if app_env_resolver is None:
+            if app_env is None:
+                from backtestforecast.config import get_settings
 
-            app_env = get_settings().app_env
-        self._is_production = app_env in ("production", "staging")
-        self._show_version = app_env in ("development", "test")
+                app_env_resolver = lambda: get_settings().app_env
+            else:
+                app_env_resolver = lambda: app_env
+        self._app_env_resolver = app_env_resolver
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -283,9 +301,10 @@ class ApiSecurityHeadersMiddleware:
                 headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
                 headers.setdefault("X-XSS-Protection", "0")
                 headers.setdefault("X-Robots-Tag", "noindex, nofollow")
-                if self._is_production:
+                app_env = self._app_env_resolver()
+                if app_env in ("production", "staging"):
                     headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-                if self._show_version:
+                if app_env in ("development", "test"):
                     headers["X-API-Version"] = get_public_version()
             await send(message)
 

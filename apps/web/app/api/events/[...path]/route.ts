@@ -3,8 +3,11 @@ import { NextRequest } from "next/server";
 
 const API_BASE = (process.env.API_INTERNAL_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
+function getAllowedOrigin(): string {
+  return new URL((process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "")).origin;
+}
+
 function isAllowedOrigin(req: NextRequest): boolean {
-  const allowed = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
   const origin = req.headers.get("origin");
   const referer = req.headers.get("referer");
   let candidate: string | null = null;
@@ -21,7 +24,7 @@ function isAllowedOrigin(req: NextRequest): boolean {
   // Require explicit Origin/Referer evidence so a future auth or cookie change
   // cannot silently widen who may open authenticated streams through this route.
   if (!candidate) return false;
-  const allowedOrigin = new URL(allowed).origin;
+  const allowedOrigin = getAllowedOrigin();
   return candidate === allowedOrigin;
 }
 
