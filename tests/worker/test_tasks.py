@@ -1,7 +1,7 @@
 """Unit tests for Celery worker tasks."""
 from __future__ import annotations
 
-import warnings
+import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -17,17 +17,11 @@ from backtestforecast.db.base import Base
 from backtestforecast.errors import AppError
 from backtestforecast.models import (
     BacktestRun,
-    ExportJob,
-    ScannerJob,
-    SymbolAnalysis,
     User,
 )
 
-warnings.warn(
-    "Worker tests use SQLite which silently ignores Postgres-specific features like "
-    "skip_locked and FOR UPDATE. Run with DATABASE_URL pointing to Postgres for "
-    "full coverage.",
-    stacklevel=1,
+logging.getLogger("tests.worker.sqlite").warning(
+    "Worker tests use SQLite which silently ignores Postgres-specific features like skip_locked and FOR UPDATE. Run with DATABASE_URL pointing to Postgres for full coverage.",
 )
 
 # ---------------------------------------------------------------------------
@@ -233,7 +227,7 @@ def test_reap_stale_jobs_redispatches(db_session, db_session_factory, monkeypatc
     result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
     assert result["backtest_runs"] == 1
-    assert any("backtests.run" == t[0] for t in dispatched_tasks)
+    assert any(t[0] == "backtests.run" for t in dispatched_tasks)
 
     db_session.expire_all()
     refreshed = db_session.get(BacktestRun, run_id)
@@ -278,7 +272,7 @@ def test_reap_stale_jobs_skips_dispatched(db_session, db_session_factory, monkey
     result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
     assert result["backtest_runs"] == 0
-    assert not any("backtests.run" == t[0] for t in dispatched_tasks)
+    assert not any(t[0] == "backtests.run" for t in dispatched_tasks)
 
 
 def test_reap_stale_jobs_skips_recent(db_session, db_session_factory, monkeypatch):
@@ -1230,6 +1224,7 @@ def test_reaper_stale_running_queries_use_skip_locked():
     locked by other workers. We inspect the source code of
     _reap_stale_jobs_inner to confirm."""
     import inspect
+
     import apps.worker.app.tasks as tasks_module
 
     source = inspect.getsource(tasks_module._reap_stale_jobs_inner)

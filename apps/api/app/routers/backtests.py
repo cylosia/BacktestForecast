@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
@@ -32,7 +32,7 @@ logger = structlog.get_logger("api.backtests")
 
 @router.get("", response_model=BacktestRunListResponse)
 def list_backtests(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
@@ -53,7 +53,7 @@ def list_backtests(
 def create_backtest(
     payload: CreateBacktestRunRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -91,7 +91,7 @@ def create_backtest(
 def compare_backtests(
     payload: CompareBacktestsRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> CompareBacktestsResponse:
@@ -110,8 +110,8 @@ def compare_backtests(
 @router.get("/{run_id}/status", response_model=BacktestRunStatusResponse)
 def get_backtest_status(
     run_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunStatusResponse:
     # Feature flag not checked on read: users may view past results even when creation is disabled.
@@ -129,8 +129,8 @@ def get_backtest_status(
 def get_backtest(
     run_id: UUID,
     response: Response,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     trade_limit: int = Query(default=10_000, ge=0, le=20_000),
     settings: Settings = Depends(get_settings),
 ) -> BacktestRunDetailResponse:

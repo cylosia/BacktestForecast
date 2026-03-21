@@ -7,12 +7,15 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
+from backtestforecast.errors import FeatureLockedError
+from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.schemas.sweeps import (
     CreateSweepRequest,
     SweepJobListResponse,
@@ -20,9 +23,6 @@ from backtestforecast.schemas.sweeps import (
     SweepJobStatusResponse,
     SweepResultListResponse,
 )
-from backtestforecast.errors import FeatureLockedError
-from backtestforecast.feature_flags import is_feature_enabled
-from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.sweeps import SweepService
 
@@ -38,7 +38,7 @@ router = APIRouter(prefix="/sweeps", tags=["sweeps"])
 
 @router.get("", response_model=SweepJobListResponse)
 def list_sweeps(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
@@ -59,7 +59,7 @@ def list_sweeps(
 def create_sweep(
     payload: CreateSweepRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     _: None = Depends(_require_sweeps_enabled),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
@@ -99,8 +99,8 @@ def create_sweep(
 @router.get("/{job_id}/status", response_model=SweepJobStatusResponse)
 def get_sweep_status(
     job_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobStatusResponse:
     get_rate_limiter().check(
@@ -123,8 +123,8 @@ def get_sweep_status(
 @router.get("/{job_id}", response_model=SweepJobResponse)
 def get_sweep(
     job_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobResponse:
     get_rate_limiter().check(
@@ -158,7 +158,7 @@ def delete_sweep(
 @router.get("/{job_id}/results", response_model=SweepResultListResponse)
 def get_sweep_results(
     job_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
