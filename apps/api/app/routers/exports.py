@@ -11,7 +11,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
-from apps.api.app.dependencies import get_current_user, get_request_metadata
+from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
@@ -27,7 +27,7 @@ logger = structlog.get_logger("api.exports")
 
 @router.get("", response_model=ExportJobListResponse)
 def list_exports(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
@@ -71,7 +71,7 @@ def list_exports(
 def create_export(
     payload: CreateExportRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -86,42 +86,33 @@ def create_export(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ExportService(db) as service:
-        job_response = service.enqueue_export(
+        export_job = service.enqueue_export(
             user,
             payload,
             request_id=metadata.request_id,
             ip_address=metadata.ip_address,
         )
-
-        export_job = service.exports.get_for_user(job_response.id, user.id)
-        if export_job is not None:
-            dispatch_celery_task(
-                db=db,
-                job=export_job,
-                task_name="exports.generate",
-                task_kwargs={"export_job_id": str(job_response.id)},
-                queue="exports",
-                log_event="export",
-                logger=logger,
-                request_id=metadata.request_id,
-                traceparent=request.headers.get("traceparent"),
-            )
-        else:
-            logger.error("export.post_enqueue_missing", export_job_id=str(job_response.id))
-            from backtestforecast.errors import AppError
-            raise AppError(code="enqueue_failed", message="Export job could not be verified after creation.")
-
-        if export_job is not None:
-            db.refresh(export_job)
-            if export_job.status == "failed":
-                raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(export_job.error_message) or "Unable to dispatch job."})
-        return service.get_export_status(user, job_response.id)
+        dispatch_celery_task(
+            db=db,
+            job=export_job,
+            task_name="exports.generate",
+            task_kwargs={"export_job_id": str(export_job.id)},
+            queue="exports",
+            log_event="export",
+            logger=logger,
+            request_id=metadata.request_id,
+            traceparent=request.headers.get("traceparent"),
+        )
+        db.refresh(export_job)
+        if export_job.status == "failed":
+            raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(export_job.error_message) or "Unable to dispatch job."})
+        return service.get_export_status(user, export_job.id)
 
 
 @router.get("/{export_job_id}/status", response_model=ExportJobResponse)
 def get_export_status(
     export_job_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> ExportJobResponse:
