@@ -237,6 +237,34 @@ class SymbolDeepAnalysisService:
             raise
         return analysis
 
+    def create_and_dispatch_analysis(
+        self,
+        user: User,
+        symbol: str,
+        *,
+        idempotency_key: str | None = None,
+        request_id: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> SymbolAnalysis:
+        """Create an analysis and persist dispatch state transactionally."""
+        from apps.api.app.dispatch import dispatch_celery_task
+
+        analysis = self.create_analysis(user, symbol, idempotency_key=idempotency_key)
+        dispatch_celery_task(
+            db=self.session,
+            job=analysis,
+            task_name="analysis.deep_symbol",
+            task_kwargs={"analysis_id": str(analysis.id)},
+            queue="research",
+            log_event="analysis",
+            logger=dispatch_logger or logger,
+            request_id=request_id,
+            traceparent=traceparent,
+        )
+        self.session.refresh(analysis)
+        return analysis
+
     def execute_analysis(self, analysis_id: UUID) -> SymbolAnalysis:
         """Execute the deep analysis (called by Celery worker)."""
         analysis = self.session.scalar(

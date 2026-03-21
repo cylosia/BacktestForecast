@@ -9,7 +9,6 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
-from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import FeatureLockedError, NotFoundError
@@ -67,21 +66,13 @@ def create_backtest(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with BacktestService(db) as service:
-        run = service.enqueue(user, payload)
-
-        dispatch_celery_task(
-            db=db,
-            job=run,
-            task_name="backtests.run",
-            task_kwargs={"run_id": str(run.id)},
-            queue="research",
-            log_event="backtest",
-            logger=logger,
+        run = service.create_and_dispatch(
+            user,
+            payload,
             request_id=metadata.request_id,
             traceparent=request.headers.get("traceparent"),
+            dispatch_logger=logger,
         )
-
-        db.refresh(run)
         if run.status == "failed":
             raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(run.error_message) or "Unable to dispatch job."})
         return service.get_run_for_owner(user_id=user.id, run_id=run.id)

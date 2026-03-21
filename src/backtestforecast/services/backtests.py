@@ -3,6 +3,7 @@ from __future__ import annotations
 import time as _time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
@@ -157,6 +158,33 @@ class BacktestService:
                 if existing is not None:
                     return existing
             raise
+        return run
+
+    def create_and_dispatch(
+        self,
+        user: User,
+        request: CreateBacktestRunRequest,
+        *,
+        request_id: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> BacktestRun:
+        """Create a backtest run and persist its dispatch state transactionally."""
+        from apps.api.app.dispatch import dispatch_celery_task
+
+        run = self.enqueue(user, request)
+        dispatch_celery_task(
+            db=self.session,
+            job=run,
+            task_name="backtests.run",
+            task_kwargs={"run_id": str(run.id)},
+            queue="research",
+            log_event="backtest",
+            logger=dispatch_logger or logger,
+            request_id=request_id,
+            traceparent=traceparent,
+        )
+        self.session.refresh(run)
         return run
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:
