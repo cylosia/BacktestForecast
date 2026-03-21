@@ -17,11 +17,10 @@ function isAllowedOrigin(req: NextRequest): boolean {
       return false; // Malformed Referer: treat as not allowed
     }
   }
-  // Non-browser clients (e.g., curl, server-to-server) may omit Origin and
-  // Referer headers. Since the primary security mechanism is the Bearer token
-  // (verified server-side before proxying), this is acceptable. The origin
-  // check is defense-in-depth, not the primary auth gate.
-  if (!candidate) return true;
+  // This proxy is only used by browser EventSource requests from the web app.
+  // Require explicit Origin/Referer evidence so a future auth or cookie change
+  // cannot silently widen who may open authenticated streams through this route.
+  if (!candidate) return false;
   const allowedOrigin = new URL(allowed).origin;
   return candidate === allowedOrigin;
 }

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-
-import structlog
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
+
+import structlog
 
 if TYPE_CHECKING:
     from redis import Redis
@@ -14,13 +14,12 @@ if TYPE_CHECKING:
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
+from apps.api.app.dependencies import _extract_client_ip, reset_token_verifier, reset_trusted_networks
 from apps.api.app.routers import (
     account,
     analysis,
@@ -38,24 +37,28 @@ from apps.api.app.routers import (
     sweeps,
     templates,
 )
-from apps.api.app.dependencies import _extract_client_ip, reset_trusted_networks, reset_token_verifier
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.errors import AppError, FeatureLockedError, QuotaExceededError, RateLimitError
-from backtestforecast.security import get_rate_limiter
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
 from backtestforecast.observability.logging import RequestContextMiddleware
 from backtestforecast.observability.metrics import API_ERRORS_TOTAL, PrometheusMiddleware, metrics_response
-from backtestforecast.security.http import ApiSecurityHeadersMiddleware, RequestBodyLimitMiddleware
+from backtestforecast.security import get_rate_limiter
+from backtestforecast.security.http import (
+    ApiSecurityHeadersMiddleware,
+    DynamicCORSMiddleware,
+    DynamicTrustedHostMiddleware,
+    RequestBodyLimitMiddleware,
+)
+from backtestforecast.version import get_public_version
 
 _startup_settings = get_settings()
 configure_logging(_startup_settings)
 logger = get_logger("api")
 
-# WARNING: _startup_settings captures configuration at import time.  Values
-# used in middleware constructor args (CORS origins, allowed hosts, body
-# limits) are fixed for the process lifetime.  Per-request code paths
-# (e.g., /metrics auth, /admin/dlq auth) must call get_settings() to pick
-# up post-invalidation changes.
+# WARNING: _startup_settings still captures configuration used to build the
+# FastAPI app itself (notably docs exposure). Middleware that enforces host,
+# CORS, and body-size limits now re-reads settings per request, but docs/openapi
+# visibility still requires a process restart after config changes.
 settings = _startup_settings
 
 if settings.sentry_dsn:
@@ -196,11 +199,9 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("lifespan.shutdown_complete")
 
 
-from backtestforecast import __version__ as _app_version
-
 app = FastAPI(
     title=settings.app_name,
-    version=_app_version,
+    version=get_public_version(),
     description="BacktestForecast API — options backtesting, scanning, forecasting, and portfolio analysis.",
     openapi_url="/openapi.json" if settings.app_env in ("development", "test") else None,
     docs_url="/docs" if settings.app_env in ("development", "test") else None,
@@ -326,25 +327,25 @@ class _CancelledErrorMiddleware:
                     )
                     await response(scope, receive, original_send)
                 except Exception:
-                    pass
+                    logger.debug("client_disconnect.response_send_failed", exc_info=True)
 
 
 # Middleware execution order (outermost to innermost):
 # 1. PrometheusMiddleware — records request metrics (including 499s)
 # 2. _CancelledErrorMiddleware — converts CancelledError to 499
 # 3. RequestContextMiddleware — binds request_id to structlog context
-# 4. TrustedHostMiddleware — rejects requests with invalid Host headers
-# 5. CORSMiddleware — handles cross-origin preflight and response headers
+# 4. DynamicTrustedHostMiddleware — rejects requests with invalid Host headers
+# 5. DynamicCORSMiddleware — handles cross-origin preflight and response headers
 # 6. RequestBodyLimitMiddleware — enforces max request body size
 # 7. ApiSecurityHeadersMiddleware — adds security response headers
 #
 # Starlette builds middleware LIFO: the last add_middleware call is outermost.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 app.add_middleware(ApiSecurityHeadersMiddleware)
-app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
+app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=lambda: get_settings().request_max_body_bytes)
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.web_cors_origins,
+    DynamicCORSMiddleware,
+    allow_origins=lambda: get_settings().web_cors_origins,
     allow_credentials=True,
     # PUT intentionally excluded: no API endpoints use PUT. All updates use PATCH.
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
@@ -352,11 +353,11 @@ app.add_middleware(
     expose_headers=["X-Request-ID", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
     max_age=600,
 )
-# Note: TrustedHostMiddleware runs BEFORE CORSMiddleware. If a CORS preflight
+# Note: DynamicTrustedHostMiddleware runs BEFORE DynamicCORSMiddleware. If a CORS preflight
 # request has a Host header not in api_allowed_hosts, it will be rejected with
 # 400 before CORS headers are attached. Ensure api_allowed_hosts includes all
 # domains that legitimate CORS requests target.
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
+app.add_middleware(DynamicTrustedHostMiddleware, allowed_hosts=lambda: get_settings().api_allowed_hosts)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(_CancelledErrorMiddleware)
 
@@ -385,7 +386,7 @@ class _RequestTimeoutMiddleware:
 
         try:
             await asyncio.wait_for(self.app(scope, receive, guarded_send), timeout=self.timeout_seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if not response_started:
                 from starlette.responses import JSONResponse as _JR
 
