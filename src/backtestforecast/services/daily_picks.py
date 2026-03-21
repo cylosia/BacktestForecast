@@ -1,7 +1,7 @@
 """Service for daily picks / nightly pipeline queries."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -45,11 +45,15 @@ class DailyPicksService:
             cursor_dt, cursor_id = self._parse_cursor(cursor)
 
         runs = self.repository.list_pipeline_history(
-            limit=limit, cursor_dt=cursor_dt, cursor_id=cursor_id,
+            limit=limit + 1, cursor_dt=cursor_dt, cursor_id=cursor_id,
         )
 
+        has_next = len(runs) > limit
+        if has_next:
+            runs = runs[:limit]
+
         next_cursor = None
-        if len(runs) == limit:
+        if has_next and runs:
             last = runs[-1]
             next_cursor = f"{last.created_at.isoformat()}|{last.id}"
 
@@ -65,21 +69,21 @@ class DailyPicksService:
             try:
                 cursor_dt = datetime.fromisoformat(parts[0])
                 cursor_id = UUID(parts[1])
-            except (ValueError, IndexError):
+            except (ValueError, IndexError) as exc:
                 raise AppValidationError(
                     "Invalid pagination cursor format. Expected 'ISO_timestamp|UUID'."
-                )
+                ) from exc
         else:
             try:
                 cursor_dt = datetime.fromisoformat(cursor)
-            except ValueError:
+            except ValueError as exc:
                 raise AppValidationError(
                     "Invalid pagination cursor format. Expected an ISO 8601 timestamp."
-                )
+                ) from exc
             cursor_id = None
 
         if cursor_dt.tzinfo is None:
-            cursor_dt = cursor_dt.replace(tzinfo=timezone.utc)
+            cursor_dt = cursor_dt.replace(tzinfo=UTC)
         return cursor_dt, cursor_id
 
     @staticmethod

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
-from typing import Generator
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
@@ -78,13 +78,16 @@ def get_pipeline_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_readonly_db),
     limit: int = Query(default=10, ge=1, le=30),
-    cursor: str | None = Query(default=None, max_length=50, description="created_at ISO cursor from previous page"),
+    cursor: str | None = Query(
+        default=None,
+        max_length=100,
+        description="Opaque cursor from the previous page's `next_cursor` value.",
+    ),
 ) -> PipelineHistoryResponse:
     """Return recent pipeline run history (Pro+ gated).
 
-    Supports optional cursor-based pagination via the ``cursor`` parameter
-    which should be the ``created_at`` ISO timestamp of the last item from
-    the previous page.
+    Supports optional cursor-based pagination via the ``cursor`` parameter.
+    Pass the exact ``next_cursor`` returned by the previous page.
     """
     settings = get_settings()
     if not settings.feature_daily_picks_enabled:
@@ -97,14 +100,6 @@ def get_pipeline_history(
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-
-    if cursor is not None:
-        try:
-            parsed = datetime.fromisoformat(cursor)
-        except (ValueError, TypeError) as exc:
-            raise AppValidationError("cursor must be a valid ISO 8601 timestamp.") from exc
-        if parsed.tzinfo is None:
-            raise AppValidationError("cursor must include timezone information (e.g. +00:00 or Z).")
 
     with _daily_picks_service(db) as service:
         return PipelineHistoryResponse.model_validate(service.get_history(limit=limit, cursor=cursor))

@@ -97,7 +97,7 @@ def create_scan(
 def get_scan_status(
     job_id: UUID,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> ScannerJobStatusResponse:
     get_rate_limiter().check(
@@ -121,7 +121,7 @@ def get_scan_status(
 def get_scan(
     job_id: UUID,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> ScannerJobResponse:
     get_rate_limiter().check(

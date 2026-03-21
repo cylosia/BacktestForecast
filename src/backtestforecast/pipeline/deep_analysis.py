@@ -223,7 +223,7 @@ class SymbolDeepAnalysisService:
         )
         self.session.add(analysis)
         try:
-            self.session.commit()
+            self.session.flush()
         except IntegrityError:
             self.session.rollback()
             if idempotency_key:
@@ -235,7 +235,6 @@ class SymbolDeepAnalysisService:
                 if existing is not None:
                     return existing
             raise
-        self.session.refresh(analysis)
         return analysis
 
     def execute_analysis(self, analysis_id: UUID) -> SymbolAnalysis:

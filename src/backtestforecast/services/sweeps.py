@@ -204,7 +204,7 @@ class SweepService:
             metadata={"symbol": job.symbol},
         )
         try:
-            self.session.commit()
+            self.session.flush()
         except IntegrityError:
             self.session.rollback()
             if payload.idempotency_key:
@@ -217,7 +217,6 @@ class SweepService:
                 if existing is not None:
                     return existing
             raise
-        self.session.refresh(job)
         return job
 
     def run_job(self, job_id: UUID) -> SweepJob:
