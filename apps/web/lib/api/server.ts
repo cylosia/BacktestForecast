@@ -1,7 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { cache } from "react";
-import { apiRequest } from "@/lib/api/shared";
-import { buildPaginatedListPath } from "@/lib/api/pagination";
+import { apiRequest, validatedApiRequest } from "@/lib/api/shared";
+import { buildCursorPaginatedPath, buildPaginatedListPath } from "@/lib/api/pagination";
+import { validateTemplateListResponse } from "@/lib/templates/contracts";
 import type {
   AnalysisListResponse,
   BacktestRunDetailResponse,
@@ -62,7 +63,12 @@ export const getBacktestRun = cache(async (runId: string): Promise<BacktestRunDe
 
 export const getTemplates = cache(async (): Promise<TemplateListResponse> => {
   const token = await getServerToken();
-  return apiRequest<TemplateListResponse>("/v1/templates", token, { cache: "no-store" });
+  return validatedApiRequest<TemplateListResponse>(
+    "/v1/templates",
+    token,
+    validateTemplateListResponse,
+    { cache: "no-store" },
+  );
 });
 
 export async function compareBacktests(runIds: string[]): Promise<CompareBacktestsResponse> {
@@ -139,10 +145,9 @@ export const getAnalysisHistory = cache(async (limit = 10, offset = 0, cursor?: 
 
 export const getDailyPicksHistory = cache(async (limit = 10, cursor?: string | null) => {
   const token = await getServerToken();
-  const safeLimit = Math.max(1, Math.min(limit, 30));
-  const params = new URLSearchParams({ limit: String(safeLimit) });
-  if (cursor && cursor.trim().length > 0) {
-    params.set("cursor", cursor);
-  }
-  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?${params.toString()}`, token, { cache: "no-store" });
+  return apiRequest<PipelineHistoryResponse>(
+    buildCursorPaginatedPath("/v1/daily-picks/history", limit, 30, cursor),
+    token,
+    { cache: "no-store" },
+  );
 });
