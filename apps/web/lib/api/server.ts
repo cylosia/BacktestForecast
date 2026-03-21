@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import { cache } from "react";
 import { apiRequest } from "@/lib/api/shared";
 import { buildPaginatedListPath } from "@/lib/api/pagination";
 import type {
@@ -19,7 +20,7 @@ import type {
   TemplateListResponse,
 } from "@backtestforecast/api-client";
 
-async function getServerToken(): Promise<string> {
+const getServerToken = cache(async (): Promise<string> => {
   const { isAuthenticated, getToken, redirectToSignIn } = await auth();
 
   if (!isAuthenticated) {
@@ -34,16 +35,16 @@ async function getServerToken(): Promise<string> {
   }
 
   return token;
-}
+});
 
-export async function getCurrentUser(): Promise<CurrentUserResponse> {
+export const getCurrentUser = cache(async (): Promise<CurrentUserResponse> => {
   const token = await getServerToken();
   const user = await apiRequest<CurrentUserResponse>("/v1/me", token, { cache: "no-store" });
   if (!user || typeof user.id !== "string" || typeof user.plan_tier !== "string") {
     throw new Error("Invalid user response shape from API");
   }
   return user;
-}
+});
 
 export async function getBacktestHistory(limit = 50, offset = 0, cursor?: string | null): Promise<BacktestRunListResponse> {
   const token = await getServerToken();
@@ -136,8 +137,12 @@ export async function getAnalysisHistory(limit = 10, offset = 0, cursor?: string
   );
 }
 
-export async function getDailyPicksHistory(limit = 10) {
+export async function getDailyPicksHistory(limit = 10, cursor?: string | null) {
   const token = await getServerToken();
   const safeLimit = Math.max(1, Math.min(limit, 30));
-  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?limit=${safeLimit}`, token, { cache: "no-store" });
+  const params = new URLSearchParams({ limit: String(safeLimit) });
+  if (cursor && cursor.trim().length > 0) {
+    params.set("cursor", cursor);
+  }
+  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?${params.toString()}`, token, { cache: "no-store" });
 }

@@ -18,7 +18,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
 from apps.api.app.routers import (
@@ -45,17 +44,22 @@ from backtestforecast.security import get_rate_limiter
 from backtestforecast.observability import REQUEST_ID_HEADER, configure_logging, get_logger
 from backtestforecast.observability.logging import RequestContextMiddleware
 from backtestforecast.observability.metrics import API_ERRORS_TOTAL, PrometheusMiddleware, metrics_response
-from backtestforecast.security.http import ApiSecurityHeadersMiddleware, RequestBodyLimitMiddleware
+from backtestforecast.security.http import (
+    ApiSecurityHeadersMiddleware,
+    DynamicTrustedHostMiddleware,
+    RequestBodyLimitMiddleware,
+)
 
 _startup_settings = get_settings()
 configure_logging(_startup_settings)
 logger = get_logger("api")
 
-# WARNING: _startup_settings captures configuration at import time.  Values
-# used in middleware constructor args (CORS origins, allowed hosts, body
-# limits) are fixed for the process lifetime.  Per-request code paths
-# (e.g., /metrics auth, /admin/dlq auth) must call get_settings() to pick
-# up post-invalidation changes.
+# WARNING: _startup_settings still captures configuration used to build the
+# FastAPI app itself (notably CORS configuration and docs exposure) at import
+# time. Host validation and body-size enforcement re-read settings per request,
+# but CORS/origin behavior still requires a process restart after config
+# changes. Per-request code paths (e.g. /metrics auth, /admin/dlq auth) must
+# call get_settings() to pick up post-invalidation changes.
 settings = _startup_settings
 
 if settings.sentry_dsn:
@@ -341,7 +345,7 @@ class _CancelledErrorMiddleware:
 # Starlette builds middleware LIFO: the last add_middleware call is outermost.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 app.add_middleware(ApiSecurityHeadersMiddleware)
-app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.request_max_body_bytes)
+app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=lambda: get_settings().request_max_body_bytes)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.web_cors_origins,
@@ -356,7 +360,7 @@ app.add_middleware(
 # request has a Host header not in api_allowed_hosts, it will be rejected with
 # 400 before CORS headers are attached. Ensure api_allowed_hosts includes all
 # domains that legitimate CORS requests target.
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.api_allowed_hosts)
+app.add_middleware(DynamicTrustedHostMiddleware, allowed_hosts=lambda: get_settings().api_allowed_hosts)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(_CancelledErrorMiddleware)
 

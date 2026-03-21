@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from backtestforecast import __version__ as HEALTH_VERSION
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.db.session import ping_database
 from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
@@ -135,14 +136,15 @@ def _check_migration_drift() -> bool:
 _MIGRATION_CHECK_TTL_SECONDS = 60.0
 _migration_check_cache: tuple[float, bool] | None = None
 
-HEALTH_VERSION = "0.1.0"
-_SHOW_VERSION_IN_HEALTH = get_settings().app_env not in ("production", "staging")
+
+def _show_version_in_health() -> bool:
+    return get_settings().app_env not in ("production", "staging")
 
 
 @router.get("/health/live", response_model=None)
 def live() -> dict[str, str] | JSONResponse:
     resp: dict[str, str] = {"status": "ok", "service": "api"}
-    if _SHOW_VERSION_IN_HEALTH:
+    if _show_version_in_health():
         resp["version"] = HEALTH_VERSION
     return resp
 
@@ -168,7 +170,7 @@ def ready(request: Request) -> JSONResponse:
 
     if not db_up:
         content: dict[str, str] = {"status": "degraded"}
-        if _SHOW_VERSION_IN_HEALTH:
+        if _show_version_in_health():
             content["version"] = HEALTH_VERSION
         if show_details:
             content["environment"] = settings.app_env
@@ -179,7 +181,7 @@ def ready(request: Request) -> JSONResponse:
 
     if not broker_up:
         content = {"status": "degraded"}
-        if _SHOW_VERSION_IN_HEALTH:
+        if _show_version_in_health():
             content["version"] = HEALTH_VERSION
         if show_details:
             content["environment"] = settings.app_env
@@ -194,7 +196,7 @@ def ready(request: Request) -> JSONResponse:
 
     if not redis_up and settings.rate_limit_fail_closed:
         content = {"status": "unavailable"}
-        if _SHOW_VERSION_IN_HEALTH:
+        if _show_version_in_health():
             content["version"] = HEALTH_VERSION
         if show_details:
             content["environment"] = settings.app_env
@@ -217,7 +219,7 @@ def ready(request: Request) -> JSONResponse:
         migration_aligned = _check_migration_drift()
         if not migration_aligned:
             payload: dict[str, object] = {"status": "degraded"}
-            if _SHOW_VERSION_IN_HEALTH:
+            if _show_version_in_health():
                 payload["version"] = HEALTH_VERSION
             if show_details:
                 payload["environment"] = settings.app_env
@@ -234,7 +236,7 @@ def ready(request: Request) -> JSONResponse:
     outbox_status = str(outbox.get("status", "unknown"))
     if outbox_status == "stale":
         payload = {"status": "degraded"}
-        if _SHOW_VERSION_IN_HEALTH:
+        if _show_version_in_health():
             payload["version"] = HEALTH_VERSION
         if show_details:
             payload["environment"] = settings.app_env
@@ -251,7 +253,7 @@ def ready(request: Request) -> JSONResponse:
     payload: dict[str, object] = {
         "status": "ok" if all_ok else "degraded",
     }
-    if _SHOW_VERSION_IN_HEALTH:
+    if _show_version_in_health():
         payload["version"] = HEALTH_VERSION
     if show_details:
         payload["environment"] = settings.app_env
