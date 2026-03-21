@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
+import type { StrategyCatalogGroup } from "@backtestforecast/api-client";
 import { createScannerJob } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { getOrCreatePendingIdempotencyKey } from "@/lib/idempotency";
@@ -117,12 +118,58 @@ const ADVANCED_STRATEGY_GROUPS: Array<{
 
 const ADVANCED_STRATEGIES = ADVANCED_STRATEGY_GROUPS.flatMap((g) => g.strategies);
 
+function buildFallbackStrategyGroups(mode: ScannerMode): StrategyCatalogGroup[] {
+  if (mode === "advanced") {
+    return ADVANCED_STRATEGY_GROUPS.map((group) => ({
+      category: group.category.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+      category_label: group.category,
+      strategies: group.strategies.map((strategy) => ({
+        strategy_type: strategy.value as StrategyType,
+        label: strategy.label,
+        short_description: "",
+        category: "all",
+        bias: "neutral",
+        leg_count: 1,
+        min_tier: "free",
+        max_loss_description: "",
+        notes: "",
+        tags: [],
+      })),
+    }));
+  }
+
+  return [{
+    category: "basic",
+    category_label: "Basic",
+    strategies: BASIC_STRATEGIES.map((strategy) => ({
+      strategy_type: strategy.value as StrategyType,
+      label: strategy.label,
+      short_description: "",
+      category: "all",
+      bias: "neutral",
+      leg_count: 1,
+      min_tier: "free",
+      max_loss_description: "",
+      notes: "",
+      tags: [],
+    })),
+  }];
+}
+
 export function ScannerForm({
   scannerModes,
   planTier = "free",
+  catalogGroups = [],
+  basicAllowedStrategyTypes = [],
+  advancedAllowedStrategyTypes = [],
+  maxScannerWindowDays,
 }: {
   scannerModes: Array<"basic" | "advanced">;
   planTier?: PlanTier;
+  catalogGroups?: StrategyCatalogGroup[];
+  basicAllowedStrategyTypes?: string[];
+  advancedAllowedStrategyTypes?: string[];
+  maxScannerWindowDays?: number;
 }) {
   const router = useRouter();
   const { getToken } = useAuth();
@@ -184,20 +231,35 @@ export function ScannerForm({
     new Set(["long_call", "long_put"]),
   );
 
+  const allowedStrategySet = new Set(
+    (
+      form.mode === "advanced"
+        ? (advancedAllowedStrategyTypes.length > 0
+          ? advancedAllowedStrategyTypes
+          : ADVANCED_STRATEGIES.map((strategy) => strategy.value))
+        : (basicAllowedStrategyTypes.length > 0
+          ? basicAllowedStrategyTypes
+          : BASIC_STRATEGIES.map((strategy) => strategy.value))
+    ),
+  );
+  const strategyGroups = (catalogGroups.length > 0 ? catalogGroups : buildFallbackStrategyGroups(form.mode))
+    .map((group) => ({
+      ...group,
+      strategies: group.strategies.filter((strategy) => allowedStrategySet.has(strategy.strategy_type)),
+    }))
+    .filter((group) => group.strategies.length > 0);
+
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [requiredTier, setRequiredTier] = useState<string | undefined>();
 
   useEffect(() => {
-    const allowed: Set<string> = new Set(
-      (form.mode === "advanced" ? ADVANCED_STRATEGIES : BASIC_STRATEGIES).map((s) => s.value),
-    );
     setSelectedStrategies((prev) => {
-      const pruned = new Set([...prev].filter((v) => allowed.has(v)));
+      const pruned = new Set([...prev].filter((v) => allowedStrategySet.has(v)));
       return pruned.size === prev.size ? prev : pruned;
     });
-  }, [form.mode]);
+  }, [allowedStrategySet]);
 
   const toggleStrategy = useCallback((value: string) => {
     setSelectedStrategies((prev) => {
@@ -215,10 +277,7 @@ export function ScannerForm({
     e.preventDefault();
     if (submittingRef.current) return;
 
-    const allowed = new Set(
-      (form.mode === "advanced" ? ADVANCED_STRATEGIES : BASIC_STRATEGIES).map((s) => s.value),
-    );
-    const effectiveStrategies = new Set([...selectedStrategies].filter((v) => allowed.has(v)));
+    const effectiveStrategies = new Set([...selectedStrategies].filter((v) => allowedStrategySet.has(v)));
 
     const symbols = parseSymbols(form.symbolsText);
 
@@ -226,6 +285,7 @@ export function ScannerForm({
       mode: form.mode,
       symbolsText: form.symbolsText,
       selectedStrategies: effectiveStrategies,
+      maxScannerWindowDays,
       startDate: form.startDate,
       endDate: form.endDate,
       targetDte: form.targetDte,
@@ -320,7 +380,7 @@ export function ScannerForm({
     } finally {
       submittingRef.current = false;
     }
-  }, [form, selectedStrategies, getToken, router, planTier]);
+  }, [allowedStrategySet, form, getToken, maxScannerWindowDays, planTier, router, selectedStrategies]);
 
   return (
     <form className="space-y-6" noValidate onSubmit={handleSubmit} aria-label="Scanner configuration">
@@ -363,22 +423,22 @@ export function ScannerForm({
             <Label>Strategy types</Label>
             {form.mode === "advanced" ? (
               <div className="space-y-4">
-                {ADVANCED_STRATEGY_GROUPS.map((group) => (
+                {strategyGroups.map((group) => (
                   <div key={group.category}>
                     <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      {group.category}
+                      {group.category_label}
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {group.strategies.map((strategy) => (
                         <label
-                          key={strategy.value}
+                          key={strategy.strategy_type}
                           className="inline-flex items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-sm cursor-pointer hover:bg-accent"
                         >
                           <input
                             type="checkbox"
                             className="h-4 w-4 rounded border-input"
-                            checked={selectedStrategies.has(strategy.value)}
-                            onChange={() => toggleStrategy(strategy.value)}
+                            checked={selectedStrategies.has(strategy.strategy_type)}
+                            onChange={() => toggleStrategy(strategy.strategy_type)}
                           />
                           {strategy.label}
                         </label>
@@ -389,16 +449,16 @@ export function ScannerForm({
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {BASIC_STRATEGIES.map((strategy) => (
+                {strategyGroups.flatMap((group) => group.strategies).map((strategy) => (
                   <label
-                    key={strategy.value}
+                    key={strategy.strategy_type}
                     className="inline-flex items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-sm cursor-pointer hover:bg-accent"
                   >
                     <input
                       type="checkbox"
                       className="h-4 w-4 rounded border-input"
-                      checked={selectedStrategies.has(strategy.value)}
-                      onChange={() => toggleStrategy(strategy.value)}
+                      checked={selectedStrategies.has(strategy.strategy_type)}
+                      onChange={() => toggleStrategy(strategy.strategy_type)}
                     />
                     {strategy.label}
                   </label>
@@ -461,7 +521,7 @@ export function ScannerForm({
           <CardTitle>Timeframe and risk</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">{getScannerWindowHelpText()}</p>
+          <p className="text-sm text-muted-foreground">{getScannerWindowHelpText(maxScannerWindowDays)}</p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="scanStart">Start date</Label>

@@ -499,6 +499,10 @@ class FeatureAccessResponse(BaseModel):
     forecasting_access: bool
     export_formats: list[str] = Field(default_factory=list)
     scanner_modes: list[str] = Field(default_factory=list)
+    scanner_basic_allowed_strategy_types: list[str] = Field(default_factory=list)
+    scanner_advanced_allowed_strategy_types: list[str] = Field(default_factory=list)
+    max_scanner_window_days: int
+    max_sweep_window_days: int
     cancel_at_period_end: bool = False
 
 
