@@ -28,4 +28,17 @@ test.describe("Daily picks", () => {
 
     expect(hasCards || hasMessage).toBeTruthy();
   });
+
+  test("history pagination surfaces next_cursor in the page URL when a next page exists", async ({ page }) => {
+    await page.goto("/app/daily-picks");
+    await expect(page.getByRole("heading", { name: /today'?s top trades|daily picks|picks for/i })).toBeVisible();
+
+    const nextLink = page.getByRole("link", { name: "Next" });
+    if ((await nextLink.count()) === 0 || !(await nextLink.first().isVisible().catch(() => false))) {
+      test.skip(true, "No history next page available in the current fixture data.");
+    }
+
+    await nextLink.first().click();
+    await expect(page).toHaveURL(/next_cursor=/);
+  });
 });
