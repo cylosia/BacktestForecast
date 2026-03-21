@@ -1,7 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { cache } from "react";
-import { apiRequest } from "@/lib/api/shared";
+import { apiRequest, validatedApiRequest } from "@/lib/api/shared";
 import { buildCursorPaginatedPath, buildPaginatedListPath } from "@/lib/api/pagination";
+import { validateTemplateListResponse } from "@/lib/templates/contracts";
 import type {
   AnalysisListResponse,
   BacktestRunDetailResponse,
@@ -62,7 +63,12 @@ export const getBacktestRun = cache(async (runId: string): Promise<BacktestRunDe
 
 export const getTemplates = cache(async (): Promise<TemplateListResponse> => {
   const token = await getServerToken();
-  return apiRequest<TemplateListResponse>("/v1/templates", token, { cache: "no-store" });
+  return validatedApiRequest<TemplateListResponse>(
+    "/v1/templates",
+    token,
+    validateTemplateListResponse,
+    { cache: "no-store" },
+  );
 });
 
 export async function compareBacktests(runIds: string[]): Promise<CompareBacktestsResponse> {

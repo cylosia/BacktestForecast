@@ -29,4 +29,10 @@ describe("buildPaginatedListPath", () => {
       "/v1/daily-picks/history?limit=5",
     );
   });
+
+  it("lets the daily-picks page surface next_cursor in the page URL while still sending cursor to the API", () => {
+    expect(buildCursorPaginatedPath("/v1/daily-picks/history", 25, 30, "backend-next-cursor")).toBe(
+      "/v1/daily-picks/history?limit=25&cursor=backend-next-cursor",
+    );
+  });
 });
