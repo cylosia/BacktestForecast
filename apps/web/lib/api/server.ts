@@ -39,14 +39,17 @@ const getServerToken = cache(async (): Promise<string> => {
   return token;
 });
 
-export const getCurrentUser = cache(async (): Promise<CurrentUserResponse> => {
-  const token = await getServerToken();
+const loadCurrentUser = cache(async (token: string): Promise<CurrentUserResponse> => {
   const user = await apiRequest<CurrentUserResponse>("/v1/me", token, { cache: "no-store" });
   if (!user || typeof user.id !== "string" || typeof user.plan_tier !== "string") {
     throw new Error("Invalid user response shape from API");
   }
   return user;
 });
+
+export async function getCurrentUser(): Promise<CurrentUserResponse> {
+  return loadCurrentUser(await getServerToken());
+}
 
 export interface RuntimeMetaResponse {
   service: string;

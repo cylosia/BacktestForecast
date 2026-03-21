@@ -117,7 +117,7 @@ export default async function DailyPicksPage({
 }) {
   const params = await searchParams;
   const cursor = params.next_cursor?.trim() || params.cursor?.trim() || undefined;
-  const scheduleLabel = (await getMeta().catch(() => null))?.daily_picks_schedule_utc ?? getDailyPicksScheduleLabel();
+  const scheduleLabel = getDailyPicksScheduleLabel();
   let user;
   try {
     user = await getCurrentUser();
