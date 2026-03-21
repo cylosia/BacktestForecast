@@ -222,3 +222,17 @@ class TestServerApiCaching:
         assert "export const getDailyPicks = cache(async" in source
         assert "export const getAnalysisHistory = cache(async" in source
         assert "export const getDailyPicksHistory = cache(async" in source
+
+
+class TestStartupSideEffects:
+    def test_strategy_catalog_defers_missing_entry_logging_until_runtime(self):
+        source = Path("src/backtestforecast/strategy_catalog/catalog.py").read_text()
+
+        assert "def log_missing_catalog_entries()" in source
+        assert "if _missing:" not in source
+
+    def test_worker_sqlite_warning_is_not_logged_at_import_time(self):
+        source = Path("tests/worker/test_tasks.py").read_text()
+
+        assert "_sqlite_warning_logged = False" in source
+        assert "def db_engine():" in source

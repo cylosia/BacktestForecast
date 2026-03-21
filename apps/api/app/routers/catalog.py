@@ -14,6 +14,7 @@ from backtestforecast.strategy_catalog.catalog import (
     CATEGORY_LABELS,
     STRATEGY_CATALOG,
     get_catalog_entries_grouped,
+    log_missing_catalog_entries,
 )
 
 router = APIRouter(tags=["catalog"])
@@ -32,6 +33,7 @@ def get_strategy_catalog(
         window_seconds=settings.rate_limit_window_seconds,
     )
     response.headers["Cache-Control"] = "private, max-age=3600"
+    log_missing_catalog_entries()
     grouped = get_catalog_entries_grouped()
     groups = []
     for category, entries in grouped:

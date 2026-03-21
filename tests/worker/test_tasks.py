@@ -19,17 +19,13 @@ from backtestforecast.models import (
     BacktestRun,
     User,
 )
+from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
-logging.getLogger("tests.worker.sqlite").warning(
-    "Worker tests use SQLite which silently ignores Postgres-specific features like skip_locked and FOR UPDATE. Run with DATABASE_URL pointing to Postgres for full coverage.",
-)
+_sqlite_warning_logged = False
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
 @pytest.fixture()
@@ -41,6 +37,12 @@ def db_engine():
     For full coverage run these tests against Postgres in CI using the
     ``postgres-integration`` job configuration.
     """
+    global _sqlite_warning_logged
+    if not _sqlite_warning_logged:
+        logging.getLogger("tests.worker.sqlite").warning(
+            "Worker tests use SQLite which silently ignores Postgres-specific features like skip_locked and FOR UPDATE. Run with DATABASE_URL pointing to Postgres for full coverage.",
+        )
+        _sqlite_warning_logged = True
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -395,9 +397,10 @@ def test_generate_export_value_error_propagates(mock_session_local, mock_publish
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service):
-        with pytest.raises(ValueError, match="bad value in export data"):
-            generate_export(str(uuid4()))
+    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service), pytest.raises(
+        ValueError, match="bad value in export data"
+    ):
+        generate_export(str(uuid4()))
 
     mock_service.close.assert_called_once()
 

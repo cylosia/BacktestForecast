@@ -512,9 +512,12 @@ def get_catalog_entries_grouped() -> list[tuple[StrategyCategory, list[StrategyC
 
 
 _all_strategy_types = {st.value for st in StrategyType}
-_missing = _all_strategy_types - set(STRATEGY_CATALOG.keys())
-if _missing:
-    logging.getLogger("backtestforecast.strategy_catalog").warning(
-        "Strategy catalog is missing entries for %s. Add StrategyCatalogEntry instances in catalog.py.",
-        sorted(_missing),
-    )
+
+
+def log_missing_catalog_entries() -> None:
+    missing = _all_strategy_types - set(STRATEGY_CATALOG.keys())
+    if missing:
+        logging.getLogger("backtestforecast.strategy_catalog").warning(
+            "Strategy catalog is missing entries for %s. Add StrategyCatalogEntry instances in catalog.py.",
+            sorted(missing),
+        )

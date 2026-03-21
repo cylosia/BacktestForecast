@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -46,6 +45,7 @@ from backtestforecast.observability.metrics import API_ERRORS_TOTAL, PrometheusM
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.security.http import (
     ApiSecurityHeadersMiddleware,
+    DynamicCORSMiddleware,
     DynamicTrustedHostMiddleware,
     RequestBodyLimitMiddleware,
 )
@@ -56,11 +56,9 @@ configure_logging(_startup_settings)
 logger = get_logger("api")
 
 # WARNING: _startup_settings still captures configuration used to build the
-# FastAPI app itself (notably CORS configuration and docs exposure) at import
-# time. Host validation and body-size enforcement re-read settings per request,
-# but CORS/origin behavior still requires a process restart after config
-# changes. Per-request code paths (e.g. /metrics auth, /admin/dlq auth) must
-# call get_settings() to pick up post-invalidation changes.
+# FastAPI app itself (notably docs exposure). Middleware that enforces host,
+# CORS, and body-size limits now re-reads settings per request, but docs/openapi
+# visibility still requires a process restart after config changes.
 settings = _startup_settings
 
 if settings.sentry_dsn:
@@ -336,8 +334,8 @@ class _CancelledErrorMiddleware:
 # 1. PrometheusMiddleware — records request metrics (including 499s)
 # 2. _CancelledErrorMiddleware — converts CancelledError to 499
 # 3. RequestContextMiddleware — binds request_id to structlog context
-# 4. TrustedHostMiddleware — rejects requests with invalid Host headers
-# 5. CORSMiddleware — handles cross-origin preflight and response headers
+# 4. DynamicTrustedHostMiddleware — rejects requests with invalid Host headers
+# 5. DynamicCORSMiddleware — handles cross-origin preflight and response headers
 # 6. RequestBodyLimitMiddleware — enforces max request body size
 # 7. ApiSecurityHeadersMiddleware — adds security response headers
 #
@@ -346,8 +344,8 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 app.add_middleware(ApiSecurityHeadersMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=lambda: get_settings().request_max_body_bytes)
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.web_cors_origins,
+    DynamicCORSMiddleware,
+    allow_origins=lambda: get_settings().web_cors_origins,
     allow_credentials=True,
     # PUT intentionally excluded: no API endpoints use PUT. All updates use PATCH.
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
@@ -355,7 +353,7 @@ app.add_middleware(
     expose_headers=["X-Request-ID", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
     max_age=600,
 )
-# Note: TrustedHostMiddleware runs BEFORE CORSMiddleware. If a CORS preflight
+# Note: DynamicTrustedHostMiddleware runs BEFORE DynamicCORSMiddleware. If a CORS preflight
 # request has a Host header not in api_allowed_hosts, it will be rejected with
 # 400 before CORS headers are attached. Ensure api_allowed_hosts includes all
 # domains that legitimate CORS requests target.
