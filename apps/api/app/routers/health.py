@@ -1,6 +1,7 @@
 import hmac
-from time import monotonic
+from contextlib import suppress
 from threading import Lock
+from time import monotonic
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -10,6 +11,7 @@ from backtestforecast import __version__ as HEALTH_VERSION
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.db.session import ping_database
 from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
+from backtestforecast.version import get_public_version
 
 router = APIRouter(tags=["health"])
 
@@ -24,10 +26,8 @@ def _invalidate_broker_redis() -> None:
         client = _broker_redis
         _broker_redis = None
     if client is not None:
-        try:
+        with suppress(Exception):
             client.close()
-        except Exception:
-            pass
 
 
 register_invalidation_callback(_invalidate_broker_redis)
@@ -51,10 +51,8 @@ def _ping_broker_redis() -> bool:
     except Exception:
         with _broker_redis_lock:
             if _broker_redis is not None:
-                try:
+                with suppress(Exception):
                     _broker_redis.close()
-                except Exception:
-                    pass
                 _broker_redis = None
         return False
 
@@ -108,6 +106,7 @@ def _check_migration_drift() -> bool:
         from alembic.config import Config
         from alembic.runtime.migration import MigrationContext
         from alembic.script import ScriptDirectory
+
         from backtestforecast.db.session import _get_engine
         from backtestforecast.observability.metrics import MIGRATION_HEAD_MATCH
 
@@ -145,7 +144,7 @@ def _show_version_in_health() -> bool:
 def live() -> dict[str, str] | JSONResponse:
     resp: dict[str, str] = {"status": "ok", "service": "api"}
     if _show_version_in_health():
-        resp["version"] = HEALTH_VERSION
+        resp["version"] = get_public_version()
     return resp
 
 
@@ -171,7 +170,7 @@ def ready(request: Request) -> JSONResponse:
     if not db_up:
         content: dict[str, str] = {"status": "degraded"}
         if _show_version_in_health():
-            content["version"] = HEALTH_VERSION
+            content["version"] = get_public_version()
         if show_details:
             content["environment"] = settings.app_env
             content["database"] = "down"
@@ -182,7 +181,7 @@ def ready(request: Request) -> JSONResponse:
     if not broker_up:
         content = {"status": "degraded"}
         if _show_version_in_health():
-            content["version"] = HEALTH_VERSION
+            content["version"] = get_public_version()
         if show_details:
             content["environment"] = settings.app_env
             content["database"] = "up"
@@ -197,7 +196,7 @@ def ready(request: Request) -> JSONResponse:
     if not redis_up and settings.rate_limit_fail_closed:
         content = {"status": "unavailable"}
         if _show_version_in_health():
-            content["version"] = HEALTH_VERSION
+            content["version"] = get_public_version()
         if show_details:
             content["environment"] = settings.app_env
             content["database"] = "up"
@@ -220,7 +219,7 @@ def ready(request: Request) -> JSONResponse:
         if not migration_aligned:
             payload: dict[str, object] = {"status": "degraded"}
             if _show_version_in_health():
-                payload["version"] = HEALTH_VERSION
+                payload["version"] = get_public_version()
             if show_details:
                 payload["environment"] = settings.app_env
                 payload["database"] = "up"
@@ -237,7 +236,7 @@ def ready(request: Request) -> JSONResponse:
     if outbox_status == "stale":
         payload = {"status": "degraded"}
         if _show_version_in_health():
-            payload["version"] = HEALTH_VERSION
+            payload["version"] = get_public_version()
         if show_details:
             payload["environment"] = settings.app_env
             payload["database"] = "up"
@@ -254,7 +253,7 @@ def ready(request: Request) -> JSONResponse:
         "status": "ok" if all_ok else "degraded",
     }
     if _show_version_in_health():
-        payload["version"] = HEALTH_VERSION
+        payload["version"] = get_public_version()
     if show_details:
         payload["environment"] = settings.app_env
         payload["database"] = "up"
@@ -262,24 +261,21 @@ def ready(request: Request) -> JSONResponse:
         payload["broker"] = "up" if broker_up else "down"
         payload["rate_limit_mode"] = rl_mode
         payload["massive_api"] = massive_status
-        try:
+        with suppress(Exception):
             from backtestforecast.db.session import get_pool_stats
+
             payload["pool_stats"] = get_pool_stats()
-        except Exception:
-            pass
         redis_pool = _get_redis_pool_stats()
         if redis_pool is not None:
             payload["redis_pool_stats"] = redis_pool
-        try:
+        with suppress(Exception):
             from backtestforecast.market_data.redis_cache import OptionDataRedisCache
-            from backtestforecast.config import get_settings as _gs
-            _s = _gs()
-            if _s.option_cache_enabled and _s.redis_cache_url:
-                _cache = OptionDataRedisCache(_s.redis_cache_url, _s.option_cache_ttl_seconds)
-                payload["option_cache_freshness"] = _cache.check_freshness("SPY")
-                _cache.close()
-        except Exception:
-            pass
+
+            cache_settings = get_settings()
+            if cache_settings.option_cache_enabled and cache_settings.redis_cache_url:
+                cache = OptionDataRedisCache(cache_settings.redis_cache_url, cache_settings.option_cache_ttl_seconds)
+                payload["option_cache_freshness"] = cache.check_freshness("SPY")
+                cache.close()
         if settings.sentry_dsn:
             try:
                 import sentry_sdk

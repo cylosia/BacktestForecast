@@ -7,6 +7,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backtestforecast.observability import REQUEST_ID_HEADER
+from backtestforecast.version import get_public_version
 
 BODY_LIMIT_OVERRIDES: dict[str, int] = {
     # Stripe webhook payloads are typically 5-15 KB but can reach 50+ KB
@@ -31,7 +32,7 @@ class _BodyTooLarge(Exception):
 
 
 # NOTE: Response body size is not limited at the middleware level.
-# Large responses (e.g., compare endpoint with 10 runs × 10K trades)
+# Large responses (e.g., compare endpoint with 10 runs x 10K trades)
 # are bounded by trade_limit parameters at the service layer.
 # GZipMiddleware (min_size=1000, level=6) is enabled in main.py.
 
@@ -98,6 +99,32 @@ class RequestBodyLimitMiddleware:
         await self.app(scope, receive, send)
 
 
+    @staticmethod
+    async def _send_413(scope: Scope, send: Send) -> None:
+        request_id = None
+        state = scope.get("state")
+        if state is not None:
+            request_id = getattr(state, "request_id", None)
+
+        body = json.dumps({
+            "error": {
+                "code": "payload_too_large",
+                "message": "The request body exceeded the maximum allowed size.",
+                "request_id": request_id,
+            }
+        }).encode("utf-8")
+
+        resp_headers: list[tuple[bytes, bytes]] = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ]
+        if request_id:
+            resp_headers.append((REQUEST_ID_HEADER.encode(), request_id.encode()))
+
+        await send({"type": "http.response.start", "status": 413, "headers": resp_headers})
+        await send({"type": "http.response.body", "body": body})
+
+
 class DynamicTrustedHostMiddleware:
     """Validate Host against the current settings on every request.
 
@@ -139,39 +166,6 @@ class DynamicTrustedHostMiddleware:
         )
         await send({"type": "http.response.body", "body": body})
 
-    @staticmethod
-    async def _send_413(scope: Scope, send: Send) -> None:
-        request_id = None
-        state = scope.get("state")
-        if state is not None:
-            request_id = getattr(state, "request_id", None)
-
-        body = json.dumps({
-            "error": {
-                "code": "payload_too_large",
-                "message": "The request body exceeded the maximum allowed size.",
-                "request_id": request_id,
-            }
-        }).encode("utf-8")
-
-        resp_headers: list[tuple[bytes, bytes]] = [
-            (b"content-type", b"application/json"),
-            (b"content-length", str(len(body)).encode()),
-        ]
-        if request_id:
-            resp_headers.append(
-                (REQUEST_ID_HEADER.encode(), request_id.encode())
-            )
-
-        await send({
-            "type": "http.response.start",
-            "status": 413,
-            "headers": resp_headers,
-        })
-        await send({
-            "type": "http.response.body",
-            "body": body,
-        })
 
 
 def normalize_origin(value: str) -> str:
@@ -187,9 +181,6 @@ def normalize_origin(value: str) -> str:
     elif v.startswith("http://") and v.endswith(":80"):
         v = v[:-3]
     return v
-
-
-from backtestforecast import __version__ as API_VERSION
 
 
 class ApiSecurityHeadersMiddleware:
@@ -237,7 +228,7 @@ class ApiSecurityHeadersMiddleware:
                         "max-age=31536000; includeSubDomains",
                     )
                 if self._show_version:
-                    headers["X-API-Version"] = API_VERSION
+                    headers["X-API-Version"] = get_public_version()
             await send(message)
 
         await self.app(scope, receive, send_with_headers)

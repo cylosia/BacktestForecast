@@ -12,7 +12,10 @@ from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
+from backtestforecast.errors import FeatureLockedError
+from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.schemas.scans import (
     CreateScannerJobRequest,
     ScannerJobListResponse,
@@ -20,9 +23,6 @@ from backtestforecast.schemas.scans import (
     ScannerJobStatusResponse,
     ScannerRecommendationListResponse,
 )
-from backtestforecast.errors import FeatureLockedError
-from backtestforecast.feature_flags import is_feature_enabled
-from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.scans import ScanService
 
@@ -155,7 +155,7 @@ def delete_scan(
 @router.get("/{job_id}/recommendations", response_model=ScannerRecommendationListResponse)
 def get_scan_recommendations(
     job_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,

@@ -12,7 +12,10 @@ from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
+from backtestforecast.errors import FeatureLockedError
+from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
+from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.schemas.sweeps import (
     CreateSweepRequest,
     SweepJobListResponse,
@@ -20,9 +23,6 @@ from backtestforecast.schemas.sweeps import (
     SweepJobStatusResponse,
     SweepResultListResponse,
 )
-from backtestforecast.errors import FeatureLockedError
-from backtestforecast.feature_flags import is_feature_enabled
-from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.sweeps import SweepService
 
@@ -158,7 +158,7 @@ def delete_sweep(
 @router.get("/{job_id}/results", response_model=SweepResultListResponse)
 def get_sweep_results(
     job_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_readonly),
     db: Session = Depends(get_readonly_db),
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,

@@ -17,6 +17,7 @@ from backtestforecast.config import Settings
 from backtestforecast.repositories.audit_events import AuditEventRepository
 from backtestforecast.schemas.scans import ScannerRecommendationResponse
 from backtestforecast.schemas.sweeps import CreateSweepRequest
+from backtestforecast.version import get_public_version
 
 
 def _trade(net_pnl: float, *, day_offset: int = 0) -> TradeResult:
@@ -116,10 +117,10 @@ class TestSettingsDefaults:
 
 class TestVersionDerivation:
     def test_meta_router_uses_package_version(self) -> None:
-        assert __version__ == meta_router.API_VERSION
+        assert __version__ == get_public_version()
 
     def test_health_router_uses_package_version(self) -> None:
-        assert __version__ == health_router.HEALTH_VERSION
+        assert __version__ == get_public_version()
 
 
 class TestSweepWindowLimit:
@@ -202,5 +203,5 @@ class TestMetaGracefulDegradation:
 
         assert payload == {
             "service": "backtestforecast-api",
-            "version": meta_router.API_VERSION,
+            "version": get_public_version(),
         }

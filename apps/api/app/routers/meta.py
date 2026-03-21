@@ -16,6 +16,7 @@ from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
 from backtestforecast.security import get_rate_limiter
+from backtestforecast.version import get_public_version
 
 
 class FeatureFlagsResponse(BaseModel):
@@ -84,7 +85,7 @@ def get_meta(request: Request, db: Session = Depends(get_readonly_db)) -> dict[s
     )
     result: dict[str, Any] = {
         "service": "backtestforecast-api",
-        "version": API_VERSION,
+        "version": get_public_version(),
     }
     try:
         user = _try_authenticate(request, db)

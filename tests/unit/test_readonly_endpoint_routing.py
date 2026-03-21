@@ -77,3 +77,8 @@ def test_read_heavy_routers_use_readonly_auth_dependency() -> None:
     ):
         source = _router_source(path)
         assert "get_current_user_readonly" in source, path
+
+
+def test_readonly_auth_dependency_does_not_enable_write_fallback() -> None:
+    source = _router_source("apps/api/app/dependencies.py")
+    assert "allow_write_fallback=False" in source
