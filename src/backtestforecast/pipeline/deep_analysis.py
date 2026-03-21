@@ -33,6 +33,7 @@ UTC = timezone.utc
 from backtestforecast.models import SymbolAnalysis, User
 from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 from backtestforecast.pipeline.regime import classify_regime
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("deep_analysis")
 
@@ -187,7 +188,16 @@ class SymbolDeepAnalysisService:
         if idempotency_key:
             existing = self._repo.get_by_idempotency_key(user.id, idempotency_key)
             if existing is not None:
-                return existing
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="SymbolAnalysis",
+                    task_name="analysis.deep_symbol",
+                    task_kwargs={"analysis_id": str(existing.id)},
+                    queue="research",
+                    log_event="analysis",
+                    logger=logger,
+                )
 
         self.session.execute(
             select(User).where(User.id == user.id).with_for_update()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 from uuid import UUID
@@ -25,6 +25,8 @@ from backtestforecast.services.sweeps import SweepService
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+UTC = timezone.utc
 
 
 @pytest.fixture(autouse=True)
@@ -108,6 +110,42 @@ def _assert_pending_outbox(session: Session, job_id: UUID, *, task_name: str, mo
     assert len(outbox_messages) == 1
     assert outbox_messages[0].status == "pending"
     assert outbox_messages[0].task_name == task_name
+
+
+def _mark_job_stale(session: Session, job, *, stale_task_id: str = "stale-task-id") -> None:
+    stale_time = datetime.now(UTC) - timedelta(minutes=30)
+    job.created_at = stale_time
+    job.celery_task_id = stale_task_id
+    session.add(
+        OutboxMessage(
+            task_name="stale.task",
+            task_kwargs_json={"job_id": str(job.id)},
+            queue="research",
+            status="pending",
+            correlation_id=job.id,
+        )
+    )
+    session.commit()
+    session.refresh(job)
+
+
+def _assert_stale_job_redispatched(session: Session, job_id: UUID, *, task_name: str, model_type) -> None:
+    session.expire_all()
+    job = session.get(model_type, job_id)
+    assert job is not None
+    assert job.status == "queued"
+    assert job.celery_task_id is not None
+    assert job.celery_task_id != "stale-task-id"
+
+    statuses = list(
+        session.scalars(
+            select(OutboxMessage.status)
+            .where(OutboxMessage.correlation_id == job_id)
+            .order_by(OutboxMessage.created_at)
+        )
+    )
+    assert "failed" in statuses
+    assert "sent" in statuses
 
 
 def test_backtest_create_and_dispatch_preserves_pending_outbox_on_send_failure(
@@ -242,6 +280,162 @@ def test_export_create_and_dispatch_preserves_pending_outbox_on_send_failure(
     )
 
     _assert_pending_outbox(
+        db_session,
+        export_job.id,
+        task_name="exports.generate",
+        model_type=ExportJob,
+    )
+
+
+def test_backtest_idempotency_reuse_redispatches_stale_queued_job(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="pro")
+    service = BacktestService(db_session)
+    payload = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=20,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("40"), "period": 14}],
+        idempotency_key="bt-stale-idem",
+    )
+
+    run = service.enqueue(user, payload)
+    db_session.commit()
+    _mark_job_stale(db_session, run)
+    _mock_celery_module.send_task.return_value = MagicMock(id="fresh-task-id")
+
+    reused = service.create_and_dispatch(user, payload)
+
+    assert reused.id == run.id
+    _assert_stale_job_redispatched(db_session, run.id, task_name="backtests.run", model_type=BacktestRun)
+
+
+def test_scan_idempotency_reuse_redispatches_stale_queued_job(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    from backtestforecast.models import ScannerJob
+
+    user = _create_user(db_session, plan_tier="premium")
+    service = ScanService(db_session)
+    payload = CreateScannerJobRequest(
+        name="Dispatch regression scan",
+        mode="basic",
+        symbols=["AAPL"],
+        strategy_types=["long_call"],
+        rule_sets=[{"name": "RSI", "entry_rules": [{"type": "rsi", "operator": "lte", "threshold": Decimal("40"), "period": 14}]}],
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=20,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        max_recommendations=5,
+        idempotency_key="scan-stale-idem",
+    )
+
+    with patch.object(ScanService, "_count_compatible_candidates", return_value=(1, [])):
+        job = service.create_job(user, payload)
+        db_session.commit()
+        _mark_job_stale(db_session, job)
+        _mock_celery_module.send_task.return_value = MagicMock(id="fresh-task-id")
+        reused = service.create_and_dispatch_job(user, payload)
+
+    assert reused.id == job.id
+    _assert_stale_job_redispatched(db_session, job.id, task_name="scans.run_job", model_type=ScannerJob)
+
+
+def test_sweep_idempotency_reuse_redispatches_stale_queued_job(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    from backtestforecast.models import SweepJob
+
+    user = _create_user(db_session, plan_tier="premium")
+    service = SweepService(db_session)
+    payload = CreateSweepRequest(
+        symbol="SPY",
+        strategy_types=["bull_put_credit_spread"],
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=20,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rule_sets=[{"name": "no_filter", "entry_rules": []}],
+        idempotency_key="sweep-stale-idem",
+    )
+
+    with patch.object(SweepService, "_compute_candidate_count", return_value=1):
+        job = service.create_job(user, payload)
+        db_session.commit()
+        _mark_job_stale(db_session, job)
+        _mock_celery_module.send_task.return_value = MagicMock(id="fresh-task-id")
+        reused = service.create_and_dispatch_job(user, payload)
+
+    assert reused.id == job.id
+    _assert_stale_job_redispatched(db_session, job.id, task_name="sweeps.run", model_type=SweepJob)
+
+
+def test_analysis_idempotency_reuse_redispatches_stale_queued_job(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    from backtestforecast.models import SymbolAnalysis
+
+    user = _create_user(db_session, plan_tier="premium")
+    service = SymbolDeepAnalysisService(db_session, market_data_fetcher=None, backtest_executor=None)
+    payload = CreateAnalysisRequest(symbol="AAPL", idempotency_key="analysis-stale-idem")
+
+    analysis = service.create_analysis(user, payload.symbol, idempotency_key=payload.idempotency_key)
+    db_session.commit()
+    _mark_job_stale(db_session, analysis)
+    _mock_celery_module.send_task.return_value = MagicMock(id="fresh-task-id")
+
+    reused = service.create_and_dispatch_analysis(user, payload.symbol, idempotency_key=payload.idempotency_key)
+
+    assert reused.id == analysis.id
+    _assert_stale_job_redispatched(
+        db_session,
+        analysis.id,
+        task_name="analysis.deep_symbol",
+        model_type=SymbolAnalysis,
+    )
+
+
+def test_export_idempotency_reuse_redispatches_stale_queued_job(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    from backtestforecast.models import ExportJob
+
+    user = _create_user(db_session, plan_tier="pro")
+    run = _create_succeeded_backtest(db_session, user.id)
+    service = ExportService(db_session)
+    payload = CreateExportRequest(run_id=run.id, format=ExportFormat.CSV, idempotency_key="export-stale-idem")
+
+    export_job = service.enqueue_export(user, payload)
+    db_session.commit()
+    _mark_job_stale(db_session, export_job)
+    _mock_celery_module.send_task.return_value = MagicMock(id="fresh-task-id")
+
+    reused = service.create_and_dispatch_export(user, payload)
+
+    assert reused.id == export_job.id
+    _assert_stale_job_redispatched(
         db_session,
         export_job.id,
         task_name="exports.generate",

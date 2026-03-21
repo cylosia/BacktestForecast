@@ -45,6 +45,7 @@ UTC = timezone.utc
 from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 from backtestforecast.utils import to_decimal
 
 logger = structlog.get_logger("services.backtests")
@@ -132,7 +133,16 @@ class BacktestService:
         if request.idempotency_key:
             existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
             if existing is not None:
-                return existing
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="BacktestRun",
+                    task_name="backtests.run",
+                    task_kwargs={"run_id": str(existing.id)},
+                    queue="research",
+                    log_event="backtest",
+                    logger=logger,
+                )
 
         self._enforce_backtest_quota(user)
 

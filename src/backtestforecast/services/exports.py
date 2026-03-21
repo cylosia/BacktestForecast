@@ -26,6 +26,7 @@ from backtestforecast.schemas.exports import CreateExportRequest, ExportJobRespo
 from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("services.exports")
 UTC = timezone.utc
@@ -93,7 +94,17 @@ class ExportService:
         if payload.idempotency_key:
             existing = self.exports.get_by_idempotency_key(user.id, payload.idempotency_key)
             if existing is not None:
-                return existing
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="ExportJob",
+                    task_name="exports.generate",
+                    task_kwargs={"export_job_id": str(existing.id)},
+                    queue="exports",
+                    log_event="export",
+                    logger=logger,
+                    request_id=request_id,
+                )
 
         run = self.backtests.get_lightweight_for_user(payload.run_id, user.id)
         if run is None:

@@ -43,6 +43,7 @@ from backtestforecast.observability.metrics import (
 )
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 from backtestforecast.utils import to_decimal
 from backtestforecast.services.serialization import (
     downsample_equity_curve,
@@ -158,7 +159,16 @@ class SweepService:
         if payload.idempotency_key:
             existing = self.repository.get_by_idempotency_key(user.id, payload.idempotency_key)
             if existing is not None:
-                return existing
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="SweepJob",
+                    task_name="sweeps.run",
+                    task_kwargs={"job_id": str(existing.id)},
+                    queue="research",
+                    log_event="sweep",
+                    logger=logger,
+                )
 
         recent = self.repository.find_recent_duplicate(
             user.id,
@@ -167,7 +177,16 @@ class SweepService:
             since=datetime.now(UTC) - timedelta(minutes=10),
         )
         if recent is not None:
-            return recent
+            return redispatch_if_stale_queued(
+                self.session,
+                recent,
+                model_name="SweepJob",
+                task_name="sweeps.run",
+                task_kwargs={"job_id": str(recent.id)},
+                queue="research",
+                log_event="sweep",
+                logger=logger,
+            )
 
         candidate_count = self._compute_candidate_count(payload)
         if candidate_count == 0:
