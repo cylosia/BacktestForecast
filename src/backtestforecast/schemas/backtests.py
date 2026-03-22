@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from backtestforecast.config import get_settings
 from backtestforecast.schemas.common import JobStatus, PlanTier, RunJobStatus, sanitize_error_message
+from backtestforecast.version import DEFAULT_ENGINE_VERSION, ENGINE_VERSION_CHOICES
 
 SYMBOL_ALLOWED_CHARS = re.compile(r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
 
@@ -686,7 +687,7 @@ class BacktestRunDetailResponse(BaseModel):
     account_size: Decimal
     risk_per_trade_pct: Decimal
     commission_per_contract: Decimal
-    engine_version: Literal["options-multileg-v1", "options-multileg-v2"] = "options-multileg-v2"
+    engine_version: Literal[ENGINE_VERSION_CHOICES[0], ENGINE_VERSION_CHOICES[1]] = DEFAULT_ENGINE_VERSION
     data_source: Literal["massive", "manual"] = "massive"
     created_at: datetime
     started_at: datetime | None = None
