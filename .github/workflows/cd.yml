@@ -185,23 +185,30 @@ jobs:
           echo "Deploying images..."
           eval "${DEPLOY_COMMAND}"
 
-      - name: Staging smoke test
+      - name: Staging workflow smoke test
         env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
+          API_BASE_URL: ${{ secrets.STAGING_URL }}
+          SMOKE_BEARER_TOKEN: ${{ secrets.STAGING_SMOKE_BEARER_TOKEN }}
+          SMOKE_ENABLE_MUTATIONS: ${{ vars.STAGING_SMOKE_ENABLE_MUTATIONS || 'false' }}
         run: |
-          if [ -z "${STAGING_URL}" ]; then
+          if [ -z "${API_BASE_URL}" ]; then
             echo "::warning::STAGING_URL not configured. Staging smoke test skipped — configure for verification."
             exit 0
           fi
-          for i in 1 2 3 4 5; do
-            if curl -sf "${STAGING_URL}/health/live" > /dev/null 2>&1; then
-              echo "Staging health check passed"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Staging health check failed after 5 attempts"
-          exit 1
+          python scripts/api_smoke_workflows.py
+
+      - name: Staging lightweight load
+        env:
+          LOAD_TEST_TOKEN: ${{ secrets.STAGING_LOAD_TEST_TOKEN }}
+          LOAD_TEST_ENABLE_MUTATIONS: ${{ vars.STAGING_LOAD_TEST_ENABLE_MUTATIONS || 'false' }}
+        run: |
+          if [ -z "${LOAD_TEST_TOKEN}" ] || [ -z "${{ secrets.STAGING_URL }}" ]; then
+            echo "::warning::Staging load test skipped — configure STAGING_URL and STAGING_LOAD_TEST_TOKEN to enable it."
+            exit 0
+          fi
+          python -m pip install --upgrade pip
+          python -m pip install --constraint constraints.txt locust
+          locust -f tests/load/locustfile.py --headless --host "${{ secrets.STAGING_URL }}" --users 5 --spawn-rate 1 --run-time 1m --stop-timeout 15s
 
   deploy:
     needs: [deploy-staging]
@@ -251,7 +258,28 @@ jobs:
         env:
           DEPLOY_COMMAND: ${{ secrets.DEPLOY_COMMAND }}
 
+      - name: Deploy canary to production
+        if: vars.CANARY_DEPLOY_COMMAND != ''
+        env:
+          DEPLOY_COMMAND: ${{ vars.CANARY_DEPLOY_COMMAND }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "Deploying canary images..."
+          eval "${DEPLOY_COMMAND}"
+
+      - name: Promote canary to production
+        if: vars.CANARY_DEPLOY_COMMAND != '' && vars.CANARY_PROMOTE_COMMAND != ''
+        env:
+          DEPLOY_COMMAND: ${{ vars.CANARY_PROMOTE_COMMAND }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "Promoting canary deployment..."
+          eval "${DEPLOY_COMMAND}"
+
       - name: Deploy to production
+        if: vars.CANARY_DEPLOY_COMMAND == ''
         env:
           DEPLOY_COMMAND: ${{ secrets.DEPLOY_COMMAND }}
           IMAGE_TAG: ${{ github.sha }}
@@ -268,28 +296,13 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Health check
+      - name: Workflow smoke check
         id: smoke
         env:
-          API_URL: ${{ vars.API_PRODUCTION_URL }}
-        run: |
-          echo "Waiting for deployment to propagate..."
-          for i in $(seq 1 12); do
-            if curl --fail --silent --max-time 10 "${API_URL}/health/live" > /dev/null 2>&1; then
-              echo "Service is reachable (attempt ${i})."
-              break
-            fi
-            echo "Waiting for service to be ready (attempt ${i}/12)..."
-            sleep 10
-          done
-
-          echo "Checking ${API_URL}/health/live"
-          curl --fail --silent --max-time 10 "${API_URL}/health/live" || exit 1
-          echo "Checking ${API_URL}/health/ready"
-          curl --fail --silent --max-time 10 "${API_URL}/health/ready" || exit 1
-          echo "Checking ${API_URL}/v1/meta"
-          curl --fail --silent --max-time 10 "${API_URL}/v1/meta" || exit 1
-          echo "All smoke checks passed."
+          API_BASE_URL: ${{ vars.API_PRODUCTION_URL }}
+          SMOKE_BEARER_TOKEN: ${{ secrets.PRODUCTION_SMOKE_BEARER_TOKEN }}
+          SMOKE_ENABLE_MUTATIONS: ${{ vars.PRODUCTION_SMOKE_ENABLE_MUTATIONS || 'false' }}
+        run: python scripts/api_smoke_workflows.py
 
       - name: Log in to GHCR for rollback
         if: failure() && steps.smoke.outcome == 'failure' && vars.ROLLBACK_TAG != ''
