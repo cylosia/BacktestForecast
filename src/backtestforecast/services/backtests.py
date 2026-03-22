@@ -46,6 +46,7 @@ from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_S
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 from backtestforecast.utils import to_decimal
 
 logger = structlog.get_logger("services.backtests")
@@ -453,13 +454,14 @@ class BacktestService:
         run = self.run_repository.get_lightweight_for_user(run_id, user.id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
+        diagnostic = get_dispatch_diagnostic(run)
         return BacktestRunStatusResponse(
             id=run.id,
             status=run.status,
             started_at=run.started_at,
             completed_at=run.completed_at,
-            error_code=run.error_code,
-            error_message=run.error_message,
+            error_code=run.error_code or (diagnostic[0] if diagnostic else None),
+            error_message=run.error_message or (diagnostic[1] if diagnostic else None),
         )
 
     def get_run_for_owner(self, *, user_id: UUID, run_id: UUID, trade_limit: int = 10_000) -> BacktestRunDetailResponse:

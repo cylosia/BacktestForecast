@@ -23,6 +23,7 @@ from backtestforecast.schemas.sweeps import (
     SweepResultListResponse,
 )
 from backtestforecast.security import get_rate_limiter
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("api.sweeps")
@@ -104,12 +105,15 @@ def get_sweep_status(
     )
     with SweepService(db) as service:
         job = service.get_job(user, job_id)
+        diagnostic = get_dispatch_diagnostic(job)
         return SweepJobStatusResponse(
             id=job.id,
             status=job.status,
             created_at=job.created_at,
             started_at=job.started_at,
             completed_at=job.completed_at,
+            error_code=job.error_code or (diagnostic[0] if diagnostic else None),
+            error_message=job.error_message or (diagnostic[1] if diagnostic else None),
         )
 
 

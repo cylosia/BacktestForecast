@@ -14,9 +14,11 @@
 
 ## SSE Infrastructure
 
-The backend implements a full Server-Sent Events (SSE) infrastructure (`apps/api/app/routers/events.py`) with Redis Pub/Sub, connection slot management via Lua scripts, and an SSE proxy route in the Next.js frontend (`apps/web/app/api/events/[...path]/route.ts`). However, the frontend exclusively uses the `usePolling` hook for real-time updates. The SSE code path has no active consumers and exists as a future upgrade path. The `useSSE` hook in `apps/web/hooks/use-sse.ts` is implemented but not wired into any component.
+The backend implements a full Server-Sent Events (SSE) infrastructure (`apps/api/app/routers/events.py`) with Redis Pub/Sub, connection slot management via Lua scripts, and an SSE proxy route in the Next.js frontend (`apps/web/app/api/events/[...path]/route.ts`).
 
-This infrastructure consumes Redis connection pool resources (configured for up to 50 SSE connections) even when unused. If SSE is not planned for near-term activation, consider removing it to reduce operational surface area.
+The frontend has active SSE consumers through `useSSE` in the backtest, scanner, and sweep job pollers, with polling fallback when the stream fails. This means SSE is part of the live real-time path and should be tested/operated accordingly rather than treated as dormant infrastructure.
+
+This infrastructure consumes Redis connection pool resources, so capacity and proxy buffering settings still need to be monitored in production.
 
 ## OutboxMessage Scaffolding
 

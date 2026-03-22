@@ -23,6 +23,7 @@ from backtestforecast.schemas.scans import (
     ScannerRecommendationListResponse,
 )
 from backtestforecast.security import get_rate_limiter
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 from backtestforecast.services.scans import ScanService
 
 logger = structlog.get_logger("api.scans")
@@ -101,12 +102,15 @@ def get_scan_status(
     )
     with ScanService(db) as service:
         job = service.get_job(user, job_id)
+        diagnostic = get_dispatch_diagnostic(job)
         return ScannerJobStatusResponse(
             id=job.id,
             status=job.status,
             created_at=job.created_at,
             started_at=job.started_at,
             completed_at=job.completed_at,
+            error_code=job.error_code or (diagnostic[0] if diagnostic else None),
+            error_message=job.error_message or (diagnostic[1] if diagnostic else None),
         )
 
 

@@ -25,6 +25,7 @@ from backtestforecast.schemas.analysis import (
 from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
 from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 logger = structlog.get_logger("api.analysis")
@@ -195,4 +196,9 @@ def list_analyses(
 
 
 def _to_summary(analysis: Any) -> AnalysisSummaryResponse:
-    return AnalysisSummaryResponse.model_validate(analysis)
+    summary = AnalysisSummaryResponse.model_validate(analysis)
+    diagnostic = get_dispatch_diagnostic(analysis)
+    if diagnostic is not None and summary.error_code is None:
+        summary.error_code = diagnostic[0]
+        summary.error_message = diagnostic[1]
+    return summary

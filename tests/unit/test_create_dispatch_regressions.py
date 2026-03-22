@@ -12,12 +12,13 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.billing.entitlements import ExportFormat
 from backtestforecast.db.base import Base
-from backtestforecast.models import BacktestRun, OutboxMessage, User
+from backtestforecast.models import BacktestRun, OutboxMessage, ScannerJob, User
 from backtestforecast.schemas.analysis import CreateAnalysisRequest
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.schemas.exports import CreateExportRequest
 from backtestforecast.schemas.scans import CreateScannerJobRequest
 from backtestforecast.schemas.sweeps import CreateSweepRequest
+from backtestforecast.services.dispatch_recovery import repair_stranded_jobs
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
@@ -112,6 +113,23 @@ def _assert_pending_outbox(session: Session, job_id: UUID, *, task_name: str, mo
     assert outbox_messages[0].task_name == task_name
 
 
+def _assert_sent_outbox(session: Session, job_id: UUID, *, task_name: str, model_type):
+    session.expire_all()
+    job = session.get(model_type, job_id)
+    assert job is not None
+    assert job.status == "queued"
+    assert job.celery_task_id is not None
+
+    outbox_messages = list(
+        session.scalars(
+            select(OutboxMessage).where(OutboxMessage.correlation_id == job_id)
+        )
+    )
+    assert len(outbox_messages) == 1
+    assert outbox_messages[0].status == "sent"
+    assert outbox_messages[0].task_name == task_name
+
+
 def _mark_job_stale(session: Session, job, *, stale_task_id: str = "stale-task-id") -> None:
     stale_time = datetime.now(UTC) - timedelta(minutes=30)
     job.created_at = stale_time
@@ -174,6 +192,31 @@ def test_backtest_create_and_dispatch_preserves_pending_outbox_on_send_failure(
     _assert_pending_outbox(db_session, run.id, task_name="backtests.run", model_type=BacktestRun)
 
 
+def test_backtest_create_and_dispatch_records_sent_outbox_on_success(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="pro")
+    service = BacktestService(db_session)
+    payload = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=20,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("40"), "period": 14}],
+    )
+
+    run = service.create_and_dispatch(user, payload)
+
+    _assert_sent_outbox(db_session, run.id, task_name="backtests.run", model_type=BacktestRun)
+
+
 def test_scan_create_and_dispatch_preserves_pending_outbox_on_send_failure(
     db_session: Session,
     _mock_celery_module: MagicMock,
@@ -204,6 +247,39 @@ def test_scan_create_and_dispatch_preserves_pending_outbox_on_send_failure(
         job = service.create_and_dispatch_job(user, payload)
 
     _assert_pending_outbox(db_session, job.id, task_name="scans.run_job", model_type=ScannerJob)
+
+
+def test_repair_stranded_jobs_requeues_missing_dispatch_state(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="premium")
+    job = ScannerJob(
+        user_id=user.id,
+        name="Stranded scan",
+        status="queued",
+        mode="basic",
+        plan_tier_snapshot=user.plan_tier,
+        candidate_count=1,
+        request_snapshot_json={},
+        request_hash="abc123",
+        created_at=datetime.now(UTC) - timedelta(minutes=20),
+        ranking_version="scanner-ranking-v1",
+        engine_version="options-multileg-v2",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    counts = repair_stranded_jobs(
+        db_session,
+        logger=MagicMock(),
+        action="requeue",
+        older_than=timedelta(minutes=5),
+    )
+
+    assert counts["found"] == 1
+    assert counts["requeued"] == 1
+    _assert_sent_outbox(db_session, job.id, task_name="scans.run_job", model_type=ScannerJob)
 
 
 def test_sweep_create_and_dispatch_preserves_pending_outbox_on_send_failure(

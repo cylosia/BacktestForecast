@@ -26,6 +26,7 @@ from backtestforecast.schemas.exports import CreateExportRequest, ExportJobRespo
 from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("services.exports")
@@ -971,6 +972,7 @@ class ExportService:
     @staticmethod
     def to_response(job: ExportJob) -> ExportJobResponse:
         effective_status = job.status
+        diagnostic = get_dispatch_diagnostic(job)
         if (
             job.status == "succeeded"
             and job.expires_at is not None
@@ -986,8 +988,8 @@ class ExportService:
             mime_type=job.mime_type,
             size_bytes=job.size_bytes,
             sha256_hex=job.sha256_hex,
-            error_code=job.error_code,
-            error_message=job.error_message,
+            error_code=job.error_code or (diagnostic[0] if diagnostic else None),
+            error_message=job.error_message or (diagnostic[1] if diagnostic else None),
             created_at=job.created_at,
             started_at=job.started_at,
             completed_at=job.completed_at,

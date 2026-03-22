@@ -86,6 +86,7 @@ _settings = get_settings()
 celery_app.conf.task_routes = {
     "maintenance.ping": {"queue": "maintenance"},
     "maintenance.reap_stale_jobs": {"queue": "maintenance"},
+    "maintenance.reconcile_stranded_jobs": {"queue": "maintenance"},
     "maintenance.reconcile_s3_orphans": {"queue": "maintenance"},
     "backtests.run": {"queue": "research"},
     "scans.run_job": {"queue": "research"},
@@ -123,6 +124,10 @@ celery_app.conf.beat_schedule = {
     "reap-stale-jobs": {
         "task": "maintenance.reap_stale_jobs",
         "schedule": crontab(minute="*/10"),
+    },
+    "reconcile-stranded-jobs": {
+        "task": "maintenance.reconcile_stranded_jobs",
+        "schedule": crontab(minute="*/5"),
     },
     "reconcile-s3-orphans-daily": {
         "task": "maintenance.reconcile_s3_orphans",

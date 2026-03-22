@@ -52,3 +52,38 @@ def test_integration_client_overrides_readonly_db_dependency() -> None:
     source = _read("tests/integration/conftest.py")
     assert "get_readonly_db" in source
     assert "app.dependency_overrides[get_readonly_db] = override_get_db" in source
+
+
+def test_dispatch_helper_has_tracing_span_and_outbox_correlation_logging() -> None:
+    source = _read("apps/api/app/dispatch.py")
+    assert 'start_as_current_span' in source
+    assert '"dispatch.outbox_written"' in source
+    assert 'outbox_id=' in source
+    assert 'job_id=' in source
+
+
+def test_routers_delegate_dispatch_to_services_only() -> None:
+    for relpath in (
+        "apps/api/app/routers/backtests.py",
+        "apps/api/app/routers/scans.py",
+        "apps/api/app/routers/sweeps.py",
+        "apps/api/app/routers/exports.py",
+        "apps/api/app/routers/analysis.py",
+    ):
+        source = _read(relpath)
+        assert "dispatch_celery_task" not in source
+        assert "create_and_dispatch" in source
+
+
+def test_reconciliation_and_support_tooling_exist_for_stranded_jobs() -> None:
+    worker_source = _read("apps/worker/app/tasks.py")
+    assert "maintenance.reconcile_stranded_jobs" in worker_source
+    assert "repair_stranded_jobs(" in worker_source
+
+    celery_source = _read("apps/worker/app/celery_app.py")
+    assert '"maintenance.reconcile_stranded_jobs"' in celery_source
+    assert '"reconcile-stranded-jobs"' in celery_source
+
+    script_source = _read("scripts/repair_stranded_jobs.py")
+    assert "--action" in script_source
+    assert "repair_stranded_jobs(" in script_source

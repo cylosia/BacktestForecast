@@ -40,6 +40,7 @@ from backtestforecast.models import (
     User,
 )
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.dispatch_recovery import DISPATCH_SLA, repair_stranded_jobs
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
@@ -1370,6 +1371,23 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
                 redis.close()
             except Exception:
                 pass
+
+
+@celery_app.task(name="maintenance.reconcile_stranded_jobs", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=180, time_limit=240)
+def reconcile_stranded_jobs(self, stale_minutes: int | None = None) -> dict[str, int]:
+    """Requeue queued jobs that missed dispatch entirely (no task claim and no outbox row)."""
+    from datetime import timedelta
+
+    effective_minutes = stale_minutes or max(int(DISPATCH_SLA.total_seconds() // 60), 5)
+    with create_worker_session() as session:
+        counts = repair_stranded_jobs(
+            session,
+            logger=logger,
+            action="requeue",
+            older_than=timedelta(minutes=effective_minutes),
+        )
+        logger.info("reconcile_stranded_jobs.completed", stale_minutes=effective_minutes, **counts)
+        return counts
 
 
 def _reap_queued_jobs(
