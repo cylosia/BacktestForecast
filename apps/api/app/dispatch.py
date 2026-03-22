@@ -35,6 +35,7 @@ class Dispatchable(Protocol):
     celery_task_id: str | None
     error_code: str | None
     error_message: str | None
+    dispatch_started_at: dt.datetime | None
     completed_at: dt.datetime | None
 
 
@@ -99,9 +100,12 @@ def dispatch_celery_task(
             headers["traceparent"] = traceparent
 
         task_id = str(uuid4())
+        dispatch_started_at = dt.datetime.now(UTC)
         job.celery_task_id = task_id
+        job.dispatch_started_at = dispatch_started_at
         if span is not None:
             span.set_attribute("celery.task_id", task_id)
+            span.set_attribute("dispatch.started_at", dispatch_started_at.isoformat())
 
         # Write an OutboxMessage in the same transaction as the job update so
         # that if the process crashes after commit but before send_task, the

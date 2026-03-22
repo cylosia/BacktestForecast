@@ -15,6 +15,7 @@ from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
 from backtestforecast.security import get_rate_limiter
+from backtestforecast.utils.schedules import format_utc_schedule_label
 from backtestforecast.version import API_SERVICE_NAME, get_public_version
 
 
@@ -104,7 +105,10 @@ def get_meta(request: Request, db: Session = Depends(get_readonly_db)) -> dict[s
             "billing": settings.feature_billing_enabled,
             "sweeps": settings.feature_sweeps_enabled,
         }
-    result["daily_picks_schedule_utc"] = f"{(settings.daily_picks_pipeline_hour_utc % 12) or 12}:{settings.daily_picks_pipeline_minute_utc:02d} {'PM' if settings.daily_picks_pipeline_hour_utc >= 12 else 'AM'} UTC"
+    result["daily_picks_schedule_utc"] = format_utc_schedule_label(
+        settings.daily_picks_pipeline_hour_utc,
+        settings.daily_picks_pipeline_minute_utc,
+    )
     if settings.app_env not in ("production", "staging"):
         result["environment"] = settings.app_env
     return result

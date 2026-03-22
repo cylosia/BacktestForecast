@@ -57,6 +57,7 @@ from backtestforecast.schemas.scans import (
 )
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
 from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 from backtestforecast.utils import to_decimal
 from backtestforecast.services.serialization import (
@@ -311,6 +312,7 @@ class ScanService:
             logger.warning("scan.run_job_already_running", job_id=str(job.id))
             return job
         self.session.refresh(job)
+        observe_job_create_to_running_latency(job)
 
         try:
             self.repository.delete_recommendations(job.id)

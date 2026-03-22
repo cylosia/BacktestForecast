@@ -90,7 +90,12 @@ class CreateSweepRequest(BaseModel):
     genetic_config: GeneticSweepConfig | None = Field(default=None)
     max_results: int = Field(default=20, ge=1, le=100)
     slippage_pct: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("5"))
-    idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=4,
+        max_length=80,
+        description="Optional client-generated key for retry-safe sweep creation. Retries with the same key return or repair the existing queued job instead of creating a duplicate sweep.",
+    )
 
     @field_validator("symbol")
     @classmethod

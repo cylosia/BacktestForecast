@@ -63,7 +63,12 @@ class CreateScannerJobRequest(BaseModel):
     max_recommendations: int = Field(default=10, ge=1, le=30)
     refresh_daily: bool = False
     refresh_priority: int = Field(default=0, ge=0, le=100)
-    idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=4,
+        max_length=80,
+        description="Optional client-generated key for retry-safe create semantics. Reusing the same key lets the API return or repair the existing job instead of creating a duplicate scan.",
+    )
 
     @field_validator("name")
     @classmethod

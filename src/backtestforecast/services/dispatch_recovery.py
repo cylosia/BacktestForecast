@@ -6,15 +6,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import Select, exists, select, update
+from sqlalchemy import Select, exists, func, select, update
 from sqlalchemy.orm import Session
 
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.models import BacktestRun, ExportJob, OutboxMessage, ScannerJob, SweepJob, SymbolAnalysis
 from backtestforecast.observability.metrics import (
     IDEMPOTENT_DUPLICATE_RETURNS_TOTAL,
+    JOB_CREATE_TO_RUNNING_LATENCY_SECONDS,
     ORPHAN_DETECTIONS_TOTAL,
     STALE_QUEUED_DUPLICATE_RETURNS_TOTAL,
+    QUEUED_JOBS_PAST_DISPATCH_SLA,
+    QUEUED_JOBS_WITHOUT_OUTBOX,
 )
 
 UTC = timezone.utc
@@ -69,6 +72,92 @@ def get_dispatch_diagnostic(job: Any, *, now: datetime | None = None) -> tuple[s
         "dispatch_delayed",
         "This job has remained queued longer than expected and may still be waiting on worker capacity.",
     )
+
+
+def _normalize_ts(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def observe_job_create_to_running_latency(job: Any, *, model_name: str | None = None, now: datetime | None = None) -> None:
+    created_at = _normalize_ts(getattr(job, "created_at", None))
+    started_at = _normalize_ts(getattr(job, "started_at", None)) or now
+    if created_at is None or started_at is None or started_at < created_at:
+        return
+    JOB_CREATE_TO_RUNNING_LATENCY_SECONDS.labels(model=model_name or type(job).__name__).observe(
+        (started_at - created_at).total_seconds()
+    )
+
+
+def get_queue_diagnostics(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    older_than: timedelta = DISPATCH_SLA,
+    targets: Iterable[DispatchTarget] = DISPATCH_TARGETS,
+) -> dict[str, object]:
+    now = now or datetime.now(UTC)
+    cutoff = now - older_than
+    models: dict[str, dict[str, object]] = {}
+    total_stale_queued = 0
+    total_without_outbox = 0
+
+    for target in targets:
+        model = target.model
+        correlated_outbox = (
+            select(OutboxMessage.id)
+            .where(OutboxMessage.correlation_id == model.id)
+            .correlate(model)
+        )
+        stale_queued = session.scalar(
+            select(func.count(model.id)).where(model.status == "queued", model.created_at < cutoff)
+        ) or 0
+        stale_without_outbox = session.scalar(
+            select(func.count(model.id)).where(
+                model.status == "queued",
+                model.created_at < cutoff,
+                model.celery_task_id.is_(None),
+                ~exists(correlated_outbox),
+            )
+        ) or 0
+        oldest_created = session.scalar(select(func.min(model.created_at)).where(model.status == "queued"))
+        oldest_stale = _normalize_ts(oldest_created)
+
+        model_payload: dict[str, object] = {
+            "stale_queued": int(stale_queued),
+            "stale_without_outbox": int(stale_without_outbox),
+        }
+        if oldest_stale is not None:
+            model_payload["oldest_queued_age_seconds"] = round((now - oldest_stale).total_seconds(), 1)
+        models[target.model_name] = model_payload
+        total_stale_queued += int(stale_queued)
+        total_without_outbox += int(stale_without_outbox)
+
+    status = "ok"
+    if total_without_outbox > 0:
+        status = "stale_without_outbox"
+    elif total_stale_queued > 0:
+        status = "delayed"
+
+    return {
+        "status": status,
+        "dispatch_sla_seconds": int(older_than.total_seconds()),
+        "stale_queued_total": total_stale_queued,
+        "stale_without_outbox_total": total_without_outbox,
+        "models": models,
+    }
+
+
+def update_queue_diagnostic_gauges(session: Session) -> dict[str, object]:
+    diagnostics = get_queue_diagnostics(session)
+    for model_name, payload in diagnostics["models"].items():
+        model_payload = payload if isinstance(payload, dict) else {}
+        QUEUED_JOBS_PAST_DISPATCH_SLA.labels(model=model_name).set(int(model_payload.get("stale_queued", 0)))
+        QUEUED_JOBS_WITHOUT_OUTBOX.labels(model=model_name).set(int(model_payload.get("stale_without_outbox", 0)))
+    return diagnostics
 
 
 def _stranded_job_stmt(target: DispatchTarget, *, cutoff: datetime) -> Select[tuple[Any]]:

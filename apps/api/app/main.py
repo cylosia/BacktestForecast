@@ -690,7 +690,18 @@ def dlq_status(request: Request) -> Response:
                 recent.append(item)
             except (ValueError, TypeError, UnicodeDecodeError):
                 recent.append({"raw": "[binary data]"})
-        return JSONResponse(content={"depth": depth, "recent": recent})
+        from backtestforecast.services.dispatch_recovery import get_queue_diagnostics
+        from backtestforecast.db.session import create_session as _create_session
+
+        queue_diagnostics: dict[str, object]
+        try:
+            with _create_session() as session:
+                queue_diagnostics = get_queue_diagnostics(session)
+                session.rollback()
+        except Exception:
+            queue_diagnostics = {"status": "unknown"}
+
+        return JSONResponse(content={"depth": depth, "recent": recent, "queue_diagnostics": queue_diagnostics})
     except Exception:
         logger.exception("admin.dlq_unavailable")
         return JSONResponse(status_code=503, content={"error": {"code": "dlq_unavailable", "message": "Dead-letter queue is currently unavailable."}})

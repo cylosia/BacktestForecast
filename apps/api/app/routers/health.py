@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.db.session import ping_database
 from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
+from backtestforecast.services.dispatch_recovery import get_queue_diagnostics
 from backtestforecast.version import API_HEALTH_READY_PATH, API_SERVICE_NAME, get_public_version
 
 router = APIRouter(tags=["health"])
@@ -228,11 +229,14 @@ def ready(request: Request) -> JSONResponse:
                 payload["massive_api"] = massive_status
                 payload["migration_aligned"] = False
                 payload["outbox"] = _check_outbox_health()
+                payload["queue_diagnostics"] = _check_queue_health()
             return JSONResponse(status_code=503, content=payload)
 
     outbox = _check_outbox_health()
+    queue_diagnostics = _check_queue_health()
     outbox_status = str(outbox.get("status", "unknown"))
-    if outbox_status == "stale":
+    queue_status = str(queue_diagnostics.get("status", "unknown"))
+    if outbox_status == "stale" or queue_status == "stale_without_outbox":
         payload = {"status": "degraded"}
         if _show_version_in_health():
             payload["version"] = get_public_version()
@@ -245,6 +249,7 @@ def ready(request: Request) -> JSONResponse:
             payload["massive_api"] = massive_status
             payload["migration_aligned"] = migration_aligned
             payload["outbox"] = outbox
+            payload["queue_diagnostics"] = queue_diagnostics
         return JSONResponse(status_code=503, content=payload)
 
     all_ok = redis_up and broker_up and massive_status in ("ok", "unconfigured")
@@ -284,6 +289,7 @@ def ready(request: Request) -> JSONResponse:
         if settings.app_env not in ("development",):
             payload["migration_aligned"] = migration_aligned
         payload["outbox"] = outbox
+        payload["queue_diagnostics"] = queue_diagnostics
     return JSONResponse(status_code=200, content=payload)
 
 
@@ -319,5 +325,17 @@ def _check_outbox_health() -> dict[str, object]:
         else:
             result["status"] = "ok"
         return result
+    except Exception:
+        return {"status": "unknown"}
+
+
+def _check_queue_health() -> dict[str, object]:
+    try:
+        from backtestforecast.db.session import create_session
+
+        with create_session() as session:
+            result = get_queue_diagnostics(session)
+            session.rollback()
+            return result
     except Exception:
         return {"status": "unknown"}

@@ -27,6 +27,7 @@ from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SEC
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
+from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
 from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("services.exports")
@@ -253,6 +254,7 @@ class ExportService:
             self.session.refresh(export_job)
             return export_job
         self.session.refresh(export_job)
+        observe_job_create_to_running_latency(export_job)
 
         run = self.backtests.get_lightweight_for_user(export_job.backtest_run_id, export_job.user_id)
         if run is not None:

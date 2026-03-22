@@ -468,3 +468,10 @@ Key queries to monitor:
 
 Run `EXPLAIN ANALYZE` on slow queries identified via `pg_stat_statements`.
 The API sets `statement_timeout=30s` and workers use `statement_timeout=300s`.
+## Stranded queued jobs and dispatch recovery
+
+- A job can appear as `queued` without progressing when the process committed the job row but failed before a broker claim or outbox recovery completed.
+- `idempotency_key` retries are intentionally retry-safe: the API returns the original job and may replace/supersede an abandoned queued dispatch attempt rather than creating a duplicate row.
+- Inspect `/health/ready` (with `x-metrics-token`) or `/admin/dlq` for `queue_diagnostics`, including stale queued totals and stale-without-outbox counts by model.
+- If `stale_without_outbox_total` is non-zero, run `python scripts/repair_stranded_jobs.py --action list` first, then `--action requeue` when safe.
+- `dispatch_started_at` records when the API attempted dispatch, while `started_at` records when worker execution actually began. A large gap indicates broker/worker latency rather than request-time creation latency.

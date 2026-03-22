@@ -156,6 +156,25 @@ JOBS_STUCK_RUNNING = Gauge(
     ["model"],
 )
 
+QUEUED_JOBS_WITHOUT_OUTBOX = Gauge(
+    "queued_jobs_without_outbox",
+    "Queued jobs older than the dispatch SLA that still have no outbox row",
+    ["model"],
+)
+
+QUEUED_JOBS_PAST_DISPATCH_SLA = Gauge(
+    "queued_jobs_past_dispatch_sla",
+    "Queued jobs older than the dispatch SLA",
+    ["model"],
+)
+
+JOB_CREATE_TO_RUNNING_LATENCY_SECONDS = Histogram(
+    "job_create_to_running_latency_seconds",
+    "Wall-clock latency from job creation to the first queued->running transition",
+    ["model"],
+    buckets=(1, 5, 10, 30, 60, 120, 300, 600, 900, 1800),
+)
+
 DB_POOL_SIZE = Gauge("db_pool_size", "Database connection pool size")
 DB_POOL_CHECKED_IN = Gauge("db_pool_checked_in", "Database connections available in the pool")
 DB_POOL_CHECKED_OUT = Gauge("db_pool_checked_out", "Database connections currently in use")
@@ -548,10 +567,23 @@ def _refresh_pool_gauges() -> None:
         _logger.debug("pool_gauge_refresh_failed", exc_info=True)
 
 
+def _refresh_dispatch_queue_gauges() -> None:
+    try:
+        from backtestforecast.db.session import create_session
+        from backtestforecast.services.dispatch_recovery import update_queue_diagnostic_gauges
+
+        with create_session() as session:
+            update_queue_diagnostic_gauges(session)
+            session.rollback()
+    except Exception:
+        _logger.debug("dispatch_queue_gauge_refresh_failed", exc_info=True)
+
+
 def metrics_response() -> Response:
     import os
 
     _refresh_pool_gauges()
+    _refresh_dispatch_queue_gauges()
 
     prom_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
     if prom_dir:

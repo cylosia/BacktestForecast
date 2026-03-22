@@ -18,6 +18,16 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  let planTier: PlanTier | null = null;
+
+  let planError = false;
+  try {
+    const user = await getCurrentUser();
+    planTier = user.plan_tier as PlanTier;
+  } catch {
+    planError = true;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-background focus:text-foreground">Skip to content</a>

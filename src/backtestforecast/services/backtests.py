@@ -45,8 +45,9 @@ UTC = timezone.utc
 from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
-from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
+from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 from backtestforecast.utils import to_decimal
 
 logger = structlog.get_logger("services.backtests")
@@ -227,6 +228,7 @@ class BacktestService:
             self.session.refresh(run)
             return run
         self.session.refresh(run)
+        observe_job_create_to_running_latency(run)
 
         request = CreateBacktestRunRequest.model_validate(run.input_snapshot_json)
 

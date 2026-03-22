@@ -91,7 +91,12 @@ class CreateAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     symbol: str = Field(min_length=1, max_length=16)
-    idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=4,
+        max_length=80,
+        description="Optional client-generated key for retry-safe analysis creation. Reusing the key returns the existing analysis job rather than creating a duplicate.",
+    )
 
     @field_validator("symbol", mode="before")
     @classmethod

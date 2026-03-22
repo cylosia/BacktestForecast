@@ -33,6 +33,7 @@ UTC = timezone.utc
 from backtestforecast.models import SymbolAnalysis, User
 from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 from backtestforecast.pipeline.regime import classify_regime
+from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
 from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("deep_analysis")
@@ -334,6 +335,7 @@ class SymbolDeepAnalysisService:
             logger.warning("deep_analysis.backward_stage_transition", current=analysis.stage, target="regime", analysis_id=str(analysis_id))
         analysis.stage = "regime"
         analysis.started_at = datetime.now(UTC)
+        observe_job_create_to_running_latency(analysis)
         self.session.commit()
 
         try:

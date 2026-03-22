@@ -31,3 +31,7 @@
 - **API health**: request volume, latency, 4xx/5xx, ready-state.
 - **Worker health**: queue depth, retries, job durations.
 - **Provider health**: success rate, retry volume, outage periods.
+- Queue diagnostics:
+  - `/health/ready` and `/admin/dlq` now expose `queue_diagnostics` with `stale_queued_total` and `stale_without_outbox_total`.
+  - Prometheus emits `queued_jobs_past_dispatch_sla{model=...}` and `queued_jobs_without_outbox{model=...}` from the metrics scrape path.
+  - `job_create_to_running_latency_seconds{model=...}` tracks create→running latency for synthetic/alerting thresholds.
