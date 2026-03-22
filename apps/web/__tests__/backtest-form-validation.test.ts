@@ -118,6 +118,17 @@ describe("backtest form submission edge cases", () => {
     expect(payload!.symbol).toBe("AAPL");
   });
 
+  it("serializes put calendar selection into strategy_overrides", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      strategyType: "calendar_spread" as const,
+      calendarContractType: "put" as const,
+    };
+    const { errors, payload } = validateBacktestForm(values);
+    expect(Object.keys(errors)).toHaveLength(0);
+    expect(payload?.strategy_overrides).toEqual({ calendar_contract_type: "put" });
+  });
+
   it("uses backend-compatible support/resistance enum values", () => {
     const values = {
       ...getDefaultBacktestFormValues(),

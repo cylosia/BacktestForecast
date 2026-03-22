@@ -25,6 +25,8 @@ import { TaRuleControls } from "@/components/backtests/ta-rule-controls";
 import { TimeframeControls } from "@/components/backtests/timeframe-controls";
 import { TemplatePicker, templateToFormValues } from "@/components/templates/template-picker";
 import { SaveAsTemplate } from "@/components/templates/save-as-template";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 
 export function BacktestForm({
@@ -240,6 +242,24 @@ export function BacktestForm({
               catalogGroups={catalogGroups}
             />
           </div>
+
+          {values.strategyType === "calendar_spread" ? (
+            <div className="grid gap-2 lg:max-w-sm">
+              <Label htmlFor="calendarContractType">Calendar contract type</Label>
+              <Select
+                id="calendarContractType"
+                value={values.calendarContractType}
+                onChange={(event) => updateValues({ calendarContractType: event.target.value as "call" | "put" })}
+                options={[
+                  { value: "call", label: "Call calendar" },
+                  { value: "put", label: "Put calendar" },
+                ]}
+              />
+              <p className="text-xs text-muted-foreground">
+                Choose whether the near/far expiration pair uses call contracts or put contracts.
+              </p>
+            </div>
+          ) : null}
 
           <TimeframeControls
             errors={{

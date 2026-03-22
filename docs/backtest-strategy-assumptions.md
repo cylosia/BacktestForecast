@@ -72,7 +72,7 @@ This document describes the default modeling assumptions used by the current mul
 - Max loss is total debit paid.
 
 ### Calendar Spread
-- Modeled as a call calendar in this slice.
+- Supports both call and put calendars. Default is call calendar unless `strategy_overrides.calendar_contract_type="put"` is supplied.
 - Short leg uses the expiration nearest `target_dte`.
 - Long leg uses the next later expiration at least 14 calendar days farther out when available.
 - Package exits at the near-leg expiration, `max_holding_days`, or backtest end.

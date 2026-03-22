@@ -70,6 +70,7 @@ export interface BacktestFormValues {
   supportResistanceEnabled: boolean;
   supportResistanceMode: string;
   supportResistancePeriod: string;
+  calendarContractType: "call" | "put";
 }
 
 export type BacktestFormErrors = Partial<Record<keyof BacktestFormValues | "form", string>>;
@@ -164,6 +165,7 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     supportResistanceEnabled: false,
     supportResistanceMode: "near_support",
     supportResistancePeriod: "20",
+    calendarContractType: "call",
   };
 }
 
@@ -522,6 +524,11 @@ export function validateBacktestForm(values: BacktestFormValues): {
     entry_rules: entryRules,
     slippage_pct: slippage,
   };
+  if (values.strategyType === "calendar_spread" && values.calendarContractType === "put") {
+    payload.strategy_overrides = {
+      calendar_contract_type: "put",
+    };
+  }
   if (values.profitTargetEnabled) {
     payload.profit_target_pct = parseNumber(values.profitTargetPct);
   }

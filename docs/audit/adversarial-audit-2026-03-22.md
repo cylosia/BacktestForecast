@@ -8,7 +8,7 @@
   1. Scanner execution still accumulates up to 1000 candidate payloads in memory, including summaries/forecasts/trade lists/equity curves, which is an avoidable worker-memory bomb under broad universes or relaxed filters.
   2. Option-contract and quote fetches have no in-flight request coalescing, so concurrent scans/sweeps can stampede the external data provider and Redis cache.
   3. Billing audit writes are still best-effort only; if the DB is unhealthy during webhook processing, the billing state change can succeed while the audit trail silently disappears.
-  4. The backtest engine still does not model early assignment around ex-dividend risk for American calls, so covered-call/naked-call results can be directionally plausible and still wrong.
+  4. The backtest engine now includes early-assignment heuristics, but they remain approximation-based rather than broker- or contract-specific, so assignment-sensitive strategies can still be directionally plausible and wrong at the edges.
   5. Wheel strategy accounting still uses float arithmetic internally and only reconciles at the end, leaving intermediate equity-curve points vulnerable to precision drift.
   6. The pricing page is hardcoded presentation data rather than a backend-driven contract, so customer-visible prices/features can drift from Stripe reality.
   7. `docs/known-limitations.md` is materially stale: it still documents a frontend/backend `target_dte` mismatch that no longer exists, claims the outbox is scaffolding only, and describes a commit-first dispatch gap that the current dispatch code no longer uses.
@@ -17,7 +17,7 @@
   10. `apps/worker/app/tasks.py` is still a 2277-line god file that couples pipeline, export, reaper, outbox, billing reconciliation, scan refresh, and core execution paths.
   11. `BillingService` is still nearly 1000 lines and mixes checkout, portal, webhook parsing, reconciliation, circuit breaking, and Stripe data translation.
   12. `ScanService` is still >1100 lines and mixes entitlement enforcement, dedupe/idempotency, execution, ranking, persistence, and serialization.
-  13. Calendar spread remains call-only despite the product surface broadly presenting “calendar spread” as a strategy type; bearish users cannot express a put calendar equivalent.
+  13. Calendar spread now supports both call and put calendars through `strategy_overrides.calendar_contract_type`, but older clients/templates that never send the override will still default to call calendars.
   14. Naked option sizing is collateral-based and documented as understating theoretical risk; this is acceptable only if surfaced aggressively to users.
   15. Risk-free-rate handling is environment-static rather than date-aware, so Sharpe/Sortino values are operationally reproducible but financially stale when rates move.
   16. CI intentionally excludes load tests and the CD path still does not perform canary/weighted rollout or post-deploy workflow validation beyond health checks.
@@ -38,7 +38,7 @@
   10. Regression hidden inside `BillingService` because a local change accidentally impacts webhook or reconciliation behavior.
   11. Regression hidden inside `ScanService` because ranking, execution, and persistence are not isolated.
   12. Users receiving plausible but inaccurate risk metrics because `RISK_FREE_RATE` was not updated after a rate regime shift.
-  13. Users expecting put calendars but receiving only call-calendar behavior.
+  13. Older clients/templates expecting generic calendar behavior but silently defaulting to call calendars because they never send the new override.
   14. Ops assuming the outbox poller is disabled because docs say so, while production actually depends on it.
   15. Ops assuming a target-DTE frontend constraint still exists and therefore missing low-DTE user behavior in telemetry/support.
   16. Post-deploy production issue escaping because CD verifies health endpoints, not end-to-end product actions.
@@ -46,7 +46,7 @@
   18. Job throughput collapse when scans, sweeps, and pipeline work overlap on shared provider and worker resources.
   19. Support tickets on intermediate wheel-equity chart discrepancies versus final totals.
   20. New engineers misreading the codebase because system behavior is scattered across giant files plus stale documentation.
-- **Confidence level:** moderate-high. Verified directly from current source for architecture, dispatch, SSE, scans, exports, billing, pricing, CI/CD, and major strategy/modeling notes. Financial-correctness findings around early assignment, wheel drift, and static risk-free-rate handling are partly direct (code/doc confirmed) and partly inferred from domain behavior. I did **not** exhaustively execute every workflow end-to-end against running infrastructure.
+- **Confidence level:** moderate-high. Verified directly from current source for architecture, dispatch, SSE, scans, exports, billing, pricing, CI/CD, and major strategy/modeling notes. Financial-correctness findings around assignment heuristics, wheel drift, and static risk-free-rate handling are partly direct (code/doc confirmed) and partly inferred from domain behavior. I did **not** exhaustively execute every workflow end-to-end against running infrastructure.
 
 ## 2. System Map
 
@@ -122,11 +122,11 @@
 - **Severity:** High
 - **Category:** correctness
 - **Location:** `src/backtestforecast/backtests/engine.py`; strategy assumptions in `docs/backtest-strategy-assumptions.md`
-- **Evidence:** The engine exit rules are expiration / max-holding / final-bar oriented. The current code collects ex-dividend dates but does not model early-assignment exits for short calls. The audit backlog documents this explicitly.
-- **Why it is a problem:** Covered calls and naked calls on dividend-paying names can be forcibly assigned before expiration. Ignoring that materially overstates hold-to-expiration behavior.
-- **Real-world failure mode:** Customer sees a “profitable” covered-call backtest that would have been assigned away before the modeled exit date.
-- **How to fix it:** Add explicit early-assignment checks near ex-dividend dates using delta/intrinsic heuristics and force-close affected positions with a dedicated exit reason.
-- **Fix priority:** P0 for trust-sensitive strategy outputs.
+- **Evidence:** The engine already contains early-assignment heuristics, but they are rule-based approximations keyed off ex-dividend dates, moneyness, DTE, intrinsic value, and remaining time value rather than broker/borrow/borrow-cost or contract-specific exercise behavior.
+- **Why it is a problem:** Assignment-sensitive strategies are better modeled than before, but the logic is still heuristic and can diverge from real-world assignment/exercise behavior.
+- **Real-world failure mode:** Customer sees a backtest exit that is directionally right but mistimed versus actual broker assignment behavior.
+- **How to fix it:** Continue refining assignment heuristics and label affected exits as approximation-based in result metadata.
+- **Fix priority:** P1 for trust-sensitive strategy outputs.
 
 ### CF-5
 - **Severity:** Medium
@@ -212,11 +212,11 @@
 - **Severity:** Medium
 - **Category:** correctness / product-contract mismatch
 - **Location:** `src/backtestforecast/backtests/strategies/calendar.py`, `docs/backtest-strategy-assumptions.md`
-- **Evidence:** Calendar spread is implemented as call-calendar only. The code TODO explicitly says put calendars are not supported.
-- **Why it is a problem:** “Calendar spread” is a broader financial concept than the implementation provided.
-- **Real-world failure mode:** User expects bearish put calendar semantics but receives call-calendar-only behavior or cannot express the intended trade.
-- **How to fix it:** Add `contract_type` or split into explicit call/put calendar strategy types and update catalog/UI copy.
-- **Fix priority:** P2.
+- **Evidence:** Calendar spread now supports both call and put contracts through `strategy_overrides.calendar_contract_type`, but the default remains `call` for backward compatibility.
+- **Why it is a problem:** Capability exists, but clients/templates that do not expose the override can still silently get call calendars.
+- **Real-world failure mode:** A stale client or saved template submits `calendar_spread` without the override and receives the old call-calendar behavior.
+- **How to fix it:** Ensure all clients/templates explicitly expose and persist the calendar contract type selection.
+- **Fix priority:** P1.
 
 ### CF-14
 - **Severity:** Medium
@@ -292,7 +292,7 @@
 
 1. **Pricing contract is not authoritative in the UI.** `apps/web/app/pricing/page.tsx` hardcodes amounts/features while the backend/Stripe checkout flow is authoritative. This is a customer-visible contract drift risk.
 2. **Documentation falsely describes a `target_dte` mismatch.** Current frontend validation allows `target_dte >= 1`, matching backend schema, but docs still say the frontend enforces `>= 7`.
-3. **Calendar-spread semantics are broader in product language than in engine reality.** The strategy surface says “calendar spread”; the engine only implements call calendars.
+3. **Calendar-spread defaults can still be misleading.** The engine supports put calendars now, but clients that never send `strategy_overrides.calendar_contract_type` still get call calendars by default.
 4. **Risk modeling for naked options is weaker than a typical user would infer from the generic strategy names.** The API returns “working” backtests, but the economic interpretation is looser than the name implies.
 5. **Pricing/features shown on the marketing page can drift from Stripe env-backed reality without any code failure.** This is not caught by type generation or OpenAPI.
 
@@ -372,7 +372,7 @@ Ranked by exploitability + blast radius:
 - Collapse stale audit docs and keep one current ops/audit status page.
 - Replace pricing-page hardcoded data with backend-driven contract.
 - Remove or rewrite stale “known limitations” entries that are no longer true.
-- Treat calendar-spread naming as misleading until put calendars or explicit naming is added.
+- Ensure every client/template surface persists the calendar contract type explicitly.
 
 ## 11. Quick Wins
 
@@ -468,7 +468,7 @@ Ranked by exploitability + blast radius:
 24. Add optional historical rate-series support for Sharpe/Sortino.
 25. Add UI warning for naked-option theoretical-risk understatement.
 26. Add API warning code for naked-option backtests.
-27. Decide whether calendar spread should support puts or be renamed.
+27. Propagate `calendar_contract_type` through every client/template/export surface and document the backward-compatible default.
 28. Implement put-calendar support or split into explicit call/put strategies.
 29. Update strategy catalog and docs for calendar semantics.
 30. Split `apps/worker/app/tasks.py` into domain modules.
@@ -558,7 +558,7 @@ Ranked by exploitability + blast radius:
 11. Billing regressions hiding inside oversized `BillingService` changes.
 12. Task-routing or maintenance regressions hiding inside oversized worker task file changes.
 13. Static `RISK_FREE_RATE` producing stale risk-adjusted metrics.
-14. Users misinterpreting calendar-spread support as including put calendars.
+14. Older clients/templates silently falling back to call calendars because they omit `calendar_contract_type`.
 15. Users misinterpreting naked-option results as full-risk-aware modeling.
 16. Production deploys passing health while failing meaningful workflows.
 17. Redis transport assumptions becoming unsafe after topology changes.
@@ -573,7 +573,7 @@ Ranked by exploitability + blast radius:
 3. Wheel equity curves that visually look right despite float-path drift.
 4. Sharpe/Sortino values that are numerically stable but economically stale.
 5. Pricing page values that look polished but may not match checkout reality.
-6. “Calendar spread” results that actually mean only call calendars.
+6. Calendar spread results from stale clients/templates that still omit `calendar_contract_type` and therefore silently mean call calendars.
 7. Export download path that works in tests but scales poorly under concurrency.
 8. Dispatch troubleshooting guided by docs rather than current code.
 9. Low-DTE assumptions held by support/ops because of stale docs.

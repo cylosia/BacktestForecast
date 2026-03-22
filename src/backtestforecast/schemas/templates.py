@@ -8,7 +8,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from backtestforecast.schemas.backtests import EntryRule, StrategyType, validate_entry_rule_collection
+from backtestforecast.schemas.backtests import (
+    EntryRule,
+    StrategyOverrides,
+    StrategyType,
+    validate_entry_rule_collection,
+)
 
 TEMPLATE_SCHEMA_VERSION = 1
 
@@ -39,6 +44,10 @@ class TemplateConfig(BaseModel):
 
     # Optional pre-fill hints — not required, but useful if the user always tests the same symbol/window
     default_symbol: str | None = Field(default=None, max_length=16, pattern=r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
+    strategy_overrides: StrategyOverrides | None = Field(
+        default=None,
+        description="Optional strategy-specific overrides such as put-calendar selection.",
+    )
 
     @field_validator("default_symbol", mode="before")
     @classmethod
