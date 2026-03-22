@@ -85,6 +85,49 @@ class BacktestService:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    def _build_user_warnings(self, request: CreateBacktestRunRequest, *, resolved_risk_free_rate: float | None = None) -> list[dict[str, Any]]:
+        warnings: list[dict[str, Any]] = []
+        if request.strategy_type.value in NAKED_OPTION_STRATEGY_TYPES:
+            warnings.append(
+                _warning(
+                    "naked_option_margin_only",
+                    "This strategy is sized using broker-style margin collateral only. Reported sizing can materially understate the true economic downside of naked short-option exposure; review results with separate stress-loss limits.",
+                    severity="critical",
+                    metadata={
+                        "recommendation": "Add stress-loss sizing or scenario analysis before treating this run as production-ready.",
+                        "strategy_type": request.strategy_type.value,
+                    },
+                )
+            )
+        if request.risk_free_rate is None:
+            configured_rfr = get_settings().risk_free_rate
+            warnings.append(
+                _warning(
+                    "configured_static_risk_free_rate",
+                    f"Sharpe and Sortino are using the configured server risk-free rate ({configured_rfr:.4f}) captured at run creation, not a Treasury series matched to {request.start_date.isoformat()} through {request.end_date.isoformat()}.",
+                    metadata={
+                        "configured_risk_free_rate": configured_rfr,
+                        "resolved_risk_free_rate": resolved_risk_free_rate if resolved_risk_free_rate is not None else configured_rfr,
+                        "start_date": request.start_date.isoformat(),
+                        "end_date": request.end_date.isoformat(),
+                    },
+                )
+            )
+        return warnings
+
+    @staticmethod
+    def _merge_warnings(*warning_sets: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for warning_set in warning_sets:
+            for warning in warning_set or []:
+                key = (str(warning.get("code", "")), str(warning.get("message", "")))
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(warning)
+        return merged
+
     @staticmethod
     def _resolve_request_risk_free_rate(request: CreateBacktestRunRequest) -> float:
         if request.risk_free_rate is not None:
