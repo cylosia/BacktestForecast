@@ -9,6 +9,7 @@ from redbeat import RedBeatSchedulerEntry  # noqa: F401 — registers the custom
 
 from backtestforecast.config import get_settings
 from backtestforecast.observability import configure_logging
+from backtestforecast.version import PROMETHEUS_TEXT_FORMAT_VERSION
 
 _shutdown_logger = structlog.get_logger("worker.lifecycle")
 
@@ -210,7 +211,7 @@ def _start_worker_metrics_server() -> None:
                 from prometheus_client import generate_latest
                 body = generate_latest()
                 self.send_response(200)
-                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Type", f"text/plain; version={PROMETHEUS_TEXT_FORMAT_VERSION}; charset=utf-8")
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
