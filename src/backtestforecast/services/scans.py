@@ -55,6 +55,7 @@ from backtestforecast.schemas.scans import (
     ScannerRecommendationListResponse,
     ScannerRecommendationResponse,
 )
+from backtestforecast.version import DEFAULT_ENGINE_VERSION, DEFAULT_RANKING_VERSION
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
@@ -198,8 +199,8 @@ class ScanService:
             recommendation_count=0,
             request_snapshot_json={**payload.model_dump(mode="json"), "max_recommendations": effective_max_recommendations},
             warnings_json=compatibility_warnings,
-            ranking_version="scanner-ranking-v1",
-            engine_version="options-multileg-v2",
+            ranking_version=DEFAULT_RANKING_VERSION,
+            engine_version=DEFAULT_ENGINE_VERSION,
         )
         self.repository.add(job)
         self.audit.record(

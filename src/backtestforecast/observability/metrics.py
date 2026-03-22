@@ -9,6 +9,8 @@ from prometheus_client import Counter, Gauge, Histogram, generate_latest
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from backtestforecast.version import PROMETHEUS_TEXT_FORMAT_VERSION
+
 HTTP_REQUESTS_TOTAL = Counter(
     "http_requests_total",
     "Total HTTP requests",
@@ -598,5 +600,5 @@ def metrics_response() -> Response:
 
     return Response(
         content=content,
-        media_type="text/plain; version=0.0.4; charset=utf-8",
+        media_type=f"text/plain; version={PROMETHEUS_TEXT_FORMAT_VERSION}; charset=utf-8",
     )

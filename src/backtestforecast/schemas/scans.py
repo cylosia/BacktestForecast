@@ -20,6 +20,12 @@ from backtestforecast.schemas.backtests import (
     TradeJsonResponse,
     validate_entry_rule_collection,
 )
+from backtestforecast.version import (
+    DEFAULT_ENGINE_VERSION,
+    DEFAULT_RANKING_VERSION,
+    ENGINE_VERSION_CHOICES,
+    RANKING_VERSION_CHOICES,
+)
 
 
 ScannerJobStatus = RunJobStatus
@@ -220,8 +226,8 @@ class ScannerJobResponse(BaseModel):
     refresh_daily: bool
     refresh_priority: int
     pipeline_run_id: UUID | None = None
-    ranking_version: Literal["scanner-ranking-v1", "scanner-ranking-v2"] = "scanner-ranking-v1"
-    engine_version: Literal["options-multileg-v1", "options-multileg-v2"] = "options-multileg-v2"
+    ranking_version: Literal[RANKING_VERSION_CHOICES[0], RANKING_VERSION_CHOICES[1]] = DEFAULT_RANKING_VERSION
+    engine_version: Literal[ENGINE_VERSION_CHOICES[0], ENGINE_VERSION_CHOICES[1]] = DEFAULT_ENGINE_VERSION
     warnings: list[dict[str, Any]] = Field(default_factory=list, validation_alias="warnings_json")
     error_code: str | None = None
     error_message: str | None = None

@@ -48,6 +48,7 @@ from backtestforecast.services.backtest_execution import BacktestExecutionServic
 from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
 from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
+from backtestforecast.version import DEFAULT_ENGINE_VERSION
 from backtestforecast.utils import to_decimal
 
 logger = structlog.get_logger("services.backtests")
@@ -114,7 +115,7 @@ class BacktestService:
             },
             idempotency_key=request.idempotency_key,
             warnings_json=[],
-            engine_version="options-multileg-v2",
+            engine_version=DEFAULT_ENGINE_VERSION,
             data_source="massive",
             trade_count=0,
             win_rate=Decimal("0"),

@@ -89,7 +89,8 @@ def publish_job_status(
 ) -> None:
     """Publish a job status change to Redis Pub/Sub for SSE consumers.
 
-    Call from Celery workers whenever a job transitions state.
+    Call from Celery workers whenever a job transitions state so the web
+    pollers/SSE subscribers can update job progress in near real time.
     """
     from redis.exceptions import RedisError
 
