@@ -233,6 +233,8 @@ class Settings(BaseSettings):
     analysis_rate_limit_window_seconds: int = 3600
     forecast_rate_limit: int = 6
     daily_picks_rate_limit: int = 30
+    daily_picks_pipeline_hour_utc: int = Field(default=6, ge=0, le=23)
+    daily_picks_pipeline_minute_utc: int = Field(default=0, ge=0, le=59)
     sse_rate_limit: int = 30
     sse_redis_max_connections: int = 50
     sse_redis_socket_timeout: float = 10.0
@@ -881,7 +883,12 @@ def get_settings() -> Settings:
 def invalidate_settings() -> None:
     """Clear cached settings so the next ``get_settings()`` creates a fresh instance.
 
-    Called during graceful reload or secret rotation.  Currently invoked only
+    This reload is process-local and only affects call sites that resolve settings
+    dynamically after invalidation. It does **not** rebuild already-instantiated
+    application surfaces such as FastAPI metadata, OpenAPI/docs toggles, Celery beat
+    schedules, or other startup-only wiring; those still require a process restart.
+
+    Called during graceful reload or secret rotation. Currently invoked only
     via the /admin/reload endpoint (when enabled) or programmatically in tests.
 
     Callbacks are invoked outside the lock to avoid deadlocks if a callback

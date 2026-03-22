@@ -7,11 +7,10 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from backtestforecast import __version__ as HEALTH_VERSION
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.db.session import ping_database
 from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
-from backtestforecast.version import get_public_version
+from backtestforecast.version import API_HEALTH_READY_PATH, API_SERVICE_NAME, get_public_version
 
 router = APIRouter(tags=["health"])
 
@@ -142,7 +141,7 @@ def _show_version_in_health() -> bool:
 
 @router.get("/health/live", response_model=None)
 def live() -> dict[str, str] | JSONResponse:
-    resp: dict[str, str] = {"status": "ok", "service": "api"}
+    resp: dict[str, str] = {"status": "ok", "service": API_SERVICE_NAME}
     if _show_version_in_health():
         resp["version"] = get_public_version()
     return resp

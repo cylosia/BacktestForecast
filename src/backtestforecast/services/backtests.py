@@ -3,6 +3,7 @@ from __future__ import annotations
 import time as _time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
@@ -44,6 +45,8 @@ UTC = timezone.utc
 from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 from backtestforecast.utils import to_decimal
 
 logger = structlog.get_logger("services.backtests")
@@ -131,7 +134,16 @@ class BacktestService:
         if request.idempotency_key:
             existing = self.run_repository.get_by_idempotency_key(user.id, request.idempotency_key)
             if existing is not None:
-                return existing
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="BacktestRun",
+                    task_name="backtests.run",
+                    task_kwargs={"run_id": str(existing.id)},
+                    queue="research",
+                    log_event="backtest",
+                    logger=logger,
+                )
 
         self._enforce_backtest_quota(user)
 
@@ -157,6 +169,33 @@ class BacktestService:
                 if existing is not None:
                     return existing
             raise
+        return run
+
+    def create_and_dispatch(
+        self,
+        user: User,
+        request: CreateBacktestRunRequest,
+        *,
+        request_id: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> BacktestRun:
+        """Create a backtest run and persist its dispatch state transactionally."""
+        from apps.api.app.dispatch import dispatch_celery_task
+
+        run = self.enqueue(user, request)
+        dispatch_celery_task(
+            db=self.session,
+            job=run,
+            task_name="backtests.run",
+            task_kwargs={"run_id": str(run.id)},
+            queue="research",
+            log_event="backtest",
+            logger=dispatch_logger or logger,
+            request_id=request_id,
+            traceparent=traceparent,
+        )
+        self.session.refresh(run)
         return run
 
     def execute_run_by_id(self, run_id: UUID) -> BacktestRun:
@@ -415,13 +454,14 @@ class BacktestService:
         run = self.run_repository.get_lightweight_for_user(run_id, user.id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
+        diagnostic = get_dispatch_diagnostic(run)
         return BacktestRunStatusResponse(
             id=run.id,
             status=run.status,
             started_at=run.started_at,
             completed_at=run.completed_at,
-            error_code=run.error_code,
-            error_message=run.error_message,
+            error_code=run.error_code or (diagnostic[0] if diagnostic else None),
+            error_message=run.error_message or (diagnostic[1] if diagnostic else None),
         )
 
     def get_run_for_owner(self, *, user_id: UUID, run_id: UUID, trade_limit: int = 10_000) -> BacktestRunDetailResponse:

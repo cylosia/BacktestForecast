@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -8,6 +9,11 @@ SRC_DIR = ROOT / "src"
 for path in (ROOT, SRC_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
+
+
+# Keep test bootstrap resilient when optional provider credentials are absent.
+os.environ.setdefault("MASSIVE_API_KEY", "test-massive-api-key")
+os.environ.setdefault("EARNINGS_API_KEY", "test-earnings-api-key")
 
 from backtestforecast.db.base import Base
 

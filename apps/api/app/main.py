@@ -88,17 +88,17 @@ if _startup_settings.sentry_dsn:
 @asynccontextmanager
 async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     if _startup_settings.app_env in ("production", "staging"):
-        if not _startup_settings.clerk_audience or not settings.clerk_audience.strip():
+        if not _startup_settings.clerk_audience or not _startup_settings.clerk_audience.strip():
             raise RuntimeError(
                 "CLERK_AUDIENCE must be set to a non-empty value in production/staging. "
                 "JWT audience verification will not work without it."
             )
-        if not _startup_settings.clerk_issuer or not settings.clerk_issuer.strip():
+        if not _startup_settings.clerk_issuer or not _startup_settings.clerk_issuer.strip():
             raise RuntimeError(
                 "CLERK_ISSUER must be set to a non-empty value in production/staging. "
                 "JWT issuer verification will not work without it."
             )
-        if not _startup_settings.admin_token or not settings.admin_token.strip():
+        if not _startup_settings.admin_token or not _startup_settings.admin_token.strip():
             raise RuntimeError(
                 "ADMIN_TOKEN must be set to a non-empty value in production/staging. "
                 "The /admin/dlq endpoint will fall back to metrics_token without it."
@@ -159,6 +159,26 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
     register_invalidation_callback(reset_token_verifier)
 
     register_invalidation_callback(_invalidate_dlq_redis)
+
+    logger.info(
+        "startup.config_reload_surfaces",
+        reloadable=[
+            "runtime HTTP policy (trusted hosts, CORS origins, body limits)",
+            "security headers app-env resolver",
+            "DB/Redis/session factories and cached clients via invalidation callbacks",
+            "JWKS/token verifier caches",
+        ],
+        restart_required=[
+            "FastAPI title/version/docs OpenAPI surface",
+            "process-start logging/Sentry configuration",
+            "Celery beat schedules and worker process env",
+            "Next.js baked NEXT_PUBLIC_* bundle values",
+        ],
+        msg=(
+            "invalidate_settings() is process-local and refreshes only runtime-resolved settings. "
+            "Startup-built surfaces still require a restart to pick up env changes."
+        ),
+    )
 
     if _startup_settings.clerk_jwks_url or _startup_settings.clerk_issuer:
         try:
