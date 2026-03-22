@@ -1,6 +1,16 @@
-# Workflow Trace Reference
+# Current Operational Assumptions
 
-This document is the operator-facing companion to `docs/known-limitations.md`. It describes the **current** runtime flow so support/on-call work does not rely on stale assumptions.
+This is the **authoritative current-state document** for operator-facing runtime behavior. When historical audits or older notes disagree with this page, treat this document and the referenced live code paths as the source of truth.
+
+**Owners**
+- Primary owner: API + worker maintainers for `apps/api` and `apps/worker` runtime behavior
+- Backup owner: Active on-call rotation listed in the incident schedule for the current release
+- Review cadence: update this page in the same PR as any dispatch, queue, auth, billing, export, or request-contract change that alters runtime assumptions
+
+**Related docs**
+- `docs/RUNBOOK.md` for incident response steps.
+- `docs/known-limitations.md` for still-open constraints and tradeoffs.
+- `docs/audit/` and `docs/archive/audit-log.md` for historical snapshots only; they are not authoritative for the current runtime.
 
 ## Auth flow
 
@@ -40,7 +50,7 @@ This document is the operator-facing companion to `docs/known-limitations.md`. I
 ## Billing / entitlement flow
 
 - Pricing/checkout UI -> Stripe checkout -> webhook reconciliation -> user subscription state sync -> entitlement checks on create endpoints.
-- Support incidents should validate both the Stripe event trail and the app-side entitlement state; hardcoded pricing/UI assumptions are a separate drift risk from webhook correctness.
+- Support incidents should validate the pricing contract fetch, Stripe event trail, and the app-side entitlement state together; contract drift and webhook correctness are separate failure modes.
 - When billing revokes access, cancellation status publication happens only after the DB transaction commits so clients do not observe rolled-back cancels.
 
 ## Error / retry flow

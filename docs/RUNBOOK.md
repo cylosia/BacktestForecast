@@ -4,6 +4,11 @@
 
 ## Workflow Trace Quick Notes
 
+`docs/workflow-trace.md` is the authoritative current-state reference for operational assumptions. Use the runbook for response steps, but prefer the workflow trace when validating what the runtime is supposed to do today.
+
+See `docs/README.md` for the split between current operational docs and historical audit archives.
+
+
 ### `/v1/meta` during auth-adjacent outages
 
 `GET /v1/meta` is intentionally public. When clients send a Bearer token or `__session` cookie, the route attempts a best-effort user lookup so it can include authenticated feature metadata. If the DB is unavailable during that lookup, the endpoint degrades to unauthenticated metadata instead of failing the whole request. Treat that as degraded auth enrichment, not as a full auth outage.
