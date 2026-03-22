@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import heapq
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -76,6 +78,7 @@ from backtestforecast.services.serialization import (
     safe_validate_list as _safe_validate_list,
     safe_validate_summary as _safe_validate_summary,
 )
+from backtestforecast.services.scan_components import ScanExecutor, ScanJobFactory, ScanPresenter
 
 
 def _get_fallback_entry_rules() -> list[RsiRule]:
@@ -93,6 +96,25 @@ def _get_fallback_entry_rules() -> list[RsiRule]:
     return [RsiRule(type="rsi", operator="lte", threshold=Decimal(str(threshold)), period=14)]
 
 
+@dataclass(slots=True)
+class _RankedCandidate:
+    """Heap entry for bounded in-memory recommendation selection.
+
+    ``recommendation_sort_key`` returns the natural ascending sort order for the
+    final recommendation list (best candidate first).  We invert the comparison
+    so ``heapq`` behaves like a max-heap whose root is the *worst* candidate
+    currently retained. That lets us keep a bounded top-K set in memory.
+    """
+
+    sort_key: tuple[float, str, str, str]
+    candidate: dict[str, Any] = field(compare=False)
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, _RankedCandidate):
+            return NotImplemented
+        return self.sort_key > other.sort_key
+
+
 class ScanService:
     _MAX_CONCURRENT_SCANS = 5
 
@@ -107,6 +129,9 @@ class ScanService:
         self._forecaster = forecaster
         self.repository = ScannerJobRepository(session)
         self.audit = AuditService(session)
+        self.job_factory = ScanJobFactory(self)
+        self.executor = ScanExecutor(self)
+        self.presenter = ScanPresenter(self)
 
     @property
     def execution_service(self) -> BacktestExecutionService:
@@ -124,13 +149,32 @@ class ScanService:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+
+    def create_job(self, user: User, payload: CreateScannerJobRequest) -> ScannerJob:
+        return self.job_factory.create_job(user, payload)
+
+    def run_job(self, job_id: UUID) -> ScannerJob:
+        return self.executor.run_job(job_id)
+
+    def list_jobs(self, user: User, limit: int = 50, offset: int = 0, cursor: str | None = None) -> ScannerJobListResponse:
+        return self.presenter.list_jobs(user, limit=limit, offset=offset, cursor=cursor)
+
+    def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
+        return self.presenter.get_job(user, job_id)
+
+    def get_recommendations(self, user: User, job_id: UUID) -> ScannerRecommendationListResponse:
+        return self.presenter.get_recommendations(user, job_id)
+
+    def build_forecast(self, job: ScannerJob, recommendation: ScannerRecommendation) -> ForecastEnvelopeResponse:
+        return self.executor.build_forecast(job, recommendation)
+
     @property
     def forecaster(self) -> HistoricalAnalogForecaster:
         if self._forecaster is None:
             self._forecaster = HistoricalAnalogForecaster()
         return self._forecaster
 
-    def create_job(self, user: User, payload: CreateScannerJobRequest) -> ScannerJob:
+    def _create_job_impl(self, user: User, payload: CreateScannerJobRequest) -> ScannerJob:
         from sqlalchemy import select
         self.session.execute(
             select(User).where(User.id == user.id).with_for_update()
@@ -259,7 +303,7 @@ class ScanService:
         self.session.refresh(job)
         return job
 
-    def run_job(self, job_id: UUID) -> ScannerJob:
+    def _run_job_impl(self, job_id: UUID) -> ScannerJob:
         job = self.repository.get(job_id, for_update=True)
         if job is None:
             raise NotFoundError("Scanner job not found.")
@@ -343,10 +387,10 @@ class ScanService:
     # If this value exceeds the statement_timeout, individual candidate backtests
     # will fail with StatementTimeout before the scan-level timeout fires.
     _CANDIDATE_TIMEOUT_SECONDS = 120
-    # Candidates are accumulated in memory and periodically trimmed (every 200)
-    # to keep peak memory bounded. Low-ranked candidates have their heavy
-    # fields (trades, equity_curve) cleared during trimming.
-    _MAX_CANDIDATES_IN_MEMORY = 1000
+    # Keep only a bounded pool of top-ranked candidates in memory. We retain a
+    # small buffer above max_recommendations to preserve deterministic ranking
+    # after ties while avoiding O(universe size) memory growth.
+    _MIN_TOP_CANDIDATE_BUFFER = 50
 
     def _execute_scan(
         self,
@@ -358,15 +402,15 @@ class ScanService:
         compatibility_candidate_count, compatibility_warnings = self._count_compatible_candidates(payload)
         job.candidate_count = compatibility_candidate_count
         warnings: list[dict[str, Any]] = list(compatibility_warnings)
-        candidates: list[dict[str, Any]] = []
+        candidates_heap: list[_RankedCandidate] = []
         forecast_cache: dict[tuple[str, str], HistoricalAnalogForecastResponse] = {}
 
         bundle_cache = self._prepare_bundles(payload, warnings)
         historical_cache = self._batch_historical_performance(payload, job.created_at)
         scan_start = _time.monotonic()
         _scan_timed_out = False
-        _candidate_cap_hit = False
         _scan_timeout = get_settings().scan_timeout_seconds
+        keep_limit = max(payload.max_recommendations * 3, self._MIN_TOP_CANDIDATE_BUFFER)
 
         if _scan_timeout <= self._CANDIDATE_TIMEOUT_SECONDS:
             safe_minimum = self._CANDIDATE_TIMEOUT_SECONDS * 2
@@ -383,10 +427,10 @@ class ScanService:
         random.Random(job.id.int).shuffle(symbols)
 
         for symbol in symbols:
-            if _scan_timed_out or _candidate_cap_hit:
+            if _scan_timed_out:
                 break
             for strategy in payload.strategy_types:
-                if _scan_timed_out or _candidate_cap_hit:
+                if _scan_timed_out:
                     break
                 for rule_set in payload.rule_sets:
                     if not is_strategy_rule_set_compatible(strategy.value, rule_set.entry_rules):
@@ -442,50 +486,37 @@ class ScanService:
                             strategy_type=strategy.value,
                             account_size=float(payload.account_size),
                         )
-                        _TRIM_INTERVAL = 200
-                        if (
-                            len(candidates) > 0
-                            and len(candidates) % _TRIM_INTERVAL == 0
-                            and len(candidates) > payload.max_recommendations * 2
-                        ):
-                            candidates.sort(
-                                key=lambda c: recommendation_sort_key((
-                                    c["symbol"], c["strategy_type"], c["rule_set_name"],
-                                    self._ranking_response_model(c["ranking"]),
-                                )),
-                            )
-                            keep = max(payload.max_recommendations * 3, _TRIM_INTERVAL)
-                            for c in candidates[keep:]:
-                                c["trades"] = []
-                                c["equity_curve"] = []
-
-                        if len(candidates) >= self._MAX_CANDIDATES_IN_MEMORY:
-                            logger.warning("scan.candidate_cap_reached", max=self._MAX_CANDIDATES_IN_MEMORY)
-                            warnings.append({"type": "candidate_cap", "message": f"Candidate cap of {self._MAX_CANDIDATES_IN_MEMORY} reached; remaining candidates were skipped."})
-                            _candidate_cap_hit = True
-                            break
-                        candidates.append(
-                            {
-                                "symbol": symbol,
-                                "strategy_type": strategy.value,
-                                "rule_set_name": rule_set.name,
-                                "rule_set_hash": candidate_rule_set_hash,
-                                "request_snapshot": request.model_dump(mode="json"),
-                                "summary": self._serialize_summary(execution_result.summary),
-                                "warnings": execution_result.warnings,
-                                "trades": [
-                                    self._serialize_trade(trade)
-                                    for trade in execution_result.trades[:50]
-                                ],
-                                "trades_truncated": len(execution_result.trades) > 50,
-                                "equity_curve": self._downsample_equity_curve(
-                                    execution_result.equity_curve
-                                ),
-                                "historical": historical.model_dump(mode="json"),
-                                "forecast": forecast.model_dump(mode="json"),
-                                "ranking": ranking.model_dump(mode="json"),
-                            }
+                        sort_key = recommendation_sort_key(
+                            (symbol, strategy.value, rule_set.name, ranking),
                         )
+                        if len(candidates_heap) >= keep_limit and sort_key >= candidates_heap[0].sort_key:
+                            continue
+
+                        candidate = {
+                            "symbol": symbol,
+                            "strategy_type": strategy.value,
+                            "rule_set_name": rule_set.name,
+                            "rule_set_hash": candidate_rule_set_hash,
+                            "request_snapshot": request.model_dump(mode="json"),
+                            "summary": self._serialize_summary(execution_result.summary),
+                            "warnings": execution_result.warnings,
+                            "trades": [
+                                self._serialize_trade(trade)
+                                for trade in execution_result.trades[:50]
+                            ],
+                            "trades_truncated": len(execution_result.trades) > 50,
+                            "equity_curve": self._downsample_equity_curve(
+                                execution_result.equity_curve
+                            ),
+                            "historical": historical.model_dump(mode="json"),
+                            "forecast": forecast.model_dump(mode="json"),
+                            "ranking": ranking.model_dump(mode="json"),
+                        }
+                        ranked_candidate = _RankedCandidate(sort_key=sort_key, candidate=candidate)
+                        if len(candidates_heap) < keep_limit:
+                            heapq.heappush(candidates_heap, ranked_candidate)
+                        else:
+                            heapq.heapreplace(candidates_heap, ranked_candidate)
                     except AppError as exc:
                         SCAN_CANDIDATE_FAILURES_TOTAL.labels(reason=_normalize_scan_failure_reason(exc.code if hasattr(exc, 'code') else "internal")).inc()
                         warnings.append(
@@ -520,7 +551,7 @@ class ScanService:
                             }
                         )
 
-        if not candidates:
+        if not candidates_heap:
             job.status = "failed"
             job.error_code = "scan_empty"
             job.error_message = "No scan combinations completed successfully."
@@ -529,17 +560,13 @@ class ScanService:
             self.session.commit()
             return job
 
-        sorted_candidates = sorted(
-            candidates,
-            key=lambda c: recommendation_sort_key(
-                (
-                    c["symbol"],
-                    c["strategy_type"],
-                    c["rule_set_name"],
-                    self._ranking_response_model(c["ranking"]),
-                )
-            ),
-        )
+        sorted_candidates = [
+            entry.candidate
+            for entry in sorted(
+                candidates_heap,
+                key=lambda entry: entry.sort_key,
+            )
+        ]
         rank_lookup = {
             (c["symbol"], c["strategy_type"], c["rule_set_name"]): idx + 1
             for idx, c in enumerate(sorted_candidates)
@@ -611,7 +638,7 @@ class ScanService:
                 )
         return job
 
-    def list_jobs(
+    def _list_jobs_impl(
         self,
         user: User,
         limit: int = 50,
@@ -644,7 +671,7 @@ class ScanService:
             next_cursor=next_cursor,
         )
 
-    def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
+    def _get_job_impl(self, user: User, job_id: UUID) -> ScannerJobResponse:
         job = self.repository.get_for_user(job_id, user.id)
         if job is None:
             raise NotFoundError("Scanner job not found.")
@@ -674,7 +701,7 @@ class ScanService:
             self.session.rollback()
             raise
 
-    def get_recommendations(
+    def _get_recommendations_impl(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
     ) -> ScannerRecommendationListResponse:
         import time as _time
@@ -800,7 +827,7 @@ class ScanService:
             self.session.commit()
         return created_jobs
 
-    def build_forecast(
+    def _build_forecast_impl(
         self,
         *,
         user: User,

@@ -400,6 +400,10 @@ class StrategyOverrides(BaseModel):
         default=None, description="Override long call placement (for diagonals, PMCC)"
     )
     long_put_strike: StrikeSelection | None = Field(default=None, description="Override long put placement")
+    calendar_contract_type: Literal["call", "put"] | None = Field(
+        default=None,
+        description="Override the option type used by calendar_spread. Defaults to 'call'.",
+    )
     spread_width: SpreadWidthConfig | None = Field(
         default=None, description="Override wing/spread width for strategies with protection legs"
     )
@@ -492,6 +496,10 @@ class CreateBacktestRunRequest(BaseModel):
             short_count = sum(1 for leg in self.custom_legs if leg.side == "short")
             if long_count == 0 or short_count == 0:
                 raise ValueError("custom_legs must contain at least one long and one short leg")
+
+        if self.strategy_overrides and self.strategy_type != StrategyType.CALENDAR_SPREAD:
+            if self.strategy_overrides.calendar_contract_type is not None:
+                raise ValueError("calendar_contract_type override is only valid for calendar_spread")
 
         return self
 

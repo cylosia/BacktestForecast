@@ -718,7 +718,7 @@ class SweepService:
             StrategyType,
         )
         from backtestforecast.sweeps.constraints import Individual
-        from backtestforecast.sweeps.genetic import GAResult, GeneticConfig, GeneticOptimizer
+        from backtestforecast.sweeps.genetic import GAResult, GeneticConfig, GeneticOptimizer, SerializableFitnessEvaluator
 
         gc = payload.genetic_config
         if gc is None:
@@ -762,65 +762,21 @@ class SweepService:
         )
         job.prefetch_summary_json = prefetch_summary.to_dict()
 
-        entry_rules = payload.entry_rule_sets[0].entry_rules if payload.entry_rule_sets else []
-        exit_set = payload.exit_rule_sets[0] if payload.exit_rule_sets else None
-        exec_service = self.execution_service
-
         genetic_start = _time.monotonic()
         safe_genetic_timeout = max(get_settings().sweep_genetic_timeout_seconds, _CANDIDATE_TIMEOUT_SECONDS * 2)
-        _genetic_timed_out = False
 
-        def fitness_fn(individual: Individual) -> float:
-            nonlocal _genetic_timed_out
-            if _genetic_timed_out:
-                return 0.0
-            elapsed = _time.monotonic() - genetic_start
-            if elapsed > safe_genetic_timeout - _CANDIDATE_TIMEOUT_SECONDS:
-                _genetic_timed_out = True
-                warnings.append({
-                    "code": "timeout",
-                    "message": "Genetic sweep time limit approaching; remaining evaluations returned 0.",
-                })
-                return 0.0
-            legs = [
-                CustomLegDefinition(
-                    asset_type=leg.get("asset_type", "option"),
-                    contract_type=leg.get("contract_type"),
-                    side=leg["side"],
-                    strike_offset=leg.get("strike_offset", 0),
-                    expiration_offset=leg.get("expiration_offset", 0),
-                    quantity_ratio=leg.get("quantity_ratio", Decimal("1")),
-                )
-                for leg in individual
-            ]
-            request = CreateBacktestRunRequest(
-                symbol=payload.symbol,
-                strategy_type=strategy_type,
-                start_date=payload.start_date,
-                end_date=payload.end_date,
-                target_dte=payload.target_dte,
-                dte_tolerance_days=payload.dte_tolerance_days,
-                max_holding_days=payload.max_holding_days,
-                account_size=payload.account_size,
-                risk_per_trade_pct=payload.risk_per_trade_pct,
-                commission_per_contract=payload.commission_per_contract,
-                entry_rules=entry_rules,
-                slippage_pct=payload.slippage_pct,
-                profit_target_pct=exit_set.profit_target_pct if exit_set else None,
-                stop_loss_pct=exit_set.stop_loss_pct if exit_set else None,
-                custom_legs=legs,
-            )
-            try:
-                result = exec_service.execute_request(request, bundle=bundle)
-                summary = self._serialize_summary(result.summary)
-                return self._score_candidate_from_summary(summary)
-            except (AppError, AppValidationError):
-                return 0.0
-            except _PydanticValidationError:
-                return 0.0
-            except Exception:
-                logger.warning("sweep.genetic_fitness_unexpected_error", exc_info=True)
-                return 0.0
+        fitness_fn = SerializableFitnessEvaluator(
+            initializer_module="backtestforecast.services.sweep_genetic_runtime",
+            initializer_name="init_sweep_genetic_runtime",
+            evaluator_module="backtestforecast.services.sweep_genetic_runtime",
+            evaluator_name="evaluate_sweep_individual",
+            context={
+                "payload": payload.model_dump(mode="json"),
+                "strategy_type": strategy_type,
+                "timeout_seconds": safe_genetic_timeout - _CANDIDATE_TIMEOUT_SECONDS,
+                "score_summary": True,
+            },
+        )
 
         effective_max_workers = min(gc.max_workers, get_settings().pipeline_max_workers)
         ga_config = GeneticConfig(

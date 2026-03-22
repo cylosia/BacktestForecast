@@ -75,7 +75,7 @@ class WheelStrategyBacktestEngine:
 
         warnings: list[dict[str, Any]] = []
         warning_codes: set[str] = set()
-        cash = float(config.account_size)
+        cash = _D(config.account_size)
         peak_equity = cash
         active_option: OpenShortOptionPhase | None = None
         held_shares: HeldShares | None = None
@@ -89,7 +89,7 @@ class WheelStrategyBacktestEngine:
             if bar.trade_date < config.start_date:
                 continue
 
-            option_value = 0.0
+            option_value = Decimal("0")
             if active_option is not None:
                 quote = option_gateway.get_quote(active_option.ticker, bar.trade_date)
                 if quote is None:
@@ -121,7 +121,7 @@ class WheelStrategyBacktestEngine:
                             " the engine carried forward the previous mid-price.",
                         )
                 active_option.last_mid = current_mid
-                option_value = -current_mid * 100.0 * active_option.quantity
+                option_value = _D(-current_mid) * _D(100) * _D(active_option.quantity)
 
                 capital_at_risk = active_option.strike_price * active_option.quantity * 100.0
                 position_pnl = (active_option.entry_mid - current_mid) * active_option.quantity * 100.0
@@ -176,8 +176,8 @@ class WheelStrategyBacktestEngine:
                         option_detail["legs"][0]["exit_mid"] = exit_mid
                         option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
                         option_net_pnl = option_gross_pnl - entry_commission - entry_slippage
-                        cash -= active_option.strike_price * 100.0 * active_option.quantity
-                        if cash < 0:
+                        cash -= _D(active_option.strike_price) * _D(100) * _D(active_option.quantity)
+                        if cash < Decimal("0"):
                             self._add_warning_once(
                                 warnings, warning_codes, "implicit_margin",
                                 "Cash balance went negative during put assignment. Returns may be "
@@ -235,7 +235,7 @@ class WheelStrategyBacktestEngine:
                         option_detail["legs"][0]["exit_mid"] = exit_mid
                         option_gross_pnl = active_option.entry_mid * 100.0 * active_option.quantity
                         option_net_pnl = option_gross_pnl - entry_commission - entry_slippage
-                        cash += active_option.strike_price * 100.0 * active_option.quantity
+                        cash += _D(active_option.strike_price) * _D(100) * _D(active_option.quantity)
                         trades.append(
                             TradeResult(
                                 option_ticker=active_option.ticker,
@@ -304,7 +304,7 @@ class WheelStrategyBacktestEngine:
                         )
                         held_shares = None
                     else:
-                        cash += (-exit_mid * 100.0 * active_option.quantity) - exit_commission - exit_slippage
+                        cash += (_D(-exit_mid) * _D(100) * _D(active_option.quantity)) - _D(exit_commission) - _D(exit_slippage)
                         trades.append(
                             TradeResult(
                                 option_ticker=active_option.ticker,
@@ -337,9 +337,9 @@ class WheelStrategyBacktestEngine:
                             )
                         )
                     active_option = None
-                    option_value = 0.0
+                    option_value = Decimal("0")
 
-            shares_value = 0.0 if held_shares is None else bar.close_price * 100.0 * held_shares.quantity
+            shares_value = Decimal("0") if held_shares is None else _D(bar.close_price) * _D(100) * _D(held_shares.quantity)
 
             just_closed_this_bar = (
                 active_option is None
@@ -369,9 +369,9 @@ class WheelStrategyBacktestEngine:
                     if position is not None:
                         active_option = position
                         entry_slip = position.entry_mid * 100.0 * position.quantity * (config.slippage_pct / 100.0)
-                        cash += (position.entry_mid * 100.0 * position.quantity) - (
-                            float(config.commission_per_contract) * position.quantity
-                        ) - entry_slip
+                        cash += (_D(position.entry_mid) * _D(100) * _D(position.quantity)) - (
+                            _D(config.commission_per_contract) * _D(position.quantity)
+                        ) - _D(entry_slip)
                 else:
                     position = self._open_covered_call(
                         config, bar, index, option_gateway, held_shares.quantity, warnings, warning_codes
@@ -379,31 +379,31 @@ class WheelStrategyBacktestEngine:
                     if position is not None:
                         active_option = position
                         entry_slip = position.entry_mid * 100.0 * position.quantity * (config.slippage_pct / 100.0)
-                        cash += (position.entry_mid * 100.0 * position.quantity) - (
-                            float(config.commission_per_contract) * position.quantity
-                        ) - entry_slip
+                        cash += (_D(position.entry_mid) * _D(100) * _D(position.quantity)) - (
+                            _D(config.commission_per_contract) * _D(position.quantity)
+                        ) - _D(entry_slip)
 
-            option_value = 0.0
+            option_value = Decimal("0")
             if active_option is not None:
-                option_value = -active_option.last_mid * 100.0 * active_option.quantity
-            shares_value = 0.0 if held_shares is None else bar.close_price * 100.0 * held_shares.quantity
+                option_value = _D(-active_option.last_mid) * _D(100) * _D(active_option.quantity)
+            shares_value = Decimal("0") if held_shares is None else _D(bar.close_price) * _D(100) * _D(held_shares.quantity)
 
             if not math.isfinite(option_value):
-                option_value = 0.0
+                option_value = Decimal("0")
             if not math.isfinite(shares_value):
-                shares_value = 0.0
+                shares_value = Decimal("0")
 
-            cash = round(cash, 2)
+            cash = cash.quantize(Decimal("0.01"))
             equity = cash + shares_value + option_value
             peak_equity = max(peak_equity, equity)
-            drawdown_pct = 0.0 if peak_equity == 0 else ((peak_equity - equity) / peak_equity) * 100.0
+            drawdown_pct = Decimal("0") if peak_equity == 0 else ((peak_equity - equity) / peak_equity) * _D(100)
             equity_curve.append(
                 EquityPointResult(
                     trade_date=bar.trade_date,
-                    equity=_D(equity),
-                    cash=_D(cash),
-                    position_value=_D(shares_value + option_value),
-                    drawdown_pct=_D(drawdown_pct),
+                    equity=equity,
+                    cash=cash,
+                    position_value=shares_value + option_value,
+                    drawdown_pct=drawdown_pct,
                 )
             )
 
@@ -419,7 +419,7 @@ class WheelStrategyBacktestEngine:
             liq_entry_slip = active_option.entry_mid * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
             liq_exit_slip = abs(exit_mid) * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
             option_net = option_gross - (entry_commission + exit_commission) - (liq_entry_slip + liq_exit_slip)
-            cash += (-exit_mid * 100.0 * active_option.quantity) - exit_commission - liq_exit_slip
+            cash += (_D(-exit_mid) * _D(100) * _D(active_option.quantity)) - _D(exit_commission) - _D(liq_exit_slip)
             trades.append(
                 TradeResult(
                     option_ticker=active_option.ticker,
@@ -456,7 +456,7 @@ class WheelStrategyBacktestEngine:
 
         if held_shares is not None:
             final_bar = sorted_bars[-1]
-            cash += final_bar.close_price * 100.0 * held_shares.quantity
+            cash += _D(final_bar.close_price) * _D(100) * _D(held_shares.quantity)
             stock_gross = (final_bar.close_price - held_shares.entry_price) * 100.0 * held_shares.quantity
             trades.append(
                 TradeResult(
@@ -490,24 +490,7 @@ class WheelStrategyBacktestEngine:
                 )
             )
 
-        # Reconcile ending equity from trade-level P&L to eliminate
-        # accumulated float arithmetic drift.  Each trade's net_pnl is
-        # computed and stored as Decimal, so summing those is exact.
-        # The float-based cash accumulator drifts ~$0.01 per 100 trades;
-        # this reconciliation ensures the summary statistics (ROI, CAGR,
-        # Sharpe, etc.) are derived from the precise value.
-        trade_pnl_sum = sum(float(t.net_pnl) for t in trades)
-        reconciled_equity = float(config.account_size) + trade_pnl_sum
-        drift = cash - reconciled_equity
-        if abs(drift) > 0.02:
-            logger.warning(
-                "wheel.float_drift_corrected",
-                raw_cash=round(cash, 4),
-                reconciled=round(reconciled_equity, 4),
-                drift=round(drift, 4),
-                trade_count=len(trades),
-            )
-        ending_equity = reconciled_equity
+        ending_equity = float(cash.quantize(Decimal("0.01")))
 
         if equity_curve and _D(ending_equity) != equity_curve[-1].equity:
             last_td = equity_curve[-1].trade_date

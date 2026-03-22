@@ -38,7 +38,9 @@ celery_app = Celery(
     backend=settings.celery_result_backend_url or settings.redis_url,
     include=[
         "apps.worker.app.tasks",
-        "apps.worker.app.maintenance_tasks",
+        "apps.worker.app.research_tasks",
+        "apps.worker.app.pipeline_tasks",
+        "apps.worker.app.worker_maintenance_tasks",
     ],
 )
 

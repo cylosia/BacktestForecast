@@ -206,7 +206,7 @@ def download_export(
         mime_type = export_job.mime_type if export_job.mime_type in allowed_mime_types else "application/octet-stream"
 
         storage_key = getattr(export_job, "storage_key", None)
-        content = export_job.content_bytes
+        content = None
 
         if storage_key and content is None:
             try:
@@ -288,23 +288,7 @@ def download_export(
                 from backtestforecast.errors import ExternalServiceError
                 raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.")
 
-        # TODO: For large exports (>10MB), consider using StreamingResponse with chunked
-        # reads from the database to avoid loading the full file into memory.
-        # Currently bounded by _MAX_EXPORT_SIZE_BYTES but could still cause memory
-        # pressure under concurrent downloads.
-        #
-        # Recommended implementation approach:
-        # 1. Check `len(content_bytes)` against a 10MB threshold.
-        # 2. If exceeded, use `StreamingResponse` with a generator that yields
-        #    32KB chunks from the in-memory bytes (already done below via
-        #    `_chunk_bytes`). The real win comes from avoiding the full DB
-        #    column load — requires switching to server-side cursor or
-        #    PostgreSQL large-object streaming (lo_read) so the content is
-        #    never fully materialized in Python memory.
-        # 3. For DB-backed exports, consider migrating all large files to S3
-        #    (storage_key path) so this fallback path only handles small files.
-        # 4. Add a `Content-Length` header from `export_job.size_bytes` so
-        #    clients can show download progress.
+        content = service.get_db_content_bytes_for_download(user, export_job_id)
 
         if content is None:
             from backtestforecast.errors import NotFoundError

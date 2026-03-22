@@ -4,54 +4,42 @@ import { CheckoutButton } from "@/components/billing/checkout-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-// TODO: Replace these display prices with backend-driven Stripe metadata.
-// The checkout flow itself is authoritative; these values are presentation-only
-// until the pricing page is wired to a server-sourced contract.
-const plans = [
-  {
-    title: "Free",
-    price: "$0",
-    subtitle: "Get started with manual research",
-    monthly: null,
-    yearly: null,
-    features: [
-      "5 backtests / month",
-      "30 days of history",
-      "1 side-by-side comparison slot",
-      "No scanner, forecast, or export access",
-    ],
-  },
-  {
-    title: "Pro",
-    price: "$29/mo",
-    subtitle: "$290/year",
-    monthly: { tier: "pro" as const, billingInterval: "monthly" as const },
-    yearly: { tier: "pro" as const, billingInterval: "yearly" as const },
-    features: [
-      "Unlimited backtests",
-      "Basic scanner access",
-      "Historical-analog forecasting",
-      "CSV exports",
-      "365-day history window",
-    ],
-  },
-  {
-    title: "Premium",
-    price: "$79/mo",
-    subtitle: "$790/year",
-    monthly: { tier: "premium" as const, billingInterval: "monthly" as const },
-    yearly: { tier: "premium" as const, billingInterval: "yearly" as const },
-    features: [
-      "Advanced scanner access",
-      "PDF + CSV exports",
-      "Full history depth",
-      "Highest comparison allowance",
-      "Priority scheduled scan refreshes",
-    ],
-  },
-] as const;
+const API_BASE = (process.env.API_INTERNAL_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
-export default function PricingPage() {
+type PricingIntervalResponse = {
+  price_id: string | null;
+  unit_amount_usd: number | null;
+  display_price: string;
+  available: boolean;
+};
+
+type PricingPlanResponse = {
+  tier: "free" | "pro" | "premium";
+  title: string;
+  headline: string;
+  description: string;
+  features: string[];
+  monthly: PricingIntervalResponse | null;
+  yearly: PricingIntervalResponse | null;
+};
+
+type PricingContractResponse = {
+  currency: string;
+  checkout_authoritative: boolean;
+  plans: PricingPlanResponse[];
+};
+
+async function getPricingContract(): Promise<PricingContractResponse> {
+  const response = await fetch(`${API_BASE}/v1/billing/pricing`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Failed to load pricing contract (${response.status}).`);
+  }
+  return response.json() as Promise<PricingContractResponse>;
+}
+
+export default async function PricingPage() {
+  const contract = await getPricingContract();
+
   return (
     <main className="mx-auto max-w-6xl px-6 py-16">
       <div className="mx-auto max-w-3xl text-center">
@@ -65,17 +53,20 @@ export default function PricingPage() {
       </div>
 
       <div className="mt-12 grid gap-6 lg:grid-cols-3">
-        {plans.map((plan) => (
-          <Card key={plan.title} className="h-full border-border/80">
+        {contract.plans.map((plan) => (
+          <Card key={plan.tier} className="h-full border-border/80">
             <CardHeader>
               <CardTitle>{plan.title}</CardTitle>
-              <CardDescription>{plan.subtitle}</CardDescription>
+              <CardDescription>{plan.description}</CardDescription>
               <p
                 className="pt-3 text-3xl font-semibold tracking-tight"
-                data-testid={plan.title === "Pro" ? "price-pro" : plan.title === "Premium" ? "price-premium" : undefined}
+                data-testid={plan.tier === "pro" ? "price-pro" : plan.tier === "premium" ? "price-premium" : undefined}
               >
-                {plan.price}
+                {plan.monthly?.display_price ?? plan.headline}
               </p>
+              {plan.yearly?.display_price ? (
+                <p className="text-sm text-muted-foreground">{plan.yearly.display_price}</p>
+              ) : null}
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-3">
@@ -89,11 +80,11 @@ export default function PricingPage() {
 
               {plan.monthly ? (
                 <div className="space-y-3">
-                  <CheckoutButton className="w-full" billingInterval={plan.monthly.billingInterval} tier={plan.monthly.tier}>
+                  <CheckoutButton className="w-full" billingInterval="monthly" tier={plan.tier}>
                     Start monthly plan
                   </CheckoutButton>
                   {plan.yearly ? (
-                    <CheckoutButton className="w-full" billingInterval={plan.yearly.billingInterval} tier={plan.yearly.tier}>
+                    <CheckoutButton className="w-full" billingInterval="yearly" tier={plan.tier}>
                       Start yearly plan
                     </CheckoutButton>
                   ) : null}
@@ -115,7 +106,7 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 text-center text-xs text-muted-foreground">
-        All amounts in USD. Checkout is authoritative if pricing changes before this page updates.
+        All amounts in {contract.currency}. Checkout is authoritative and uses the configured Stripe price IDs for paid plans.
       </p>
     </main>
   );

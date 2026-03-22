@@ -7,49 +7,11 @@ import { Bookmark, Loader2 } from "lucide-react";
 import { createTemplate } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { validateBacktestForm, type BacktestFormValues } from "@/lib/backtests/validation";
+import { formValuesToTemplateConfig } from "@/lib/templates/format";
 import { mapTemplateFieldErrors } from "@/lib/templates/validation";
-import type { CreateTemplateRequest, StrategyType } from "@backtestforecast/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-function formValuesToTemplateConfig(
-  values: BacktestFormValues,
-): CreateTemplateRequest["config"] {
-  const entryRules: NonNullable<CreateTemplateRequest["config"]["entry_rules"]> = [];
-
-  if (values.rsiEnabled) {
-    const rsiRule: NonNullable<CreateTemplateRequest["config"]["entry_rules"]>[number] = {
-      type: "rsi" as const,
-      operator: values.rsiOperator,
-      threshold: Number(values.rsiThreshold),
-      period: Number(values.rsiPeriod),
-    };
-    entryRules.push(rsiRule);
-  }
-
-  if (values.movingAverageEnabled) {
-    const maRule: NonNullable<CreateTemplateRequest["config"]["entry_rules"]>[number] = {
-      type: values.movingAverageType as "sma_crossover" | "ema_crossover",
-      fast_period: Number(values.fastPeriod),
-      slow_period: Number(values.slowPeriod),
-      direction: values.crossoverDirection,
-    };
-    entryRules.push(maRule);
-  }
-
-  return {
-    strategy_type: values.strategyType as StrategyType,
-    target_dte: Number(values.targetDte),
-    dte_tolerance_days: Number(values.dteToleranceDays),
-    max_holding_days: Number(values.maxHoldingDays),
-    account_size: Number(values.accountSize),
-    risk_per_trade_pct: Number(values.riskPerTradePct),
-    commission_per_contract: Number(values.commissionPerContract),
-    entry_rules: entryRules,
-    default_symbol: values.symbol || null,
-  };
-}
 
 export function SaveAsTemplate({ values }: { values: BacktestFormValues }) {
   const router = useRouter();

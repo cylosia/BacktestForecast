@@ -3,6 +3,8 @@ and sweep schema validation."""
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -221,7 +223,10 @@ class TestGatewayThreeTierLookup:
         result = gw.get_quote("O:TEST", date(2025, 3, 14))
 
         assert result is None
-        redis_cache.set_quote.assert_called_once_with("O:TEST", date(2025, 3, 14), None)
+        redis_cache.set_quote.assert_called_once()
+        args, kwargs = redis_cache.set_quote.call_args
+        assert args == ("O:TEST", date(2025, 3, 14), None)
+        assert kwargs["ttl_seconds"] is not None
 
     def test_no_redis_falls_through_to_api(self):
         gw = self._make_gateway(redis_cache=None)
@@ -247,6 +252,56 @@ class TestGatewayThreeTierLookup:
         assert result.bid_price == 1.0
         redis_cache.get_quote.assert_not_called()
         gw.client.get_option_quote_for_date.assert_not_called()
+
+    def test_concurrent_list_contracts_coalesces_provider_calls(self):
+        gw = self._make_gateway(redis_cache=None)
+
+        contracts = [OptionContractRecord("O:API", "put", date(2025, 3, 21), 250.0, 100.0)]
+
+        def fetch_contracts(**kwargs):
+            time.sleep(0.05)
+            return contracts
+
+        gw.client.list_option_contracts.side_effect = fetch_contracts
+        results: list[list[OptionContractRecord]] = []
+
+        def worker() -> None:
+            results.append(gw.list_contracts(date(2025, 3, 14), "put", 8, 2))
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join(timeout=2)
+        t2.join(timeout=2)
+
+        assert len(results) == 2
+        assert gw.client.list_option_contracts.call_count == 1
+
+    def test_concurrent_get_quote_coalesces_provider_calls(self):
+        gw = self._make_gateway(redis_cache=None)
+        quote = OptionQuoteRecord(date(2025, 3, 14), 3.0, 3.2, None)
+
+        def fetch_quote(*args, **kwargs):
+            time.sleep(0.05)
+            return quote
+
+        gw.client.get_option_quote_for_date.side_effect = fetch_quote
+        results: list[OptionQuoteRecord | None] = []
+
+        def worker() -> None:
+            results.append(gw.get_quote("O:TEST", date(2025, 3, 14)))
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join(timeout=2)
+        t2.join(timeout=2)
+
+        assert len(results) == 2
+        assert all(r is not None for r in results)
+        assert gw.client.get_option_quote_for_date.call_count == 1
 
 
 # ---------------------------------------------------------------------------

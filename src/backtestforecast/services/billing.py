@@ -33,6 +33,7 @@ from backtestforecast.schemas.billing import (
     PortalSessionResponse,
 )
 from backtestforecast.services.audit import AuditService
+from backtestforecast.services.billing_components import CheckoutService, PortalService, ReconciliationService, WebhookHandler
 
 logger = get_logger("billing")
 UTC = timezone.utc
@@ -67,8 +68,32 @@ class BillingService:
         self.stripe_events = StripeEventRepository(session)
         self._stripe_client: Any = None
         self._pending_cancellation_events: list[tuple[str, UUID]] = []
+        self.checkout_service = CheckoutService(self)
+        self.portal_service = PortalService(self)
+        self.webhook_handler = WebhookHandler(self)
+        self.reconciliation_service = ReconciliationService(self)
+
 
     def create_checkout_session(
+        self, user: User, payload: CreateCheckoutSessionRequest, *, request_id: str | None = None, ip_address: str | None = None,
+    ) -> CheckoutSessionResponse:
+        return self.checkout_service.create_checkout_session(user, payload, request_id=request_id, ip_address=ip_address)
+
+    def create_portal_session(
+        self, user: User, payload: CreatePortalSessionRequest, *, request_id: str | None = None, ip_address: str | None = None,
+    ) -> PortalSessionResponse:
+        return self.portal_service.create_portal_session(user, payload, request_id=request_id, ip_address=ip_address)
+
+    def handle_webhook(
+        self, payload_bytes: bytes, signature_header: str | None, *, request_id: str | None = None, ip_address: str | None = None,
+    ) -> dict[str, str]:
+        return self.webhook_handler.handle_webhook(payload_bytes, signature_header, request_id=request_id, ip_address=ip_address)
+
+    def reconcile_subscriptions(self, *, batch_size: int = 100) -> int:
+        return self.reconciliation_service.reconcile_subscriptions(batch_size=batch_size)
+
+
+    def _create_checkout_session_impl(
         self,
         user: User,
         payload: CreateCheckoutSessionRequest,
@@ -137,7 +162,7 @@ class BillingService:
             expires_at=self._timestamp_to_datetime(checkout_session.expires_at),
         )
 
-    def create_portal_session(
+    def _create_portal_session_impl(
         self,
         user: User,
         payload: CreatePortalSessionRequest,
@@ -165,7 +190,7 @@ class BillingService:
         logger.info("billing.portal_session.created", user_id=str(user.id))
         return PortalSessionResponse(portal_url=portal_session.url)
 
-    def handle_webhook(
+    def _handle_webhook_impl(
         self,
         payload_bytes: bytes,
         signature_header: str | None,
@@ -488,7 +513,7 @@ class BillingService:
             status=status,
         )
 
-    def reconcile_subscriptions(self, *, grace_hours: int = 48, dry_run: bool = False) -> list[dict[str, Any]]:
+    def _reconcile_subscriptions_impl(self, *, grace_hours: int = 48, dry_run: bool = False) -> list[dict[str, Any]]:
         """Reconcile local subscription records with Stripe.
 
         Finds users whose subscription is locally marked 'active' but whose
