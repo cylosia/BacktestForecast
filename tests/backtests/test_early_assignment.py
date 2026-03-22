@@ -108,6 +108,38 @@ def test_short_call_is_assigned_before_ex_dividend_date() -> None:
     assert trade.warnings
 
 
+def test_naked_call_is_assigned_before_ex_dividend_date() -> None:
+    engine = OptionsBacktestEngine()
+    bars = [
+        make_bar(date(2025, 1, 1), 100.0),
+        make_bar(date(2025, 1, 2), 112.0),
+        make_bar(date(2025, 1, 3), 112.0),
+    ]
+    contracts = {
+        (date(2025, 1, 1), "call"): [
+            OptionContractRecord("CALL100", "call", date(2025, 1, 10), 100.0, 100),
+        ],
+    }
+    quotes = {
+        ("CALL100", date(2025, 1, 1)): make_quote(date(2025, 1, 1), 2.4),
+        ("CALL100", date(2025, 1, 2)): make_quote(date(2025, 1, 2), 12.05),
+    }
+
+    result = engine.run(
+        config=make_config("naked_call"),
+        bars=bars,
+        earnings_dates=set(),
+        ex_dividend_dates={date(2025, 1, 3)},
+        option_gateway=AssignmentGateway(contracts=contracts, quotes=quotes),
+    )
+
+    assert len(result.trades) == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "early_assignment_call_ex_div"
+    assert trade.exit_date == date(2025, 1, 2)
+    assert trade.detail_json["assignment_detail"]["assignment_trigger"] == "ex_dividend"
+
+
 def test_deep_itm_short_put_is_assigned_near_expiry() -> None:
     engine = OptionsBacktestEngine()
     bars = [

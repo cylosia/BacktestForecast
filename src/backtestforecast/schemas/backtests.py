@@ -497,6 +497,10 @@ class CreateBacktestRunRequest(BaseModel):
             if long_count == 0 or short_count == 0:
                 raise ValueError("custom_legs must contain at least one long and one short leg")
 
+        if self.strategy_overrides and self.strategy_type != StrategyType.CALENDAR_SPREAD:
+            if self.strategy_overrides.calendar_contract_type is not None:
+                raise ValueError("calendar_contract_type override is only valid for calendar_spread")
+
         return self
 
 

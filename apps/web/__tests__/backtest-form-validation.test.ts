@@ -129,6 +129,48 @@ describe("backtest form submission edge cases", () => {
     expect(payload?.strategy_overrides).toEqual({ calendar_contract_type: "put" });
   });
 
+
+  it("uses backend-compatible bollinger field names", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: false,
+      bollingerEnabled: true,
+    };
+    const { errors, payload } = validateBacktestForm(values);
+    expect(Object.keys(errors)).toHaveLength(0);
+    expect(payload?.entry_rules).toContainEqual({
+      type: "bollinger_bands",
+      period: 20,
+      standard_deviations: 2,
+      band: "lower",
+      operator: "lt",
+    });
+  });
+
+  it("rejects MACD configurations where fast period is not less than slow period", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: false,
+      macdEnabled: true,
+      macdFastPeriod: "26",
+      macdSlowPeriod: "26",
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.macdSlowPeriod).toContain("greater than fast period");
+  });
+
+  it("rejects avoid-earnings rules with a zero-day window on both sides", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: false,
+      avoidEarningsEnabled: true,
+      avoidEarningsDaysBefore: "0",
+      avoidEarningsDaysAfter: "0",
+    };
+    const { errors } = validateBacktestForm(values);
+    expect(errors.avoidEarningsDaysAfter).toContain("greater than 0");
+  });
+
   it("uses backend-compatible support/resistance enum values", () => {
     const values = {
       ...getDefaultBacktestFormValues(),

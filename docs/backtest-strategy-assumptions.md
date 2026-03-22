@@ -30,7 +30,7 @@ This document describes the default modeling assumptions used by the current mul
 - Buys 100 shares per contract and sells one OTM call.
 - The short call strike is the nearest listed strike at or above spot.
 - Capital sizing is constrained by share cost, not just option premium.
-- The combined covered-call package is exited at the call expiration, `max_holding_days`, or backtest end.
+- The combined covered-call package is exited at call expiration, `max_holding_days`, backtest end, or earlier if the short call is modeled as assigned before an ex-dividend date.
 
 ### Cash-Secured Put
 - Sells one OTM put per package.
@@ -170,6 +170,7 @@ This document describes the default modeling assumptions used by the current mul
 ### Naked Call
 - Sells a single call at a resolved strike. Unlimited theoretical loss.
 - Capital uses Reg T naked option margin formula.
+- Deep-ITM short calls with very low remaining time value may be force-closed before the next ex-dividend date to approximate early assignment risk.
 - Users should interpret results with caution — see known limitations.
 
 ### Naked Put
