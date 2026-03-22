@@ -138,6 +138,24 @@ describe("templateToFormValues", () => {
     expect(patch!.avoidEarningsEnabled).toBe(true);
   });
 
+  it("rehydrates put calendar template overrides", () => {
+    const template: TemplateResponse = {
+      ...VALID_TEMPLATE,
+      strategy_type: "calendar_spread",
+      config: {
+        ...VALID_TEMPLATE.config,
+        strategy_type: "calendar_spread",
+        strategy_overrides: {
+          calendar_contract_type: "put",
+        },
+      },
+    };
+    const patch = templateToFormValues(template);
+    expect(patch).not.toBeNull();
+    expect(patch!.strategyType).toBe("calendar_spread");
+    expect(patch!.calendarContractType).toBe("put");
+  });
+
   it("returns null for a template with invalid config", () => {
     const bad = { ...VALID_TEMPLATE, config: {} as never };
     const patch = templateToFormValues(bad);

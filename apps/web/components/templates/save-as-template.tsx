@@ -48,6 +48,10 @@ function formValuesToTemplateConfig(
     commission_per_contract: Number(values.commissionPerContract),
     entry_rules: entryRules,
     default_symbol: values.symbol || null,
+    strategy_overrides:
+      values.strategyType === "calendar_spread" && values.calendarContractType === "put"
+        ? { calendar_contract_type: "put" }
+        : undefined,
   };
 }
 

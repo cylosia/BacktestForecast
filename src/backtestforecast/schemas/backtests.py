@@ -400,6 +400,10 @@ class StrategyOverrides(BaseModel):
         default=None, description="Override long call placement (for diagonals, PMCC)"
     )
     long_put_strike: StrikeSelection | None = Field(default=None, description="Override long put placement")
+    calendar_contract_type: Literal["call", "put"] | None = Field(
+        default=None,
+        description="Override the option type used by calendar_spread. Defaults to 'call'.",
+    )
     spread_width: SpreadWidthConfig | None = Field(
         default=None, description="Override wing/spread width for strategies with protection legs"
     )

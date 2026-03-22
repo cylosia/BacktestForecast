@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from backtestforecast.backtests.margin import naked_call_margin
+from backtestforecast.backtests.margin import naked_call_margin, naked_put_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_atm_strike,
     choose_primary_expiration,
     choose_secondary_expiration,
     contracts_for_expiration,
+    get_overrides,
     require_contract_for_strike,
     synthetic_ticker,
     valid_entry_mids,
@@ -28,22 +29,6 @@ class CalendarSpreadStrategy(StrategyDefinition):
     strategy_type: str = "calendar_spread"
     margin_warning_message: str | None = None
 
-    # TODO: Add support for put calendar spreads. Currently only call calendars
-    # are supported. A `contract_type` parameter would enable put calendars for
-    # bearish/neutral market views.
-    #
-    # Implementation notes:
-    #   1. Add a `contract_type: Literal["call", "put"]` field (default "call")
-    #      to preserve backward compatibility.
-    #   2. In build_position(), branch on contract_type to call
-    #      option_gateway.list_contracts with "put" and use put margin rules.
-    #   3. Put calendars use the same ATM strike selection but require
-    #      put-specific margin (naked_put_margin) for the short leg.
-    #   4. Update detail_json "contract_type" fields and the assumptions text
-    #      to reflect "put calendar" when applicable.
-    #   5. Add unit tests covering put calendar entry, margin calculation,
-    #      and edge cases (no common strikes, missing quotes).
-
     def build_position(
         self,
         config: BacktestConfig,
@@ -51,14 +36,21 @@ class CalendarSpreadStrategy(StrategyDefinition):
         bar_index: int,
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
-        calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
-        near_expiration = choose_primary_expiration(calls, bar.trade_date, config.target_dte)
-        far_expiration = choose_secondary_expiration(calls, bar.trade_date, near_expiration, min_extra_days=14)
+        overrides = get_overrides(config.strategy_overrides)
+        contract_type = overrides.calendar_contract_type or "call"
+        contracts = option_gateway.list_contracts(
+            bar.trade_date,
+            contract_type,
+            config.target_dte,
+            config.dte_tolerance_days,
+        )
+        near_expiration = choose_primary_expiration(contracts, bar.trade_date, config.target_dte)
+        far_expiration = choose_secondary_expiration(contracts, bar.trade_date, near_expiration, min_extra_days=14)
         if far_expiration is None:
             raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
 
-        near_calls = contracts_for_expiration(calls, near_expiration)
-        far_calls = contracts_for_expiration(calls, far_expiration)
+        near_calls = contracts_for_expiration(contracts, near_expiration)
+        far_calls = contracts_for_expiration(contracts, far_expiration)
         common_strikes = sorted(
             {contract.strike_price for contract in near_calls} & {contract.strike_price for contract in far_calls}
         )
@@ -77,7 +69,10 @@ class CalendarSpreadStrategy(StrategyDefinition):
 
         entry_value_per_unit = (long_quote.mid_price - short_quote.mid_price) * 100.0
         net_debit = max(entry_value_per_unit, 0.0)
-        full_margin = naked_call_margin(bar.close_price, short_near.strike_price, short_quote.mid_price)
+        if contract_type == "put":
+            full_margin = naked_put_margin(bar.close_price, short_near.strike_price, short_quote.mid_price)
+        else:
+            full_margin = naked_call_margin(bar.close_price, short_near.strike_price, short_quote.mid_price)
         long_leg_value = long_quote.mid_price * 100.0
         reduced_margin = max(full_margin - long_leg_value, net_debit)
         _MIN_DEBIT_FLOOR = 1.0
@@ -98,7 +93,7 @@ class CalendarSpreadStrategy(StrategyDefinition):
                     "asset_type": "option",
                     "ticker": long_far.ticker,
                     "side": "long",
-                    "contract_type": "call",
+                    "contract_type": contract_type,
                     "strike_price": long_far.strike_price,
                     "expiration_date": long_far.expiration_date.isoformat(),
                     "quantity_per_unit": 1,
@@ -108,7 +103,7 @@ class CalendarSpreadStrategy(StrategyDefinition):
                     "asset_type": "option",
                     "ticker": short_near.ticker,
                     "side": "short",
-                    "contract_type": "call",
+                    "contract_type": contract_type,
                     "strike_price": short_near.strike_price,
                     "expiration_date": short_near.expiration_date.isoformat(),
                     "quantity_per_unit": 1,
@@ -116,7 +111,7 @@ class CalendarSpreadStrategy(StrategyDefinition):
                 },
             ],
             "assumptions": [
-                "Calendar spread is modeled as a call calendar in this slice.",
+                f"Calendar spread is modeled as a {contract_type} calendar in this slice.",
                 "The short leg uses the expiration nearest target_dte and the long leg uses"
                 " the next later expiration at least 14 days farther out when available.",
                 "The package exits at the near-leg expiration, max_holding_days, or backtest end;"
@@ -138,7 +133,7 @@ class CalendarSpreadStrategy(StrategyDefinition):
             option_legs=[
                 OpenOptionLeg(
                     long_far.ticker,
-                    "call",
+                    contract_type,
                     1,
                     long_far.strike_price,
                     long_far.expiration_date,
@@ -148,7 +143,7 @@ class CalendarSpreadStrategy(StrategyDefinition):
                 ),
                 OpenOptionLeg(
                     short_near.ticker,
-                    "call",
+                    contract_type,
                     -1,
                     short_near.strike_price,
                     short_near.expiration_date,
