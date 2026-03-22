@@ -131,15 +131,19 @@ These are implementation assumptions for the current slices:
 
 ## Documentation
 
+- `docs/README.md` — documentation index, owners, and split between current docs vs historical audit archives
+- `docs/workflow-trace.md` — authoritative current operational assumptions
+- `docs/RUNBOOK.md` — incident response procedures
+- `docs/known-limitations.md` — current known gaps and tradeoffs
 - `docs/launch-readiness-checklist.md` — comprehensive pre-launch checklist
 - `docs/deployment-production.md` — topology, env vars, deploy sequence, rollback
 - `docs/security-review-checklist.md` — application and infrastructure security items
-- `docs/test-plan.md` — 55-test automated suite + manual pre-launch checks
+- `docs/test-plan.md` — automated and manual validation coverage
 - `docs/monitoring-alerting.md` — metrics, alerts, and dashboards
 - `docs/failure-mode-review.md` — failure matrix with operator actions
 - `docs/data-provider-outage-strategy.md` — provider degradation playbook
-- `docs/backtest-strategy-assumptions.md` — modeling assumptions for all 14 strategies
+- `docs/backtest-strategy-assumptions.md` — modeling assumptions for strategy outputs
 - `docs/scanner-assumptions.md` — scanner ranking and forecast methodology
 - `docs/conventions.md` — architecture, product invariants, and error code conventions
-- `docs/known-limitations.md` — current known gaps
 - `docs/recommended-next-10-product-improvements.md` — backlog priorities
+- Historical audit files remain under `docs/audit/` and related `docs/audit-*.md` files, but they are archival rather than primary navigation.

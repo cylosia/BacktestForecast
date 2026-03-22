@@ -3,9 +3,9 @@
 This is the **authoritative current-state document** for operator-facing runtime behavior. When historical audits or older notes disagree with this page, treat this document and the referenced live code paths as the source of truth.
 
 **Owners**
-- Primary owner: Platform / backend maintainers
-- Backup owner: On-call engineer for the active release
-- Review cadence: update this page in the same PR as any dispatch, queue, auth, or request-contract change that alters runtime assumptions
+- Primary owner: API + worker maintainers for `apps/api` and `apps/worker` runtime behavior
+- Backup owner: Active on-call rotation listed in the incident schedule for the current release
+- Review cadence: update this page in the same PR as any dispatch, queue, auth, billing, export, or request-contract change that alters runtime assumptions
 
 **Related docs**
 - `docs/RUNBOOK.md` for incident response steps.
