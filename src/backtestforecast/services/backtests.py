@@ -11,6 +11,7 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backtestforecast.backtests.run_warnings import build_user_warnings, merge_warnings
 from backtestforecast.backtests.types import BacktestExecutionResult
 from backtestforecast.billing.entitlements import POLICIES, ScannerMode, resolve_feature_policy
 from backtestforecast.config import get_settings
@@ -56,17 +57,6 @@ from backtestforecast.version import DEFAULT_ENGINE_VERSION
 logger = structlog.get_logger("services.backtests")
 
 EQUITY_CURVE_LIMIT = 10_000
-
-NAKED_OPTION_STRATEGY_TYPES = {"naked_call", "naked_put", "short_straddle", "short_strangle", "covered_strangle", "jade_lizard", "reverse_conversion"}
-
-
-def _warning(code: str, message: str, *, severity: str = "warning", metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-    payload: dict[str, Any] = {"code": code, "severity": severity, "message": message}
-    if metadata:
-        payload["metadata"] = metadata
-    return payload
-
-
 
 class BacktestService:
     def __init__(
@@ -173,7 +163,7 @@ class BacktestService:
                 "dividend_yield": float(request.dividend_yield) if request.dividend_yield is not None else 0.0,
             },
             idempotency_key=request.idempotency_key,
-            warnings_json=self._build_user_warnings(request, resolved_risk_free_rate=self._resolve_request_risk_free_rate(request)),
+            warnings_json=build_user_warnings(request, resolved_risk_free_rate=self._resolve_request_risk_free_rate(request)),
             engine_version=DEFAULT_ENGINE_VERSION,
             data_source="massive",
             trade_count=0,
@@ -713,7 +703,7 @@ class BacktestService:
     def _apply_execution_result(self, run: BacktestRun, execution_result: BacktestExecutionResult) -> None:
         summary = execution_result.summary
 
-        run.warnings_json = self._merge_warnings(run.warnings_json, execution_result.warnings)
+        run.warnings_json = merge_warnings(run.warnings_json, execution_result.warnings)
         run.trade_count = summary.trade_count
         run.win_rate = to_decimal(summary.win_rate) or Decimal("0")
         run.total_roi_pct = to_decimal(summary.total_roi_pct) or Decimal("0")
@@ -907,7 +897,7 @@ class BacktestService:
             created_at=run.created_at,
             started_at=run.started_at,
             completed_at=run.completed_at,
-            warnings=self._merge_warnings(run.warnings_json),
+            warnings=merge_warnings(run.warnings_json),
             error_code=run.error_code,
             error_message=run.error_message,
             summary=self._summary_response(run, trades=trades),

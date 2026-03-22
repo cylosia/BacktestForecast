@@ -4,8 +4,8 @@ from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
+from backtestforecast.backtests.run_warnings import build_user_warnings
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
-from backtestforecast.services.backtests import BacktestService
 
 
 def _request(strategy_type: str = "naked_call", risk_free_rate: Decimal | None = None) -> CreateBacktestRunRequest:
@@ -27,10 +27,9 @@ def _request(strategy_type: str = "naked_call", risk_free_rate: Decimal | None =
 
 def test_build_user_warnings_includes_naked_option_and_static_rfr(monkeypatch) -> None:
     settings = SimpleNamespace(risk_free_rate=0.045)
-    monkeypatch.setattr("backtestforecast.services.backtests.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.backtests.run_warnings.get_settings", lambda: settings)
 
-    service = BacktestService(session=None)  # type: ignore[arg-type]
-    warnings = service._build_user_warnings(_request())
+    warnings = build_user_warnings(_request())
     codes = {warning["code"] for warning in warnings}
 
     assert "naked_option_margin_only" in codes
@@ -42,9 +41,8 @@ def test_build_user_warnings_includes_naked_option_and_static_rfr(monkeypatch) -
 
 def test_build_user_warnings_skips_static_rfr_when_request_overrides_rate(monkeypatch) -> None:
     settings = SimpleNamespace(risk_free_rate=0.031)
-    monkeypatch.setattr("backtestforecast.services.backtests.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.backtests.run_warnings.get_settings", lambda: settings)
 
-    service = BacktestService(session=None)  # type: ignore[arg-type]
-    warnings = service._build_user_warnings(_request(strategy_type="long_call", risk_free_rate=Decimal("0.02")))
+    warnings = build_user_warnings(_request(strategy_type="long_call", risk_free_rate=Decimal("0.02")))
 
     assert warnings == []

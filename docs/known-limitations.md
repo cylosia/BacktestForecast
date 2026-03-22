@@ -11,10 +11,6 @@
 - `market_date_today()` still relies on a hybrid holiday set: static fallback dates plus dynamically refreshed upstream holidays.
 - Sortino ratio uses a sample-corrected denominator (N-1), so some external tools may differ slightly.
 
-## Frontend / API Contract Notes
-
-The web UI and backend now both support `target_dte >= 1`. Sub-weekly DTE remains a product judgment call, but it is no longer a frontend/backend schema mismatch. Any future restriction should be enforced by both contracts at once.
-
 ## SSE Infrastructure
 
 The SSE stack is live infrastructure: the FastAPI events router, Redis Pub/Sub fanout, and the Next.js proxy route are all active and backtest/scan/sweep pollers use SSE with polling fallback. Operators should treat SSE capacity, buffering, and Redis connection limits as production concerns.
