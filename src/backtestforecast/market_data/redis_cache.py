@@ -16,6 +16,7 @@ logger = structlog.get_logger("market_data.redis_cache")
 
 _KEY_PREFIX = "bff:optcache"
 _FRESHNESS_WARN_SECONDS = 86_400 * 3  # 3 days
+_NEGATIVE_CACHE_TTL_SECONDS = 300
 
 
 class _CacheMiss(Enum):
@@ -153,12 +154,15 @@ class OptionDataRedisCache:
         exp_gte: date,
         exp_lte: date,
         contracts: list[OptionContractRecord],
+        *,
+        ttl_seconds: int | None = None,
     ) -> None:
         try:
             key = _contract_key(symbol, as_of_date, contract_type, exp_gte, exp_lte)
             pipe = self._conn().pipeline(transaction=False)
-            pipe.set(key, _serialize_contracts(contracts), ex=self._ttl)
-            pipe.set(f"{key}:ts", str(int(time.time())), ex=self._ttl)
+            ttl = ttl_seconds if ttl_seconds is not None else self._ttl
+            pipe.set(key, _serialize_contracts(contracts), ex=ttl)
+            pipe.set(f"{key}:ts", str(int(time.time())), ex=ttl)
             pipe.execute()
             self.track_symbol_write(symbol, cache_key=key)
         except Exception:
@@ -191,12 +195,15 @@ class OptionDataRedisCache:
         option_ticker: str,
         trade_date: date,
         quote: OptionQuoteRecord | None,
+        *,
+        ttl_seconds: int | None = None,
     ) -> None:
         try:
             key = _quote_key(option_ticker, trade_date)
             pipe = self._conn().pipeline(transaction=False)
-            pipe.set(key, _serialize_quote(quote), ex=self._ttl)
-            pipe.set(f"{key}:ts", str(int(time.time())), ex=self._ttl)
+            ttl = ttl_seconds if ttl_seconds is not None else self._ttl
+            pipe.set(key, _serialize_quote(quote), ex=ttl)
+            pipe.set(f"{key}:ts", str(int(time.time())), ex=ttl)
             pipe.execute()
             if ":" in option_ticker:
                 symbol = option_ticker.split(":")[0]

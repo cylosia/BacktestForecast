@@ -70,6 +70,7 @@ export interface BacktestFormValues {
   supportResistanceEnabled: boolean;
   supportResistanceMode: string;
   supportResistancePeriod: string;
+  calendarContractType: "call" | "put";
 }
 
 export type BacktestFormErrors = Partial<Record<keyof BacktestFormValues | "form", string>>;
@@ -164,6 +165,7 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     supportResistanceEnabled: false,
     supportResistanceMode: "near_support",
     supportResistancePeriod: "20",
+    calendarContractType: "call",
   };
 }
 
@@ -367,6 +369,9 @@ export function validateBacktestForm(values: BacktestFormValues): {
     if (!isFiniteNumber(values.macdSignalPeriod) || mSignal < 2 || mSignal > 100) {
       errors.macdSignalPeriod = "MACD signal period must be between 2 and 100.";
     }
+    if (!errors.macdFastPeriod && !errors.macdSlowPeriod && Number.isFinite(mFast) && Number.isFinite(mSlow) && mFast >= mSlow) {
+      errors.macdSlowPeriod = "MACD slow period must be greater than fast period.";
+    }
     if (!errors.macdFastPeriod && !errors.macdSlowPeriod && !errors.macdSignalPeriod) {
       entryRules.push({
         type: "macd",
@@ -391,7 +396,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
       entryRules.push({
         type: "bollinger_bands",
         period: bPeriod,
-        num_std_dev: bStdDev,
+        standard_deviations: bStdDev,
         band: values.bollingerBand,
         operator: values.bollingerOperator,
       } as any);
@@ -420,6 +425,9 @@ export function validateBacktestForm(values: BacktestFormValues): {
     }
     if (!isFiniteNumber(values.avoidEarningsDaysAfter) || daysAfter < 0 || daysAfter > 30) {
       errors.avoidEarningsDaysAfter = "Days after must be between 0 and 30.";
+    }
+    if (!errors.avoidEarningsDaysBefore && !errors.avoidEarningsDaysAfter && daysBefore === 0 && daysAfter === 0) {
+      errors.avoidEarningsDaysAfter = "At least one earnings buffer must be greater than 0.";
     }
     if (!errors.avoidEarningsDaysBefore && !errors.avoidEarningsDaysAfter) {
       entryRules.push({
@@ -522,6 +530,11 @@ export function validateBacktestForm(values: BacktestFormValues): {
     entry_rules: entryRules,
     slippage_pct: slippage,
   };
+  if (values.strategyType === "calendar_spread" && values.calendarContractType === "put") {
+    payload.strategy_overrides = {
+      calendar_contract_type: "put",
+    };
+  }
   if (values.profitTargetEnabled) {
     payload.profit_target_pct = parseNumber(values.profitTargetPct);
   }

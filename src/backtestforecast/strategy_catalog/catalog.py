@@ -222,8 +222,8 @@ _register(
     ),
     StrategyCatalogEntry(
         strategy_type=StrategyType.CALENDAR_SPREAD.value,
-        label="Call Calendar Spread",
-        short_description="Sell a near-term option and buy a longer-term option at the same strike.",
+        label="Calendar Spread",
+        short_description="Sell a near-term call or put and buy a longer-term contract at the same strike.",
         category=StrategyCategory.MULTI_LEG,
         bias=StrategyBias.NEUTRAL,
         leg_count=2,

@@ -129,3 +129,8 @@ class ExportJobRepository:
             .with_for_update(skip_locked=True)
         )
         return list(self.session.scalars(stmt))
+
+
+    def get_content_bytes_for_user(self, export_job_id: UUID, user_id: UUID) -> bytes | None:
+        stmt = select(ExportJob.content_bytes).where(ExportJob.id == export_job_id, ExportJob.user_id == user_id)
+        return self.session.scalar(stmt)

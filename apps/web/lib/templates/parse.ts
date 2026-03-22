@@ -63,6 +63,7 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
     volumeSpikeEnabled: false,
     supportResistanceEnabled: false,
     avoidEarningsEnabled: false,
+    calendarContractType: typed.strategy_overrides?.calendar_contract_type === "put" ? "put" : "call",
   };
 
   if (typed.default_symbol) {

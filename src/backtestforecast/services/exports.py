@@ -657,17 +657,13 @@ class ExportService:
         ip_address: str | None = None,
     ) -> ExportJob:
         use_db_content = isinstance(self._storage, DatabaseStorage)
-        export_job = self.exports.get_for_user(
-            export_job_id, user.id, include_content=use_db_content,
-        )
+        export_job = self.exports.get_for_user(export_job_id, user.id, include_content=False)
         if export_job is None:
             raise NotFoundError("Export not found.")
         if export_job.status != "succeeded":
             raise NotFoundError("Export content is not available.")
         if export_job.expires_at is not None and export_job.expires_at < datetime.now(UTC):
             raise NotFoundError("Export has expired.")
-        if use_db_content and export_job.content_bytes is None:
-            raise NotFoundError("Export content is not available.")
         if not use_db_content and not export_job.storage_key:
             raise NotFoundError("Export content is not available.")
         # Audit event is recorded before the response streams.  This is
@@ -1045,3 +1041,10 @@ class ExportService:
             completed_at=job.completed_at,
             expires_at=job.expires_at,
         )
+
+
+    def get_db_content_bytes_for_download(self, user: User, export_job_id: UUID) -> bytes:
+        content = self.exports.get_content_bytes_for_user(export_job_id, user.id)
+        if content is None:
+            raise NotFoundError("Export content is not available.")
+        return content

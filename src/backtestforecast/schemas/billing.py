@@ -9,6 +9,31 @@ from backtestforecast.billing.entitlements import BillingInterval
 from backtestforecast.schemas.common import PlanTier, sanitize_error_message
 
 
+
+
+class PricingIntervalResponse(BaseModel):
+    price_id: str | None = None
+    unit_amount_usd: int | None = Field(default=None, ge=0)
+    display_price: str
+    available: bool
+
+
+class PricingPlanResponse(BaseModel):
+    tier: PlanTier
+    title: str
+    headline: str
+    description: str
+    features: list[str]
+    monthly: PricingIntervalResponse | None = None
+    yearly: PricingIntervalResponse | None = None
+
+
+class PricingContractResponse(BaseModel):
+    currency: str = "USD"
+    checkout_authoritative: bool = True
+    plans: list[PricingPlanResponse]
+
+
 class CreateCheckoutSessionRequest(BaseModel):
     model_config = {"extra": "forbid"}
     tier: Literal[PlanTier.PRO.value, PlanTier.PREMIUM.value]

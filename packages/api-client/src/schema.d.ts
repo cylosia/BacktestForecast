@@ -2638,6 +2638,8 @@ export interface components {
          *     that don't apply to them (e.g., a long call ignores ``short_call_strike``).
          */
         StrategyOverrides: {
+            /** @description Override the option type used by calendar_spread. Defaults to 'call'. */
+            calendar_contract_type?: "call" | "put" | null;
             /** @description Override long call placement (for diagonals, PMCC) */
             long_call_strike?: components["schemas"]["StrikeSelection"] | null;
             /** @description Override long put placement */
@@ -2905,6 +2907,7 @@ export interface components {
             max_holding_days: number;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: number | string;
+            strategy_overrides?: components["schemas"]["StrategyOverrides"] | null;
             strategy_type: components["schemas"]["StrategyType"];
             /** Target Dte */
             target_dte: number;
@@ -2931,6 +2934,7 @@ export interface components {
             max_holding_days: number;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: string;
+            strategy_overrides?: components["schemas"]["StrategyOverrides"] | null;
             strategy_type: components["schemas"]["StrategyType"];
             /** Target Dte */
             target_dte: number;

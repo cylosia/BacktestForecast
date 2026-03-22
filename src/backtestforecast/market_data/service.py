@@ -68,6 +68,9 @@ class MassiveOptionGateway:
         self._iv_cache: OrderedDict[tuple[str, date], float | None] = OrderedDict()
         self._chain_snapshot_loaded: bool = False
         self._lock = threading.RLock()
+        self._contracts_inflight: dict[tuple[date, str, int, int], threading.Event] = {}
+        self._quotes_inflight: dict[tuple[str, date], threading.Event] = {}
+        self._inflight_errors: dict[tuple[str, object], tuple[Exception, float]] = {}
         self._tracked_entries = 0
         self._ex_dividend_dates: set[date] = set()
 
@@ -140,37 +143,75 @@ class MassiveOptionGateway:
             if contracts is not None:
                 self._contract_cache.move_to_end(cache_key)
                 return contracts
+            inflight_event = self._contracts_inflight.get(cache_key)
+            if inflight_event is None:
+                inflight_event = threading.Event()
+                self._contracts_inflight[cache_key] = inflight_event
+                am_fetcher = True
+            else:
+                am_fetcher = False
+
+        if not am_fetcher:
+            inflight_event.wait(timeout=30)
+            with self._lock:
+                contracts = self._contract_cache.get(cache_key)
+                if contracts is not None:
+                    self._contract_cache.move_to_end(cache_key)
+                    return contracts
+                error = self._inflight_errors.get(("contracts", cache_key))
+            if error is not None:
+                raise error[0]
 
         expiration_gte = entry_date + timedelta(days=max(1, target_dte - dte_tolerance_days))
         expiration_lte = entry_date + timedelta(days=target_dte + dte_tolerance_days)
 
-        if self._redis_cache is not None:
-            cached = self._redis_cache.get_contracts(
-                self.symbol, entry_date, contract_type, expiration_gte, expiration_lte,
-            )
-            if cached is not None:
-                MARKET_DATA_CACHE_HITS.labels(cache_type="contracts").inc()
-                contracts = [c for c in cached if c.shares_per_contract == 100]
-                self._store_contracts_in_memory(cache_key, contracts)
-                return contracts
-            MARKET_DATA_CACHE_MISSES.labels(cache_type="contracts").inc()
+        try:
+            if self._redis_cache is not None:
+                cached = self._redis_cache.get_contracts(
+                    self.symbol, entry_date, contract_type, expiration_gte, expiration_lte,
+                )
+                if cached is not None:
+                    MARKET_DATA_CACHE_HITS.labels(cache_type="contracts").inc()
+                    contracts = [c for c in cached if c.shares_per_contract == 100]
+                    self._store_contracts_in_memory(cache_key, contracts)
+                    return contracts
+                MARKET_DATA_CACHE_MISSES.labels(cache_type="contracts").inc()
 
-        contracts = self.client.list_option_contracts(
-            symbol=self.symbol,
-            as_of_date=entry_date,
-            contract_type=contract_type,
-            expiration_gte=expiration_gte,
-            expiration_lte=expiration_lte,
-        )
-
-        if self._redis_cache is not None:
-            self._redis_cache.set_contracts(
-                self.symbol, entry_date, contract_type, expiration_gte, expiration_lte, contracts,
+            contracts = self.client.list_option_contracts(
+                symbol=self.symbol,
+                as_of_date=entry_date,
+                contract_type=contract_type,
+                expiration_gte=expiration_gte,
+                expiration_lte=expiration_lte,
             )
 
-        contracts = [contract for contract in contracts if contract.shares_per_contract == 100]
-        self._store_contracts_in_memory(cache_key, contracts)
-        return contracts
+            contracts = [contract for contract in contracts if contract.shares_per_contract == 100]
+
+            if self._redis_cache is not None:
+                from backtestforecast.market_data.redis_cache import _NEGATIVE_CACHE_TTL_SECONDS
+
+                self._redis_cache.set_contracts(
+                    self.symbol,
+                    entry_date,
+                    contract_type,
+                    expiration_gte,
+                    expiration_lte,
+                    contracts,
+                    ttl_seconds=_NEGATIVE_CACHE_TTL_SECONDS if not contracts else None,
+                )
+
+            self._store_contracts_in_memory(cache_key, contracts)
+            with self._lock:
+                self._inflight_errors.pop(("contracts", cache_key), None)
+            return contracts
+        except Exception as exc:
+            with self._lock:
+                self._inflight_errors[("contracts", cache_key)] = (exc, time.monotonic())
+            raise
+        finally:
+            with self._lock:
+                self._contracts_inflight.pop(cache_key, None)
+                inflight_event.set()
 
     def _store_contracts_in_memory(
         self,
@@ -194,23 +235,58 @@ class MassiveOptionGateway:
             if cache_key in self._quote_cache:
                 self._quote_cache.move_to_end(cache_key)
                 return self._quote_cache[cache_key]
+            inflight_event = self._quotes_inflight.get(cache_key)
+            if inflight_event is None:
+                inflight_event = threading.Event()
+                self._quotes_inflight[cache_key] = inflight_event
+                am_fetcher = True
+            else:
+                am_fetcher = False
 
-        if self._redis_cache is not None:
-            from backtestforecast.market_data.redis_cache import CACHE_MISS
-            redis_result = self._redis_cache.get_quote(option_ticker, trade_date)
-            if redis_result is not CACHE_MISS:
-                MARKET_DATA_CACHE_HITS.labels(cache_type="quotes").inc()
-                self._store_quote_in_memory(cache_key, redis_result)
-                return redis_result
-            MARKET_DATA_CACHE_MISSES.labels(cache_type="quotes").inc()
+        if not am_fetcher:
+            inflight_event.wait(timeout=30)
+            with self._lock:
+                if cache_key in self._quote_cache:
+                    self._quote_cache.move_to_end(cache_key)
+                    return self._quote_cache[cache_key]
+                error = self._inflight_errors.get(("quotes", cache_key))
+            if error is not None:
+                raise error[0]
 
-        quote = self.client.get_option_quote_for_date(option_ticker, trade_date)
+        try:
+            if self._redis_cache is not None:
+                from backtestforecast.market_data.redis_cache import CACHE_MISS
+                redis_result = self._redis_cache.get_quote(option_ticker, trade_date)
+                if redis_result is not CACHE_MISS:
+                    MARKET_DATA_CACHE_HITS.labels(cache_type="quotes").inc()
+                    self._store_quote_in_memory(cache_key, redis_result)
+                    return redis_result
+                MARKET_DATA_CACHE_MISSES.labels(cache_type="quotes").inc()
 
-        if self._redis_cache is not None:
-            self._redis_cache.set_quote(option_ticker, trade_date, quote)
+            quote = self.client.get_option_quote_for_date(option_ticker, trade_date)
 
-        self._store_quote_in_memory(cache_key, quote)
-        return quote
+            if self._redis_cache is not None:
+                from backtestforecast.market_data.redis_cache import _NEGATIVE_CACHE_TTL_SECONDS
+
+                self._redis_cache.set_quote(
+                    option_ticker,
+                    trade_date,
+                    quote,
+                    ttl_seconds=_NEGATIVE_CACHE_TTL_SECONDS if quote is None else None,
+                )
+
+            self._store_quote_in_memory(cache_key, quote)
+            with self._lock:
+                self._inflight_errors.pop(("quotes", cache_key), None)
+            return quote
+        except Exception as exc:
+            with self._lock:
+                self._inflight_errors[("quotes", cache_key)] = (exc, time.monotonic())
+            raise
+        finally:
+            with self._lock:
+                self._quotes_inflight.pop(cache_key, None)
+                inflight_event.set()
 
     def set_ex_dividend_dates(self, ex_dividend_dates: set[date]) -> None:
         self._ex_dividend_dates = set(ex_dividend_dates)

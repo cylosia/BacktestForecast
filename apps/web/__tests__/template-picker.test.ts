@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
+import type { TemplateResponse } from "@backtestforecast/api-client";
+import { formValuesToTemplateConfig } from "@/lib/templates/format";
+import { getDefaultBacktestFormValues } from "@/lib/backtests/validation";
 import {
   templateToFormValues,
   isValidTemplateConfig,
 } from "@/lib/templates/parse";
-import type { TemplateResponse } from "@backtestforecast/api-client";
 
 const VALID_TEMPLATE: TemplateResponse = {
   id: "tmpl-1",
@@ -138,9 +140,60 @@ describe("templateToFormValues", () => {
     expect(patch!.avoidEarningsEnabled).toBe(true);
   });
 
+  it("rehydrates put calendar template overrides", () => {
+    const template: TemplateResponse = {
+      ...VALID_TEMPLATE,
+      strategy_type: "calendar_spread",
+      config: {
+        ...VALID_TEMPLATE.config,
+        strategy_type: "calendar_spread",
+        strategy_overrides: {
+          calendar_contract_type: "put",
+        },
+      },
+    };
+    const patch = templateToFormValues(template);
+    expect(patch).not.toBeNull();
+    expect(patch!.strategyType).toBe("calendar_spread");
+    expect(patch!.calendarContractType).toBe("put");
+  });
+
   it("returns null for a template with invalid config", () => {
     const bad = { ...VALID_TEMPLATE, config: {} as never };
     const patch = templateToFormValues(bad);
     expect(patch).toBeNull();
+  });
+});
+
+describe("formValuesToTemplateConfig", () => {
+  it("preserves non-RSI rules and calendar overrides when saving templates", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      strategyType: "calendar_spread" as const,
+      calendarContractType: "put" as const,
+      rsiEnabled: false,
+      macdEnabled: true,
+      bollingerEnabled: true,
+      ivRankEnabled: true,
+      ivPercentileEnabled: true,
+      volumeSpikeEnabled: true,
+      supportResistanceEnabled: true,
+      avoidEarningsEnabled: true,
+    };
+
+    const config = formValuesToTemplateConfig(values);
+
+    expect(config.strategy_overrides).toEqual({ calendar_contract_type: "put" });
+    expect(config.entry_rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "macd", fast_period: 12, slow_period: 26, signal_period: 9 }),
+        expect.objectContaining({ type: "bollinger_bands", standard_deviations: 2 }),
+        expect.objectContaining({ type: "iv_rank", threshold: 50 }),
+        expect.objectContaining({ type: "iv_percentile", threshold: 50 }),
+        expect.objectContaining({ type: "volume_spike", lookback_period: 20 }),
+        expect.objectContaining({ type: "support_resistance", mode: "near_support", lookback_period: 20 }),
+        expect.objectContaining({ type: "avoid_earnings", days_before: 3, days_after: 1 }),
+      ]),
+    );
   });
 });
