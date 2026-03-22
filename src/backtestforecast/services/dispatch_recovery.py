@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session
 
 from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.models import BacktestRun, ExportJob, OutboxMessage, ScannerJob, SweepJob, SymbolAnalysis
-from backtestforecast.observability.metrics import ORPHAN_DETECTIONS_TOTAL
+from backtestforecast.observability.metrics import (
+    IDEMPOTENT_DUPLICATE_RETURNS_TOTAL,
+    ORPHAN_DETECTIONS_TOTAL,
+    STALE_QUEUED_DUPLICATE_RETURNS_TOTAL,
+)
 
 UTC = timezone.utc
 _STALE_QUEUED_REUSE_AFTER = timedelta(minutes=15)
@@ -172,14 +176,18 @@ def redispatch_if_stale_queued(
     """
     created_at = getattr(job, "created_at", None)
     if getattr(job, "status", None) != "queued" or created_at is None:
+        IDEMPOTENT_DUPLICATE_RETURNS_TOTAL.labels(model=model_name, status=str(getattr(job, "status", "unknown"))).inc()
         return job
     if getattr(created_at, "tzinfo", None) is None:
         created_at = created_at.replace(tzinfo=UTC)
 
     now = datetime.now(UTC)
     if created_at >= now - _STALE_QUEUED_REUSE_AFTER:
+        IDEMPOTENT_DUPLICATE_RETURNS_TOTAL.labels(model=model_name, status="queued").inc()
         return job
 
+    IDEMPOTENT_DUPLICATE_RETURNS_TOTAL.labels(model=model_name, status="queued").inc()
+    STALE_QUEUED_DUPLICATE_RETURNS_TOTAL.labels(model=model_name).inc()
     ORPHAN_DETECTIONS_TOTAL.labels(kind="queued_job", source="idempotency_reuse", model=model_name).inc()
     logger.warning(
         "dispatch.stale_queued_job_reused",

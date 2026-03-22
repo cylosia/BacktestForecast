@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { AnalysisListResponse } from "@backtestforecast/api-client";
 import { formatDateTime } from "@/lib/backtests/format";
 import { Badge } from "@/components/ui/badge";
@@ -48,7 +49,11 @@ export function AnalysisHistory({ data }: { data: AnalysisListResponse }) {
           <TableBody>
             {data.items.map((item) => (
               <TableRow key={item.id}>
-                <TableCell className="font-medium">{item.symbol}</TableCell>
+                <TableCell className="font-medium">
+                  <Link href={`/app/analysis/${item.id}`} className="underline underline-offset-2 hover:text-primary">
+                    {item.symbol}
+                  </Link>
+                </TableCell>
                 <TableCell>
                   <Badge variant={statusVariant(item.status)}>
                     {item.status}

@@ -98,6 +98,18 @@ ORPHAN_DETECTIONS_TOTAL = Counter(
     ["kind", "source", "model"],
 )
 
+IDEMPOTENT_DUPLICATE_RETURNS_TOTAL = Counter(
+    "idempotent_duplicate_returns_total",
+    "Duplicate/idempotent create requests that returned an existing job",
+    ["model", "status"],
+)
+
+STALE_QUEUED_DUPLICATE_RETURNS_TOTAL = Counter(
+    "stale_queued_duplicate_returns_total",
+    "Duplicate/idempotent create requests that hit a stale queued job and triggered repair logic",
+    ["model"],
+)
+
 DUPLICATE_NIGHTLY_RUNS_TOTAL = Counter(
     "duplicate_nightly_runs_total",
     "Nightly pipeline runs rejected as duplicates for an already-succeeded trade_date",

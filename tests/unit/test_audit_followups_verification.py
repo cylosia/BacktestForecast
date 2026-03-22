@@ -87,3 +87,48 @@ def test_reconciliation_and_support_tooling_exist_for_stranded_jobs() -> None:
     script_source = _read("scripts/repair_stranded_jobs.py")
     assert "--action" in script_source
     assert "repair_stranded_jobs(" in script_source
+
+
+def test_duplicate_return_metrics_and_alert_docs_exist() -> None:
+    metrics_source = _read("src/backtestforecast/observability/metrics.py")
+    assert "idempotent_duplicate_returns_total" in metrics_source
+    assert "stale_queued_duplicate_returns_total" in metrics_source
+
+    recovery_source = _read("src/backtestforecast/services/dispatch_recovery.py")
+    assert "IDEMPOTENT_DUPLICATE_RETURNS_TOTAL" in recovery_source
+    assert "STALE_QUEUED_DUPLICATE_RETURNS_TOTAL" in recovery_source
+
+    monitoring_source = _read("docs/monitoring-alerting.md")
+    assert "stale_queued_duplicate_returns_total" in monitoring_source
+    assert 'idempotent_duplicate_returns_total{status="queued"}' in monitoring_source
+
+
+def test_daily_picks_and_server_fetch_helpers_keep_pagination_and_shared_token_cache() -> None:
+    daily_picks_source = _read("apps/web/app/app/daily-picks/page.tsx")
+    assert 'cursorParamName="next_cursor"' in daily_picks_source
+    assert "PaginationControls" in daily_picks_source
+
+    api_source = _read("apps/web/lib/api/server.ts")
+    assert "const getServerToken = cache(async" in api_source
+    assert "return loadCurrentUser(await getServerToken())" in api_source
+    assert "export const getAnalysisDetail = cache(async" in api_source
+
+
+def test_analysis_history_links_to_detail_page() -> None:
+    history_source = _read("apps/web/components/analysis/analysis-history.tsx")
+    assert 'href={`/app/analysis/${item.id}`}' in history_source
+
+    detail_page_source = _read("apps/web/app/app/analysis/[analysisId]/page.tsx")
+    assert "getAnalysisDetail" in detail_page_source
+    assert "Top configurations" in detail_page_source
+
+
+def test_frontend_pollers_explain_stale_or_repairing_queue_states() -> None:
+    for relpath in (
+        "apps/web/components/backtests/backtest-run-poller.tsx",
+        "apps/web/components/scanner/scanner-job-poller.tsx",
+        "apps/web/components/sweeps/sweep-job-poller.tsx",
+    ):
+        source = _read(relpath)
+        assert "dispatch_stuck" in source
+        assert "dispatch_delayed" in source

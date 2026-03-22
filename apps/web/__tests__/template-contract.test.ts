@@ -52,4 +52,43 @@ describe("template response contract", () => {
       }),
     ).toThrow(/items\[0\]/i);
   });
+
+  it("uses the typed config field and rejects legacy-only payloads", () => {
+    expect(() =>
+      validateTemplateResponse({
+        ...TEMPLATE,
+        config: undefined,
+        config_json: TEMPLATE.config,
+      }),
+    ).toThrow(/template\.config/i);
+  });
+
+  it("matches the expected template contract snapshot", () => {
+    expect({
+      templateKeys: Object.keys(TEMPLATE).sort(),
+      configKeys: Object.keys(TEMPLATE.config).sort(),
+    }).toMatchInlineSnapshot(`
+      {
+        "configKeys": [
+          "account_size",
+          "commission_per_contract",
+          "dte_tolerance_days",
+          "entry_rules",
+          "max_holding_days",
+          "risk_per_trade_pct",
+          "strategy_type",
+          "target_dte",
+        ],
+        "templateKeys": [
+          "config",
+          "created_at",
+          "description",
+          "id",
+          "name",
+          "strategy_type",
+          "updated_at",
+        ],
+      }
+    `);
+  });
 });

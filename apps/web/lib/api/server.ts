@@ -4,6 +4,7 @@ import { apiRequest, validatedApiRequest } from "@/lib/api/shared";
 import { buildCursorPaginatedPath, buildPaginatedListPath } from "@/lib/api/pagination";
 import { validateTemplateListResponse } from "@/lib/templates/contracts";
 import type {
+  AnalysisDetailResponse,
   AnalysisListResponse,
   BacktestRunDetailResponse,
   BacktestRunListResponse,
@@ -159,6 +160,11 @@ export const getAnalysisHistory = cache(async (limit = 10, offset = 0, cursor?: 
     token,
     { cache: "no-store" },
   );
+});
+
+export const getAnalysisDetail = cache(async (analysisId: string): Promise<AnalysisDetailResponse> => {
+  const token = await getServerToken();
+  return apiRequest<AnalysisDetailResponse>(`/v1/analysis/${encodeURIComponent(analysisId)}`, token, { cache: "no-store" });
 });
 
 export const getDailyPicksHistory = cache(async (limit = 10, cursor?: string | null) => {
