@@ -6,14 +6,10 @@
 - The scanner still relies on deterministic ranking heuristics rather than a learned ranking model.
 - The strategy catalog is served from an in-process Python module; a more dynamic catalog with user-configurable parameters may follow.
 - `slippage_pct` is now configurable via the backtest request payload; historical runs created before that rollout still reflect zero slippage.
-- Naked option positions (naked calls/puts) are sized by margin requirement only and still understate tail risk.
-- `RISK_FREE_RATE` is a static environment variable (default 0.045), so Sharpe/Sortino calculations are not date-sensitive.
+- Naked option positions (naked calls/puts) are still collateral-sized by margin requirement, not by worst-case stress loss. API payloads now emit explicit `naked_option_margin_only` warnings, but users should still treat those runs as economically aggressive and apply separate stress-loss sizing limits outside the current model.
+- Sharpe/Sortino payloads now surface an explicit `configured_static_risk_free_rate` warning whenever the request relies on the server-configured risk-free rate. The configured rate is mechanically consistent inside a run, but it is still not a Treasury series dynamically matched to the historical window.
 - `market_date_today()` still relies on a hybrid holiday set: static fallback dates plus dynamically refreshed upstream holidays.
 - Sortino ratio uses a sample-corrected denominator (N-1), so some external tools may differ slightly.
-
-## Frontend / API Contract Notes
-
-The web UI and backend now both support `target_dte >= 1`. Sub-weekly DTE remains a product judgment call, but it is no longer a frontend/backend schema mismatch. Any future restriction should be enforced by both contracts at once.
 
 ## SSE Infrastructure
 
@@ -42,3 +38,9 @@ Some migrations still include destructive downgrade paths. Prefer forward-fixing
 ## Genetic Sweep Convergence
 
 Genetic sweeps with degenerate parameter spaces can still terminate at `max_generations` without strong convergence, and long-running sweep workloads can still starve other queues without dedicated worker isolation.
+
+## Deployment Validation and Redis Topology
+
+CI now runs lightweight load-test contract checks, and CD can run staged authenticated smoke workflows plus a short Locust run when staging tokens are configured. That still depends on operators wiring the staging secrets/variables; health-only deploy verification should no longer be treated as sufficient evidence of workflow safety.
+
+`docker-compose.prod.yml` remains safe only for single-host/private-network Redis traffic. If Redis leaves that boundary, switch to the TLS-ready `docker-compose.prod.tls.yml` override plus `infra/redis/redis.tls.conf`, and treat `rediss://` URLs and certificate mounts as mandatory rather than optional hardening.
