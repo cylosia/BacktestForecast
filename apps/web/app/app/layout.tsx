@@ -3,10 +3,6 @@ import { UserButton } from "@clerk/nextjs";
 import { Activity, BarChart3, Bookmark, CreditCard, GitBranch, History, Microscope, PlusCircle, ScanSearch, TrendingUp, Zap } from "lucide-react";
 import { AppNavLink } from "@/components/app-nav-link";
 import { MobileNav, type NavItem } from "@/components/mobile-nav";
-import { Badge } from "@/components/ui/badge";
-import { getCurrentUser } from "@/lib/api/server";
-import type { PlanTier } from "@backtestforecast/api-client";
-import { planBadgeVariant, planLabel } from "@/lib/plan";
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/app/dashboard", icon: <BarChart3 className="h-4 w-4" />, label: "Dashboard" },
@@ -47,12 +43,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               </Link>
               <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                 <span>Research workspace</span>
-                <Badge
-                  variant={planTier ? planBadgeVariant(planTier) : "outline"}
-                  title={planError ? "Could not load plan info — some features may appear locked" : undefined}
-                >
-                  {planError ? "Error" : planTier ? planLabel(planTier) : "…"}
-                </Badge>
               </div>
             </div>
           </div>
