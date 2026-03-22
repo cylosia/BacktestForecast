@@ -1,0 +1,42 @@
+services:
+  redis:
+    # TLS-ready override for any deployment where Redis traffic leaves a single
+    # private Docker host/network boundary. Use together with docker-compose.prod.yml.
+    ports:
+      - "127.0.0.1:${REDIS_TLS_PORT:-6380}:6380"
+    volumes:
+      - ./infra/redis/redis.tls.conf:/usr/local/etc/redis/redis.conf:ro
+      - ${REDIS_TLS_CERT_FILE:?set REDIS_TLS_CERT_FILE}:/run/secrets/redis.crt:ro
+      - ${REDIS_TLS_KEY_FILE:?set REDIS_TLS_KEY_FILE}:/run/secrets/redis.key:ro
+      - ${REDIS_TLS_CA_FILE:?set REDIS_TLS_CA_FILE}:/run/secrets/redis-ca.crt:ro
+    command:
+      - sh
+      - -c
+      - |
+        cat >/tmp/redis.conf <<'EOF'
+        requirepass ${REDIS_PASSWORD}
+        EOF
+        cat /usr/local/etc/redis/redis.conf >> /tmp/redis.conf
+        redis-server /tmp/redis.conf
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --tls --cacert /run/secrets/redis-ca.crt --cert /run/secrets/redis.crt --key /run/secrets/redis.key -a \"$REDIS_PASSWORD\" --no-auth-warning -p 6380 ping"]
+
+  api:
+    environment:
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL to rediss://...}
+      REDIS_CACHE_URL: ${REDIS_CACHE_URL:-${REDIS_URL}}
+
+  worker:
+    environment:
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL to rediss://...}
+      REDIS_CACHE_URL: ${REDIS_CACHE_URL:-${REDIS_URL}}
+
+  worker-maintenance:
+    environment:
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL to rediss://...}
+      REDIS_CACHE_URL: ${REDIS_CACHE_URL:-${REDIS_URL}}
+
+  beat:
+    environment:
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL to rediss://...}
+      REDIS_CACHE_URL: ${REDIS_CACHE_URL:-${REDIS_URL}}

@@ -68,10 +68,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --constraint constraints.txt -e '.[dev]'
 
-      # Load tests (tests/load/) are intended for manual execution against
-      # staging infrastructure. They require a running API server and database.
-      # Run manually via: locust -f tests/load/locustfile.py --headless
-      # See tests/load/README.md for setup instructions.
+      # Load coverage stays lightweight in CI: contract/shape checks run here,
+      # and a short authenticated locust run can run in staging/CD when tokens
+      # are available. See tests/load/locustfile.py for workflow coverage.
 
       - name: Lint Python (ruff)
         run: python -m ruff check .
@@ -121,6 +120,10 @@ jobs:
 
       - name: Python compile smoke check
         run: python -m compileall src apps tests scripts
+
+
+      - name: Load-test contract checks
+        run: pytest -q tests/load/test_compare_load.py tests/load/test_me_rate_limit.py
 
       - name: Critical entrypoint syntax check
         run: |

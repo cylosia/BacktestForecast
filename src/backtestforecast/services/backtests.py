@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time as _time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -11,10 +11,10 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backtestforecast.backtests.run_warnings import build_user_warnings, merge_warnings
 from backtestforecast.backtests.types import BacktestExecutionResult
-from backtestforecast.config import get_settings
-from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.billing.entitlements import POLICIES, ScannerMode, resolve_feature_policy
+from backtestforecast.config import get_settings
 from backtestforecast.errors import (
     AppError,
     AppValidationError,
@@ -24,6 +24,7 @@ from backtestforecast.errors import (
     QuotaExceededError,
 )
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade, User
+from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
@@ -40,23 +41,22 @@ from backtestforecast.schemas.backtests import (
     FeatureAccessResponse,
     UsageSummaryResponse,
 )
-
-UTC = timezone.utc
-from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
+from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
-from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
-from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
-from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
-from backtestforecast.version import DEFAULT_ENGINE_VERSION
+from backtestforecast.services.dispatch_recovery import (
+    get_dispatch_diagnostic,
+    observe_job_create_to_running_latency,
+    redispatch_if_stale_queued,
+)
+from backtestforecast.utils import decode_cursor as _decode_cursor
+from backtestforecast.utils import encode_cursor as _encode_cursor
 from backtestforecast.utils import to_decimal
+from backtestforecast.version import DEFAULT_ENGINE_VERSION
 
 logger = structlog.get_logger("services.backtests")
 
 EQUITY_CURVE_LIMIT = 10_000
-
-from backtestforecast.utils import decode_cursor as _decode_cursor, encode_cursor as _encode_cursor
-
 
 class BacktestService:
     def __init__(
@@ -79,14 +79,20 @@ class BacktestService:
         if self._execution_service is not None:
             self._execution_service.close()
 
-    def __enter__(self) -> "BacktestService":
+    def __enter__(self) -> BacktestService:
         return self
 
     def __exit__(self, *exc: object) -> None:
         self.close()
 
     @staticmethod
+    def _resolve_request_risk_free_rate(request: CreateBacktestRunRequest) -> float:
+        if request.risk_free_rate is not None:
+            return float(request.risk_free_rate)
+        return float(get_settings().risk_free_rate)
+
     def _build_initial_run(
+        self,
         user_id: UUID,
         request: CreateBacktestRunRequest,
         *,
@@ -114,7 +120,7 @@ class BacktestService:
                 "dividend_yield": float(request.dividend_yield) if request.dividend_yield is not None else 0.0,
             },
             idempotency_key=request.idempotency_key,
-            warnings_json=[],
+            warnings_json=build_user_warnings(request, resolved_risk_free_rate=self._resolve_request_risk_free_rate(request)),
             engine_version=DEFAULT_ENGINE_VERSION,
             data_source="massive",
             trade_count=0,
@@ -654,7 +660,7 @@ class BacktestService:
     def _apply_execution_result(self, run: BacktestRun, execution_result: BacktestExecutionResult) -> None:
         summary = execution_result.summary
 
-        run.warnings_json = execution_result.warnings
+        run.warnings_json = merge_warnings(run.warnings_json, execution_result.warnings)
         run.trade_count = summary.trade_count
         run.win_rate = to_decimal(summary.win_rate) or Decimal("0")
         run.total_roi_pct = to_decimal(summary.total_roi_pct) or Decimal("0")
@@ -848,7 +854,7 @@ class BacktestService:
             created_at=run.created_at,
             started_at=run.started_at,
             completed_at=run.completed_at,
-            warnings=run.warnings_json,
+            warnings=merge_warnings(run.warnings_json),
             error_code=run.error_code,
             error_message=run.error_message,
             summary=self._summary_response(run, trades=trades),
