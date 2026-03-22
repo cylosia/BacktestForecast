@@ -11,6 +11,8 @@
 - Scanner queue depth, scanner job age, scan completion latency.
 - Stripe webhook success vs duplicate vs failure counts.
 - Export generation success/failure counts.
+- Idempotent duplicate returns by job status (`idempotent_duplicate_returns_total`).
+- Stale queued duplicate repairs (`stale_queued_duplicate_returns_total`).
 - Provider request latency, retry count, and provider error rate.
 - Redis availability and fallback-to-memory rate limiting count.
 
@@ -19,6 +21,8 @@
 - `/health/ready` degraded for 5+ minutes.
 - Scanner queue oldest job > 10 minutes.
 - Stripe webhook failures > 3 in 15 minutes.
+- `stale_queued_duplicate_returns_total` repeatedly increasing for the same job type over 15 minutes.
+- `idempotent_duplicate_returns_total{status="queued"}` above baseline, indicating users are repeatedly hitting queued duplicates.
 - Massive provider 429/5xx spike above baseline.
 - Export failure rate > 5% in 30 minutes.
 

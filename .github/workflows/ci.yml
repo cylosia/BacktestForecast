@@ -183,6 +183,9 @@ jobs:
       - name: Typecheck web app
         run: pnpm typecheck:web
 
+      - name: Guard against `any` in API-backed app pages
+        run: python scripts/check_no_any_in_app_pages.py
+
       - name: Run web unit tests
         run: pnpm --filter @backtestforecast/web test
 

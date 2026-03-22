@@ -81,9 +81,12 @@ celery_app.conf.task_queues = (
     Queue("pipeline"),
 )
 
+_settings = get_settings()
+
 celery_app.conf.task_routes = {
     "maintenance.ping": {"queue": "maintenance"},
     "maintenance.reap_stale_jobs": {"queue": "maintenance"},
+    "maintenance.reconcile_stranded_jobs": {"queue": "maintenance"},
     "maintenance.reconcile_s3_orphans": {"queue": "maintenance"},
     "backtests.run": {"queue": "research"},
     "scans.run_job": {"queue": "research"},
@@ -115,12 +118,16 @@ celery_app.conf.beat_schedule = {
     # consumes them.
     "nightly-scan-pipeline": {
         "task": "pipeline.nightly_scan",
-        "schedule": crontab(hour=6, minute=0),
+        "schedule": crontab(hour=_settings.daily_picks_pipeline_hour_utc, minute=_settings.daily_picks_pipeline_minute_utc),
         "kwargs": {"max_recommendations": 20},
     },
     "reap-stale-jobs": {
         "task": "maintenance.reap_stale_jobs",
         "schedule": crontab(minute="*/10"),
+    },
+    "reconcile-stranded-jobs": {
+        "task": "maintenance.reconcile_stranded_jobs",
+        "schedule": crontab(minute="*/5"),
     },
     "reconcile-s3-orphans-daily": {
         "task": "maintenance.reconcile_s3_orphans",

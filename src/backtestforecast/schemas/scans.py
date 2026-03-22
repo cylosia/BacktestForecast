@@ -235,8 +235,12 @@ class ScannerJobStatusResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
 class ScannerJobListResponse(BaseModel):

@@ -9,7 +9,7 @@ vi.mock("@/lib/env", () => ({
 }));
 
 import { ApiError } from "@/lib/api/shared";
-import type { PollingStatus, UsePollingOptions } from "@/hooks/use-polling";
+import { runTerminalPollingCallback, type PollingStatus, type UsePollingOptions } from "@/hooks/use-polling";
 
 describe("usePolling maxAttempts boundary (logic)", () => {
   beforeEach(() => {
@@ -130,5 +130,30 @@ describe("usePolling type contract", () => {
     };
     expect(opts.interval).toBe(2000);
     expect(opts.maxAttempts).toBe(30);
+  });
+});
+
+
+describe("usePolling terminal callback separation", () => {
+  it("preserves terminal resource success when onComplete throws", async () => {
+    const onComplete = vi.fn(async () => {
+      throw new Error("refresh failed");
+    });
+    const onError = vi.fn();
+
+    const callbackStatus = await runTerminalPollingCallback({ status: "succeeded" }, onComplete, onError);
+
+    expect(callbackStatus).toBe("failed");
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports callback success after terminal resource success", async () => {
+    const onComplete = vi.fn(async () => {});
+
+    const callbackStatus = await runTerminalPollingCallback({ status: "succeeded" }, onComplete);
+
+    expect(callbackStatus).toBe("succeeded");
+    expect(onComplete).toHaveBeenCalledTimes(1);
   });
 });

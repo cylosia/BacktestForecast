@@ -6,6 +6,7 @@ import io
 import re
 import time as _time
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -25,6 +26,8 @@ from backtestforecast.schemas.exports import CreateExportRequest, ExportJobRespo
 from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("services.exports")
 UTC = timezone.utc
@@ -92,7 +95,17 @@ class ExportService:
         if payload.idempotency_key:
             existing = self.exports.get_by_idempotency_key(user.id, payload.idempotency_key)
             if existing is not None:
-                return existing
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="ExportJob",
+                    task_name="exports.generate",
+                    task_kwargs={"export_job_id": str(existing.id)},
+                    queue="exports",
+                    log_event="export",
+                    logger=logger,
+                    request_id=request_id,
+                )
 
         run = self.backtests.get_lightweight_for_user(payload.run_id, user.id)
         if run is None:
@@ -140,6 +153,39 @@ class ExportService:
                 if existing is not None:
                     return existing
             raise
+        return export_job
+
+    def create_and_dispatch_export(
+        self,
+        user: User,
+        payload: CreateExportRequest,
+        *,
+        request_id: str | None = None,
+        ip_address: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> ExportJob:
+        """Create an export job and persist dispatch state transactionally."""
+        from apps.api.app.dispatch import dispatch_celery_task
+
+        export_job = self.enqueue_export(
+            user,
+            payload,
+            request_id=request_id,
+            ip_address=ip_address,
+        )
+        dispatch_celery_task(
+            db=self.session,
+            job=export_job,
+            task_name="exports.generate",
+            task_kwargs={"export_job_id": str(export_job.id)},
+            queue="exports",
+            log_event="export",
+            logger=dispatch_logger or logger,
+            request_id=request_id,
+            traceparent=traceparent,
+        )
+        self.session.refresh(export_job)
         return export_job
 
     def execute_export_by_id(self, export_job_id: UUID) -> ExportJob:
@@ -926,6 +972,7 @@ class ExportService:
     @staticmethod
     def to_response(job: ExportJob) -> ExportJobResponse:
         effective_status = job.status
+        diagnostic = get_dispatch_diagnostic(job)
         if (
             job.status == "succeeded"
             and job.expires_at is not None
@@ -941,8 +988,8 @@ class ExportService:
             mime_type=job.mime_type,
             size_bytes=job.size_bytes,
             sha256_hex=job.sha256_hex,
-            error_code=job.error_code,
-            error_message=job.error_message,
+            error_code=job.error_code or (diagnostic[0] if diagnostic else None),
+            error_message=job.error_message or (diagnostic[1] if diagnostic else None),
             created_at=job.created_at,
             started_at=job.started_at,
             completed_at=job.completed_at,

@@ -4,12 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/shared";
 
 export type PollingStatus = "idle" | "polling" | "done" | "timeout" | "error";
+export type PollingCallbackStatus = "idle" | "running" | "succeeded" | "failed";
 
 export interface UsePollingOptions<T> {
   /** Async function that fetches the latest state. Receives an AbortSignal. */
   fetcher: (signal: AbortSignal) => Promise<T>;
   /** Called once when `isComplete` returns true. */
-  onComplete: (result: T) => void;
+  onComplete: (result: T) => void | Promise<void>;
   /** Return true when the resource has reached a terminal state. */
   isComplete: (result: T) => boolean;
   /** Milliseconds between polls. */
@@ -24,12 +25,31 @@ export interface UsePollingOptions<T> {
 
 export interface UsePollingReturn {
   status: PollingStatus;
+  /** Status of the terminal UI callback after the resource itself reaches a terminal state. */
+  callbackStatus: PollingCallbackStatus;
   /** Begin (or restart) the polling loop. */
   start: () => void;
   /** Cancel the current polling loop. */
   cancel: () => void;
   /** Number of polls executed so far. */
   attempts: number;
+}
+
+
+export async function runTerminalPollingCallback<T>(
+  result: T,
+  onComplete: (result: T) => void | Promise<void>,
+  onError: (err: unknown) => void = (err) => {
+    console.error("[usePolling] onComplete failed:", err);
+  },
+): Promise<PollingCallbackStatus> {
+  try {
+    await Promise.resolve(onComplete(result));
+    return "succeeded";
+  } catch (err) {
+    onError(err);
+    return "failed";
+  }
 }
 
 /**
@@ -47,6 +67,7 @@ export function usePolling<T>({
   autoStart = false,
 }: UsePollingOptions<T>): UsePollingReturn {
   const [status, setStatus] = useState<PollingStatus>(autoStart ? "polling" : "idle");
+  const [callbackStatus, setCallbackStatus] = useState<PollingCallbackStatus>("idle");
   const [attempts, setAttempts] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -93,14 +114,11 @@ export function usePolling<T>({
       onProgressRef.current?.(result);
 
       if (isCompleteRef.current(result)) {
-        try {
-          await Promise.resolve(onCompleteRef.current(result));
-        } catch (err) {
-          console.error("[usePolling] onComplete failed:", err);
-        } finally {
-          if (mountedRef.current && !controller.signal.aborted) {
-            setStatus("done");
-          }
+        setStatus("done");
+        setCallbackStatus("running");
+        const nextCallbackStatus = await runTerminalPollingCallback(result, onCompleteRef.current);
+        if (mountedRef.current && !controller.signal.aborted) {
+          setCallbackStatus(nextCallbackStatus);
         }
         return;
       }
@@ -137,6 +155,7 @@ export function usePolling<T>({
     attemptsRef.current = 0;
     consecutiveErrorsRef.current = 0;
     setAttempts(0);
+    setCallbackStatus("idle");
     setStatus("polling");
     timerRef.current = setTimeout(poll, 0);
   }, [cancel, poll]);
@@ -156,5 +175,5 @@ export function usePolling<T>({
     };
   }, [autoStart, start, cancel]);
 
-  return { status, start, cancel, attempts };
+  return { status, callbackStatus, start, cancel, attempts };
 }
