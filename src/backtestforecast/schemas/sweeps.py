@@ -20,6 +20,7 @@ from backtestforecast.schemas.backtests import (
 )
 from backtestforecast.schemas.common import PlanTier, RunJobStatus, sanitize_error_message
 from backtestforecast.schemas.scans import RuleSetDefinition
+from backtestforecast.version import DEFAULT_ENGINE_VERSION, ENGINE_VERSION_CHOICES
 
 
 class SweepMode(str, Enum):
@@ -177,7 +178,7 @@ class SweepJobResponse(BaseModel):
     status: SweepJobStatus
     symbol: str
     mode: SweepMode = SweepMode.GRID
-    engine_version: Literal["options-multileg-v1", "options-multileg-v2"] = "options-multileg-v2"
+    engine_version: Literal[ENGINE_VERSION_CHOICES[0], ENGINE_VERSION_CHOICES[1]] = DEFAULT_ENGINE_VERSION
     plan_tier_snapshot: PlanTier
     candidate_count: int
     evaluated_candidate_count: int
