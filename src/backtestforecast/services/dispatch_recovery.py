@@ -19,6 +19,7 @@ from backtestforecast.observability.metrics import (
     QUEUED_JOBS_PAST_DISPATCH_SLA,
     QUEUED_JOBS_WITHOUT_OUTBOX,
 )
+from backtestforecast.services.audit import AuditService
 
 UTC = timezone.utc
 _STALE_QUEUED_REUSE_AFTER = timedelta(minutes=15)
@@ -205,6 +206,7 @@ def repair_stranded_jobs(
     """Find queued jobs with no task claim or outbox row and repair them safely."""
     cutoff = datetime.now(UTC) - older_than
     counts = {"found": 0, "requeued": 0, "failed": 0}
+    audit = AuditService(session)
     for target, job in find_stranded_jobs(session, cutoff=cutoff):
         counts["found"] += 1
         ORPHAN_DETECTIONS_TOTAL.labels(kind="queued_job", source="stranded_reconcile", model=target.model_name).inc()
@@ -224,6 +226,14 @@ def repair_stranded_jobs(
             job.error_message = "Job was stranded in the queue before dispatch and was safely failed."
             job.completed_at = now
             job.updated_at = now
+            audit.record_always(
+                event_type="dispatch.repair_failed",
+                subject_type=target.model_name,
+                subject_id=getattr(job, "id", None),
+                user_id=getattr(job, "user_id", None),
+                request_id=request_id,
+                metadata={"action": action, "traceparent": traceparent},
+            )
             session.commit()
             counts["failed"] += 1
             continue
@@ -239,6 +249,15 @@ def repair_stranded_jobs(
             request_id=request_id,
             traceparent=traceparent,
         )
+        audit.record_always(
+            event_type="dispatch.repaired",
+            subject_type=target.model_name,
+            subject_id=getattr(job, "id", None),
+            user_id=getattr(job, "user_id", None),
+            request_id=request_id,
+            metadata={"action": action, "traceparent": traceparent},
+        )
+        session.commit()
         session.refresh(job)
         counts["requeued"] += 1
     return counts
@@ -284,6 +303,14 @@ def redispatch_if_stale_queued(
         job_id=str(getattr(job, "id", None)),
         created_at=created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
         stale_after_seconds=int(_STALE_QUEUED_REUSE_AFTER.total_seconds()),
+    )
+    AuditService(session).record_always(
+        event_type="dispatch.idempotency_requeued",
+        subject_type=model_name,
+        subject_id=getattr(job, "id", None),
+        user_id=getattr(job, "user_id", None),
+        request_id=request_id,
+        metadata={"traceparent": traceparent, "queue": queue, "task_name": task_name},
     )
 
     model_cls = type(job)

@@ -13,8 +13,13 @@ import re
 import sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-ROOT = Path(__file__).resolve().parents[1]
+from _bootstrap import bootstrap_repo
+
+ROOT = bootstrap_repo(load_web_env=True)
 APP_DIR = ROOT / "apps" / "web" / "app" / "app"
 
 PAGE_GLOBS = ("**/page.tsx",)

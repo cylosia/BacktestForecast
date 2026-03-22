@@ -7,7 +7,7 @@ import re
 import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from sqlalchemy import update as sa_update_top
@@ -188,6 +188,54 @@ class ExportService:
         )
         self.session.refresh(export_job)
         return export_job
+
+    def regenerate_failed_export(
+        self,
+        user: User,
+        export_job_id: UUID,
+        *,
+        request_id: str | None = None,
+        ip_address: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> ExportJob:
+        original = self.exports.get_for_user(export_job_id, user.id)
+        if original is None:
+            raise NotFoundError("Export job not found.")
+        if original.status != "failed":
+            raise ConflictError("Only failed exports can be regenerated.")
+
+        payload = CreateExportRequest.model_validate(
+            {
+                "run_id": original.backtest_run_id,
+                "format": original.export_format,
+                "idempotency_key": f"regen-{original.id}-{uuid4().hex[:12]}",
+            }
+        )
+        regenerated = self.create_and_dispatch_export(
+            user,
+            payload,
+            request_id=request_id,
+            ip_address=ip_address,
+            traceparent=traceparent,
+            dispatch_logger=dispatch_logger,
+        )
+        self.audit.record_always(
+            event_type="export.regenerated",
+            subject_type="export_job",
+            subject_id=regenerated.id,
+            user_id=user.id,
+            request_id=request_id,
+            ip_address=ip_address,
+            metadata={
+                "previous_export_job_id": str(original.id),
+                "run_id": str(original.backtest_run_id),
+                "format": original.export_format,
+            },
+        )
+        self.session.commit()
+        self.session.refresh(regenerated)
+        return regenerated
 
     def execute_export_by_id(self, export_job_id: UUID) -> ExportJob:
         """Generate the export content. Called by the Celery worker."""

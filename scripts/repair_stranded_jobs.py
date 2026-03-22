@@ -2,18 +2,21 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
 import sys
+from datetime import datetime, timedelta, timezone
 
 import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT / "src") not in sys.path:
-    sys.path.insert(0, str(ROOT / "src"))
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _bootstrap import bootstrap_repo
+
+ROOT = bootstrap_repo(load_api_env=True)
 
 from backtestforecast.db.session import create_session
 from backtestforecast.services.dispatch_recovery import DISPATCH_TARGETS, find_stranded_jobs, repair_stranded_jobs
@@ -24,6 +27,13 @@ def main() -> int:
     parser.add_argument("--action", choices=("list", "requeue", "fail"), default="list")
     parser.add_argument("--older-than-minutes", type=int, default=10)
     args = parser.parse_args()
+
+    if "DATABASE_URL" not in os.environ:
+        print(
+            "DATABASE_URL is not set. Auto-loaded .env defaults were insufficient; "
+            "set DATABASE_URL or create apps/api/.env before running this script."
+        )
+        return 2
 
     logger = structlog.get_logger("scripts.repair_stranded_jobs")
     older_than = timedelta(minutes=max(args.older_than_minutes, 1))

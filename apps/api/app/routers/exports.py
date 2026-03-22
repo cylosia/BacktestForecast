@@ -115,6 +115,33 @@ def get_export_status(
         return service.get_export_status(user, export_job_id)
 
 
+@router.post("/{export_job_id}/retry", response_model=ExportJobResponse, status_code=status.HTTP_202_ACCEPTED)
+def retry_failed_export(
+    export_job_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+    metadata=Depends(get_request_metadata),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ExportJobResponse:
+    get_rate_limiter().check(
+        bucket="exports:create",
+        actor_key=str(user.id),
+        limit=settings.export_create_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with ExportService(db) as service:
+        regenerated = service.regenerate_failed_export(
+            user,
+            export_job_id,
+            request_id=metadata.request_id,
+            ip_address=metadata.ip_address,
+            traceparent=request.headers.get("traceparent"),
+            dispatch_logger=logger,
+        )
+        return service.get_export_status(user, regenerated.id)
+
+
 @router.delete("/{export_job_id}", status_code=204)
 def delete_export(
     export_job_id: UUID,
