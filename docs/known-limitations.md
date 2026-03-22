@@ -11,6 +11,12 @@
 - `market_date_today()` still relies on a hybrid holiday set: static fallback dates plus dynamically refreshed upstream holidays.
 - Sortino ratio uses a sample-corrected denominator (N-1), so some external tools may differ slightly.
 
+## Current operational assumptions
+
+`docs/workflow-trace.md` is the authoritative current-state reference for runtime behavior and operator assumptions. Use that page for dispatch, auth, queue, and recovery semantics; keep this document focused on still-open limitations rather than historical architecture drift.
+
+See `docs/README.md` for the split between current operational docs and historical audit archives.
+
 ## SSE Infrastructure
 
 The SSE stack is live infrastructure: the FastAPI events router, Redis Pub/Sub fanout, and the Next.js proxy route are all active and backtest/scan/sweep pollers use SSE with polling fallback. Operators should treat SSE capacity, buffering, and Redis connection limits as production concerns.
