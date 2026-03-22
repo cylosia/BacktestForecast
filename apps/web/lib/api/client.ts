@@ -1,4 +1,5 @@
-import { apiDownload, apiRequest } from "@/lib/api/shared";
+import { apiDownload, apiRequest, validatedApiRequest } from "@/lib/api/shared";
+import { validateTemplateResponse } from "@/lib/templates/contracts";
 import type {
   BacktestRunDetailResponse,
   BacktestRunStatusResponse,
@@ -118,7 +119,7 @@ export async function createTemplate(
   payload: CreateTemplateRequest,
   signal?: AbortSignal,
 ): Promise<TemplateResponse> {
-  return apiRequest<TemplateResponse>("/v1/templates", token, {
+  return validatedApiRequest<TemplateResponse>("/v1/templates", token, validateTemplateResponse, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
@@ -131,11 +132,16 @@ export async function updateTemplate(
   payload: UpdateTemplateRequest,
   signal?: AbortSignal,
 ): Promise<TemplateResponse> {
-  return apiRequest<TemplateResponse>(`/v1/templates/${encodeURIComponent(templateId)}`, token, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-    signal,
-  });
+  return validatedApiRequest<TemplateResponse>(
+    `/v1/templates/${encodeURIComponent(templateId)}`,
+    token,
+    validateTemplateResponse,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+      signal,
+    },
+  );
 }
 
 export async function deleteTemplate(token: string, templateId: string, signal?: AbortSignal): Promise<void> {

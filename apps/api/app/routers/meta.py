@@ -9,14 +9,13 @@ from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api.app.dependencies import _extract_client_ip, get_token_verifier
-from backtestforecast import __version__ as API_VERSION
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_readonly_db
 from backtestforecast.errors import AuthenticationError
 from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
 from backtestforecast.security import get_rate_limiter
-from backtestforecast.version import get_public_version
+from backtestforecast.version import API_SERVICE_NAME, get_public_version
 
 
 class FeatureFlagsResponse(BaseModel):
@@ -36,6 +35,7 @@ class MetaResponse(BaseModel):
     billing_enabled: bool | None = None
     features: FeatureFlagsResponse | None = None
     environment: str | None = None
+    daily_picks_schedule_utc: str | None = None
 
 router = APIRouter(tags=["meta"])
 logger = structlog.get_logger("api.meta")
@@ -84,7 +84,7 @@ def get_meta(request: Request, db: Session = Depends(get_readonly_db)) -> dict[s
         window_seconds=settings.rate_limit_window_seconds,
     )
     result: dict[str, Any] = {
-        "service": "backtestforecast-api",
+        "service": API_SERVICE_NAME,
         "version": get_public_version(),
     }
     try:
@@ -104,6 +104,7 @@ def get_meta(request: Request, db: Session = Depends(get_readonly_db)) -> dict[s
             "billing": settings.feature_billing_enabled,
             "sweeps": settings.feature_sweeps_enabled,
         }
+    result["daily_picks_schedule_utc"] = f"{(settings.daily_picks_pipeline_hour_utc % 12) or 12}:{settings.daily_picks_pipeline_minute_utc:02d} {'PM' if settings.daily_picks_pipeline_hour_utc >= 12 else 'AM'} UTC"
     if settings.app_env not in ("production", "staging"):
         result["environment"] = settings.app_env
     return result

@@ -1,8 +1,10 @@
 import { auth } from "@clerk/nextjs/server";
 import { cache } from "react";
-import { apiRequest } from "@/lib/api/shared";
-import { buildPaginatedListPath } from "@/lib/api/pagination";
+import { apiRequest, validatedApiRequest } from "@/lib/api/shared";
+import { buildCursorPaginatedPath, buildPaginatedListPath } from "@/lib/api/pagination";
+import { validateTemplateListResponse } from "@/lib/templates/contracts";
 import type {
+  AnalysisDetailResponse,
   AnalysisListResponse,
   BacktestRunDetailResponse,
   BacktestRunListResponse,
@@ -19,6 +21,7 @@ import type {
   SweepResultListResponse,
   TemplateListResponse,
 } from "@backtestforecast/api-client";
+
 
 const getServerToken = cache(async (): Promise<string> => {
   const { isAuthenticated, getToken, redirectToSignIn } = await auth();
@@ -37,13 +40,30 @@ const getServerToken = cache(async (): Promise<string> => {
   return token;
 });
 
-export const getCurrentUser = cache(async (): Promise<CurrentUserResponse> => {
-  const token = await getServerToken();
+const loadCurrentUser = cache(async (token: string): Promise<CurrentUserResponse> => {
   const user = await apiRequest<CurrentUserResponse>("/v1/me", token, { cache: "no-store" });
   if (!user || typeof user.id !== "string" || typeof user.plan_tier !== "string") {
     throw new Error("Invalid user response shape from API");
   }
   return user;
+});
+
+export async function getCurrentUser(): Promise<CurrentUserResponse> {
+  return loadCurrentUser(await getServerToken());
+}
+
+export interface RuntimeMetaResponse {
+  service: string;
+  version: string;
+  billing_enabled?: boolean | null;
+  environment?: string | null;
+  daily_picks_schedule_utc?: string | null;
+  features?: CurrentUserResponse["features"] extends infer _T ? Record<string, boolean> | null : Record<string, boolean> | null;
+}
+
+export const getMeta = cache(async (): Promise<RuntimeMetaResponse> => {
+  const token = await getServerToken();
+  return apiRequest<RuntimeMetaResponse>("/v1/meta", token, { cache: "no-store" });
 });
 
 export const getBacktestHistory = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<BacktestRunListResponse> => {
@@ -62,7 +82,12 @@ export const getBacktestRun = cache(async (runId: string): Promise<BacktestRunDe
 
 export const getTemplates = cache(async (): Promise<TemplateListResponse> => {
   const token = await getServerToken();
-  return apiRequest<TemplateListResponse>("/v1/templates", token, { cache: "no-store" });
+  return validatedApiRequest<TemplateListResponse>(
+    "/v1/templates",
+    token,
+    validateTemplateListResponse,
+    { cache: "no-store" },
+  );
 });
 
 export async function compareBacktests(runIds: string[]): Promise<CompareBacktestsResponse> {
@@ -137,12 +162,16 @@ export const getAnalysisHistory = cache(async (limit = 10, offset = 0, cursor?: 
   );
 });
 
+export const getAnalysisDetail = cache(async (analysisId: string): Promise<AnalysisDetailResponse> => {
+  const token = await getServerToken();
+  return apiRequest<AnalysisDetailResponse>(`/v1/analysis/${encodeURIComponent(analysisId)}`, token, { cache: "no-store" });
+});
+
 export const getDailyPicksHistory = cache(async (limit = 10, cursor?: string | null) => {
   const token = await getServerToken();
-  const safeLimit = Math.max(1, Math.min(limit, 30));
-  const params = new URLSearchParams({ limit: String(safeLimit) });
-  if (cursor && cursor.trim().length > 0) {
-    params.set("cursor", cursor);
-  }
-  return apiRequest<PipelineHistoryResponse>(`/v1/daily-picks/history?${params.toString()}`, token, { cache: "no-store" });
+  return apiRequest<PipelineHistoryResponse>(
+    buildCursorPaginatedPath("/v1/daily-picks/history", limit, 30, cursor),
+    token,
+    { cache: "no-store" },
+  );
 });

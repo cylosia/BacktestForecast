@@ -43,6 +43,9 @@ export default async function DashboardPage() {
   const history = historyResult.status === "fulfilled" ? (historyResult.value?.items ?? []) : [];
   const quota = buildBacktestQuota(user);
   const latestRun = history.find((r) => r.status === "succeeded") ?? null;
+  const now = Date.now();
+  const dispatchSlaMs = 5 * 60 * 1000;
+  const staleQueuedRuns = history.filter((run) => run.status === "queued" && now - new Date(run.created_at).getTime() >= dispatchSlaMs);
 
   return (
     <div className="space-y-8">
@@ -131,6 +134,16 @@ export default async function DashboardPage() {
           You have {quota.remaining} backtest{quota.remaining === 1 ? "" : "s"} remaining this month on the Free plan.{" "}
           <Link href="/pricing" className="font-medium underline underline-offset-2 hover:text-primary">
             View upgrade options
+          </Link>
+        </div>
+      ) : null}
+
+      {staleQueuedRuns.length > 0 ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-700 dark:text-amber-400">
+          {staleQueuedRuns.length} queued backtest{staleQueuedRuns.length === 1 ? "" : "s"} {staleQueuedRuns.length === 1 ? "has" : "have"} exceeded the dispatch SLA.
+          Automatic reconciliation should retry them shortly.{" "}
+          <Link href="/app/backtests" className="font-medium underline underline-offset-2 hover:text-primary">
+            Open history
           </Link>
         </div>
       ) : null}

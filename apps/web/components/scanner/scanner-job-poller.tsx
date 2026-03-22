@@ -26,6 +26,7 @@ export function ScannerJobPoller({
   const { getToken } = useAuth();
   const [status, setStatus] = useState<ScannerJobStatus | string>(initialStatus);
   const [evaluated, setEvaluated] = useState(0);
+  const [diagnosticCode, setDiagnosticCode] = useState<string | null>(null);
 
   const fetcher = useCallback(async (signal: AbortSignal) => {
     const token = await getToken();
@@ -42,6 +43,9 @@ export function ScannerJobPoller({
       if (typeof data.evaluated_candidate_count === "number") {
         setEvaluated(data.evaluated_candidate_count);
       }
+      if (typeof data.error_code === "string") {
+        setDiagnosticCode(data.error_code);
+      }
     },
     onComplete: () => router.refresh(),
     isTerminal: isTerminalStatus,
@@ -52,6 +56,7 @@ export function ScannerJobPoller({
       onProgress: (job) => {
         setStatus(job.status);
         setEvaluated(job.evaluated_candidate_count);
+        setDiagnosticCode(job.error_code ?? null);
       },
       isComplete: (job) => isTerminalStatus(job.status),
       interval: POLL_INTERVAL_MS,
@@ -62,6 +67,11 @@ export function ScannerJobPoller({
   if (isTerminalStatus(status)) return null;
 
   const pct = candidateCount > 0 ? Math.round((evaluated / candidateCount) * 100) : 0;
+  const queueMessage = diagnosticCode === "dispatch_stuck"
+    ? "This scan is queued while the dispatch claim is being repaired automatically."
+    : diagnosticCode === "dispatch_delayed"
+      ? "This scan is queued longer than expected, but workers may still pick it up shortly."
+      : "Your scan is queued and will start processing shortly.";
 
   return (
     <Card>
@@ -72,7 +82,7 @@ export function ScannerJobPoller({
         </CardTitle>
         <CardDescription>
           {status === "queued"
-            ? "Your scan is queued and will start processing shortly."
+            ? queueMessage
             : `Evaluating candidates — ${evaluated} of ${candidateCount} complete (${pct}%).`}
         </CardDescription>
       </CardHeader>
