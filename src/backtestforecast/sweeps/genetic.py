@@ -8,10 +8,11 @@ definitions efficiently.  Fitness evaluation is parallelized via
 from __future__ import annotations
 
 import random
-from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
+from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Callable
+import importlib
 
 import structlog
 
@@ -55,9 +56,38 @@ class GAResult:
     top_individuals: list[tuple[Individual, float]] = field(default_factory=list)
 
 
-# fitness_fn must be thread-safe: it is called from multiple threads
-# concurrently via ThreadPoolExecutor in _evaluate_population.
-FitnessFunc = Callable[[Individual], float]
+# fitness_fn must be thread-safe when a plain callable is used.
+# SerializableFitnessEvaluator enables process-pool execution.
+
+
+@dataclass(frozen=True, slots=True)
+class SerializableFitnessEvaluator:
+    initializer_module: str
+    initializer_name: str
+    evaluator_module: str
+    evaluator_name: str
+    context: dict[str, Any]
+
+
+FitnessFunc = Callable[[Individual], float] | SerializableFitnessEvaluator
+
+
+_PROCESS_FITNESS_EVALUATOR: Callable[[Individual], float] | None = None
+
+
+def _init_process_fitness_evaluator(spec: SerializableFitnessEvaluator) -> None:
+    global _PROCESS_FITNESS_EVALUATOR
+    init_module = importlib.import_module(spec.initializer_module)
+    init_fn = getattr(init_module, spec.initializer_name)
+    init_fn(spec.context)
+    eval_module = importlib.import_module(spec.evaluator_module)
+    _PROCESS_FITNESS_EVALUATOR = getattr(eval_module, spec.evaluator_name)
+
+
+def _run_process_fitness(individual: Individual) -> float:
+    if _PROCESS_FITNESS_EVALUATOR is None:
+        raise RuntimeError("Process fitness evaluator was not initialized")
+    return _PROCESS_FITNESS_EVALUATOR(individual)
 
 
 class GeneticOptimizer:
@@ -237,19 +267,26 @@ class GeneticOptimizer:
         if not to_evaluate:
             return results
 
-        # TODO: ThreadPoolExecutor is suboptimal for CPU-bound fitness evaluation
-        # due to the GIL. ProcessPoolExecutor would be preferable but requires
-        # fitness_fn to be pickle-serializable. Since fitness_fn is typically a
-        # closure constructed in the sweep service (capturing the DB session,
-        # backtest engine, and config), it cannot be pickled without major
-        # refactoring to extract it into a top-level function with explicit
-        # serializable arguments. Revisit if sweep latency becomes a bottleneck.
         workers = min(max_workers, len(to_evaluate))
+        if isinstance(fitness_fn, SerializableFitnessEvaluator):
+            with ProcessPoolExecutor(
+                max_workers=workers,
+                initializer=_init_process_fitness_evaluator,
+                initargs=(fitness_fn,),
+            ) as pool:
+                futures = {pool.submit(_run_process_fitness, ind): (i, ind) for i, ind in to_evaluate}
+                for future in as_completed(futures):
+                    _, ind = futures[future]
+                    try:
+                        fit_val = future.result()
+                    except Exception:
+                        logger.debug("ga.fitness_error", exc_info=True)
+                        fit_val = float("-inf")
+                    results.append((ind, fit_val))
+            return results
+
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(fitness_fn, ind): (i, ind)
-                for i, ind in to_evaluate
-            }
+            futures = {pool.submit(fitness_fn, ind): (i, ind) for i, ind in to_evaluate}
             for future in as_completed(futures):
                 _, ind = futures[future]
                 try:

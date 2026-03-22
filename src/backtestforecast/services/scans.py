@@ -78,6 +78,7 @@ from backtestforecast.services.serialization import (
     safe_validate_list as _safe_validate_list,
     safe_validate_summary as _safe_validate_summary,
 )
+from backtestforecast.services.scan_components import ScanExecutor, ScanJobFactory, ScanPresenter
 
 
 def _get_fallback_entry_rules() -> list[RsiRule]:
@@ -128,6 +129,9 @@ class ScanService:
         self._forecaster = forecaster
         self.repository = ScannerJobRepository(session)
         self.audit = AuditService(session)
+        self.job_factory = ScanJobFactory(self)
+        self.executor = ScanExecutor(self)
+        self.presenter = ScanPresenter(self)
 
     @property
     def execution_service(self) -> BacktestExecutionService:
@@ -145,13 +149,32 @@ class ScanService:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+
+    def create_job(self, user: User, payload: CreateScannerJobRequest) -> ScannerJob:
+        return self.job_factory.create_job(user, payload)
+
+    def run_job(self, job_id: UUID) -> ScannerJob:
+        return self.executor.run_job(job_id)
+
+    def list_jobs(self, user: User, limit: int = 50, offset: int = 0, cursor: str | None = None) -> ScannerJobListResponse:
+        return self.presenter.list_jobs(user, limit=limit, offset=offset, cursor=cursor)
+
+    def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
+        return self.presenter.get_job(user, job_id)
+
+    def get_recommendations(self, user: User, job_id: UUID) -> ScannerRecommendationListResponse:
+        return self.presenter.get_recommendations(user, job_id)
+
+    def build_forecast(self, job: ScannerJob, recommendation: ScannerRecommendation) -> ForecastEnvelopeResponse:
+        return self.executor.build_forecast(job, recommendation)
+
     @property
     def forecaster(self) -> HistoricalAnalogForecaster:
         if self._forecaster is None:
             self._forecaster = HistoricalAnalogForecaster()
         return self._forecaster
 
-    def create_job(self, user: User, payload: CreateScannerJobRequest) -> ScannerJob:
+    def _create_job_impl(self, user: User, payload: CreateScannerJobRequest) -> ScannerJob:
         from sqlalchemy import select
         self.session.execute(
             select(User).where(User.id == user.id).with_for_update()
@@ -280,7 +303,7 @@ class ScanService:
         self.session.refresh(job)
         return job
 
-    def run_job(self, job_id: UUID) -> ScannerJob:
+    def _run_job_impl(self, job_id: UUID) -> ScannerJob:
         job = self.repository.get(job_id, for_update=True)
         if job is None:
             raise NotFoundError("Scanner job not found.")
@@ -615,7 +638,7 @@ class ScanService:
                 )
         return job
 
-    def list_jobs(
+    def _list_jobs_impl(
         self,
         user: User,
         limit: int = 50,
@@ -648,7 +671,7 @@ class ScanService:
             next_cursor=next_cursor,
         )
 
-    def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
+    def _get_job_impl(self, user: User, job_id: UUID) -> ScannerJobResponse:
         job = self.repository.get_for_user(job_id, user.id)
         if job is None:
             raise NotFoundError("Scanner job not found.")
@@ -678,7 +701,7 @@ class ScanService:
             self.session.rollback()
             raise
 
-    def get_recommendations(
+    def _get_recommendations_impl(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
     ) -> ScannerRecommendationListResponse:
         import time as _time
@@ -804,7 +827,7 @@ class ScanService:
             self.session.commit()
         return created_jobs
 
-    def build_forecast(
+    def _build_forecast_impl(
         self,
         *,
         user: User,
