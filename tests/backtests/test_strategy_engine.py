@@ -9,6 +9,7 @@ from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.types import BacktestConfig
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+from backtestforecast.schemas.backtests import StrategyOverrides
 
 
 @dataclass
@@ -156,6 +157,54 @@ def test_calendar_spread_exits_on_near_leg_expiration() -> None:
     assert trade.exit_date == date(2025, 2, 4)
     assert round(trade.net_pnl, 2) == 50.0
     assert trade.detail_json["legs"][0]["ticker"] == "FAR100"
+
+
+def test_put_calendar_spread_uses_put_contracts_when_overridden() -> None:
+    engine = OptionsBacktestEngine()
+    bars = [
+        make_bar(date(2025, 2, 1), 100),
+        make_bar(date(2025, 2, 2), 100),
+        make_bar(date(2025, 2, 3), 100),
+        make_bar(date(2025, 2, 4), 100),
+        make_bar(date(2025, 2, 5), 100),
+    ]
+    contracts = {
+        (date(2025, 2, 2), "put"): [
+            OptionContractRecord("NEARP100", "put", date(2025, 2, 4), 100, 100),
+            OptionContractRecord("FARP100", "put", date(2025, 2, 18), 100, 100),
+        ]
+    }
+    quotes = {
+        ("NEARP100", date(2025, 2, 2)): make_quote(date(2025, 2, 2), 1.0),
+        ("FARP100", date(2025, 2, 2)): make_quote(date(2025, 2, 2), 4.0),
+        ("FARP100", date(2025, 2, 4)): make_quote(date(2025, 2, 4), 3.5),
+    }
+    result = engine.run(
+        BacktestConfig(
+            symbol="SPY",
+            strategy_type="calendar_spread",
+            start_date=date(2025, 2, 1),
+            end_date=date(2025, 2, 3),
+            target_dte=2,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=10_000,
+            risk_per_trade_pct=3,
+            commission_per_contract=0,
+            entry_rules=[],
+            strategy_overrides=StrategyOverrides(calendar_contract_type="put"),
+        ),
+        bars,
+        set(),
+        FakeGateway(contracts=contracts, quotes=quotes),
+    )
+
+    assert result.summary.trade_count == 1
+    trade = result.trades[0]
+    assert trade.exit_date == date(2025, 2, 4)
+    assert round(trade.net_pnl, 2) == 50.0
+    assert trade.detail_json["legs"][0]["contract_type"] == "put"
+    assert trade.detail_json["legs"][1]["contract_type"] == "put"
 
 
 def test_custom_2_leg_stock_only_uses_end_date() -> None:

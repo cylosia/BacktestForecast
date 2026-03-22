@@ -100,7 +100,7 @@ export function strategyLabel(strategy: string | StrategyType): string {
     case "long_strangle":
       return "Long Strangle";
     case "calendar_spread":
-      return "Call Calendar Spread";
+      return "Calendar Spread";
     case "butterfly":
       return "Butterfly Spread";
     case "wheel_strategy":
