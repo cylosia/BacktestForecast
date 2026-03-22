@@ -1,6 +1,16 @@
-# Workflow Trace Reference
+# Current Operational Assumptions
 
-This document is the operator-facing companion to `docs/known-limitations.md`. It describes the **current** runtime flow so support/on-call work does not rely on stale assumptions.
+This is the **authoritative current-state document** for operator-facing runtime behavior. When historical audits or older notes disagree with this page, treat this document and the referenced live code paths as the source of truth.
+
+**Owners**
+- Primary owner: Platform / backend maintainers
+- Backup owner: On-call engineer for the active release
+- Review cadence: update this page in the same PR as any dispatch, queue, auth, or request-contract change that alters runtime assumptions
+
+**Related docs**
+- `docs/RUNBOOK.md` for incident response steps.
+- `docs/known-limitations.md` for still-open constraints and tradeoffs.
+- `docs/audit/` and `docs/audit-log.md` for historical snapshots only; they are not authoritative for the current runtime.
 
 ## Auth flow
 

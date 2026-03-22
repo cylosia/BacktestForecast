@@ -1,6 +1,12 @@
-# Audit Log
+# Audit Log (Historical Archive)
+
+This file is a **historical snapshot** of earlier audit conclusions and should not be used as the source of truth for current runtime behavior. For active operational assumptions, use `docs/workflow-trace.md`. For still-open constraints, use `docs/known-limitations.md`.
 
 ## 2026-03-19: Comprehensive Production Audit
+
+### Historical notes retained for traceability
+
+The entries below are preserved as an audit trail of what was believed or changed at the time. Some statements no longer reflect the current system state.
 
 ### Critical Fixes Applied
 
@@ -8,7 +14,7 @@
 2. **Heartbeat calls added** — All long-running tasks now call `_update_heartbeat` before execution
 3. **Crashed worker redelivery** — `_validate_task_ownership` no longer rejects redelivery for `running` status jobs
 4. **TypeScript sweep types updated** — Added `trades_truncated` and `request_snapshot` fields
-5. **Poll-outbox disabled** — Removed from beat schedule since OutboxMessage table is never populated
+5. **Poll-outbox disabled** — Historical note only; do not rely on this statement for current operations
 6. **SSE proxy cache header** — Added `cache: "no-store"` to prevent CDN caching of event streams
 7. **DB constraints tightened** — Aligned CHECK constraints with Pydantic schema limits
 8. **Concurrent sweep limit enforced** — API now checks `max_concurrent_sweeps` before accepting new sweeps
