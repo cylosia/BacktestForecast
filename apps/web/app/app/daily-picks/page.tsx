@@ -1,4 +1,4 @@
-import { getCurrentUser, getDailyPicks, getDailyPicksHistory } from "@/lib/api/server";
+import { getCurrentUser, getDailyPicks, getDailyPicksHistory, getMeta } from "@/lib/api/server";
 import { ApiError } from "@/lib/api/shared";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import type { DailyPickItem, DailyPicksResponse } from "@backtestforecast/api-client";
