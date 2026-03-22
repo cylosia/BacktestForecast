@@ -2,6 +2,24 @@
 
 ## Health Checks
 
+## Workflow Trace Quick Notes
+
+### `/v1/meta` during auth-adjacent outages
+
+`GET /v1/meta` is intentionally public. When clients send a Bearer token or `__session` cookie, the route attempts a best-effort user lookup so it can include authenticated feature metadata. If the DB is unavailable during that lookup, the endpoint degrades to unauthenticated metadata instead of failing the whole request. Treat that as degraded auth enrichment, not as a full auth outage.
+
+### Delayed create flows
+
+Create endpoints now rely on the transactional outbox path documented in `apps/api/app/dispatch.py`: job state + outbox row are committed together, followed by an optimistic inline send and `maintenance.poll_outbox` recovery. A queued job with no visible progress should be diagnosed through outbox/reaper state before assuming the API dropped the task.
+
+### Export download pressure
+
+S3-backed exports remain the preferred production path. If exports are stored in PostgreSQL `content_bytes`, the API still materializes the full blob in Python memory before streaming. Under concurrent large downloads, that can look like a generic API memory/latency incident even though job generation succeeded.
+
+### Billing audit evidence
+
+Billing paths try to record audit evidence inline, and webhook event logging also has a fallback persistence path. If a cancellation/reconciliation incident seems to be missing audit rows, check application logs for `billing.audit_record_failed` or `billing.audit_write_failed` before concluding that the business action itself failed.
+
 | Endpoint           | Purpose                     | Expected   |
 |--------------------|-----------------------------|------------|
 | `GET /health/live` | Process is alive            | `200 OK`   |
