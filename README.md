@@ -119,7 +119,7 @@ These are implementation assumptions for the current slices:
 - `POST /v1/backtests` returns HTTP 202 with the run in `queued` status; the frontend polls `GET /v1/backtests/{run_id}` until the status becomes `succeeded` or `failed`.
 - Scanner jobs execute asynchronously through Celery.
 - Daily scan refresh creates a new child job instead of mutating the original snapshot.
-- Idempotent submission is supported via an optional `idempotency_key` field on the create request.
+- Idempotent submission is supported via an optional `idempotency_key` field on create requests. Reusing the same key is retry-safe: the API returns the existing job and may repair an abandoned queued job instead of creating a duplicate.
 - Stripe webhooks are received at `POST /v1/billing/webhook` — this path bypasses Clerk auth and uses a dedicated 512 KB body-limit override that must stay in sync with the route contract.
 - Plan tier is synced from Stripe subscription events. The webhook handler is idempotent (duplicate events are detected via audit log).
 - Entitlements are backend-authoritative: the API raises `quota_exceeded` (403) for usage limits and `feature_locked` (403) for tier-gated features.

@@ -116,3 +116,17 @@ The trimming approach achieves bounded memory without this complexity.
   - A/B testing integration
 - The current env-var approach works well for the current team size;
   switch when flag changes need to be faster than a deploy cycle
+
+
+## LT-21: Explicit Unit-of-Work for DB + Outbox
+
+**Status: Candidate refactor — current transactional helpers are working**
+
+### What's done
+- `create_and_dispatch*` helpers keep job-row writes and outbox dispatch state together in the service layer.
+- Router-level dispatch calls are guarded by static analysis so HTTP handlers do not reintroduce split transaction boundaries.
+
+### Future work
+- Wrap DB mutations, outbox writes, and audit side-effects in a dedicated unit-of-work abstraction.
+- Move repeated commit/refresh/error-handling patterns behind that abstraction.
+- Keep the current helper-based approach until the abstraction reduces complexity rather than just moving it around.

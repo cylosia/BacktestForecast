@@ -33,6 +33,8 @@ UTC = timezone.utc
 from backtestforecast.models import SymbolAnalysis, User
 from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 from backtestforecast.pipeline.regime import classify_regime
+from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("deep_analysis")
 
@@ -187,7 +189,16 @@ class SymbolDeepAnalysisService:
         if idempotency_key:
             existing = self._repo.get_by_idempotency_key(user.id, idempotency_key)
             if existing is not None:
-                return existing
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="SymbolAnalysis",
+                    task_name="analysis.deep_symbol",
+                    task_kwargs={"analysis_id": str(existing.id)},
+                    queue="research",
+                    log_event="analysis",
+                    logger=logger,
+                )
 
         self.session.execute(
             select(User).where(User.id == user.id).with_for_update()
@@ -235,6 +246,34 @@ class SymbolDeepAnalysisService:
                 if existing is not None:
                     return existing
             raise
+        return analysis
+
+    def create_and_dispatch_analysis(
+        self,
+        user: User,
+        symbol: str,
+        *,
+        idempotency_key: str | None = None,
+        request_id: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> SymbolAnalysis:
+        """Create an analysis and persist dispatch state transactionally."""
+        from apps.api.app.dispatch import dispatch_celery_task
+
+        analysis = self.create_analysis(user, symbol, idempotency_key=idempotency_key)
+        dispatch_celery_task(
+            db=self.session,
+            job=analysis,
+            task_name="analysis.deep_symbol",
+            task_kwargs={"analysis_id": str(analysis.id)},
+            queue="research",
+            log_event="analysis",
+            logger=dispatch_logger or logger,
+            request_id=request_id,
+            traceparent=traceparent,
+        )
+        self.session.refresh(analysis)
         return analysis
 
     def execute_analysis(self, analysis_id: UUID) -> SymbolAnalysis:
@@ -296,6 +335,7 @@ class SymbolDeepAnalysisService:
             logger.warning("deep_analysis.backward_stage_transition", current=analysis.stage, target="regime", analysis_id=str(analysis_id))
         analysis.stage = "regime"
         analysis.started_at = datetime.now(UTC)
+        observe_job_create_to_running_latency(analysis)
         self.session.commit()
 
         try:

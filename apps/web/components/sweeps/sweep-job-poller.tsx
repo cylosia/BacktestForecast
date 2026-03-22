@@ -26,6 +26,7 @@ export function SweepJobPoller({
   const { getToken } = useAuth();
   const [status, setStatus] = useState(initialStatus);
   const [evaluated, setEvaluated] = useState(0);
+  const [diagnosticCode, setDiagnosticCode] = useState<string | null>(null);
 
   const fetcher = useCallback(async (signal: AbortSignal) => {
     const token = await getToken();
@@ -41,6 +42,9 @@ export function SweepJobPoller({
       if (typeof data.evaluated_candidate_count === "number") {
         setEvaluated(data.evaluated_candidate_count);
       }
+      if (typeof data.error_code === "string") {
+        setDiagnosticCode(data.error_code);
+      }
     },
     onComplete: () => router.refresh(),
     isTerminal: isTerminalStatus,
@@ -51,6 +55,7 @@ export function SweepJobPoller({
       onProgress: (job: SweepJobResponse) => {
         setStatus(job.status);
         setEvaluated(job.evaluated_candidate_count);
+        setDiagnosticCode(job.error_code ?? null);
       },
       isComplete: (job: SweepJobResponse) => isTerminalStatus(job.status),
       interval: POLL_INTERVAL_MS,
@@ -61,6 +66,11 @@ export function SweepJobPoller({
   if (isTerminalStatus(status)) return null;
 
   const pct = candidateCount > 0 ? Math.round((evaluated / candidateCount) * 100) : 0;
+  const queueMessage = diagnosticCode === "dispatch_stuck"
+    ? "This sweep is queued while the dispatch claim is being repaired automatically."
+    : diagnosticCode === "dispatch_delayed"
+      ? "This sweep is queued longer than expected, but workers may still pick it up shortly."
+      : "Your sweep is queued and will start processing shortly.";
 
   return (
     <Card>
@@ -71,7 +81,7 @@ export function SweepJobPoller({
         </CardTitle>
         <CardDescription>
           {status === "queued"
-            ? "Your sweep is queued and will start processing shortly."
+            ? queueMessage
             : `Evaluating candidates — ${evaluated.toLocaleString()} of ${candidateCount.toLocaleString()} (${pct}%).`}
         </CardDescription>
       </CardHeader>

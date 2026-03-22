@@ -100,6 +100,7 @@ class BacktestRun(Base):
         Index("ix_backtest_runs_user_status", "user_id", "status"),
         Index("ix_backtest_runs_user_symbol", "user_id", "symbol"),
         Index("ix_backtest_runs_started_at", "started_at"),
+        Index("ix_backtest_runs_dispatch_started_at", "dispatch_started_at"),
         Index("ix_backtest_runs_celery_task_id", "celery_task_id"),
         Index("ix_backtest_runs_status_celery_created", "status", "celery_task_id", "created_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_backtest_runs_user_idempotency_key"),
@@ -181,6 +182,7 @@ class BacktestRun(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -344,6 +346,7 @@ class ScannerJob(Base):
             "name IS NULL OR length(name) > 0",
             name="ck_scanner_jobs_name_not_empty",
         ),
+        Index("ix_scanner_jobs_dispatch_started_at", "dispatch_started_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -374,6 +377,7 @@ class ScannerJob(Base):
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -465,6 +469,7 @@ class ExportJob(Base):
         Index("ix_export_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         Index("ix_export_jobs_sha256_hex", "sha256_hex"),
         Index("ix_export_jobs_storage_key", "storage_key"),
+        Index("ix_export_jobs_dispatch_started_at", "dispatch_started_at"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')",
             name="ck_export_jobs_valid_export_status",
@@ -499,6 +504,7 @@ class ExportJob(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -718,6 +724,7 @@ class SymbolAnalysis(Base):
         Index("ix_symbol_analyses_user_created", "user_id", "created_at"),
         Index("ix_symbol_analyses_symbol", "symbol"),
         Index("ix_symbol_analyses_status_created", "status", "created_at"),
+        Index("ix_symbol_analyses_dispatch_started_at", "dispatch_started_at"),
         Index("ix_symbol_analyses_celery_task_id", "celery_task_id"),
         Index("ix_symbol_analyses_status_celery_created", "status", "celery_task_id", "created_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_symbol_analyses_user_idempotency"),
@@ -759,6 +766,7 @@ class SymbolAnalysis(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -776,6 +784,7 @@ class SweepJob(Base):
         Index("ix_sweep_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         Index("ix_sweep_jobs_user_symbol_created", "user_id", "symbol", "created_at"),
         Index("ix_sweep_jobs_request_hash", "request_hash"),
+        Index("ix_sweep_jobs_dispatch_started_at", "dispatch_started_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_sweep_jobs_user_idempotency_key"),
         Index("ix_sweep_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         CheckConstraint(
@@ -823,6 +832,7 @@ class SweepJob(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

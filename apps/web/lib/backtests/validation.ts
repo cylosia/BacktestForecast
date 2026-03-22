@@ -276,6 +276,17 @@ export function validateBacktestForm(values: BacktestFormValues): {
   }
 
   const entryRules: CreateBacktestRunRequest["entry_rules"] = [];
+  const hasEnabledEntryRule = [
+    values.rsiEnabled,
+    values.movingAverageEnabled,
+    values.macdEnabled,
+    values.bollingerEnabled,
+    values.ivRankEnabled,
+    values.avoidEarningsEnabled,
+    values.ivPercentileEnabled,
+    values.volumeSpikeEnabled,
+    values.supportResistanceEnabled,
+  ].some(Boolean);
 
   if (values.rsiEnabled) {
     if (!isFiniteNumber(values.rsiThreshold)) {
@@ -465,7 +476,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     }
   }
 
-  if (entryRules.length === 0) {
+  if (!hasEnabledEntryRule) {
     errors.form = "At least one valid entry rule must be configured.";
   }
 
