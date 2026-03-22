@@ -35,8 +35,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # SECURITY: Redis connections are unencrypted. For deployments where Redis
-    # is on a separate host, enable TLS:
+    # SECURITY: Redis connections are unencrypted in this base file and are only
+    # acceptable for a single-host/private-network deployment. If Redis traffic
+    # crosses hosts, subnets, or any shared network boundary, this file is not
+    # production-safe on its own; use docker-compose.prod.tls.yml instead.
+    # For deployments where Redis is on a separate host, enable TLS:
     # 1. Generate/obtain TLS certificates
     # 2. Add to redis.conf: tls-port 6380, tls-cert-file, tls-key-file, tls-ca-cert-file
     # 3. Update REDIS_URL to use rediss:// scheme
