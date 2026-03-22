@@ -106,6 +106,48 @@ To trigger manually:
 celery -A apps.worker.app.celery_app.celery_app call maintenance.reap_stale_jobs
 ```
 
+### Stranded queued jobs / stale idempotency keys
+
+#### Symptoms
+
+- A job remains in `queued` for more than 10-15 minutes.
+- Re-issuing the same request with the same `idempotency_key` returns the old job ID.
+- Metrics show growth in `orphan_detections_total{kind="queued_job",...}`.
+
+#### Diagnosis
+
+1. Check the job row for `status='queued'`, `created_at`, and `celery_task_id`.
+2. Check `outbox_messages` for `correlation_id = <job_id>`:
+   - `pending` rows indicate the outbox poller can still recover delivery.
+   - old `pending` rows plus a very old `queued` job indicate a stranded dispatch claim.
+3. Review worker logs for:
+   - `dispatch.stale_queued_job_reused`
+   - `reaper.orphan_recovery`
+   - `dispatch.outbox_pending`
+
+#### Recovery
+
+1. **Preferred:** retry the original create request with the **same** `idempotency_key`.
+   - The service now detects stale queued jobs on idempotency reuse.
+   - It fails superseded pending outbox rows, clears the stale task claim, and re-dispatches the original job instead of creating a duplicate.
+2. **Operator fallback:** trigger the reaper manually:
+   ```bash
+   celery -A apps.worker.app.celery_app.celery_app call maintenance.reap_stale_jobs
+   ```
+3. **Last resort:** manually clear an obviously dead claim so the reaper can pick it up:
+   ```sql
+   UPDATE backtest_runs
+   SET celery_task_id = NULL, updated_at = NOW()
+   WHERE id = '<job_uuid>' AND status = 'queued';
+   ```
+   Replace `backtest_runs` with the relevant table (`scanner_jobs`, `sweep_jobs`, `symbol_analyses`, `export_jobs`) as needed.
+
+#### Admin checklist
+
+- Capture the affected job ID, user ID, and `idempotency_key`.
+- Confirm whether a retry should redispatch the existing job or whether the job should be failed for user visibility.
+- If manual SQL was required, record an audit note in the incident ticket including the exact statement run and timestamp.
+
 ## Reaper NameError Recovery
 
 ### Symptoms
@@ -426,3 +468,10 @@ Key queries to monitor:
 
 Run `EXPLAIN ANALYZE` on slow queries identified via `pg_stat_statements`.
 The API sets `statement_timeout=30s` and workers use `statement_timeout=300s`.
+## Stranded queued jobs and dispatch recovery
+
+- A job can appear as `queued` without progressing when the process committed the job row but failed before a broker claim or outbox recovery completed.
+- `idempotency_key` retries are intentionally retry-safe: the API returns the original job and may replace/supersede an abandoned queued dispatch attempt rather than creating a duplicate row.
+- Inspect `/health/ready` (with `x-metrics-token`) or `/admin/dlq` for `queue_diagnostics`, including stale queued totals and stale-without-outbox counts by model.
+- If `stale_without_outbox_total` is non-zero, run `python scripts/repair_stranded_jobs.py --action list` first, then `--action requeue` when safe.
+- `dispatch_started_at` records when the API attempted dispatch, while `started_at` records when worker execution actually began. A large gap indicates broker/worker latency rather than request-time creation latency.

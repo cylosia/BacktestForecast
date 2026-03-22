@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
-from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.models import User
@@ -86,24 +85,14 @@ def create_export(
         window_seconds=settings.rate_limit_window_seconds,
     )
     with ExportService(db) as service:
-        export_job = service.enqueue_export(
+        export_job = service.create_and_dispatch_export(
             user,
             payload,
             request_id=metadata.request_id,
             ip_address=metadata.ip_address,
-        )
-        dispatch_celery_task(
-            db=db,
-            job=export_job,
-            task_name="exports.generate",
-            task_kwargs={"export_job_id": str(export_job.id)},
-            queue="exports",
-            log_event="export",
-            logger=logger,
-            request_id=metadata.request_id,
             traceparent=request.headers.get("traceparent"),
+            dispatch_logger=logger,
         )
-        db.refresh(export_job)
         if export_job.status == "failed":
             raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(export_job.error_message) or "Unable to dispatch job."})
         return service.get_export_status(user, export_job.id)

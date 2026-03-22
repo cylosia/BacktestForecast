@@ -63,6 +63,7 @@ export type StrategyOverrides = components["schemas"]["StrategyOverrides"];
 export type FeatureAccessResponse = components["schemas"]["FeatureAccessResponse"];
 export type UsageSummaryResponse = components["schemas"]["UsageSummaryResponse"];
 export type CurrentUserResponse = components["schemas"]["CurrentUserResponse"];
+export type MetaResponse = components["schemas"]["MetaResponse"];
 export type CreateCheckoutSessionRequest = components["schemas"]["CreateCheckoutSessionRequest"];
 export type CheckoutSessionResponse = components["schemas"]["CheckoutSessionResponse"];
 export type CreatePortalSessionRequest = components["schemas"]["CreatePortalSessionRequest"];

@@ -234,6 +234,24 @@ groups:
           summary: "Outbox messages table has >1000 rows"
           description: "The outbox_messages table is growing. Until the outbox poller is implemented, these rows are dead writes."
 
+      - alert: QueuedJobsWithoutOutbox
+        expr: sum(queued_jobs_without_outbox) > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Queued jobs exist without outbox records"
+          description: "At least one queued job has exceeded the dispatch SLA without an outbox record. Inspect /health/ready or /admin/dlq queue_diagnostics and consider repair_stranded_jobs."
+
+      - alert: CreateToRunningLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(job_create_to_running_latency_seconds_bucket[15m]))) > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Create→running latency p95 exceeds 5 minutes"
+          description: "Background jobs are taking too long to transition from created to running. Check broker health, worker capacity, and queue diagnostics."
+
       - alert: DiskUsageHigh
         expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
         for: 10m

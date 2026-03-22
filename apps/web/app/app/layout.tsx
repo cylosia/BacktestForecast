@@ -29,7 +29,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     const user = await getCurrentUser();
     planTier = user.plan_tier as PlanTier;
   } catch {
-    console.error("Failed to fetch user plan tier");
     planError = true;
   }
 

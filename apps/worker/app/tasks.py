@@ -40,6 +40,7 @@ from backtestforecast.models import (
     User,
 )
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.dispatch_recovery import DISPATCH_SLA, repair_stranded_jobs
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
@@ -1241,6 +1242,7 @@ def _process_orphan_batch(
     """Check a batch of S3 keys against the DB and delete orphans."""
     from sqlalchemy import select
     from backtestforecast.models import ExportJob
+    from backtestforecast.observability.metrics import ORPHAN_DETECTIONS_TOTAL
 
     existing: set[str] = set()
     for i in range(0, len(page_keys), _ORPHAN_IN_CHUNK_SIZE):
@@ -1254,6 +1256,7 @@ def _process_orphan_batch(
             limit_reached = True
             break
         if s3_key not in existing:
+            ORPHAN_DETECTIONS_TOTAL.labels(kind="storage_object", source="reconcile_s3_orphans", model="ExportJob").inc()
             logger.info("s3_orphan_deleting", s3_key=s3_key)
             try:
                 s3_storage.delete(s3_key)
@@ -1370,6 +1373,23 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
                 pass
 
 
+@celery_app.task(name="maintenance.reconcile_stranded_jobs", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=180, time_limit=240)
+def reconcile_stranded_jobs(self, stale_minutes: int | None = None) -> dict[str, int]:
+    """Requeue queued jobs that missed dispatch entirely (no task claim and no outbox row)."""
+    from datetime import timedelta
+
+    effective_minutes = stale_minutes or max(int(DISPATCH_SLA.total_seconds() // 60), 5)
+    with create_worker_session() as session:
+        counts = repair_stranded_jobs(
+            session,
+            logger=logger,
+            action="requeue",
+            older_than=timedelta(minutes=effective_minutes),
+        )
+        logger.info("reconcile_stranded_jobs.completed", stale_minutes=effective_minutes, **counts)
+        return counts
+
+
 def _reap_queued_jobs(
     session,
     model_cls,
@@ -1383,7 +1403,7 @@ def _reap_queued_jobs(
     """Re-dispatch queued jobs with no celery_task_id older than *cutoff*."""
     from sqlalchemy import select, update
 
-    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL
+    from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL, ORPHAN_DETECTIONS_TOTAL
 
     stale_stmt = (
         select(model_cls.id)
@@ -1396,6 +1416,8 @@ def _reap_queued_jobs(
         .with_for_update(skip_locked=True)
     )
     stale_ids = list(session.scalars(stale_stmt))
+    if stale_ids:
+        ORPHAN_DETECTIONS_TOTAL.labels(kind="queued_job", source="reaper_no_task_id", model=model_name).inc(len(stale_ids))
     for job_id in stale_ids:
         try:
             task_id = str(uuid4())
@@ -1604,6 +1626,10 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                     .with_for_update(skip_locked=True)
                 )
                 orphan_rows = list(session.execute(orphan_ids_stmt))
+                if orphan_rows:
+                    from backtestforecast.observability.metrics import ORPHAN_DETECTIONS_TOTAL
+
+                    ORPHAN_DETECTIONS_TOTAL.labels(kind="queued_job", source="reaper_stale_claim", model=model_name).inc(len(orphan_rows))
                 recovered = 0
                 for row_id, stale_task_id, created_at in orphan_rows:
                     task_alive = False

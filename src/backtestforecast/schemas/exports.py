@@ -12,7 +12,12 @@ from backtestforecast.schemas.common import JobStatus, sanitize_error_message
 class CreateExportRequest(BaseModel):
     run_id: UUID
     export_format: ExportFormat = Field(alias="format")
-    idempotency_key: str | None = Field(default=None, min_length=4, max_length=80)
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=4,
+        max_length=80,
+        description="Optional client-generated key for retry-safe export creation. Retries with the same key return the existing export job instead of creating duplicates.",
+    )
 
     model_config = {
         "populate_by_name": True,
