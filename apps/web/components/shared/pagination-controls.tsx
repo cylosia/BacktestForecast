@@ -11,6 +11,7 @@ interface PaginationControlsProps {
   cursor?: string | null;
   nextCursor?: string | null;
   extraParams?: Record<string, string>;
+  cursorParamName?: string;
 }
 
 function buildHref(
@@ -19,10 +20,11 @@ function buildHref(
   limit: number,
   extra?: Record<string, string>,
   cursor?: string | null,
+  cursorParamName = "cursor",
 ): string {
   const params = new URLSearchParams();
   if (cursor && cursor.trim().length > 0) {
-    params.set("cursor", cursor);
+    params.set(cursorParamName, cursor);
   } else if (offset > 0) {
     params.set("offset", String(offset));
   }
@@ -42,6 +44,7 @@ export function PaginationControls({
   cursor,
   nextCursor,
   extraParams,
+  cursorParamName = "cursor",
 }: PaginationControlsProps) {
   const usingCursor = Boolean(cursor || nextCursor);
   if (total <= limit && offset === 0) return null;
@@ -64,7 +67,7 @@ export function PaginationControls({
             <Link
               href={
                 usingCursor
-                  ? buildHref(basePath, 0, limit, extraParams)
+                  ? buildHref(basePath, 0, limit, extraParams, undefined, cursorParamName)
                   : buildHref(basePath, Math.max(0, offset - limit), limit, extraParams)
               }
             >
@@ -84,7 +87,7 @@ export function PaginationControls({
             <Link
               href={
                 usingCursor
-                  ? buildHref(basePath, 0, limit, extraParams, nextCursor)
+                  ? buildHref(basePath, 0, limit, extraParams, nextCursor, cursorParamName)
                   : buildHref(basePath, offset + limit, limit, extraParams)
               }
             >

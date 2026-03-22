@@ -23,6 +23,7 @@ export function BacktestRunPoller({
   const router = useRouter();
   const { getToken } = useAuth();
   const [status, setStatus] = useState<RunStatus | string>(initialStatus);
+  const [diagnosticCode, setDiagnosticCode] = useState<string | null>(null);
 
   const fetcher = useCallback(async (signal: AbortSignal) => {
     const token = await getToken();
@@ -36,6 +37,7 @@ export function BacktestRunPoller({
     onProgress: (data) => {
       const s = data.status as RunStatus | string;
       if (s) setStatus(s);
+      if (typeof data.error_code === "string") setDiagnosticCode(data.error_code);
     },
     onComplete: () => router.refresh(),
     isTerminal: isTerminalStatus,
@@ -43,7 +45,10 @@ export function BacktestRunPoller({
     pollingFallback: {
       fetcher,
       onComplete: () => router.refresh(),
-      onProgress: (run) => setStatus(run.status),
+      onProgress: (run) => {
+        setStatus(run.status);
+        setDiagnosticCode(run.error_code ?? null);
+      },
       isComplete: (run) => isTerminalStatus(run.status),
       interval: POLL_INTERVAL_MS,
       maxAttempts: MAX_POLLS,
@@ -54,6 +59,12 @@ export function BacktestRunPoller({
     return null;
   }
 
+  const queueMessage = diagnosticCode === "dispatch_stuck"
+    ? "This backtest is still queued because dispatch is being repaired automatically. You can leave this page open or check history in a moment."
+    : diagnosticCode === "dispatch_delayed"
+      ? "This backtest is still queued longer than expected, but worker capacity may still pick it up shortly."
+      : "Your backtest is queued and will begin processing shortly.";
+
   return (
     <Card>
       <CardHeader>
@@ -63,7 +74,7 @@ export function BacktestRunPoller({
         </CardTitle>
         <CardDescription>
           {status === "queued"
-            ? "Your backtest is queued and will begin processing shortly."
+            ? queueMessage
             : "Your backtest is running. Results will appear automatically when complete."}
         </CardDescription>
       </CardHeader>

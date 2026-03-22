@@ -1,8 +1,8 @@
 /**
  * SSE hook for real-time job status updates with polling fallback.
  *
- * Used by sweep-job-poller for real-time progress tracking. Falls back
- * to polling via `usePolling` if the SSE connection fails.
+ * Used by the async job pollers to stream status updates through the Next.js
+ * SSE proxy and fall back to polling via `usePolling` if the stream fails.
  *
  * @see hooks/use-polling.ts for the polling fallback mechanism
  */

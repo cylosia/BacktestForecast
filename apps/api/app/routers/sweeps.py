@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
-from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
@@ -24,6 +23,7 @@ from backtestforecast.schemas.sweeps import (
     SweepResultListResponse,
 )
 from backtestforecast.security import get_rate_limiter
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("api.sweeps")
@@ -75,19 +75,13 @@ def create_sweep(
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
     with SweepService(db) as service:
-        job = service.create_job(user, payload)
-        dispatch_celery_task(
-            db=db,
-            job=job,
-            task_name="sweeps.run",
-            task_kwargs={"job_id": str(job.id)},
-            queue="research",
-            log_event="sweep",
-            logger=logger,
+        job = service.create_and_dispatch_job(
+            user,
+            payload,
             request_id=metadata.request_id,
             traceparent=request.headers.get("traceparent"),
+            dispatch_logger=logger,
         )
-        db.refresh(job)
         if job.status == "failed":
             raise HTTPException(
                 status_code=500,
@@ -111,12 +105,15 @@ def get_sweep_status(
     )
     with SweepService(db) as service:
         job = service.get_job(user, job_id)
+        diagnostic = get_dispatch_diagnostic(job)
         return SweepJobStatusResponse(
             id=job.id,
             status=job.status,
             created_at=job.created_at,
             started_at=job.started_at,
             completed_at=job.completed_at,
+            error_code=job.error_code or (diagnostic[0] if diagnostic else None),
+            error_message=job.error_message or (diagnostic[1] if diagnostic else None),
         )
 
 

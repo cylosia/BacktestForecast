@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
-from apps.api.app.dispatch import dispatch_celery_task
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
@@ -26,6 +25,7 @@ from backtestforecast.schemas.analysis import (
 from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
 from backtestforecast.schemas.common import sanitize_error_message
 from backtestforecast.security import get_rate_limiter
+from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 logger = structlog.get_logger("api.analysis")
@@ -70,21 +70,14 @@ def create_analysis(
     idempotency_key = payload.idempotency_key
 
     with _analysis_service(db) as service:
-        analysis = service.create_analysis(user, symbol, idempotency_key=idempotency_key)
-
-        dispatch_celery_task(
-            db=db,
-            job=analysis,
-            task_name="analysis.deep_symbol",
-            task_kwargs={"analysis_id": str(analysis.id)},
-            queue="research",
-            log_event="analysis",
-            logger=logger,
+        analysis = service.create_and_dispatch_analysis(
+            user,
+            symbol,
+            idempotency_key=idempotency_key,
             request_id=metadata.request_id,
             traceparent=request.headers.get("traceparent"),
+            dispatch_logger=logger,
         )
-
-        db.refresh(analysis)
         if analysis.status == "failed":
             raise HTTPException(status_code=500, detail={"code": "enqueue_failed", "message": sanitize_error_message(analysis.error_message) or "Unable to dispatch job."})
         return _to_summary(analysis)
@@ -203,4 +196,9 @@ def list_analyses(
 
 
 def _to_summary(analysis: Any) -> AnalysisSummaryResponse:
-    return AnalysisSummaryResponse.model_validate(analysis)
+    summary = AnalysisSummaryResponse.model_validate(analysis)
+    diagnostic = get_dispatch_diagnostic(analysis)
+    if diagnostic is not None and summary.error_code is None:
+        summary.error_code = diagnostic[0]
+        summary.error_message = diagnostic[1]
+    return summary
