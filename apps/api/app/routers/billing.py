@@ -3,8 +3,6 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
-from starlette.responses import JSONResponse
-
 from apps.api.app.dependencies import get_current_user, get_request_metadata
 from backtestforecast.config import get_settings
 from backtestforecast.db.session import get_db
@@ -167,9 +165,9 @@ def stripe_webhook(
                 code=exc.code,
             )
         _webhook_logger.exception("webhook.unhandled_error", ip=ip_address, request_id=request_id)
-        return JSONResponse(
+        raise HTTPException(
             status_code=500,
-            content={"received": False, "reason": "Transient processing error; please retry."},
+            detail={"code": "webhook_processing_failed", "message": "Transient processing error; Stripe should retry."},
         )
 
 

@@ -70,7 +70,7 @@ def list_exports(
 def create_export(
     payload: CreateExportRequest,
     request: Request,
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),

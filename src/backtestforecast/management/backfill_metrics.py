@@ -11,7 +11,9 @@ Usage (one-time):
 from __future__ import annotations
 
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
+
+from backtestforecast.time import UTC
 from decimal import Decimal
 
 import structlog

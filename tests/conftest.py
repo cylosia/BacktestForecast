@@ -33,3 +33,13 @@ def strip_partial_indexes_for_sqlite(engine) -> None:
         ]
         for idx in indexes_to_remove:
             table.indexes.discard(idx)
+
+
+def pytest_addoption(parser) -> None:
+    """Register optional pytest.ini keys used by newer plugins.
+
+    This keeps collection from failing outright when a local environment has
+    an older or missing pytest-asyncio installation.
+    """
+    parser.addini("asyncio_mode", "pytest-asyncio execution mode", default="auto")
+    parser.addini("timeout", "pytest-timeout per-test timeout", default="120")

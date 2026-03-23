@@ -225,7 +225,7 @@ def _cleanup_export_storage(db: Session, user_id: uuid.UUID) -> None:
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     x_confirm_delete: str | None = Header(default=None),

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import time as _time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+
+from backtestforecast.time import UTC
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4

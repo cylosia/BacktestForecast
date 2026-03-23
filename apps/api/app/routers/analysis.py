@@ -45,7 +45,7 @@ def _analysis_service(db: Session) -> Generator[SymbolDeepAnalysisService, None,
 def create_analysis(
     payload: CreateAnalysisRequest,
     request: Request,
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -134,7 +134,7 @@ def get_analysis_status(
 @router.delete("/{analysis_id}", status_code=204)
 def delete_analysis(
     analysis_id: UUID,
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> None:

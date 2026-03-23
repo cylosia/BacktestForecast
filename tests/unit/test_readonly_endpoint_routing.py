@@ -44,10 +44,11 @@ def test_templates_router_uses_readonly_db_for_list_and_get() -> None:
     assert source.count("db: Session = Depends(get_readonly_db)") >= 2
 
 
-def test_me_router_uses_readonly_db() -> None:
+def test_me_router_bootstraps_user_via_primary_auth_dependency() -> None:
     source = _router_source("apps/api/app/routers/me.py")
     assert "get_readonly_db" in source
-    assert "get_current_user_readonly" in source
+    assert "get_current_user" in source
+    assert "get_current_user_readonly" not in source
     assert "db: Session = Depends(get_readonly_db)" in source
 
 
@@ -90,3 +91,34 @@ def test_events_router_uses_readonly_auth_for_sse() -> None:
     source = _router_source("apps/api/app/routers/events.py")
     assert source.count("Depends(get_current_user_readonly)") >= 5
     assert "create_readonly_session" in source
+
+
+def test_create_endpoints_bootstrap_user_records() -> None:
+    expected = {
+        "apps/api/app/routers/backtests.py": ["def create_backtest(", "Depends(get_current_user)", "def compare_backtests(", "Depends(get_current_user)"],
+        "apps/api/app/routers/analysis.py": ["def create_analysis(", "Depends(get_current_user)"],
+        "apps/api/app/routers/scans.py": ["def create_scan(", "Depends(get_current_user)"],
+        "apps/api/app/routers/sweeps.py": ["def create_sweep(", "Depends(get_current_user)"],
+        "apps/api/app/routers/templates.py": ["def create_template(", "Depends(get_current_user)"],
+        "apps/api/app/routers/exports.py": ["def create_export(", "Depends(get_current_user)"],
+    }
+    for path, snippets in expected.items():
+        source = _router_source(path)
+        for snippet in snippets:
+            assert snippet in source, (path, snippet)
+
+
+def test_mutating_endpoints_use_primary_auth_dependency() -> None:
+    expected = {
+        "apps/api/app/routers/account.py": ["def delete_account(", "Depends(get_current_user)"],
+        "apps/api/app/routers/analysis.py": ["def create_analysis(", "def delete_analysis(", "Depends(get_current_user)"],
+        "apps/api/app/routers/backtests.py": ["def create_backtest(", "def compare_backtests(", "Depends(get_current_user)"],
+        "apps/api/app/routers/exports.py": ["def create_export(", "def retry_failed_export(", "Depends(get_current_user)"],
+        "apps/api/app/routers/scans.py": ["def create_scan(", "Depends(get_current_user)"],
+        "apps/api/app/routers/sweeps.py": ["def create_sweep(", "Depends(get_current_user)"],
+        "apps/api/app/routers/templates.py": ["def create_template(", "def update_template(", "Depends(get_current_user)"],
+    }
+    for path, snippets in expected.items():
+        source = _router_source(path)
+        for snippet in snippets:
+            assert snippet in source, (path, snippet)

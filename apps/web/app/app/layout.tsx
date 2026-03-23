@@ -3,6 +3,7 @@ import { UserButton } from "@clerk/nextjs";
 import { Activity, BarChart3, Bookmark, CreditCard, GitBranch, History, Microscope, PlusCircle, ScanSearch, TrendingUp, Zap } from "lucide-react";
 import { AppNavLink } from "@/components/app-nav-link";
 import { MobileNav, type NavItem } from "@/components/mobile-nav";
+import { getCurrentUser } from "@/lib/api/server";
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/app/dashboard", icon: <BarChart3 className="h-4 w-4" />, label: "Dashboard" },
@@ -18,15 +19,7 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  let planTier: PlanTier | null = null;
-
-  let planError = false;
-  try {
-    const user = await getCurrentUser();
-    planTier = user.plan_tier as PlanTier;
-  } catch {
-    planError = true;
-  }
+  await getCurrentUser();
 
   return (
     <div className="min-h-screen bg-background">
