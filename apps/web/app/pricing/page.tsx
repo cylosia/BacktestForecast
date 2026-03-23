@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, Check } from "lucide-react";
+import type { PlanTier } from "@backtestforecast/api-client";
 import { CheckoutButton } from "@/components/billing/checkout-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +29,12 @@ type PricingContractResponse = {
   checkout_authoritative: boolean;
   plans: PricingPlanResponse[];
 };
+
+type PaidPlanTier = Exclude<PlanTier, "free">;
+
+function isPaidPlanTier(tier: PlanTier): tier is PaidPlanTier {
+  return tier === "pro" || tier === "premium";
+}
 
 async function getPricingContract(): Promise<PricingContractResponse> {
   const response = await fetch(`${API_BASE}/v1/billing/pricing`, { cache: "no-store" });
@@ -78,7 +85,7 @@ export default async function PricingPage() {
                 ))}
               </div>
 
-              {plan.monthly ? (
+              {plan.monthly && isPaidPlanTier(plan.tier) ? (
                 <div className="space-y-3">
                   <CheckoutButton className="w-full" billingInterval="monthly" tier={plan.tier}>
                     Start monthly plan

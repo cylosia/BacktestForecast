@@ -529,6 +529,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     commission_per_contract: parseNumber(values.commissionPerContract),
     entry_rules: entryRules,
     slippage_pct: slippage,
+    risk_free_rate: rfr,
   };
   if (values.strategyType === "calendar_spread" && values.calendarContractType === "put") {
     payload.strategy_overrides = {

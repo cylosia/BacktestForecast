@@ -57,7 +57,7 @@ def list_templates(
 @router.post("", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
 def create_template(
     payload: CreateTemplateRequest,
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TemplateResponse:

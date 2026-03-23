@@ -59,7 +59,7 @@ def list_scans(
 def create_scan(
     payload: CreateScannerJobRequest,
     request: Request,
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     _: None = Depends(_require_scanner_enabled),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
