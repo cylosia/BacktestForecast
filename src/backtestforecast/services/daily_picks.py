@@ -1,7 +1,9 @@
 """Service for daily picks / nightly pipeline queries."""
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
+
+from backtestforecast.time import UTC
 from typing import Any
 from uuid import UUID
 

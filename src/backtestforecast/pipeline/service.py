@@ -13,7 +13,9 @@ from __future__ import annotations
 import time
 from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
+
+from backtestforecast.time import UTC
 from decimal import Decimal
 from typing import Any
 

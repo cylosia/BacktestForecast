@@ -19,11 +19,7 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  try {
-    await getCurrentUser();
-  } catch {
-    // Allow the app shell to render even if the user bootstrap request fails.
-  }
+  await getCurrentUser();
 
   return (
     <div className="min-h-screen bg-background">

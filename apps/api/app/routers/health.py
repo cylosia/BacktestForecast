@@ -312,7 +312,9 @@ def _check_outbox_health() -> dict[str, object]:
 
         result: dict[str, object] = {"pending_count": pending_count}
         if oldest_pending is not None:
-            from datetime import UTC, datetime
+            from datetime import datetime
+
+            from backtestforecast.time import UTC
 
             age_seconds = (datetime.now(UTC) - oldest_pending.replace(tzinfo=UTC)).total_seconds()
             result["oldest_pending_age_seconds"] = round(age_seconds, 1)
