@@ -11,6 +11,10 @@ from uuid import UUID
 import structlog
 
 from backtestforecast.config import get_settings
+from backtestforecast.observability.metrics import (
+    BILLING_AUDIT_REPLAYED_TOTAL,
+    BILLING_AUDIT_WRITE_FAILURES_TOTAL,
+)
 
 logger = structlog.get_logger("billing.events")
 UTC = timezone.utc
@@ -78,6 +82,113 @@ def _persist_failed_billing_audit(payload: dict[str, object]) -> None:
         logger.critical("billing.audit_fallback_persist_failed", exc_info=True)
 
 
+def _replay_payload(session: "Session", payload: dict[str, object]) -> None:
+    from backtestforecast.services.audit import AuditService
+
+    user_id_raw = payload.get("user_id")
+    user_id = UUID(str(user_id_raw)) if user_id_raw else None
+    subscription_id = payload.get("subscription_id")
+    request_id = payload.get("request_id")
+    source = str(payload.get("source") or "fallback")
+    event_type = str(payload["event_type"])
+    old_state = payload.get("old_state")
+    new_state = payload.get("new_state")
+
+    AuditService(session).record_always(
+        event_type=f"billing.{event_type}",
+        subject_type="stripe_subscription",
+        subject_id=str(subscription_id) if subscription_id is not None else None,
+        user_id=user_id,
+        request_id=str(request_id) if request_id is not None else None,
+        metadata={
+            "old_state": old_state if isinstance(old_state, dict) else None,
+            "new_state": new_state if isinstance(new_state, dict) else None,
+            "source": source,
+            "replayed_from_fallback": True,
+            "fallback_recorded_at": payload.get("recorded_at"),
+        },
+    )
+
+
+def drain_deferred_billing_audits(session: "Session", *, batch_size: int = 100) -> dict[str, int]:
+    settings = get_settings()
+    redis_url = settings.redis_cache_url or settings.redis_url
+    drained = 0
+    failed = 0
+    scanned = 0
+
+    if redis_url:
+        try:
+            import redis
+
+            client = redis.Redis.from_url(redis_url, socket_timeout=5, socket_connect_timeout=5, decode_responses=True)
+            while scanned < batch_size:
+                raw_payload = client.lindex(_BILLING_AUDIT_FALLBACK_REDIS_KEY, -1)
+                if raw_payload is None:
+                    break
+                scanned += 1
+                payload = json.loads(raw_payload)
+                try:
+                    _replay_payload(session, payload)
+                    session.flush()
+                    session.commit()
+                    client.rpop(_BILLING_AUDIT_FALLBACK_REDIS_KEY)
+                    drained += 1
+                    BILLING_AUDIT_REPLAYED_TOTAL.labels(source="redis").inc()
+                except Exception:
+                    session.rollback()
+                    failed += 1
+                    logger.error("billing.audit_replay_failed", source="redis", exc_info=True)
+                    break
+        except Exception:
+            session.rollback()
+            logger.error("billing.audit_replay_redis_unavailable", exc_info=True)
+
+    if scanned >= batch_size:
+        return {"drained": drained, "failed": failed, "scanned": scanned}
+
+    remaining_capacity = batch_size - scanned
+    if not _BILLING_AUDIT_FALLBACK_FILE.exists():
+        return {"drained": drained, "failed": failed, "scanned": scanned}
+
+    retained_lines: list[str] = []
+    drained_from_file = 0
+    try:
+        original_lines = _BILLING_AUDIT_FALLBACK_FILE.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(original_lines):
+            if not line:
+                continue
+            if drained_from_file >= remaining_capacity:
+                retained_lines.append(line)
+                continue
+            scanned += 1
+            payload = json.loads(line)
+            try:
+                _replay_payload(session, payload)
+                session.flush()
+                session.commit()
+                drained += 1
+                drained_from_file += 1
+                BILLING_AUDIT_REPLAYED_TOTAL.labels(source="file").inc()
+            except Exception:
+                session.rollback()
+                retained_lines.extend(original_lines[index:])
+                failed += 1
+                logger.error("billing.audit_replay_failed", source="file", exc_info=True)
+                break
+        if retained_lines:
+            _BILLING_AUDIT_FALLBACK_FILE.write_text(
+                "\n".join(retained_lines) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            _BILLING_AUDIT_FALLBACK_FILE.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+
+    return {"drained": drained, "failed": failed, "scanned": scanned}
+
+
 def log_billing_event(
     *,
     user_id: UUID,
@@ -142,6 +253,7 @@ def log_billing_event(
             )
         except Exception:
             _persist_failed_billing_audit(fallback_payload)
+            BILLING_AUDIT_WRITE_FAILURES_TOTAL.labels(source=source).inc()
             logger.error(
                 "billing.audit_write_failed",
                 event_type=event_type,

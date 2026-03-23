@@ -34,6 +34,20 @@ groups:
             Unusually high duplicate audit event insertion attempts.
             May indicate duplicate webhook deliveries or retry storms.
 
+      - alert: BillingAuditWriteFailures
+        expr: |
+          increase(billing_audit_write_failures_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Billing audit writes are falling back to deferred storage"
+          runbook_url: "https://github.com/OWNER/BacktestForecast/blob/main/docs/RUNBOOK.md#billing-and-subscription-incidents"
+          description: >-
+            Billing audit writes have failed in the last 10 minutes and are
+            being deferred for replay. Investigate DB health and the billing
+            audit drain task.
+
       - alert: HighHTTPErrorRate
         expr: |
           (

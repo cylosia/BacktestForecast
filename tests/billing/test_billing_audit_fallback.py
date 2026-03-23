@@ -41,3 +41,65 @@ def test_log_billing_event_writes_failed_audits_to_file(monkeypatch, tmp_path) -
     assert len(payloads) == 1
     assert payloads[0]["event_type"] == "subscription.updated"
     assert payloads[0]["subscription_id"] == "sub_123"
+
+
+def test_drain_deferred_billing_audits_replays_file_payloads(monkeypatch, tmp_path) -> None:
+    fallback_file = tmp_path / "billing-audit.jsonl"
+    fallback_file.write_text(
+        json.dumps(
+            {
+                "event_type": "subscription.updated",
+                "user_id": str(uuid4()),
+                "subscription_id": "sub_456",
+                "request_id": "req_456",
+                "source": "webhook",
+                "old_state": {"status": "past_due"},
+                "new_state": {"status": "active"},
+                "recorded_at": "2026-03-22T00:00:00+00:00",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    recorded: list[dict[str, object]] = []
+
+    class _RecordingAuditService:
+        def __init__(self, session) -> None:
+            self.session = session
+
+        def record_always(self, **kwargs) -> None:
+            recorded.append(kwargs)
+
+    class _Session:
+        def flush(self) -> None:
+            return None
+
+        def commit(self) -> None:
+            return None
+
+        def rollback(self) -> None:
+            return None
+
+    monkeypatch.setattr(billing_events, "_BILLING_AUDIT_FALLBACK_FILE", fallback_file)
+    monkeypatch.setattr(
+        billing_events,
+        "get_settings",
+        lambda: SimpleNamespace(redis_cache_url=None, redis_url=None),
+    )
+    monkeypatch.setattr(audit_module, "AuditService", _RecordingAuditService)
+
+    result = billing_events.drain_deferred_billing_audits(_Session(), batch_size=10)
+
+    assert result["drained"] == 1
+    assert result["failed"] == 0
+    assert recorded[0]["event_type"] == "billing.subscription.updated"
+    assert recorded[0]["metadata"]["replayed_from_fallback"] is True
+    assert not fallback_file.exists()
+
+
+def test_worker_registers_billing_audit_drain_task() -> None:
+    from pathlib import Path
+
+    source = Path("apps/worker/app/celery_app.py").read_text(encoding="utf-8")
+    assert "maintenance.drain_billing_audit_fallback" in source
+    assert '"drain-billing-audit-fallback"' in source

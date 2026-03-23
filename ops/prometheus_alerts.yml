@@ -55,6 +55,15 @@ groups:
           summary: "Duplicate task executions detected"
           description: "Task {{ $labels.task_name }} is being delivered multiple times."
 
+      - alert: BillingAuditWriteFailures
+        expr: increase(billing_audit_write_failures_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Billing audit writes are failing"
+          description: "Billing audit events are being deferred to fallback storage. Check billing.audit_write_failed logs and the drain task."
+
       - alert: ValidateJsonShapeWarningRateHigh
         expr: rate(validate_json_shape_warnings_total[10m]) > 1
         for: 5m

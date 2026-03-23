@@ -73,6 +73,18 @@ BILLING_UNKNOWN_STATUS_TOTAL = Counter(
     ["status"],
 )
 
+BILLING_AUDIT_WRITE_FAILURES_TOTAL = Counter(
+    "billing_audit_write_failures_total",
+    "Billing audit writes that failed and had to be deferred to fallback storage",
+    ["source"],
+)
+
+BILLING_AUDIT_REPLAYED_TOTAL = Counter(
+    "billing_audit_replayed_total",
+    "Deferred billing audit payloads successfully replayed into the audit trail",
+    ["source"],
+)
+
 SCAN_CORRUPT_SUMMARY_TOTAL = Counter(
     "scan_corrupt_summary_total",
     "Scan recommendations with unparseable summary JSON",
