@@ -132,7 +132,8 @@ These are implementation assumptions for the current slices:
 ## Documentation
 
 - `docs/README.md` — documentation index, owners, and split between current docs vs historical audit archives
-- `docs/workflow-trace.md` — authoritative current operational assumptions
+- `docs/current-operational-assumptions.md` — authoritative current operational assumptions
+- `docs/workflow-trace.md` — detailed workflow trace and recovery semantics
 - `docs/RUNBOOK.md` — incident response procedures
 - `docs/known-limitations.md` — current known gaps and tradeoffs
 - `docs/launch-readiness-checklist.md` — comprehensive pre-launch checklist

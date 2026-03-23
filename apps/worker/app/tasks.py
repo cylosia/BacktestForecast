@@ -2129,6 +2129,25 @@ def reconcile_subscriptions(self) -> dict[str, int]:
 
 
 @celery_app.task(
+    name="maintenance.drain_billing_audit_fallback",
+    base=BaseTaskWithDLQ,
+    bind=True,
+    ignore_result=True,
+    max_retries=1,
+    soft_time_limit=120,
+    time_limit=180,
+)
+def drain_billing_audit_fallback(self, batch_size: int = 100) -> dict[str, int]:
+    from backtestforecast.billing.events import drain_deferred_billing_audits
+
+    with create_worker_session() as session:
+        result = drain_deferred_billing_audits(session, batch_size=batch_size)
+    CELERY_TASKS_TOTAL.labels(task_name="maintenance.drain_billing_audit_fallback", status="succeeded").inc()
+    logger.info("billing.audit_replay_complete", **result)
+    return result
+
+
+@celery_app.task(
     name="maintenance.cleanup_stripe_orphan",
     base=BaseTaskWithDLQ,
     bind=True,

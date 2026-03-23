@@ -13,7 +13,7 @@
 
 ## Current operational assumptions
 
-`docs/workflow-trace.md` is the authoritative current-state reference for runtime behavior and operator assumptions. Use that page for dispatch, auth, queue, and recovery semantics; keep this document focused on still-open limitations rather than historical architecture drift.
+`docs/current-operational-assumptions.md` is the authoritative current-state entry point for runtime behavior and operator assumptions. Use that page plus `docs/workflow-trace.md` for dispatch, auth, queue, and recovery semantics; keep this document focused on still-open limitations rather than historical architecture drift.
 
 See `docs/README.md` for the split between current operational docs and historical audit archives.
 

@@ -6,6 +6,7 @@ This index separates **current operational guidance** from **historical audit ar
 
 | Document | Purpose | Owner | When to update |
 |---|---|---|---|
+| `docs/current-operational-assumptions.md` | Authoritative top-level operational assumptions and navigation | API + worker maintainers | Any runtime invariant or source-of-truth document changes |
 | `docs/workflow-trace.md` | Authoritative current operational assumptions for auth, dispatch, queues, billing, exports, and retries | API + worker maintainers | Any change to runtime behavior or recovery semantics |
 | `docs/RUNBOOK.md` | Incident response and diagnosis steps | On-call rotation + API/worker maintainers | Any incident response change or new operator procedure |
 | `docs/known-limitations.md` | Still-open constraints and tradeoffs | Service/domain owner for the affected subsystem | When a limitation is added, removed, or materially changes |
@@ -21,5 +22,7 @@ These files are retained for traceability and planning context, but they are **n
 - `docs/audit-open-items-2026-03-20.md`
 - `docs/audit-remaining-items.md`
 - `docs/audit-remaining-items2.md`
+
+Treat those files as archived snapshots even when they remain at legacy paths for compatibility.
 
 If a historical audit conflicts with a current operational doc, treat the current operational doc plus the referenced code path as authoritative.

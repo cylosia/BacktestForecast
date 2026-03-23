@@ -4,7 +4,7 @@
 
 ## Workflow Trace Quick Notes
 
-`docs/workflow-trace.md` is the authoritative current-state reference for operational assumptions. Use the runbook for response steps, but prefer the workflow trace when validating what the runtime is supposed to do today.
+`docs/current-operational-assumptions.md` is the authoritative current-state reference for operational assumptions. Use the runbook for response steps, but prefer that page and `docs/workflow-trace.md` when validating what the runtime is supposed to do today.
 
 <<<<<<< codex/count-implementable-issues-in-a-session-i61zks
 See `docs/README.md` for the split between current operational docs and historical audit archives.

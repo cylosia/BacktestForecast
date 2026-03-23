@@ -15,12 +15,11 @@ from backtestforecast.schemas.billing import (
     CreatePortalSessionRequest,
     PortalSessionResponse,
     PricingContractResponse,
-    PricingIntervalResponse,
-    PricingPlanResponse,
     WebhookResponse,
 )
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.billing import BillingService
+from backtestforecast.services.pricing_contract import build_pricing_contract
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 _webhook_logger = structlog.get_logger("api.billing.webhook")
@@ -176,61 +175,4 @@ def stripe_webhook(
 
 @router.get("/pricing", response_model=PricingContractResponse)
 def get_pricing_contract() -> PricingContractResponse:
-    settings = get_settings()
-
-    def interval(tier: str, billing_interval: str, amount_usd: int) -> PricingIntervalResponse:
-        price_id = settings.stripe_price_lookup.get((tier, billing_interval))
-        suffix = "mo" if billing_interval == "monthly" else "yr"
-        return PricingIntervalResponse(
-            price_id=price_id,
-            unit_amount_usd=amount_usd if price_id else None,
-            display_price=f"${amount_usd}/{suffix}",
-            available=bool(price_id),
-        )
-
-    return PricingContractResponse(
-        plans=[
-            PricingPlanResponse(
-                tier="free",
-                title="Free",
-                headline="$0",
-                description="Get started with manual research",
-                features=[
-                    "5 backtests / month",
-                    "30 days of history",
-                    "2 side-by-side comparison slots",
-                    "No scanner, forecast, or export access",
-                ],
-            ),
-            PricingPlanResponse(
-                tier="pro",
-                title="Pro",
-                headline="Unlimited backtests and starter automation",
-                description="Best for active solo research workflows",
-                monthly=interval("pro", "monthly", 29),
-                yearly=interval("pro", "yearly", 290),
-                features=[
-                    "Unlimited backtests",
-                    "Basic scanner access",
-                    "Historical-analog forecasting",
-                    "CSV exports",
-                    "365-day history window",
-                ],
-            ),
-            PricingPlanResponse(
-                tier="premium",
-                title="Premium",
-                headline="Advanced automation and full exports",
-                description="For heavier scanners, exports, and scheduled workflows",
-                monthly=interval("premium", "monthly", 79),
-                yearly=interval("premium", "yearly", 790),
-                features=[
-                    "Advanced scanner access",
-                    "PDF + CSV exports",
-                    "Full history depth",
-                    "Highest comparison allowance",
-                    "Priority scheduled scan refreshes",
-                ],
-            ),
-        ]
-    )
+    return build_pricing_contract(get_settings())

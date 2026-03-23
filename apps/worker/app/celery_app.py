@@ -103,6 +103,7 @@ celery_app.conf.task_routes = {
     "maintenance.refresh_market_holidays": {"queue": "maintenance"},
     "maintenance.cleanup_outbox": {"queue": "maintenance"},
     "maintenance.poll_outbox": {"queue": "maintenance"},
+    "maintenance.drain_billing_audit_fallback": {"queue": "maintenance"},
     "maintenance.reconcile_subscriptions": {"queue": "maintenance"},
     "maintenance.cleanup_stripe_orphan": {"queue": "maintenance"},
     "maintenance.expire_old_exports": {"queue": "maintenance"},
@@ -155,6 +156,10 @@ celery_app.conf.beat_schedule = {
     "poll-outbox": {
         "task": "maintenance.poll_outbox",
         "schedule": 30.0,
+    },
+    "drain-billing-audit-fallback": {
+        "task": "maintenance.drain_billing_audit_fallback",
+        "schedule": 60.0,
     },
     "reconcile-subscriptions-daily": {
         "task": "maintenance.reconcile_subscriptions",
