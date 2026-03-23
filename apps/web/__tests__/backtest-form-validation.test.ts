@@ -110,6 +110,17 @@ describe("backtest form submission edge cases", () => {
     expect(errors.riskPerTradePct).toContain("greater than");
   });
 
+
+  it("includes the risk-free rate in the create payload", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      riskFreeRate: "0.031",
+    };
+    const { errors, payload } = validateBacktestForm(values);
+    expect(Object.keys(errors)).toHaveLength(0);
+    expect(payload?.risk_free_rate).toBe(0.031);
+  });
+
   it("accepts valid payload and returns correct symbol normalization", () => {
     const values = { ...getDefaultBacktestFormValues(), symbol: "aapl" };
     const { errors, payload } = validateBacktestForm(values);

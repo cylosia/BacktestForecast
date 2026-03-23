@@ -52,7 +52,7 @@ def list_backtests(
 def create_backtest(
     payload: CreateBacktestRunRequest,
     request: Request,
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -82,7 +82,7 @@ def create_backtest(
 def compare_backtests(
     payload: CompareBacktestsRequest,
     request: Request,
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_readonly_db),
     settings: Settings = Depends(get_settings),
 ) -> CompareBacktestsResponse:

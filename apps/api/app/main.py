@@ -507,7 +507,7 @@ def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         if info is not None:
             response.headers["Retry-After"] = str(max(info.reset_at - int(time.time()), 1))
             response.headers["X-RateLimit-Limit"] = str(info.limit)
-            response.headers["X-RateLimit-Renning"] = str(info.remaining)
+            response.headers["X-RateLimit-Remaining"] = str(info.remaining)
             response.headers["X-RateLimit-Reset"] = str(info.reset_at)
     return response
 
