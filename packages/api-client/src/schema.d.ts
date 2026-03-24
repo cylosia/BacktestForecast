@@ -790,6 +790,8 @@ export interface components {
             forecast?: {
                 [key: string]: unknown;
             } | null;
+            /** Integrity Warnings */
+            integrity_warnings?: string[];
             /**
              * Id
              * Format: uuid
@@ -2290,6 +2292,22 @@ export interface components {
         PipelineHistoryResponse: {
             /** Items */
             items: components["schemas"]["PipelineHistoryItemResponse"][];
+            /**
+             * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
+             * @default 0
+             */
+            total?: number;
+            /**
+             * Offset
+             * @default 0
+             */
+            offset?: number;
+            /**
+             * Limit
+             * @default 50
+             */
+            limit?: number;
             /** Next Cursor */
             next_cursor?: string | null;
         };
@@ -2847,6 +2865,11 @@ export interface components {
             entry_rule_set_name: string;
             /** Equity Curve */
             equity_curve?: components["schemas"]["EquityCurvePointResponse"][];
+            /**
+             * Equity Curve Points Omitted
+             * @default 0
+             */
+            equity_curve_points_omitted: number;
             /** Exit Rule Set Name */
             exit_rule_set_name?: string | null;
             /**
@@ -2869,6 +2892,11 @@ export interface components {
             /** Strategy Type */
             strategy_type: string;
             summary: components["schemas"]["BacktestSummaryResponse"];
+            /**
+             * Trade Items Omitted
+             * @default 0
+             */
+            trade_items_omitted: number;
             /** Trades Json */
             trades_json?: components["schemas"]["TradeJsonResponse"][];
             /**

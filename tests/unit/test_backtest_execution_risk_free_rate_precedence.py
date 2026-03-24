@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
@@ -21,9 +21,12 @@ from tests.conftest import strip_partial_indexes_for_sqlite
 
 
 class _StubMarketDataService:
-    def __init__(self, bundle: HistoricalDataBundle) -> None:
+    def __init__(self, bundle: HistoricalDataBundle, *, treasury_rate: float | None = None) -> None:
         self._bundle = bundle
-        self.client = SimpleNamespace(close=lambda: None)
+        self.client = SimpleNamespace(
+            close=lambda: None,
+            get_average_treasury_yield=lambda *_args, **_kwargs: treasury_rate,
+        )
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
         return self._bundle
@@ -129,7 +132,10 @@ def _sample_equity_curve() -> list[EquityPointResult]:
     return points
 
 
-def test_request_risk_free_rate_override_takes_precedence_and_round_trips(monkeypatch, db_session, user):
+@pytest.mark.target_assertion
+def test_request_risk_free_rate_override_takes_precedence_and_round_trips(
+    monkeypatch, db_session, user, target_assertion
+):
     override_rate = Decimal("0.0123")
     estimated_rate = 0.099
     settings = SimpleNamespace(app_env="test", risk_free_rate=0.045, option_cache_warn_age_seconds=259_200)
@@ -156,6 +162,7 @@ def test_request_risk_free_rate_override_takes_precedence_and_round_trips(monkey
         account_size=Decimal("10000"),
         risk_per_trade_pct=Decimal("5"),
         commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
         risk_free_rate=override_rate,
     )
 
@@ -176,6 +183,7 @@ def test_request_risk_free_rate_override_takes_precedence_and_round_trips(monkey
         risk_free_rate=estimated_rate,
     )
 
+    target_assertion()
     assert engine.last_config is not None
     assert engine.last_config.risk_free_rate == pytest.approx(float(override_rate))
     assert execution_result.summary.sharpe_ratio == pytest.approx(expected_override.sharpe_ratio)
@@ -185,5 +193,92 @@ def test_request_risk_free_rate_override_takes_precedence_and_round_trips(monkey
     run = backtest_service.create_and_run(user, request)
     detail = backtest_service.get_run_for_owner(user_id=user.id, run_id=run.id)
 
-    assert detail.summary.sharpe_ratio == pytest.approx(expected_override.sharpe_ratio)
+    assert float(detail.summary.sharpe_ratio) == pytest.approx(expected_override.sharpe_ratio, abs=1e-4)
     assert detail.risk_free_rate == override_rate
+    assert run.input_snapshot_json["resolved_risk_free_rate_source"] == "request_override"
+
+
+@pytest.mark.target_assertion
+def test_server_default_is_replaced_by_massive_treasury_rate(monkeypatch, db_session, user, target_assertion):
+    treasury_rate = 0.051
+    settings = SimpleNamespace(app_env="test", risk_free_rate=0.045, option_cache_warn_age_seconds=259_200)
+
+    monkeypatch.setattr("backtestforecast.services.backtest_execution.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.services.backtests.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.backtests.run_warnings.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "backtestforecast.services.risk_free_rate.get_settings",
+        lambda: settings,
+    )
+
+    bundle = HistoricalDataBundle(bars=[], earnings_dates=set(), ex_dividend_dates=set(), option_gateway=SimpleNamespace())
+    engine = _CapturingEngine()
+    execution_service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle, treasury_rate=treasury_rate),
+        engine=engine,
+    )
+
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2024-01-02",
+        end_date="2024-03-31",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
+    )
+
+    backtest_service = BacktestService(db_session, execution_service=execution_service)
+    run = backtest_service.create_and_run(user, request)
+    detail = backtest_service.get_run_for_owner(user_id=user.id, run_id=run.id)
+
+    target_assertion()
+    assert engine.last_config is not None
+    assert engine.last_config.risk_free_rate == pytest.approx(treasury_rate)
+    assert float(detail.risk_free_rate) == pytest.approx(treasury_rate)
+    assert run.input_snapshot_json["resolved_risk_free_rate_source"] == "massive_treasury"
+    warning_codes = {warning.code for warning in detail.warnings}
+    assert "historical_treasury_risk_free_rate" in warning_codes
+
+
+def test_enqueue_audits_execution_parameter_resolution(monkeypatch, db_session, user):
+    treasury_rate = 0.031
+    settings = SimpleNamespace(app_env="test", risk_free_rate=0.045, option_cache_warn_age_seconds=259_200)
+
+    monkeypatch.setattr("backtestforecast.services.backtest_execution.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.services.backtests.get_settings", lambda: settings)
+
+    bundle = HistoricalDataBundle(bars=[], earnings_dates=set(), ex_dividend_dates=set(), option_gateway=SimpleNamespace())
+    execution_service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle, treasury_rate=treasury_rate),
+        engine=_CapturingEngine(),
+    )
+
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2024-01-02",
+        end_date="2024-03-31",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
+    )
+
+    service = BacktestService(db_session, execution_service=execution_service)
+    recorded: list[dict] = []
+    monkeypatch.setattr(service.audit, "record_always", lambda **kwargs: recorded.append(kwargs))
+
+    run = service.enqueue(user, request)
+
+    assert run.input_snapshot_json["resolved_risk_free_rate_source"] == "massive_treasury"
+    event = next(event for event in recorded if event["event_type"] == "backtest.execution_parameters_resolved")
+    assert event["metadata"]["risk_free_rate"] == treasury_rate
+    assert event["metadata"]["risk_free_rate_source"] == "massive_treasury"

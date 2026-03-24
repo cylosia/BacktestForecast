@@ -1,10 +1,10 @@
-"""Repository for NightlyPipelineRun and DailyRecommendation queries."""
+﻿"""Repository for NightlyPipelineRun and DailyRecommendation queries."""
 from __future__ import annotations
 
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
@@ -42,25 +42,44 @@ class DailyPicksRepository:
         self,
         *,
         limit: int = 10,
-        cursor_dt: datetime | None = None,
-        cursor_id: UUID | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[NightlyPipelineRun]:
         stmt = select(NightlyPipelineRun).order_by(
             desc(NightlyPipelineRun.created_at),
             desc(NightlyPipelineRun.id),
         )
-        if cursor_dt is not None:
-            if cursor_id is not None:
-                stmt = stmt.where(
-                    or_(
-                        NightlyPipelineRun.created_at < cursor_dt,
-                        and_(
-                            NightlyPipelineRun.created_at == cursor_dt,
-                            NightlyPipelineRun.id < cursor_id,
-                        ),
-                    )
+        if cursor_before is not None:
+            cursor_dt, cursor_id = cursor_before
+            stmt = stmt.where(
+                or_(
+                    NightlyPipelineRun.created_at < cursor_dt,
+                    and_(
+                        NightlyPipelineRun.created_at == cursor_dt,
+                        NightlyPipelineRun.id < cursor_id,
+                    ),
                 )
-            else:
-                stmt = stmt.where(NightlyPipelineRun.created_at < cursor_dt)
+            )
         stmt = stmt.limit(min(limit, 200))
         return list(self.session.scalars(stmt))
+
+    def count_pipeline_history(self) -> int:
+        stmt = select(func.count()).select_from(NightlyPipelineRun)
+        return int(self.session.scalar(stmt) or 0)
+
+    def count_pipeline_history_before_cursor(
+        self,
+        *,
+        cursor_before: tuple[datetime, UUID],
+    ) -> int:
+        cursor_dt, cursor_id = cursor_before
+        stmt = select(func.count()).select_from(NightlyPipelineRun)
+        stmt = stmt.where(
+            or_(
+                NightlyPipelineRun.created_at > cursor_dt,
+                and_(
+                    NightlyPipelineRun.created_at == cursor_dt,
+                    NightlyPipelineRun.id > cursor_id,
+                ),
+            )
+        )
+        return int(self.session.scalar(stmt) or 0)

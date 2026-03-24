@@ -1,8 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
@@ -16,6 +18,9 @@ os.environ.setdefault("MASSIVE_API_KEY", "test-massive-api-key")
 os.environ.setdefault("EARNINGS_API_KEY", "test-earnings-api-key")
 
 from backtestforecast.db.base import Base
+
+_TARGET_ASSERTION_REACHED = pytest.StashKey[bool]()
+_CALL_REPORT = pytest.StashKey[pytest.TestReport]()
 
 
 def strip_partial_indexes_for_sqlite(engine) -> None:
@@ -33,3 +38,38 @@ def strip_partial_indexes_for_sqlite(engine) -> None:
         ]
         for idx in indexes_to_remove:
             table.indexes.discard(idx)
+
+
+@pytest.fixture
+def target_assertion(request: pytest.FixtureRequest):
+    """Mark that a critical regression test reached its intended business assertion."""
+
+    def _mark_reached() -> None:
+        request.node.stash[_TARGET_ASSERTION_REACHED] = True
+
+    return _mark_reached
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call":
+        item.stash[_CALL_REPORT] = report
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    if item.get_closest_marker("target_assertion") is not None:
+        item.stash[_TARGET_ASSERTION_REACHED] = False
+
+
+def pytest_runtest_teardown(item: pytest.Item) -> None:
+    marker = item.get_closest_marker("target_assertion")
+    report = item.stash.get(_CALL_REPORT, None)
+    if marker is None or report is None or not report.passed:
+        return
+    if not item.stash.get(_TARGET_ASSERTION_REACHED, False):
+        raise AssertionError(
+            "This regression test passed without reaching its target assertion. "
+            "Call the target_assertion fixture immediately before the business-behavior assertion it is meant to protect."
+        )

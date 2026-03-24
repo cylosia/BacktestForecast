@@ -1,14 +1,13 @@
-"""Service for daily picks / nightly pipeline queries."""
+﻿"""Service for daily picks / nightly pipeline queries."""
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from backtestforecast.errors import AppValidationError
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
+from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
 from backtestforecast.repositories.daily_picks import DailyPicksRepository
 from backtestforecast.schemas.analysis import DailyPicksResponse
 from backtestforecast.schemas.common import sanitize_error_message
@@ -39,52 +38,29 @@ class DailyPicksService:
     def get_history(
         self, *, limit: int = 10, cursor: str | None = None,
     ) -> dict[str, Any]:
-        cursor_dt: datetime | None = None
-        cursor_id: UUID | None = None
-        if cursor:
-            cursor_dt, cursor_id = self._parse_cursor(cursor)
+        effective_limit = min(max(limit, 1), 30)
+        cursor_before, _ = parse_cursor_param(cursor)
 
-        runs = self.repository.list_pipeline_history(
-            limit=limit + 1, cursor_dt=cursor_dt, cursor_id=cursor_id,
+        total = self.repository.count_pipeline_history()
+        offset = (
+            self.repository.count_pipeline_history_before_cursor(
+                cursor_before=cursor_before,
+            )
+            if cursor_before is not None
+            else 0
         )
-
-        has_next = len(runs) > limit
-        if has_next:
-            runs = runs[:limit]
-
-        next_cursor = None
-        if has_next and runs:
-            last = runs[-1]
-            next_cursor = f"{last.created_at.isoformat()}|{last.id}"
+        runs = self.repository.list_pipeline_history(
+            limit=effective_limit + 1, cursor_before=cursor_before,
+        )
+        page = finalize_cursor_page(runs, total=total, offset=offset, limit=effective_limit)
 
         return {
-            "items": [self._run_to_dict(r) for r in runs],
-            "next_cursor": next_cursor,
+            "items": [self._run_to_dict(r) for r in page.items],
+            "total": page.total,
+            "offset": page.offset,
+            "limit": page.limit,
+            "next_cursor": page.next_cursor,
         }
-
-    @staticmethod
-    def _parse_cursor(cursor: str) -> tuple[datetime, UUID | None]:
-        if "|" in cursor:
-            parts = cursor.split("|", 1)
-            try:
-                cursor_dt = datetime.fromisoformat(parts[0])
-                cursor_id = UUID(parts[1])
-            except (ValueError, IndexError) as exc:
-                raise AppValidationError(
-                    "Invalid pagination cursor format. Expected 'ISO_timestamp|UUID'."
-                ) from exc
-        else:
-            try:
-                cursor_dt = datetime.fromisoformat(cursor)
-            except ValueError as exc:
-                raise AppValidationError(
-                    "Invalid pagination cursor format. Expected an ISO 8601 timestamp."
-                ) from exc
-            cursor_id = None
-
-        if cursor_dt.tzinfo is None:
-            cursor_dt = cursor_dt.replace(tzinfo=UTC)
-        return cursor_dt, cursor_id
 
     @staticmethod
     def _build_picks_response(
@@ -139,5 +115,6 @@ class DailyPicksService:
             "completed_at": (
                 r.completed_at.isoformat() if r.completed_at else None
             ),
+            "error_code": r.error_code,
             "error_message": sanitize_error_message(r.error_message) if r.error_message else None,
         }

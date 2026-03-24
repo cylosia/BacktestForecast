@@ -1,7 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from urllib.parse import urlparse
 
 import pytest
 from alembic.command import downgrade as alembic_downgrade
@@ -19,15 +20,60 @@ from backtestforecast.db.session import get_readonly_db
 from backtestforecast.security.rate_limits import get_rate_limiter
 
 
-def _make_engine():
-    """Require a real Postgres DATABASE_URL — SQLite hides Postgres-specific bugs."""
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        pytest.skip(
-            "DATABASE_URL is not set — integration tests require a real Postgres instance. "
-            "See the postgres-integration CI job for the expected configuration."
+def _assert_safe_test_database_url(url: str) -> str:
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if not scheme.startswith("postgres"):
+        raise RuntimeError("TEST_DATABASE_URL must use a Postgres driver.")
+
+    database_name = parsed.path.rsplit("/", 1)[-1].lower()
+    if not database_name or database_name == "/":
+        raise RuntimeError("TEST_DATABASE_URL must include a concrete database name.")
+
+    safe_markers = (
+        "_test",
+        "-test",
+        "test_",
+        "_pytest",
+        "-pytest",
+        "pytest_",
+        "_ci",
+        "-ci",
+        "ci_",
+        "_e2e",
+        "-e2e",
+        "e2e_",
+    )
+    if not (database_name in {"test", "pytest", "ci", "e2e"} or any(marker in database_name for marker in safe_markers)):
+        raise RuntimeError(
+            "TEST_DATABASE_URL must point to an isolated test database "
+            "(database name should include one of: test, pytest, ci, e2e)."
         )
-    return create_engine(url)
+
+    return url
+
+
+def _resolve_database_url() -> str:
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Integration tests require an explicit TEST_DATABASE_URL pointing to an isolated Postgres database.")
+    return _assert_safe_test_database_url(url)
+
+
+def _make_engine():
+    """Require an explicit isolated test database and verify it is reachable."""
+    url = _resolve_database_url()
+    engine = create_engine(url, connect_args={"connect_timeout": 2})
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")
+    except Exception:
+        engine.dispose()
+        pytest.skip(
+            "Integration tests require a reachable Postgres instance. "
+            "Set TEST_DATABASE_URL to an isolated test database and ensure Postgres is running."
+        )
+    return engine
 
 
 @pytest.fixture(scope="session")

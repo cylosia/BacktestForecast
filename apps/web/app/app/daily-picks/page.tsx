@@ -1,4 +1,4 @@
-import { getCurrentUser, getDailyPicks, getDailyPicksHistory } from "@/lib/api/server";
+import { getCurrentUser, getDailyPicks, getDailyPicksHistory, getMeta } from "@/lib/api/server";
 import { ApiError } from "@/lib/api/shared";
 import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
 import type { DailyPickItem, DailyPicksResponse } from "@backtestforecast/api-client";
@@ -9,7 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PicksHistory } from "@/components/daily-picks/picks-history";
 import type { PipelineHistoryResponse } from "@backtestforecast/api-client";
 import { PaginationControls } from "@/components/shared/pagination-controls";
-import { getDailyPicksScheduleLabel } from "@/lib/daily-picks-schedule";
 
 const HISTORY_PAGE_SIZE = 25;
 
@@ -117,13 +116,15 @@ export default async function DailyPicksPage({
 }) {
   const params = await searchParams;
   const cursor = params.next_cursor?.trim() || params.cursor?.trim() || undefined;
-  const scheduleLabel = getDailyPicksScheduleLabel();
-  let user;
-  try {
-    user = await getCurrentUser();
-  } catch {
+  const [userResult, metaResult] = await Promise.allSettled([getCurrentUser(), getMeta()]);
+  if (userResult.status !== "fulfilled") {
     return <div className="p-8 text-center text-muted-foreground">Unable to load user data. Please try again.</div>;
   }
+  const user = userResult.value;
+  const scheduleLabel =
+    metaResult.status === "fulfilled" && metaResult.value.daily_picks_schedule_utc
+      ? metaResult.value.daily_picks_schedule_utc
+      : "06:00 UTC";
   const hasAccess = user.features.forecasting_access;
 
   if (!hasAccess) {
@@ -138,10 +139,13 @@ export default async function DailyPicksPage({
     );
   }
 
-  let data: DailyPicksResponse;
-  try {
-    data = await getDailyPicks();
-  } catch (err) {
+  const [dataResult, historyResult] = await Promise.allSettled([
+    getDailyPicks(),
+    getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor),
+  ]);
+
+  if (dataResult.status !== "fulfilled") {
+    const err = dataResult.reason;
     const isApiError = err instanceof ApiError;
     const status = isApiError ? err.status : 0;
     const message =
@@ -165,13 +169,8 @@ export default async function DailyPicksPage({
       </div>
     );
   }
-
-  let history: PipelineHistoryResponse | null = null;
-  try {
-    history = await getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor);
-  } catch {
-    // Don't break the page if history fails to load
-  }
+  const data: DailyPicksResponse = dataResult.value;
+  const history: PipelineHistoryResponse | null = historyResult.status === "fulfilled" ? historyResult.value : null;
 
   const items = data.items ?? [];
   const maxScore = items.length > 0 ? Math.max(1, ...items.map((i) => toNumber(i.score)).filter((score) => Number.isFinite(score))) : 1;
@@ -227,7 +226,7 @@ export default async function DailyPicksPage({
       <div className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground space-y-2">
         <p className="font-medium text-foreground">How the pipeline works</p>
         <p>
-          Every night at 6:00 AM UTC, the pipeline screens ~100 optionable symbols for
+          Every night at {scheduleLabel}, the pipeline screens ~100 optionable symbols for
           technical signals, matches each to compatible strategies based on its current
           regime (bullish/bearish/neutral × high/low IV), runs quick 90-day backtests
           across a parameter grid, refines the top candidates with full 1-year backtests,
@@ -244,9 +243,9 @@ export default async function DailyPicksPage({
           <PicksHistory data={history} />
           <PaginationControls
             basePath="/app/daily-picks"
-            offset={0}
-            limit={HISTORY_PAGE_SIZE}
-            total={history.items.length + (history.next_cursor ? HISTORY_PAGE_SIZE : 0)}
+            offset={history.offset ?? 0}
+            limit={history.limit ?? HISTORY_PAGE_SIZE}
+            total={history.total ?? 0}
             cursor={cursor}
             nextCursor={history.next_cursor}
             cursorParamName="next_cursor"

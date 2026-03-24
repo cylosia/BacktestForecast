@@ -1,10 +1,10 @@
-"""Tests for daily picks endpoint happy and edge paths."""
+﻿"""Tests for daily picks endpoint happy and edge paths."""
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from backtestforecast.models import DailyRecommendation, NightlyPipelineRun, User
+from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from tests.integration.test_api_critical_flows import _set_user_plan
 
 
@@ -16,7 +16,7 @@ def _create_pipeline_run_with_picks(session, trade_date=None):
     run = NightlyPipelineRun(
         trade_date=trade_date,
         status="succeeded",
-        stage="complete",
+        stage="forecast_rank",
         symbols_screened=100,
         symbols_after_screen=50,
         pairs_generated=200,
@@ -80,6 +80,31 @@ def test_daily_picks_no_data(client, auth_headers, db_session):
     assert data["items"] == []
 
 
+def test_daily_picks_history_reports_truthful_cursor_offset(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    [_create_pipeline_run_with_picks(db_session, trade_date=date(2025, 3, day)) for day in (1, 2, 3)]
+    first_page = client.get("/v1/daily-picks/history?limit=2", headers=auth_headers)
+    assert first_page.status_code == 200
+    first_body = first_page.json()
+    assert first_body["total"] == 3
+    assert first_body["offset"] == 0
+    assert len(first_body["items"]) == 2
+    assert first_body["next_cursor"]
+
+    second_page = client.get(
+        f"/v1/daily-picks/history?limit=2&cursor={first_body['next_cursor']}",
+        headers=auth_headers,
+    )
+    assert second_page.status_code == 200
+    second_body = second_page.json()
+    assert second_body["total"] == 3
+    assert second_body["offset"] == 2
+    assert len(second_body["items"]) == 1
+    assert second_body["next_cursor"] is None
+
+
 def test_daily_picks_requires_pro(client, auth_headers, db_session):
     """Free users should not access daily picks."""
     client.get("/v1/me", headers=auth_headers)
@@ -107,7 +132,7 @@ def test_cursor_pagination_same_timestamp(client, auth_headers, db_session):
     run1 = NightlyPipelineRun(
         trade_date=date(2025, 3, 10),
         status="succeeded",
-        stage="complete",
+        stage="forecast_rank",
         symbols_screened=50,
         symbols_after_screen=25,
         pairs_generated=100,
@@ -123,7 +148,7 @@ def test_cursor_pagination_same_timestamp(client, auth_headers, db_session):
     run2 = NightlyPipelineRun(
         trade_date=date(2025, 3, 9),
         status="succeeded",
-        stage="complete",
+        stage="forecast_rank",
         symbols_screened=50,
         symbols_after_screen=25,
         pairs_generated=100,
@@ -144,3 +169,52 @@ def test_cursor_pagination_same_timestamp(client, auth_headers, db_session):
     assert str(run1.id) in run_ids or str(run2.id) in run_ids, (
         "At least one of the same-timestamp runs should appear in history"
     )
+
+
+def test_daily_picks_history_returns_real_total(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    for idx in range(3):
+        _create_pipeline_run_with_picks(db_session, trade_date=date(2025, 3, idx + 1))
+
+    resp = client.get("/v1/daily-picks/history?limit=2", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["total"] == 3
+    assert body["limit"] == 2
+    assert body["offset"] == 0
+    assert len(body["items"]) == 2
+    assert body["next_cursor"] is not None
+
+
+def test_daily_picks_history_includes_error_code_when_pipeline_run_failed(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    failed_run = NightlyPipelineRun(
+        trade_date=date(2025, 3, 5),
+        status="failed",
+        stage="forecast_rank",
+        symbols_screened=25,
+        symbols_after_screen=10,
+        pairs_generated=5,
+        quick_backtests_run=2,
+        full_backtests_run=1,
+        recommendations_produced=0,
+        duration_seconds=Decimal("5.0"),
+        completed_at=datetime.now(UTC),
+        error_code="pipeline_failed",
+        error_message="Upstream fetch timed out",
+    )
+    db_session.add(failed_run)
+    db_session.commit()
+
+    resp = client.get("/v1/daily-picks/history?limit=10", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    failed_items = [item for item in body["items"] if item["id"] == str(failed_run.id)]
+    assert failed_items
+    assert failed_items[0]["error_code"] == "pipeline_failed"
+    assert failed_items[0]["error_message"] == "Upstream fetch timed out"
