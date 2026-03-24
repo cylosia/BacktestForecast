@@ -2,28 +2,42 @@
 
 from contextlib import suppress
 from datetime import UTC
-from random import SystemRandom
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from sqlalchemy.orm import Session
 
     from backtestforecast.models import OutboxMessage
 
-import structlog
 from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 
 from apps.worker.app.celery_app import celery_app
 from apps.worker.app.task_base import BaseTaskWithDLQ, _get_dlq_redis  # noqa: F401
 from apps.worker.app.task_helpers import close_owned_resource as _close_owned_resource
 from apps.worker.app.task_helpers import commit_then_publish as _commit_then_publish
+from apps.worker.app.task_runtime import (
+    compute_retry_delay as _compute_retry_delay,
+)
+from apps.worker.app.task_runtime import (
+    find_pipeline_run as _find_pipeline_run,
+)
+from apps.worker.app.task_runtime import (
+    logger,
+)
+from apps.worker.app.task_runtime import (
+    publish_job_status_safe as _publish_job_status_safe,
+)
+from apps.worker.app.task_runtime import (
+    update_heartbeat as _update_heartbeat,
+)
+from apps.worker.app.task_runtime import (
+    validate_task_ownership as _validate_task_ownership,
+)
 from backtestforecast.billing.entitlements import resolve_feature_policy
 from backtestforecast.db.session import create_worker_session
 from backtestforecast.errors import AppError, ExternalServiceError
-from backtestforecast.events import _VALID_TARGET_STATUSES, publish_job_status
+from backtestforecast.events import publish_job_status
 from backtestforecast.models import BacktestRun, SymbolAnalysis, User
 from backtestforecast.models import ExportJob as ExportJobModel
 from backtestforecast.models import ScannerJob as ScannerJobModel
@@ -46,9 +60,11 @@ from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
 
-logger = structlog.get_logger("worker.tasks")
-_retry_rng = SystemRandom()
 SessionLocal = create_worker_session
+
+
+def create_worker_session():
+    return SessionLocal()
 
 
 @celery_app.task(name="maintenance.ping", ignore_result=True)
@@ -58,78 +74,6 @@ def ping() -> dict[str, str]:
         "task": "maintenance.ping",
         "note": "Worker is reachable.",
     }
-
-
-def _compute_retry_delay(base_delay_seconds: int, retries: int) -> int:
-    return int(base_delay_seconds * (retries + 1) * _retry_rng.uniform(0.8, 1.2))
-
-
-def _publish_job_status_safe(
-    target: str,
-    obj_id: UUID,
-    status: str,
-    *,
-    metadata: dict[str, object] | None = None,
-    log_event: str,
-    **log_fields: object,
-) -> None:
-    try:
-        publish_job_status(target, obj_id, status, metadata=metadata)
-    except Exception:
-        logger.warning(log_event, exc_info=True, **log_fields)
-
-
-def _find_pipeline_run[ModelT](
-    session: Session,
-    model_cls: type[ModelT],
-    run: ModelT | None,
-    trade_date: date,
-    *,
-    run_id: UUID | None = None,
-) -> ModelT | None:
-    """Return the pipeline run object for failure marking.
-
-    When *run_id* is provided we look up by exact ID (preferred).
-    When *run* was returned by ``run_pipeline`` we use ``run.id``.
-    When both are ``None`` (pipeline raised before returning), fall
-    back to querying for the most recent running row for *trade_date*
-    and log a warning since this heuristic may match the wrong row.
-    """
-    effective_id = run_id or (run.id if run is not None else None)
-    if effective_id is not None:
-        return session.get(model_cls, effective_id)
-    from sqlalchemy import desc, func, select
-
-    running_count = session.scalar(
-        select(func.count()).select_from(model_cls).where(
-            model_cls.trade_date == trade_date, model_cls.status == "running"
-        )
-    ) or 0
-    logger.error(
-        "pipeline.find_run_fallback",
-        trade_date=str(trade_date),
-        running_count=running_count,
-        msg=(
-            "No run_id available; falling back to heuristic date-based lookup. "
-            "Investigate why run_id was not captured."
-        ),
-    )
-    if running_count > 1:
-        logger.error(
-            "pipeline.find_run_ambiguous",
-            trade_date=str(trade_date),
-            running_count=running_count,
-            msg="Multiple running pipeline runs for this date - refusing to guess.",
-        )
-        return None
-    stmt = (
-        select(model_cls)
-        .where(model_cls.trade_date == trade_date, model_cls.status == "running")
-        .order_by(desc(model_cls.created_at))
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
-    return session.scalar(stmt)
 
 
 @celery_app.task(name="pipeline.nightly_scan", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=1800, time_limit=1860)
@@ -295,89 +239,6 @@ def nightly_scan_pipeline(
         _close_owned_resource(shared_exec, label="nightly_scan.execution_service")
         _close_owned_resource(executor, label="nightly_scan.executor")
         _close_owned_resource(client, label="nightly_scan.massive_client")
-
-
-_TERMINAL_STATUSES = _VALID_TARGET_STATUSES | frozenset({"expired"})
-
-
-def _update_heartbeat(session: Session, model_cls: type, obj_id: UUID) -> None:
-    """Best-effort heartbeat update for long-running tasks.
-
-    Uses a savepoint to avoid committing unrelated dirty ORM state from
-    the caller's transaction.
-    """
-    from datetime import datetime
-
-    from sqlalchemy import update
-    nested = None
-    try:
-        nested = session.begin_nested()
-        session.execute(
-            update(model_cls)
-            .where(model_cls.id == obj_id)
-            .values(last_heartbeat_at=datetime.now(UTC))
-        )
-        nested.commit()
-    except Exception:
-        if nested is not None:
-            with suppress(Exception):
-                nested.rollback()
-
-
-def _validate_task_ownership(session: Session, model_cls: type, obj_id: UUID, expected_task_id: str | None) -> bool:
-    """Return True if this Celery delivery owns the job, False if it's a duplicate.
-
-    When the DB record has no ``celery_task_id`` yet (API failed to set it, or
-    the job was created before that feature), we atomically claim ownership by
-    writing our task ID with a ``WHERE celery_task_id IS NULL`` guard.  If
-    another worker already claimed it, the UPDATE affects zero rows and we
-    treat this delivery as a duplicate.
-
-    If the stored task ID differs, treat this delivery as superseded. Stale
-    claims must be cleared by the reaper/redispatch path before a new task may
-    take ownership.
-    """
-    from sqlalchemy import update
-
-    if expected_task_id is None:
-        return True
-    obj = session.get(model_cls, obj_id)
-    if obj is None:
-        logger.warning("validate_task_ownership.obj_not_found", model=model_cls.__name__, obj_id=str(obj_id))
-        return False
-    stored = getattr(obj, "celery_task_id", None)
-    if stored == expected_task_id:
-        return True
-    if stored is None:
-        nested = session.begin_nested()
-        result = session.execute(
-            update(model_cls)
-            .where(model_cls.id == obj_id, model_cls.celery_task_id.is_(None))
-            .values(celery_task_id=expected_task_id)
-            .returning(model_cls.id)
-        )
-        claimed = result.fetchone() is not None
-        try:
-            nested.commit()
-        except Exception:
-            nested.rollback()
-            logger.warning("validate_task_ownership.commit_failed", model=model_cls.__name__, obj_id=str(obj_id), exc_info=True)
-            return False
-        if not claimed:
-            return False
-        session.refresh(obj)
-        return True
-    current_status = getattr(obj, "status", None)
-    if current_status is not None and current_status not in _TERMINAL_STATUSES:
-        logger.info(
-            "validate_task_ownership.superseded_delivery",
-            model=model_cls.__name__,
-            obj_id=str(obj_id),
-            stored_task_id=stored,
-            delivery_task_id=expected_task_id,
-            status=current_status,
-        )
-    return False
 
 
 @celery_app.task(name="backtests.run", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=2, soft_time_limit=300, time_limit=330)

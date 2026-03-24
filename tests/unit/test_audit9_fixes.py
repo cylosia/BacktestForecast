@@ -189,17 +189,18 @@ class TestSweepScoringConfig:
     """Fix #7: Sweep scoring uses direct settings access."""
 
     def test_scoring_config_reads_settings(self):
-        from backtestforecast.services.sweeps import _sweep_scoring_config
+        from backtestforecast.services.sweep_service_helpers import sweep_scoring_config
 
-        with patch("backtestforecast.services.sweeps.get_settings") as mock:
+        with patch("backtestforecast.services.sweep_service_helpers.get_settings") as mock:
             mock.return_value = MagicMock(
                 sweep_score_win_rate_weight=0.30,
                 sweep_score_roi_weight=0.30,
                 sweep_score_sharpe_weight=0.20,
                 sweep_score_drawdown_weight=0.20,
                 sweep_score_sharpe_multiplier=2.5,
+                sweep_score_min_trades=3,
             )
-            cfg = _sweep_scoring_config()
+            cfg = sweep_scoring_config()
 
         assert cfg["win_rate_weight"] == 0.30
         assert cfg["roi_weight"] == 0.30

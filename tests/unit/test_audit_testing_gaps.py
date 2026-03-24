@@ -75,18 +75,20 @@ class TestScanDeleteForUser:
 
 class TestSweepProgressSavepoint:
     def test_heartbeat_uses_savepoint(self):
+        from backtestforecast.models import SweepJob
         from backtestforecast.services.sweeps import _update_heartbeat
 
         session = MagicMock()
         nested = MagicMock()
         session.begin_nested.return_value = nested
 
-        _update_heartbeat(session, uuid.uuid4())
+        _update_heartbeat(session, SweepJob, uuid.uuid4())
 
         session.begin_nested.assert_called_once()
         nested.commit.assert_called_once()
 
     def test_heartbeat_rollback_on_failure(self):
+        from backtestforecast.models import SweepJob
         from backtestforecast.services.sweeps import _update_heartbeat
 
         session = MagicMock()
@@ -94,27 +96,28 @@ class TestSweepProgressSavepoint:
         session.begin_nested.return_value = nested
         session.execute.side_effect = RuntimeError("DB gone")
 
-        _update_heartbeat(session, uuid.uuid4())
+        _update_heartbeat(session, SweepJob, uuid.uuid4())
 
         nested.rollback.assert_called_once()
 
     def test_heartbeat_failure_counter_increments(self):
-        import backtestforecast.services.sweeps as sweeps_mod
+        from backtestforecast.models import SweepJob
         from backtestforecast.services.sweeps import _update_heartbeat
+        import backtestforecast.services.sweep_service_helpers as sweep_helpers
 
-        original = sweeps_mod._heartbeat_failures
+        original = sweep_helpers._heartbeat_failures
         try:
-            sweeps_mod._heartbeat_failures = 0
+            sweep_helpers._heartbeat_failures = 0
             session = MagicMock()
             session.begin_nested.side_effect = RuntimeError("fail")
 
-            _update_heartbeat(session, uuid.uuid4())
-            assert sweeps_mod._heartbeat_failures == 1
+            _update_heartbeat(session, SweepJob, uuid.uuid4())
+            assert sweep_helpers._heartbeat_failures == 1
 
-            _update_heartbeat(session, uuid.uuid4())
-            assert sweeps_mod._heartbeat_failures == 2
+            _update_heartbeat(session, SweepJob, uuid.uuid4())
+            assert sweep_helpers._heartbeat_failures == 2
         finally:
-            sweeps_mod._heartbeat_failures = original
+            sweep_helpers._heartbeat_failures = original
 
 
 # ---------------------------------------------------------------------------

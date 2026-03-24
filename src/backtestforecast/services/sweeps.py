@@ -28,7 +28,6 @@ from backtestforecast.schemas.backtests import (
     StrategyOverrides,
     StrikeSelection,
     StrikeSelectionMode,
-    TradeJsonResponse,
 )
 from backtestforecast.schemas.json_shapes import _SUMMARY_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.schemas.sweeps import (
@@ -63,20 +62,13 @@ from backtestforecast.services.serialization import (
     serialize_summary,
     serialize_trade,
 )
-from backtestforecast.services.serialization import (
-    safe_validate_equity_curve as _safe_validate_equity_curve,
+from backtestforecast.services.sweep_service_helpers import (
+    score_candidate_from_summary,
+    sweep_job_response,
+    sweep_result_response,
 )
-from backtestforecast.services.serialization import (
-    safe_validate_json as _safe_validate_json,
-)
-from backtestforecast.services.serialization import (
-    safe_validate_list as _safe_validate_list,
-)
-from backtestforecast.services.serialization import (
-    safe_validate_summary as _safe_validate_summary,
-)
-from backtestforecast.services.serialization import (
-    safe_validate_warning_list as _safe_validate_warning_list,
+from backtestforecast.services.sweep_service_helpers import (
+    update_sweep_heartbeat as _update_heartbeat,
 )
 
 logger = structlog.get_logger("services.sweeps")
@@ -84,54 +76,6 @@ _SWEEP_QUEUE = "sweeps"
 
 _CANDIDATE_TIMEOUT_SECONDS = 120
 _MAX_EQUITY_POINTS = 500
-
-def _sweep_scoring_config() -> dict[str, float]:
-    """Return sweep scoring weights from settings."""
-    settings = get_settings()
-    return {
-        "win_rate_weight": settings.sweep_score_win_rate_weight,
-        "roi_weight": settings.sweep_score_roi_weight,
-        "sharpe_weight": settings.sweep_score_sharpe_weight,
-        "drawdown_weight": settings.sweep_score_drawdown_weight,
-        "sharpe_multiplier": settings.sweep_score_sharpe_multiplier,
-        "min_trades": settings.sweep_score_min_trades,
-    }
-
-
-_heartbeat_failures: int = 0
-
-
-def _update_heartbeat(session: Session, job_id: UUID) -> None:
-    """Best-effort heartbeat update so the reaper knows the job is alive.
-
-    Uses a savepoint to avoid committing dirty ORM state from the parent
-    transaction (e.g. in-progress candidate counts).
-    """
-    global _heartbeat_failures
-    from sqlalchemy import update as _hb_update
-    nested = None
-    try:
-        nested = session.begin_nested()
-        session.execute(
-            _hb_update(SweepJob)
-            .where(SweepJob.id == job_id)
-            .values(last_heartbeat_at=datetime.now(UTC))
-        )
-        nested.commit()
-        _heartbeat_failures = 0
-    except Exception:
-        _heartbeat_failures += 1
-        if nested is not None:
-            with contextlib.suppress(Exception):
-                nested.rollback()
-        if _heartbeat_failures >= 3:
-            logger.error(
-                "sweep.heartbeat_consecutive_failures",
-                job_id=str(job_id),
-                consecutive_failures=_heartbeat_failures,
-                hint="Reaper may kill this job if heartbeat stays stale.",
-            )
-
 
 class SweepService:
     def __init__(
@@ -625,7 +569,7 @@ class SweepService:
                                 ))
                                 local_evaluated_count += 1
                                 if local_evaluated_count % 50 == 0:
-                                    _update_heartbeat(self.session, job.id)
+                                    _update_heartbeat(self.session, SweepJob, job.id)
                                     nested_progress = None
                                     try:
                                         nested_progress = self.session.begin_nested()
@@ -827,7 +771,7 @@ class SweepService:
         optimizer = GeneticOptimizer(ga_config)
         ga_result = optimizer.run(fitness_fn)
 
-        _update_heartbeat(self.session, job.id)
+        _update_heartbeat(self.session, SweepJob, job.id)
 
         genetic_elapsed = _time.monotonic() - genetic_start
         genetic_limit = get_settings().sweep_genetic_timeout_seconds
@@ -1053,69 +997,7 @@ class SweepService:
 
     @staticmethod
     def _score_candidate_from_summary(summary: dict[str, Any], cfg: dict[str, float] | None = None) -> float:
-        """Score a candidate based on backtest summary metrics.
-
-        **Formula**::
-
-            raw = win_rate * W_wr + roi * W_roi + sharpe * (M * W_sharpe) - drawdown * W_dd
-            score = raw * norm
-
-        Where:
-
-        - ``M`` is the ``sharpe_multiplier`` (default 2.0), which amplifies
-          Sharpe's *relative* contribution vs other factors.
-        - ``norm`` is a normalization factor that keeps the total effective
-          weight proportional to the configured sum (default 1.0). Without
-          normalization, the multiplier would inflate absolute scores.
-
-        **Default weights** (effective after normalization):
-
-        ========== ========== ========= ===========
-        Factor     Configured Effective Proportion
-        ========== ========== ========= ===========
-        Win rate   0.25       0.25      ~21%
-        ROI        0.35       0.35      ~29%
-        Sharpe     0.20x2.0   0.40      ~33%
-        Drawdown   0.20       0.20      ~17%
-        ========== ========== ========= ===========
-
-        The multiplier makes Sharpe the highest-weighted factor, favouring
-        risk-adjusted returns over raw ROI in sweep ranking.
-        """
-        if cfg is None:
-            cfg = _sweep_scoring_config()
-        win_rate = Decimal(str(summary.get("win_rate", 0)))
-        roi = Decimal(str(summary.get("total_roi_pct", 0)))
-        drawdown = max(Decimal(str(summary.get("max_drawdown_pct", 0))), Decimal("0"))
-        sharpe = Decimal(str(summary.get("sharpe_ratio") or 0))
-        trade_count = int(summary.get("trade_count", 0))
-        decided_trades = int(summary.get("decided_trades", trade_count) or 0)
-
-        import math
-        if not all(math.isfinite(float(v)) for v in [win_rate, roi, drawdown, sharpe]):
-            return 0.0
-
-        min_trades = int(cfg["min_trades"])
-        if decided_trades < min_trades:
-            return 0.0
-
-        win_rate_w = Decimal(str(round(cfg["win_rate_weight"], 10)))
-        roi_w = Decimal(str(round(cfg["roi_weight"], 10)))
-        sharpe_w = Decimal(str(round(cfg["sharpe_weight"], 10)))
-        sharpe_m = Decimal(str(round(cfg["sharpe_multiplier"], 10)))
-        drawdown_w = Decimal(str(round(cfg["drawdown_weight"], 10)))
-
-        effective_sharpe_w = sharpe_w * sharpe_m
-        total_effective = win_rate_w + roi_w + effective_sharpe_w + drawdown_w
-        norm = (win_rate_w + roi_w + sharpe_w + drawdown_w) / total_effective if total_effective > 0 else Decimal("1")
-
-        score = (
-            win_rate * win_rate_w
-            + roi * roi_w
-            + sharpe * effective_sharpe_w
-            - drawdown * drawdown_w
-        ) * norm
-        return float(score)
+        return score_candidate_from_summary(summary, cfg)
 
     _serialize_summary = staticmethod(serialize_summary)
     _serialize_trade = staticmethod(serialize_trade)
@@ -1127,99 +1009,8 @@ class SweepService:
 
     @staticmethod
     def _to_job_response(job: SweepJob) -> SweepJobResponse:
-        warnings = _safe_validate_warning_list(job.warnings_json)
-        return SweepJobResponse(
-            id=job.id,
-            status=job.status,
-            symbol=job.symbol,
-            mode=job.mode,
-            plan_tier_snapshot=job.plan_tier_snapshot,
-            candidate_count=job.candidate_count,
-            evaluated_candidate_count=job.evaluated_candidate_count,
-            result_count=job.result_count,
-            prefetch_summary=_safe_validate_json(
-                job.prefetch_summary_json,
-                "prefetch_summary_json",
-                default=None,
-                response_warnings=warnings,
-            ),
-            warnings=warnings,
-            request_snapshot=_safe_validate_json(
-                job.request_snapshot_json,
-                "request_snapshot_json",
-                default={},
-                response_warnings=warnings,
-            ),
-            error_code=job.error_code,
-            error_message=job.error_message,
-            created_at=job.created_at,
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-        )
+        return sweep_job_response(job)
 
     @staticmethod
     def _to_result_response(result: SweepResult) -> SweepResultResponse:
-        params = result.parameter_snapshot_json or {}
-        warnings = _safe_validate_warning_list(result.warnings_json)
-        params = _safe_validate_json(
-            params,
-            "parameter_snapshot_json",
-            default={},
-            response_warnings=warnings,
-        )
-        persisted_trade_count = max(
-            int(params.get("trade_count") or 0),
-            int((result.summary_json or {}).get("trade_count") or 0),
-            len(result.trades_json or []),
-        )
-        serialized_trade_count = max(
-            int(params.get("serialized_trade_count") or 0),
-            len(result.trades_json or []),
-        )
-        persisted_equity_point_count = max(
-            int(params.get("equity_point_count") or 0),
-            len(result.equity_curve_json or []),
-        )
-        serialized_equity_point_count = max(
-            int(params.get("serialized_equity_point_count") or 0),
-            len(result.equity_curve_json or []),
-        )
-        trades = _safe_validate_list(
-            TradeJsonResponse,
-            result.trades_json,
-            "trades_json",
-            response_warnings=warnings,
-        )
-        equity_curve = _safe_validate_equity_curve(
-            result.equity_curve_json,
-            field_name="equity_curve_json",
-            response_warnings=warnings,
-        )
-        return SweepResultResponse(
-            id=result.id,
-            rank=result.rank,
-            score=result.score,
-            strategy_type=result.strategy_type,
-            delta=params.get("delta"),
-            width_mode=params.get("width_mode"),
-            width_value=params.get("width_value"),
-            entry_rule_set_name=params.get("entry_rule_set_name") or "default",
-            exit_rule_set_name=params.get("exit_rule_set_name"),
-            profit_target_pct=params.get("profit_target_pct"),
-            stop_loss_pct=params.get("stop_loss_pct"),
-            parameter_snapshot_json=params,
-            summary=_safe_validate_summary(
-                result.summary_json,
-                field_name="summary_json",
-                response_warnings=warnings,
-            ),
-            warnings=warnings,
-            trades_json=trades,
-            equity_curve=equity_curve,
-            trades_truncated=persisted_trade_count > serialized_trade_count,
-            trade_items_omitted=max(persisted_trade_count - serialized_trade_count, 0),
-            equity_curve_points_omitted=max(
-                persisted_equity_point_count - serialized_equity_point_count,
-                0,
-            ),
-        )
+        return sweep_result_response(result)

@@ -3,9 +3,7 @@
 import csv
 import hashlib
 import io
-import re
 import time as _time
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -24,7 +22,7 @@ from backtestforecast.models import ExportJob, User
 from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SECONDS
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
-from backtestforecast.schemas.backtests import BacktestSummaryResponse, BacktestTradeResponse, EquityCurvePointResponse
+from backtestforecast.schemas.backtests import BacktestTradeResponse, EquityCurvePointResponse
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
@@ -32,6 +30,14 @@ from backtestforecast.services.dispatch_recovery import (
     get_dispatch_diagnostic,
     observe_job_create_to_running_latency,
     redispatch_if_stale_queued,
+)
+from backtestforecast.services.export_service_helpers import (
+    ExportBacktestSnapshot,
+    build_export_file_name,
+    export_mime_type,
+    format_metric_value,
+    normalize_utc,
+    sanitize_csv_cell,
 )
 from backtestforecast.services.job_cancellation import (
     mark_job_cancelled,
@@ -46,48 +52,12 @@ from backtestforecast.services.job_transitions import (
 from backtestforecast.services.serialization import safe_validate_warning_list
 
 logger = structlog.get_logger("services.exports")
-UTC = UTC
-
-_LOOKS_NUMERIC = re.compile(
-    r"^-?"
-    r"("
-    r"0"                          # standalone zero
-    r"|[1-9]\d{0,17}"            # integer (no leading zeros)
-    r"|[1-9]\d{0,17}\.\d+"      # decimal with integer part
-    r"|0\.\d+"                   # 0.xxx
-    r"|\.\d+"                    # .xxx
-    r"|[1-9][\d,]*\d"           # thousands-separated integer
-    r"|[1-9][\d,]*\d\.\d+"     # thousands-separated decimal
-    r")"
-    r"([eE][+-]?\d{1,4})?$"      # optional scientific notation
-)
-
 _MAX_CSV_TRADES = 10_000
 _MAX_CSV_EQUITY_POINTS = 50_000
 _MAX_PDF_PAGES = 50
 MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
 MAX_DATABASE_DOWNLOADABLE_EXPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 _MAX_EXPORT_BYTES = MAX_EXPORT_BYTES
-
-
-@dataclass(frozen=True, slots=True)
-class ExportBacktestSnapshot:
-    symbol: str
-    strategy_type: str
-    status: str
-    start_date: Any
-    end_date: Any
-    created_at: datetime
-    summary: BacktestSummaryResponse
-    trades: list[BacktestTradeResponse]
-    equity_curve: list[EquityCurvePointResponse]
-    warnings: list[dict[str, Any]]
-    risk_free_rate: float | None
-    risk_free_rate_source: str | None
-    risk_free_rate_model: str | None
-    risk_free_rate_curve_points: list[dict[str, Any]]
-    risk_free_rate_curve_warning: str | None
-
 
 class ExportService:
     def __init__(
@@ -759,16 +729,11 @@ class ExportService:
 
     @staticmethod
     def _build_file_name(symbol: str, strategy_type: str, export_format: ExportFormat) -> str:
-        safe_symbol = re.sub(r'[<>:"/\\|?*\s\x00]', "-", symbol).strip("-").lower() or "unknown"
-        safe_strategy = re.sub(r'[<>:"/\\|?*\s\x00]', "-", strategy_type).strip("-").lower() or "strategy"
-        extension = "csv" if export_format == ExportFormat.CSV else "pdf"
-        return f"{safe_symbol}-{safe_strategy}-backtest.{extension}"
+        return build_export_file_name(symbol, strategy_type, export_format)
 
     @staticmethod
     def _mime_type(export_format: ExportFormat) -> str:
-        if export_format == ExportFormat.CSV:
-            return "text/csv; charset=utf-8"
-        return "application/pdf"
+        return export_mime_type(export_format)
 
     def _build_export_snapshot(
         self,
@@ -828,7 +793,7 @@ class ExportService:
         writer = csv.writer(text_wrapper)
 
         def safe_row(values: list[object]) -> list[object]:
-            return [self._sanitize_csv_cell(value) for value in values]
+            return [sanitize_csv_cell(value) for value in values]
 
         def _check_size() -> None:
             if buf.tell() > self._max_allowed_export_bytes():
@@ -1015,13 +980,13 @@ class ExportService:
             return True
 
         def _fmt(val: object) -> str:
-            return self._format_metric_value(val)
+            return format_metric_value(val)
 
         def _fmt_pct(val: object) -> str:
-            return self._format_metric_value(val, percent=True)
+            return format_metric_value(val, percent=True)
 
         def _fmt_usd(val: object) -> str:
-            return self._format_metric_value(val, usd=True)
+            return format_metric_value(val, usd=True)
 
         line("BacktestForecast.com Export", bold=True, step=22.0)
         line(f"Symbol: {detail.symbol}")
@@ -1134,41 +1099,11 @@ class ExportService:
 
     @staticmethod
     def _sanitize_csv_cell(value: object) -> object:
-        if isinstance(value, str):
-            value = value.replace("\x00", "")
-        if not isinstance(value, str):
-            return value
-        original_first = value[:1]
-        if original_first in {"\t", "\r", "\n"}:
-            return "'" + value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
-        sanitized = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
-        stripped = sanitized.strip()
-        first = stripped[:1]
-        if first in {"=", "+", "@", "|", ";"}:
-            return "'" + sanitized
-        if first == "-" and not _LOOKS_NUMERIC.match(stripped):
-            return "'" + sanitized
-        return sanitized
+        return sanitize_csv_cell(value)
 
     @staticmethod
     def _format_metric_value(val: object, *, percent: bool = False, usd: bool = False) -> str:
-        if val is None:
-            return "N/A"
-        if isinstance(val, str) and val in {"Infinity", "-Infinity"}:
-            return val
-        try:
-            numeric = float(val)
-        except (TypeError, ValueError):
-            return str(val)
-        if numeric == float("inf"):
-            return "Infinity"
-        if numeric == float("-inf"):
-            return "-Infinity"
-        if usd:
-            return f"${numeric:,.2f}"
-        if percent:
-            return f"{numeric:.2f}%"
-        return f"{numeric:,.2f}"
+        return format_metric_value(val, percent=percent, usd=usd)
 
     def _resolved_execution_fields_for_export(self, job: ExportJob) -> dict[str, Any]:
         run = self.backtests.get_lightweight_for_user(job.backtest_run_id, job.user_id)
@@ -1207,7 +1142,7 @@ class ExportService:
         if (
             job.status == "succeeded"
             and job.expires_at is not None
-            and ExportService._normalize_utc(job.expires_at) < datetime.now(UTC)
+            and normalize_utc(job.expires_at) < datetime.now(UTC)
         ):
             effective_status = "expired"
         return ExportJobResponse(
@@ -1239,12 +1174,4 @@ class ExportService:
         return content
     @staticmethod
     def _normalize_utc(dt: datetime) -> datetime:
-        """Ensure a datetime is timezone-aware (UTC) for safe comparison.
-
-        SQLite-backed test sessions may return timezone-naive datetimes even
-        when the column is declared with ``timezone=True``. PostgreSQL returns
-        timezone-aware values, so this is a no-op in production.
-        """
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=UTC)
-        return dt
+        return normalize_utc(dt)

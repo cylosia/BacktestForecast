@@ -51,6 +51,13 @@ from backtestforecast.schemas.backtests import (
 from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.backtest_service_helpers import (
+    merge_warning_sets,
+    request_payload_from_snapshot,
+    resolve_risk_free_rate,
+    resolve_risk_free_rate_curve_points,
+    risk_free_rate_curve_payload_warning,
+)
 from backtestforecast.services.dispatch_recovery import (
     get_dispatch_diagnostic,
     observe_job_create_to_running_latency,
@@ -105,16 +112,7 @@ class BacktestService:
 
     @staticmethod
     def _merge_warnings(*warning_sets: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-        merged: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        for warning_set in warning_sets:
-            for warning in warning_set or []:
-                key = (str(warning.get("code", "")), str(warning.get("message", "")))
-                if key in seen:
-                    continue
-                seen.add(key)
-                merged.append(warning)
-        return merged
+        return merge_warning_sets(*warning_sets)
 
     def _build_initial_run(
         self,
@@ -168,9 +166,7 @@ class BacktestService:
 
     @staticmethod
     def _request_payload_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
-        payload = snapshot or {}
-        allowed_fields = set(CreateBacktestRunRequest.model_fields)
-        return {key: value for key, value in payload.items() if key in allowed_fields}
+        return request_payload_from_snapshot(snapshot, set(CreateBacktestRunRequest.model_fields))
 
     def _audit_execution_parameter_resolution(
         self,
@@ -1138,14 +1134,7 @@ class BacktestService:
 
     @staticmethod
     def _resolve_risk_free_rate(run: BacktestRun) -> float | None:
-        """Return the persisted risk-free rate for this run when available."""
-        snapshot = run.input_snapshot_json or {}
-        return ResolvedExecutionParameters.from_snapshot(
-            {
-                **snapshot,
-                "risk_free_rate": float(run.risk_free_rate) if run.risk_free_rate is not None else snapshot.get("risk_free_rate"),
-            }
-        ).risk_free_rate
+        return resolve_risk_free_rate(run)
 
     def _snapshot_risk_free_rate_curve_points(
         self,
@@ -1170,44 +1159,11 @@ class BacktestService:
 
     @staticmethod
     def _resolve_risk_free_rate_curve_points(run: BacktestRun) -> list[dict[str, Any]]:
-        snapshot = run.input_snapshot_json or {}
-        raw_points = snapshot.get("resolved_risk_free_rate_curve_points")
-        if not isinstance(raw_points, list):
-            return []
-        normalized: list[dict[str, Any]] = []
-        for item in raw_points:
-            if not isinstance(item, dict):
-                continue
-            trade_date = item.get("trade_date")
-            rate = item.get("rate")
-            if not isinstance(trade_date, str):
-                continue
-            try:
-                normalized_rate = float(rate)
-            except (TypeError, ValueError):
-                continue
-            normalized.append({"trade_date": trade_date, "rate": normalized_rate})
-        return normalized
+        return resolve_risk_free_rate_curve_points(run)
 
     @staticmethod
     def _risk_free_rate_curve_payload_warning(run: BacktestRun) -> dict[str, Any] | None:
-        snapshot = run.input_snapshot_json or {}
-        raw_points = snapshot.get("resolved_risk_free_rate_curve_points")
-        if not isinstance(raw_points, list):
-            return None
-        normalized_count = len(BacktestService._resolve_risk_free_rate_curve_points(run))
-        malformed_count = len(raw_points) - normalized_count
-        if malformed_count <= 0:
-            return None
-        return make_warning(
-            "risk_free_rate_curve_partial",
-            "Some persisted risk-free-rate curve points were malformed and have been omitted from this response.",
-            metadata={
-                "persisted_points": len(raw_points),
-                "returned_points": normalized_count,
-                "omitted_points": malformed_count,
-            },
-        )
+        return risk_free_rate_curve_payload_warning(run)
 
     def _to_history_item(self, run: BacktestRun) -> BacktestRunHistoryItemResponse:
         return BacktestRunHistoryItemResponse(

@@ -1,7 +1,6 @@
 ﻿from __future__ import annotations
 
 import heapq
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -33,7 +32,6 @@ from backtestforecast.scans.ranking import (
     HistoricalObservation,
     aggregate_historical_performance,
     build_ranking_breakdown,
-    hash_payload,
     is_strategy_rule_set_compatible,
     recommendation_sort_key,
     rule_set_hash,
@@ -76,6 +74,21 @@ from backtestforecast.services.job_transitions import (
     running_transition_values,
 )
 from backtestforecast.services.scan_components import ScanExecutor, ScanJobFactory, ScanPresenter
+from backtestforecast.services.scan_service_helpers import (
+    RankedCandidate as _RankedCandidate,
+)
+from backtestforecast.services.scan_service_helpers import (
+    get_fallback_entry_rules as _get_fallback_entry_rules,
+)
+from backtestforecast.services.scan_service_helpers import (
+    historical_observation_from_summary as _historical_observation_from_summary,
+)
+from backtestforecast.services.scan_service_helpers import (
+    request_hash as _request_hash,
+)
+from backtestforecast.services.scan_service_helpers import (
+    scanner_job_response,
+)
 from backtestforecast.services.serialization import (
     downsample_equity_curve,
     serialize_equity_point,
@@ -103,68 +116,6 @@ from backtestforecast.version import DEFAULT_ENGINE_VERSION, DEFAULT_RANKING_VER
 
 logger = structlog.get_logger("services.scans")
 _SCAN_QUEUE = "scans"
-
-
-def _historical_metric_or_none(summary: dict[str, Any], field: str) -> float | None:
-    try:
-        value = float(summary.get(field, 0.0))
-    except (TypeError, ValueError):
-        return None
-    return value if value.is_finite() else None
-
-
-def _historical_observation_from_summary(
-    *,
-    completed_at: datetime | None,
-    summary: dict[str, Any],
-) -> HistoricalObservation | None:
-    if completed_at is None:
-        return None
-    win_rate = _historical_metric_or_none(summary, "win_rate")
-    total_roi_pct = _historical_metric_or_none(summary, "total_roi_pct")
-    max_drawdown_pct = _historical_metric_or_none(summary, "max_drawdown_pct")
-    if None in (win_rate, total_roi_pct, max_drawdown_pct):
-        return None
-    return HistoricalObservation(
-        completed_at=completed_at,
-        win_rate=win_rate,
-        total_roi_pct=total_roi_pct,
-        max_drawdown_pct=max_drawdown_pct,
-    )
-
-
-def _get_fallback_entry_rules() -> list[RsiRule]:
-    """Return a default RSI entry rule for warmup-period calculation.
-
-    This fallback is used when no entry rules are provided by the user's
-    rule sets. It affects the indicator warmup window (RSI-14 needs ~14
-    bars) but does NOT affect which trades the engine takes - the engine
-    still requires the user's configured entry rules to fire.
-
-    If you change the default period here, update
-    ``fallback_entry_rule_rsi_threshold`` in config.py to keep docs in sync.
-    """
-    threshold = get_settings().fallback_entry_rule_rsi_threshold
-    return [RsiRule(type="rsi", operator="lte", threshold=Decimal(str(threshold)), period=14)]
-
-
-@dataclass(slots=True)
-class _RankedCandidate:
-    """Heap entry for bounded in-memory recommendation selection.
-
-    ``recommendation_sort_key`` returns the natural ascending sort order for the
-    final recommendation list (best candidate first).  We invert the comparison
-    so ``heapq`` behaves like a max-heap whose root is the *worst* candidate
-    currently retained. That lets us keep a bounded top-K set in memory.
-    """
-
-    sort_key: tuple[float, str, str, str]
-    candidate: dict[str, Any] = field(compare=False)
-
-    def __lt__(self, other: object) -> bool:
-        if not isinstance(other, _RankedCandidate):
-            return NotImplemented
-        return self.sort_key > other.sort_key
 
 
 class ScanService:
@@ -1291,36 +1242,11 @@ class ScanService:
 
     @staticmethod
     def _request_hash(payload: CreateScannerJobRequest) -> str:
-        base_payload = payload.model_dump(mode="json")
-        base_payload.pop("name", None)
-        base_payload.pop("idempotency_key", None)
-        return hash_payload(base_payload)
+        return _request_hash(payload)
 
     @staticmethod
     def _to_job_response(job: ScannerJob) -> ScannerJobResponse:
-        warnings = _safe_validate_warning_list(job.warnings_json)
-        return ScannerJobResponse(
-            id=job.id,
-            name=job.name,
-            status=job.status,
-            mode=job.mode,
-            plan_tier_snapshot=job.plan_tier_snapshot,
-            job_kind=job.job_kind,
-            candidate_count=job.candidate_count,
-            evaluated_candidate_count=job.evaluated_candidate_count,
-            recommendation_count=job.recommendation_count,
-            refresh_daily=job.refresh_daily,
-            refresh_priority=job.refresh_priority,
-            ranking_version=job.ranking_version,
-            engine_version=job.engine_version,
-            warnings=warnings,
-            error_code=job.error_code,
-            error_message=job.error_message,
-            idempotency_key=job.idempotency_key,
-            created_at=job.created_at,
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-        )
+        return scanner_job_response(job)
 
     @staticmethod
     def _to_recommendation_response(recommendation: ScannerRecommendation) -> ScannerRecommendationResponse:
