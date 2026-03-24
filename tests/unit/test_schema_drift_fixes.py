@@ -13,32 +13,31 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VERSIONS_DIR = PROJECT_ROOT / "alembic" / "versions"
 
 
-# ---- D1: Migration revision IDs are valid ----
+# ---- D1: Migration history is consolidated to a single baseline ----
 
-def test_d1_migration_0035_has_correct_revision():
-    content = (VERSIONS_DIR / "20260319_0035_pipeline_scanner_fk.py").read_text()
-    assert 'revision = "20260319_0035"' in content
-    assert 'down_revision = "20260319_0034"' in content
-
-
-def test_d1_migration_0036_has_correct_revision():
-    content = (VERSIONS_DIR / "20260319_0036_holding_trading_days.py").read_text()
-    assert 'revision = "20260319_0036"' in content
-    assert 'down_revision = "20260319_0035"' in content
+def test_d1_consolidated_baseline_has_correct_revision():
+    content = (VERSIONS_DIR / "20260324_0001_consolidated_baseline.py").read_text()
+    assert 'revision = "20260324_0001"' in content
+    assert "down_revision = None" in content
 
 
-def test_d1_migration_0034_is_merge_point():
-    content = (VERSIONS_DIR / "20260319_0034_schema_drift_fixes.py").read_text()
-    assert 'down_revision = ("20260319_0033", "0024_heartbeat")' in content
+def test_d1_consolidated_baseline_is_only_revision_file():
+    version_files = sorted(path.name for path in VERSIONS_DIR.glob("*.py"))
+    assert version_files == ["20260324_0001_consolidated_baseline.py"]
 
 
-# ---- D2: Duplicate 0024 - actually separate branches ----
+# ---- D2: Old branch-specific revisions were intentionally removed ----
 
-def test_d2_0024_files_have_different_revision_ids():
-    f1 = (VERSIONS_DIR / "20260318_0024_validate_sweep_mode_constraint.py").read_text()
-    f2 = (VERSIONS_DIR / "20260318_0045_add_heartbeat_and_trade_index.py").read_text()
-    assert 'revision = "20260318_0024"' in f1
-    assert 'revision = "0024_heartbeat"' in f2
+def test_d2_legacy_revision_files_are_absent():
+    legacy_files = [
+        "20260318_0024_validate_sweep_mode_constraint.py",
+        "20260318_0045_add_heartbeat_and_trade_index.py",
+        "20260319_0034_schema_drift_fixes.py",
+        "20260319_0035_pipeline_scanner_fk.py",
+        "20260319_0036_holding_trading_days.py",
+    ]
+    for file_name in legacy_files:
+        assert not (VERSIONS_DIR / file_name).exists()
 
 
 # ---- D3: strategy_type intentionally has no CHECK ----
@@ -84,12 +83,12 @@ def test_d4_summary_required_keys_defined():
     assert "total_net_pnl" in _SUMMARY_REQUIRED_KEYS
 
 
-# ---- D5: NightlyPipelineRun FK to ScannerJob ----
+# ---- D5: Consolidated baseline includes NightlyPipelineRun schema ----
 
-def test_d5_pipeline_scanner_fk_migration_exists():
-    content = (VERSIONS_DIR / "20260319_0035_pipeline_scanner_fk.py").read_text()
-    assert "pipeline_run_id" in content
-    assert "fk_scanner_jobs_pipeline_run_id" in content
+def test_d5_consolidated_baseline_creates_current_schema():
+    content = (VERSIONS_DIR / "20260324_0001_consolidated_baseline.py").read_text()
+    assert "Base.metadata.create_all" in content
+    assert "_TRIGGER_TABLES" in content
 
 
 # ---- D6: AuditEvent dedup constraint misuse protection ----

@@ -57,18 +57,14 @@ def test_dc3_leg_multiplier_returns_custom():
     assert _leg_multiplier(FakeLeg()) == 50.0
 
 
-# ---- DC4: _ModelT TypeVar documented ----
+# ---- DC4: local _ModelT TypeVar removed with task helper extraction ----
 
-def test_dc4_model_typevar_has_comment():
+def test_dc4_tasks_no_longer_define_model_typevar():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         import apps.worker.app.tasks
     source = inspect.getsource(apps.worker.app.tasks)
-    assert "_ModelT" in source
-    idx = source.index("_ModelT = TypeVar")
-    end = source.index("\n", idx)
-    line = source[idx:end]
-    assert "#" in line or "Used by" in line
+    assert "_ModelT" not in source
 
 
 # ---- DC5: dead outerjoin import removed ----

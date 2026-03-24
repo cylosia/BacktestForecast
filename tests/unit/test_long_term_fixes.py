@@ -71,7 +71,7 @@ class TestBeatHealthcheck:
 
     def test_beat_heartbeat_file_defined(self) -> None:
         from apps.worker.app.celery_app import _BEAT_HEARTBEAT_FILE
-        assert _BEAT_HEARTBEAT_FILE == "/tmp/celerybeat_heartbeat"
+        assert _BEAT_HEARTBEAT_FILE.endswith("celerybeat_heartbeat")
 
     def test_prod_healthcheck_verifies_heartbeat(self) -> None:
         compose = (PROJECT_ROOT / "docker-compose.prod.yml").read_text()

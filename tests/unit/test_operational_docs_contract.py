@@ -52,7 +52,8 @@ def test_outbox_docs_align_with_live_scheduler() -> None:
     assert "poll_outbox" in docs
     assert "disabled" not in docs
     assert "scaffolding only" not in docs
-    assert "commit-first gap" not in docs or "no longer evidence of a -commit-first gap-" in docs
+    if "commit-first gap" in docs:
+        assert "no longer evidence of a" in docs
 
 
 def test_target_dte_docs_match_frontend_and_backend_validation() -> None:

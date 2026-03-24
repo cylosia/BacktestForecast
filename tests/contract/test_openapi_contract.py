@@ -109,15 +109,14 @@ def test_template_config_schema_exists(openapi_schema: dict) -> None:
 
 
 def test_scanner_job_response_has_warnings_json_field() -> None:
-    """Item 86: ScannerJobResponse must use ``warnings_json`` as the alias so
-    the DB column ``warnings_json`` maps to the ``warnings`` Pydantic field."""
+    """Item 86: ScannerJobResponse must accept ``warnings_json`` from the ORM payload."""
     from backtestforecast.schemas.scans import ScannerJobResponse
 
     fields = ScannerJobResponse.model_fields
     assert "warnings" in fields, "ScannerJobResponse must have a 'warnings' field"
-    alias = fields["warnings"].alias
-    assert alias == "warnings_json", (
-        f"Expected alias 'warnings_json' for the warnings field, got '{alias}'"
+    validation_alias = fields["warnings"].validation_alias
+    assert validation_alias == "warnings_json", (
+        f"Expected validation alias 'warnings_json' for the warnings field, got '{validation_alias}'"
     )
 
     schema = ScannerJobResponse.model_json_schema(by_alias=True)
