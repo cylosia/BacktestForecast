@@ -1,4 +1,4 @@
-"""Unit tests for audit findings that don't require a real database.
+﻿"""Unit tests for audit findings that don't require a real database.
 
 Covers:
 - _fallback_persist_status behavior
@@ -10,10 +10,10 @@ Covers:
 from __future__ import annotations
 
 import inspect
-from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
+from pathlib import Path
+from uuid import uuid4
 
-import pytest
+_ROOT = Path(__file__).resolve().parents[2]
 
 
 # ---------------------------------------------------------------------------
@@ -120,10 +120,11 @@ class TestSymbolAnalysisRepositoryOwnership:
     def test_get_for_user_requires_both_ids(self):
         from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 
-        sig = inspect.signature(SymbolAnalysisRepository.get_for_user)
+        sig = inspect.signature(SymbolAnalysisRepository.get_by_id)
         params = sig.parameters
         assert "analysis_id" in params
         assert "user_id" in params
+        assert params["user_id"].kind == inspect.Parameter.KEYWORD_ONLY
 
 
 # ---------------------------------------------------------------------------
@@ -231,11 +232,17 @@ class TestValidationConstants:
 class TestMigrationIntegrity:
     """Verify migration metadata is consistent."""
 
-    def test_latest_revision_is_0021(self):
-        """After our new migration, head should be 0021."""
-        import importlib
-        mod = importlib.import_module(
-            "alembic.versions.20260318_0021_outbox_server_defaults"
-        )
-        assert mod.revision == "20260318_0021"
-        assert mod.down_revision == "20260318_0020"
+    def test_latest_revision_is_consolidated_baseline(self):
+        """The checked-in migration chain should collapse to the consolidated baseline."""
+        import importlib.util
+
+        migration_path = _ROOT / "alembic" / "versions" / "20260324_0001_consolidated_baseline.py"
+        assert migration_path.exists()
+
+        spec = importlib.util.spec_from_file_location("migration_20260324_0001", migration_path)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        assert mod.revision == "20260324_0001"
+        assert mod.down_revision is None

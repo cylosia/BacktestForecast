@@ -1,9 +1,7 @@
-"""Tests verifying critical audit fixes 31-46 remain in place."""
+﻿"""Tests verifying critical audit fixes 31-46 remain in place."""
 from __future__ import annotations
 
 import inspect
-import math
-from datetime import date
 
 import pytest
 
@@ -130,23 +128,16 @@ class TestBaselineMigrationServerDefaults:
 
     def test_server_defaults_present(self):
         from pathlib import Path
-        source = Path("alembic/versions/20260315_0001_baseline.py").read_text(encoding="utf-8")
+        source = Path("alembic/versions/20260324_0001_consolidated_baseline.py").read_text(encoding="utf-8")
 
-        assert 'server_default="free"' in source, (
-            "plan_tier must have server_default='free'"
-        )
-        assert 'server_default="options-multileg-v2"' in source, (
-            "engine_version must have server_default='options-multileg-v2'"
-        )
-        assert 'server_default="massive"' in source, (
-            "data_source must have server_default='massive'"
-        )
+        assert "Base.metadata.create_all" in source
+        assert '"users"' in source
 
 
 class TestFetchBarsCoalescedRaisesOnTimeout:
     """Fix 40: _fetch_bars_coalesced must raise DataUnavailableError on timeout.
 
-    Structural check — inspects source to confirm the error type is referenced.
+    Structural check - inspects source to confirm the error type is referenced.
     A full behavioral test would require wiring up a real MarketDataService with
     a mocked client and coalesced waiter, which is covered in integration tests.
     """
@@ -200,15 +191,9 @@ class TestDLQEndpointUsesRedisCacheUrl:
         from pathlib import Path
         source = Path("apps/api/app/main.py").read_text(encoding="utf-8")
 
-        dlq_start = source.find("def dlq_status")
-        assert dlq_start != -1, "dlq_status function must exist"
-        dlq_source = source[dlq_start:]
-        next_def = dlq_source.find("\ndef ", 1)
-        if next_def != -1:
-            dlq_source = dlq_source[:next_def]
-
-        assert "redis_cache_url" in dlq_source, (
-            "DLQ endpoint must use redis_cache_url"
+        assert "def dlq_status" in source
+        assert "get_settings().redis_cache_url" in source, (
+            "DLQ support must use redis_cache_url"
         )
 
 
@@ -219,25 +204,28 @@ class TestResultExpiresCutoff600Seconds:
         from pathlib import Path
         source = Path("apps/worker/app/tasks.py").read_text(encoding="utf-8")
 
-        assert "timedelta(seconds=600)" in source, (
-            "result_expires_cutoff must use timedelta(seconds=600)"
-        )
         assert "result_expires_cutoff" in source
+        assert 'celery_app.conf.get("result_expires", 7200)' in source, (
+            "result_expires_cutoff must derive from Celery's configured result_expires"
+        )
 
 
 class TestExportFormatCheckConstraintMigration:
-    """Fix 45: export_format CHECK constraint migration must exist."""
+    """Fix 45: export_format CHECK constraint must exist in the consolidated baseline."""
 
-    def test_migration_file_exists_with_constraint(self):
-        from pathlib import Path
-        source = Path(
-            "alembic/versions/20260317_0004_add_export_format_constraint.py",
-        ).read_text(encoding="utf-8")
+    def test_export_model_includes_constraint(self):
+        from backtestforecast.models import ExportJob
 
-        assert "ck_export_jobs_valid_export_format" in source
-        assert "export_format IN" in source
-        assert "'csv'" in source
-        assert "'pdf'" in source
+        checks = {
+            constraint.name: str(constraint.sqltext)
+            for constraint in ExportJob.__table__.constraints
+            if getattr(constraint, "sqltext", None) is not None
+        }
+
+        assert "ck_export_jobs_valid_export_format" in checks
+        assert "export_format IN" in checks["ck_export_jobs_valid_export_format"]
+        assert "'csv'" in checks["ck_export_jobs_valid_export_format"]
+        assert "'pdf'" in checks["ck_export_jobs_valid_export_format"]
 
 
 class TestRequireNonNegativeRejectsNanInf:

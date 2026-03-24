@@ -1,4 +1,4 @@
-"""Alembic environment configuration.
+﻿"""Alembic environment configuration.
 
 MIGRATION BEST PRACTICES FOR ZERO-DOWNTIME DEPLOYMENTS:
 
@@ -16,6 +16,7 @@ MIGRATION BEST PRACTICES FOR ZERO-DOWNTIME DEPLOYMENTS:
 """
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool, text
@@ -64,16 +65,19 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        # Lock ID 2817513 derived from CRC32("backtestforecast-alembic") & 0x7FFFFFFF.
-        # Must not collide with any other pg_advisory_lock in this database.
-        connection.execute(text("SELECT pg_advisory_lock(2817513)"))
+        use_pg_advisory_lock = connection.dialect.name == "postgresql"
+        if use_pg_advisory_lock:
+            # Lock ID 2817513 derived from CRC32("backtestforecast-alembic") & 0x7FFFFFFF.
+            # Must not collide with any other pg_advisory_lock in this database.
+            connection.execute(text("SELECT pg_advisory_lock(2817513)"))
         try:
             context.configure(connection=connection, target_metadata=target_metadata, compare_type=True, compare_server_default=True)
 
             with context.begin_transaction():
                 context.run_migrations()
         finally:
-            connection.execute(text("SELECT pg_advisory_unlock(2817513)"))
+            if use_pg_advisory_lock:
+                connection.execute(text("SELECT pg_advisory_unlock(2817513)"))
 
 
 def run_migrations_online_autocommit() -> None:
@@ -94,7 +98,9 @@ def run_migrations_online_autocommit() -> None:
     )
 
     with connectable.connect() as connection:
-        connection.execute(text("SELECT pg_advisory_lock(2817513)"))
+        use_pg_advisory_lock = connection.dialect.name == "postgresql"
+        if use_pg_advisory_lock:
+            connection.execute(text("SELECT pg_advisory_lock(2817513)"))
         try:
             connection = connection.execution_options(isolation_level="AUTOCOMMIT")
             context.configure(
@@ -106,10 +112,8 @@ def run_migrations_online_autocommit() -> None:
             )
             context.run_migrations()
         finally:
-            connection.execute(text("SELECT pg_advisory_unlock(2817513)"))
-
-
-import os
+            if use_pg_advisory_lock:
+                connection.execute(text("SELECT pg_advisory_unlock(2817513)"))
 
 if context.is_offline_mode():
     run_migrations_offline()

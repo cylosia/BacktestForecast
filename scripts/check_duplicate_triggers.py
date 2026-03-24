@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 """Detect tables with duplicate BEFORE UPDATE triggers calling set_updated_at().
 
 Run manually or in CI to verify no table has more than one updated_at trigger.
@@ -36,10 +36,10 @@ def main() -> int:
 
     print("DUPLICATE TRIGGERS DETECTED:")
     for table_name, triggers, count in rows:
-        print(f"  {table_name}: {count} triggers — {triggers}")
+        print(f"  {table_name}: {count} triggers - {triggers}")
     print(
-        "\nFix: Run the latest migration (20260318_0014_add_updated_at_trigger) "
-        "which consolidates all triggers under the trg_{table}_updated_at name."
+        "\nFix: Rebuild from the consolidated baseline migration so each table "
+        "has a single trg_{table}_updated_at trigger."
     )
     return 1
 
