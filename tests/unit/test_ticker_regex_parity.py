@@ -1,4 +1,4 @@
-"""Fix 65: Frontend TICKER_RE and backend SYMBOL_ALLOWED_CHARS accept/reject
+﻿"""Fix 65: Frontend TICKER_RE and backend SYMBOL_ALLOWED_CHARS accept/reject
 the same inputs.
 
 Both regexes must be equivalent: ^[\\^A-Z][A-Z0-9./^-]{0,15}$

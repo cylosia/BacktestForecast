@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sqlite3
 import uuid
@@ -18,8 +18,6 @@ from backtestforecast.schemas.templates import (
     UpdateTemplateRequest,
 )
 from backtestforecast.services.templates import BacktestTemplateService
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
@@ -187,9 +185,9 @@ def test_template_response_has_config_json_key(db_session, free_user):
 
 def test_template_update_with_tiny_timestamp_difference(db_session, free_user):
     """Verify that an update with expected_updated_at differing by 0.001ms
-    does not raise ConflictError — the system should tolerate small
+    does not raise ConflictError - the system should tolerate small
     precision differences in timestamps."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     service = BacktestTemplateService(db_session)
     created = service.create(
@@ -204,7 +202,7 @@ def test_template_update_with_tiny_timestamp_difference(db_session, free_user):
     expected_updated_at = actual_updated_at + tiny_offset
 
     try:
-        updated = service.update(
+        service.update(
             free_user,
             created.id,
             UpdateTemplateRequest(
@@ -213,7 +211,7 @@ def test_template_update_with_tiny_timestamp_difference(db_session, free_user):
             ),
         )
     except Exception:
-        updated = service.update(
+        service.update(
             free_user,
             created.id,
             UpdateTemplateRequest(name="Updated name"),

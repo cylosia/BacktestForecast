@@ -1,4 +1,4 @@
-"""Migration safety tests: verify all Alembic migrations are well-formed and linear."""
+﻿"""Migration safety tests: verify all Alembic migrations are well-formed and linear."""
 
 from __future__ import annotations
 
@@ -67,10 +67,7 @@ def test_migration_chain_is_linear(alembic_scripts: ScriptDirectory) -> None:
         visited.add(rev)
         if rev in merge_ancestor_revisions:
             return True
-        for child in children.get(rev, []):
-            if _feeds_into_merge(child, visited):
-                return True
-        return False
+        return any(_feeds_into_merge(child, visited) for child in children.get(rev, []))
 
     for parent_rev, child_revs in children.items():
         if len(child_revs) > 1 and not _feeds_into_merge(parent_rev):

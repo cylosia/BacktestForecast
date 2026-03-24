@@ -1,4 +1,4 @@
-"""Verify S3 reconciliation uses streaming iteration, not list().
+﻿"""Verify S3 reconciliation uses streaming iteration, not list().
 
 Audit fix 18: Loading all S3 keys into memory causes OOM for large buckets.
 The reconcile task must use iter_keys() instead of list_keys().

@@ -1,13 +1,15 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import structlog
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.types import BacktestConfig, BacktestExecutionResult
 from backtestforecast.config import get_settings
+from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+from backtestforecast.services.risk_free_rate import resolve_backtest_risk_free_rate
 
 _logger = structlog.get_logger("services.backtest_execution")
 
@@ -33,9 +35,10 @@ class BacktestExecutionService:
     def close(self) -> None:
         self._closed = True
         if self._owns_client:
+            self.market_data_service.close()
             self.market_data_service.client.close()
 
-    def __enter__(self) -> "BacktestExecutionService":
+    def __enter__(self) -> BacktestExecutionService:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -45,20 +48,22 @@ class BacktestExecutionService:
         self,
         request: CreateBacktestRunRequest,
         bundle: HistoricalDataBundle | None = None,
+        resolved_parameters: ResolvedExecutionParameters | None = None,
     ) -> BacktestExecutionResult:
         if self._closed:
             raise RuntimeError("BacktestExecutionService has been closed and cannot be reused.")
         settings = get_settings()
         resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
-        from backtestforecast.backtests.types import estimate_risk_free_rate
-
-        if request.risk_free_rate is not None:
-            rfr = float(request.risk_free_rate)
-        else:
-            rfr = settings.risk_free_rate
-            if rfr == 0.045:
-                rfr = estimate_risk_free_rate(request.start_date, request.end_date)
-        div_yield = float(request.dividend_yield) if request.dividend_yield is not None else 0.0
+        parameters = resolved_parameters
+        if parameters is None:
+            resolved_risk_free_rate = resolve_backtest_risk_free_rate(
+                request,
+                client=self.market_data_service.client,
+            )
+            parameters = ResolvedExecutionParameters.from_request_resolution(
+                request,
+                resolved_risk_free_rate,
+            )
         config = BacktestConfig(
             symbol=request.symbol,
             strategy_type=request.strategy_type.value,
@@ -71,8 +76,8 @@ class BacktestExecutionService:
             risk_per_trade_pct=request.risk_per_trade_pct,
             commission_per_contract=request.commission_per_contract,
             entry_rules=request.entry_rules,
-            risk_free_rate=rfr,
-            dividend_yield=div_yield,
+            risk_free_rate=parameters.risk_free_rate or 0.0,
+            dividend_yield=parameters.dividend_yield,
             slippage_pct=request.slippage_pct,
             strategy_overrides=request.strategy_overrides,
             custom_legs=request.custom_legs,

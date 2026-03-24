@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import inspect
 from pathlib import Path
 
 
 def test_genetic_optimizer_supports_process_pool_serializable_evaluators() -> None:
-    from backtestforecast.sweeps.genetic import GeneticOptimizer, SerializableFitnessEvaluator
+    from backtestforecast.sweeps.genetic import GeneticOptimizer
 
     source = inspect.getsource(GeneticOptimizer._evaluate_population)
     assert 'ProcessPoolExecutor' in source

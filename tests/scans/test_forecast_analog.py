@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, timedelta
 
@@ -184,7 +184,7 @@ def test_bounds_low_le_median_le_high(horizon_days: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# positive_outcome_rate_pct validation (0–100)
+# positive_outcome_rate_pct validation (0-100)
 # ---------------------------------------------------------------------------
 
 
@@ -234,7 +234,7 @@ def test_horizon_days_zero_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Item 41: horizon_days=5 doesn't crash — CreateBacktestRunRequest validation
+# Item 41: horizon_days=5 doesn't crash - CreateBacktestRunRequest validation
 # ---------------------------------------------------------------------------
 
 
@@ -307,7 +307,7 @@ def test_dte_tolerance_less_than_target_dte(horizon_days: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Item 89: Canary test — dte_tolerance < target_dte across all horizon_days
+# Item 89: Canary test - dte_tolerance < target_dte across all horizon_days
 # ---------------------------------------------------------------------------
 
 

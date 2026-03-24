@@ -1,4 +1,4 @@
-"""Canary test: verify that the CSP header in middleware.ts includes
+﻿"""Canary test: verify that the CSP header in middleware.ts includes
 both clerk.dev and clerk.com domains so Clerk works in dev and production.
 
 CSP was moved from next.config.ts static headers to middleware.ts where it

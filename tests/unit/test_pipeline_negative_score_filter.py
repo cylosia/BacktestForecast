@@ -1,4 +1,4 @@
-"""Test that the nightly pipeline filters out negative-score candidates.
+﻿"""Test that the nightly pipeline filters out negative-score candidates.
 
 Regression test for the performance issue where candidates with negative
 quick-backtest scores (losing strategies) were not filtered before stage 4,

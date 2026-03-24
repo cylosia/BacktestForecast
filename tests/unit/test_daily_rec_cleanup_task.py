@@ -1,4 +1,4 @@
-"""Verify the cleanup_daily_recommendations task exists and is registered."""
+﻿"""Verify the cleanup_daily_recommendations task exists and is registered."""
 from __future__ import annotations
 
 

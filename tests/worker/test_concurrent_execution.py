@@ -1,9 +1,9 @@
-"""Test concurrent task execution for the same job.
+﻿"""Test concurrent task execution for the same job.
 
 Verifies that _validate_task_ownership correctly serialises competing
 Celery deliveries so only one worker processes a given job.
 
-Requires Redis for Celery app initialisation — marked as integration.
+Requires Redis for Celery app initialisation - marked as integration.
 """
 from __future__ import annotations
 

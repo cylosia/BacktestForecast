@@ -1,4 +1,4 @@
-"""Export the FastAPI OpenAPI schema to JSON.
+﻿"""Export the FastAPI OpenAPI schema to JSON.
 
 Usage:
     python scripts/export_openapi.py            # prints to stdout

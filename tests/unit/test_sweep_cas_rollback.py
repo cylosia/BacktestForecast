@@ -1,4 +1,4 @@
-"""Fix 20: Sweep CAS rollback prevents orphaned results.
+﻿"""Fix 20: Sweep CAS rollback prevents orphaned results.
 
 Same pattern as Fix 19 (scan) but for SweepJob / SweepResult.
 
@@ -19,8 +19,6 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
 from backtestforecast.models import SweepJob, SweepResult, User
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
@@ -68,7 +66,7 @@ class TestSweepCASRollback:
     on SweepJob.status returns rowcount==0."""
 
     def test_results_not_committed_when_cas_fails(self, db_session: Session):
-        """Reaper sets job to 'failed' via second session → CAS returns 0 → results rolled back."""
+        """Reaper sets job to 'failed' via second session -> CAS returns 0 -> results rolled back."""
         user = _create_user(db_session)
         job = _create_sweep_job(db_session, user, status="running")
 
@@ -90,6 +88,9 @@ class TestSweepCASRollback:
             strategy_type="covered_call",
             parameter_snapshot_json={"target_dte": 30},
             summary_json={"trade_count": 10},
+            warnings_json=[],
+            trades_json=[],
+            equity_curve_json=[],
         )
         db_session.add(result)
 
@@ -114,13 +115,13 @@ class TestSweepCASRollback:
         refreshed_job = db_session.get(SweepJob, job.id)
         assert refreshed_job.status == "failed"
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         result_count = db_session.scalar(
             select(func.count()).select_from(SweepResult)
             .where(SweepResult.sweep_job_id == job.id)
         )
         assert result_count == 0, (
-            "SweepResult rows must be rolled back when CAS fails — "
+            "SweepResult rows must be rolled back when CAS fails - "
             "they should NOT be attached to a failed/cancelled job"
         )
 
@@ -136,6 +137,9 @@ class TestSweepCASRollback:
             strategy_type="iron_condor",
             parameter_snapshot_json={"target_dte": 45},
             summary_json={"trade_count": 20},
+            warnings_json=[],
+            trades_json=[],
+            equity_curve_json=[],
         )
         db_session.add(result)
 
@@ -159,7 +163,7 @@ class TestSweepCASRollback:
         db_session.expire_all()
         assert db_session.get(SweepJob, job.id).status == "succeeded"
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         result_count = db_session.scalar(
             select(func.count()).select_from(SweepResult)
             .where(SweepResult.sweep_job_id == job.id)
@@ -167,7 +171,7 @@ class TestSweepCASRollback:
         assert result_count == 1
 
     def test_multiple_results_all_rolled_back(self, db_session: Session):
-        """All pending SweepResult rows — not just the last — must be rolled back."""
+        """All pending SweepResult rows - not just the last - must be rolled back."""
         user = _create_user(db_session)
         job = _create_sweep_job(db_session, user, status="running")
 
@@ -190,6 +194,9 @@ class TestSweepCASRollback:
                 strategy_type="long_call",
                 parameter_snapshot_json={"rank": rank},
                 summary_json={},
+                warnings_json=[],
+                trades_json=[],
+                equity_curve_json=[],
             ))
 
         success_rows = db_session.execute(
@@ -205,7 +212,7 @@ class TestSweepCASRollback:
 
         assert success_rows.rowcount == 0
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         result_count = db_session.scalar(
             select(func.count()).select_from(SweepResult)
             .where(SweepResult.sweep_job_id == job.id)
@@ -237,6 +244,9 @@ class TestSweepCASRollback:
             strategy_type="custom_2_leg",
             parameter_snapshot_json={"generations": 20},
             summary_json={"trade_count": 15},
+            warnings_json=[],
+            trades_json=[],
+            equity_curve_json=[],
         ))
 
         success_rows = db_session.execute(
@@ -252,7 +262,7 @@ class TestSweepCASRollback:
 
         assert success_rows.rowcount == 0
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         assert db_session.scalar(
             select(func.count()).select_from(SweepResult)
             .where(SweepResult.sweep_job_id == job.id)

@@ -1,15 +1,15 @@
-"""Canonical strategy catalog with metadata for the API and frontend."""
+﻿"""Canonical strategy catalog with metadata for the API and frontend."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from backtestforecast.schemas.backtests import StrategyType
 
 
-class StrategyCategory(str, Enum):
+class StrategyCategory(StrEnum):
     SINGLE_LEG = "single_leg"
     VERTICAL_SPREAD = "vertical_spread"
     MULTI_LEG = "multi_leg"
@@ -21,14 +21,14 @@ class StrategyCategory(str, Enum):
     CUSTOM = "custom"
 
 
-class StrategyBias(str, Enum):
+class StrategyBias(StrEnum):
     BULLISH = "bullish"
     BEARISH = "bearish"
     NEUTRAL = "neutral"
     DIRECTIONAL = "directional"
 
 
-class StrategyTier(str, Enum):
+class StrategyTier(StrEnum):
     FREE = "free"
     PRO = "pro"
     PREMIUM = "premium"

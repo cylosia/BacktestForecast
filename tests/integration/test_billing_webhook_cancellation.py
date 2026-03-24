@@ -1,8 +1,8 @@
-"""Test the billing webhook → cancellation → SSE publish flow end-to-end."""
+﻿"""Test the billing webhook -> cancellation -> SSE publish flow end-to-end."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -11,10 +11,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
-from backtestforecast.models import BacktestRun, ScannerJob, SweepJob, User
+from backtestforecast.models import BacktestRun, SweepJob, User
 from backtestforecast.services.billing import BillingService
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
@@ -80,15 +78,8 @@ class TestBillingCancellationFlow:
         session.add_all([bt, sweep])
         session.commit()
 
-        published_events: list[tuple[str, str]] = []
-
-        def capture_publish(job_type, job_id, status, **kwargs):
-            published_events.append((job_type, status))
-
         svc = BillingService(session)
-
-        with patch("backtestforecast.events.publish_job_status", side_effect=capture_publish):
-            svc.cancel_in_flight_jobs(user.id)
+        cancelled_job_ids = svc.cancel_in_flight_jobs(user.id)
         session.commit()
 
         session.refresh(bt)
@@ -102,10 +93,10 @@ class TestBillingCancellationFlow:
         assert sweep.error_code == "subscription_revoked"
         assert sweep.completed_at is not None
 
-        cancelled_types = {evt[0] for evt in published_events}
+        cancelled_types = {job_type for job_type, _ in cancelled_job_ids}
         assert "backtest" in cancelled_types
         assert "sweep" in cancelled_types
-        assert all(evt[1] == "cancelled" for evt in published_events)
+        assert len(cancelled_job_ids) == 2
 
     def test_sse_event_published_for_each_cancelled_job(self, session: Session):
         user = _make_user(session)
@@ -157,9 +148,10 @@ class TestBillingCancellationFlow:
             publish_calls.append((job_type, job_id, status))
 
         svc = BillingService(session)
-        with patch("backtestforecast.events.publish_job_status", side_effect=capture):
-            svc.cancel_in_flight_jobs(user.id)
+        cancelled_job_ids = svc.cancel_in_flight_jobs(user.id)
         session.commit()
+        with patch("backtestforecast.events.publish_job_status", side_effect=capture):
+            BillingService.publish_cancellation_events(cancelled_job_ids)
 
         assert len(publish_calls) == 3
         assert all(call[2] == "cancelled" for call in publish_calls)
@@ -187,8 +179,7 @@ class TestBillingCancellationFlow:
         session.commit()
 
         svc = BillingService(session)
-        with patch("backtestforecast.events.publish_job_status"):
-            svc.cancel_in_flight_jobs(user.id)
+        svc.cancel_in_flight_jobs(user.id)
         session.commit()
 
         session.refresh(bt)

@@ -1,4 +1,4 @@
-"""Unit tests for Celery worker tasks."""
+﻿"""Unit tests for Celery worker tasks."""
 from __future__ import annotations
 
 import logging
@@ -317,7 +317,7 @@ def test_reap_stale_jobs_skips_recent(db_session, db_session_factory, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# Entitlement checks — verify all 4 tasks reject when user is missing
+# Entitlement checks - verify all 4 tasks reject when user is missing
 # ---------------------------------------------------------------------------
 
 
@@ -642,7 +642,7 @@ def test_ping_returns_expected_format():
 
 
 # ---------------------------------------------------------------------------
-# Entitlement checks — verify all 4 tasks reject when user is missing
+# Entitlement checks - verify all 4 tasks reject when user is missing
 # ---------------------------------------------------------------------------
 
 
@@ -774,7 +774,7 @@ def test_run_backtest_allows_pro_user(mock_session_local, mock_publish):
 @patch("apps.worker.app.tasks.publish_job_status")
 @patch("apps.worker.app.tasks.SessionLocal")
 def test_generate_export_rejects_no_export_formats(mock_session_local, mock_publish):
-    """Free users have empty export_formats — worker should reject."""
+    """Free users have empty export_formats - worker should reject."""
     from apps.worker.app.tasks import generate_export
 
     export_id = uuid4()
@@ -815,7 +815,7 @@ def test_generate_export_rejects_no_export_formats(mock_session_local, mock_publ
 @patch("apps.worker.app.tasks.publish_job_status")
 @patch("apps.worker.app.tasks.SessionLocal")
 def test_run_scan_job_rejects_no_scanner_access(mock_session_local, mock_publish):
-    """Free users have basic_scanner_access=False — worker should reject."""
+    """Free users have basic_scanner_access=False - worker should reject."""
     from apps.worker.app.tasks import run_scan_job
 
     job_id = uuid4()
@@ -856,7 +856,7 @@ def test_run_scan_job_rejects_no_scanner_access(mock_session_local, mock_publish
 @patch("apps.worker.app.tasks.publish_job_status")
 @patch("apps.worker.app.tasks.SessionLocal")
 def test_run_deep_analysis_rejects_no_forecasting(mock_session_local, mock_publish):
-    """Free users have forecasting_access=False — worker should reject."""
+    """Free users have forecasting_access=False - worker should reject."""
     from apps.worker.app.tasks import run_deep_analysis
 
     analysis_id = uuid4()
@@ -983,7 +983,7 @@ def test_validate_task_ownership_rejects_mismatch(db_session, db_session_factory
 
 
 # ---------------------------------------------------------------------------
-# Item 64: Worker quota off-by-one — 5th backtest is allowed
+# Item 64: Worker quota off-by-one - 5th backtest is allowed
 # ---------------------------------------------------------------------------
 
 
@@ -1132,7 +1132,7 @@ def test_validate_task_ownership_redelivery_claims_non_terminal(db_session, db_s
 
 def test_validate_task_ownership_redelivery_rejected_for_terminal(db_session, db_session_factory):
     """When a task is in a terminal status ('succeeded'), re-delivery should
-    be rejected — we don't want to re-run a completed job."""
+    be rejected - we don't want to re-run a completed job."""
     import apps.worker.app.tasks as tasks_module
 
     user = _create_user(db_session)

@@ -1,4 +1,4 @@
-"""Smoke tests for core happy paths: backtest, export, and scanner job creation.
+﻿"""Smoke tests for core happy paths: backtest, export, and scanner job creation.
 
 These run against a real or SQLite DB and validate that the service layer
 can complete the fundamental create-and-execute flows without errors.
@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -21,7 +20,6 @@ from backtestforecast.backtests.types import (
     TradeResult,
 )
 from backtestforecast.models import User
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

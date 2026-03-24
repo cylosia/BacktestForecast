@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -17,7 +17,7 @@ def test_workflow_trace_doc_mentions_current_auth_and_dispatch_behavior() -> Non
     assert "__session" in text
     assert "maintenance.poll_outbox" in text
     assert "degrades by returning unauthenticated metadata" in lowered
-    assert "postgresql `content_bytes`" in text
+    assert "postgresql `content_bytes`" in lowered
     assert "billing webhook events also have a fallback audit persistence path" in lowered
 
 

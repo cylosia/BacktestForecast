@@ -1,11 +1,9 @@
-"""Test 75: Verify CheckConstraint names don't contain duplicated prefixes.
+﻿"""Test 75: Verify CheckConstraint names don't contain duplicated prefixes.
 
 After applying the naming convention, no CheckConstraint name should have
 a doubled prefix like ``ck_users_valid_plan_tier_valid_plan_tier``.
 """
 from __future__ import annotations
-
-import re
 
 from sqlalchemy import CheckConstraint
 

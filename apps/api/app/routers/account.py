@@ -14,7 +14,7 @@ from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import AppValidationError
 from backtestforecast.models import User
 from backtestforecast.observability.logging import short_hash
-from backtestforecast.observability.metrics import ACCOUNT_DELETIONS_TOTAL
+from backtestforecast.observability.metrics import ACCOUNT_DELETIONS_TOTAL, EXTERNAL_CLEANUP_FAILURES_TOTAL
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.audit import AuditService
 
@@ -25,6 +25,17 @@ router = APIRouter(prefix="/account", tags=["account"])
 logger = structlog.get_logger("api.account")
 
 _EXPORT_PAGE_SIZE = 200
+_STRIPE_CLEANUP_RETRY_INITIAL_DELAY_SECONDS = 30
+_STRIPE_CLEANUP_RETRY_MAX_RETRIES = 5
+_STRIPE_CLEANUP_RETRY_SOFT_TIME_LIMIT_SECONDS = 60
+_STRIPE_CLEANUP_RETRY_TIME_LIMIT_SECONDS = 90
+
+
+def _stripe_cleanup_retry_schedule_seconds() -> list[int]:
+    return [
+        _STRIPE_CLEANUP_RETRY_INITIAL_DELAY_SECONDS * (2 ** attempt)
+        for attempt in range(_STRIPE_CLEANUP_RETRY_MAX_RETRIES)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +68,7 @@ class _GdprTotals(BaseModel):
     sweep_jobs: int
     export_jobs: int
     symbol_analyses: int
+    audit_events: int
 
 
 class _GdprBacktest(BaseModel):
@@ -146,6 +158,7 @@ def _count_all_for_user(db: Session, user_id: uuid.UUID) -> dict[str, int]:
     from sqlalchemy import func, select
 
     from backtestforecast.models import (
+        AuditEvent,
         BacktestRun,
         BacktestTemplate,
         ExportJob,
@@ -162,6 +175,7 @@ def _count_all_for_user(db: Session, user_id: uuid.UUID) -> dict[str, int]:
             select(func.count(SweepJob.id)).where(SweepJob.user_id == user_id).correlate(None).scalar_subquery().label("sweep_jobs"),
             select(func.count(ExportJob.id)).where(ExportJob.user_id == user_id).correlate(None).scalar_subquery().label("export_jobs"),
             select(func.count(SymbolAnalysis.id)).where(SymbolAnalysis.user_id == user_id).correlate(None).scalar_subquery().label("symbol_analyses"),
+            select(func.count(AuditEvent.id)).where(AuditEvent.user_id == user_id).correlate(None).scalar_subquery().label("audit_events"),
         )
     ).one()
 
@@ -172,6 +186,7 @@ def _count_all_for_user(db: Session, user_id: uuid.UUID) -> dict[str, int]:
         "sweep_jobs": counts.sweep_jobs,
         "export_jobs": counts.export_jobs,
         "symbol_analyses": counts.symbol_analyses,
+        "audit_events": counts.audit_events,
     }
 
 
@@ -188,9 +203,10 @@ def _cleanup_export_storage(db: Session, user_id: uuid.UUID) -> None:
     The ``reconcile_s3_orphans`` periodic task serves as a safety net.
     """
     from sqlalchemy import select
-    from backtestforecast.exports.storage import get_storage, DatabaseStorage
-    from backtestforecast.models import ExportJob
+
     from backtestforecast.config import get_settings
+    from backtestforecast.exports.storage import DatabaseStorage, get_storage
+    from backtestforecast.models import ExportJob
 
     try:
         storage = get_storage(get_settings())
@@ -225,7 +241,7 @@ def _cleanup_export_storage(db: Session, user_id: uuid.UUID) -> None:
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     metadata=Depends(get_request_metadata),
     db: Session = Depends(get_db),
     x_confirm_delete: str | None = Header(default=None),
@@ -255,10 +271,15 @@ def delete_account(
     from backtestforecast.services.billing import BillingService
     billing = BillingService(db)
     try:
+        user = db.get(User, user.id)
+        if user is None:
+            raise AppValidationError("User not found.")
         cancelled_ids: list = []
+        cancel_in_flight_failed = False
         try:
             cancelled_ids = billing.cancel_in_flight_jobs(user.id)
         except Exception:
+            cancel_in_flight_failed = True
             logger.warning("account.cancel_in_flight_failed", user_id=str(user.id), exc_info=True)
 
         stripe_sub_id = user.stripe_subscription_id
@@ -281,20 +302,130 @@ def delete_account(
                     "plan_tier": user.plan_tier,
                     "had_stripe_subscription": stripe_sub_id is not None,
                     "had_stripe_customer": stripe_cust_id is not None,
+                    "cancel_in_flight_jobs_failed": cancel_in_flight_failed,
                 },
             )
             db.delete(user)
             db.commit()
         except Exception:
             db.rollback()
+            try:
+                AuditService(db).record_always(
+                    event_type="account.delete_failed",
+                    subject_type="user",
+                    subject_id=saved_user_id,
+                    user_id=None,
+                    request_id=metadata.request_id,
+                    ip_address=metadata.ip_address,
+                    metadata={
+                        "deleted_user_id": str(saved_user_id),
+                        "stage": "delete_commit",
+                        "had_stripe_subscription": stripe_sub_id is not None,
+                        "had_stripe_customer": stripe_cust_id is not None,
+                        "cancel_in_flight_jobs_failed": cancel_in_flight_failed,
+                    },
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("account.delete_failed_audit_write_failed", user_id=str(saved_user_id))
             logger.exception("account.delete_failed", user_id=str(user.id))
             raise
+
+        try:
+            AuditService(db).record_always(
+                event_type="account.external_cleanup_started",
+                subject_type="user",
+                subject_id=saved_user_id,
+                user_id=None,
+                request_id=metadata.request_id,
+                ip_address=metadata.ip_address,
+                metadata={
+                    "deleted_user_id": str(saved_user_id),
+                    "had_stripe_subscription": stripe_sub_id is not None,
+                    "had_stripe_customer": stripe_cust_id is not None,
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("account.external_cleanup_started_audit_write_failed", user_id=str(saved_user_id))
 
         stripe_cleanup = _cleanup_stripe(billing, stripe_sub_id, stripe_cust_id, saved_user_id)
         ACCOUNT_DELETIONS_TOTAL.labels(stripe_cleanup_result=stripe_cleanup).inc()
 
+        try:
+            AuditService(db).record_always(
+                event_type="account.external_cleanup_finished",
+                subject_type="user",
+                subject_id=saved_user_id,
+                user_id=None,
+                request_id=metadata.request_id,
+                ip_address=metadata.ip_address,
+                metadata={
+                    "deleted_user_id": str(saved_user_id),
+                    "stripe_cleanup_result": stripe_cleanup,
+                    "had_stripe_subscription": stripe_sub_id is not None,
+                    "had_stripe_customer": stripe_cust_id is not None,
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "account.external_cleanup_finished_audit_write_failed",
+                user_id=str(saved_user_id),
+                stripe_cleanup_result=stripe_cleanup,
+            )
+
         if stripe_cleanup in ("partial", "failed", "client_unavailable"):
+            try:
+                AuditService(db).record_always(
+                    event_type="account.delete_partial_cleanup",
+                    subject_type="user",
+                    subject_id=saved_user_id,
+                    user_id=None,
+                    request_id=metadata.request_id,
+                    ip_address=metadata.ip_address,
+                    metadata={
+                        "deleted_user_id": str(saved_user_id),
+                        "stripe_cleanup_result": stripe_cleanup,
+                        "had_stripe_subscription": stripe_sub_id is not None,
+                        "had_stripe_customer": stripe_cust_id is not None,
+                    },
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception(
+                    "account.delete_partial_cleanup_audit_write_failed",
+                    user_id=str(saved_user_id),
+                    stripe_cleanup_result=stripe_cleanup,
+                )
             _dispatch_stripe_cleanup_retry(stripe_sub_id, stripe_cust_id, saved_user_id, stripe_cleanup)
+            try:
+                AuditService(db).record_always(
+                    event_type="account.external_cleanup_retry_dispatched",
+                    subject_type="user",
+                    subject_id=saved_user_id,
+                    user_id=None,
+                    request_id=metadata.request_id,
+                    ip_address=metadata.ip_address,
+                    metadata={
+                        "deleted_user_id": str(saved_user_id),
+                        "stripe_cleanup_result": stripe_cleanup,
+                        "had_stripe_subscription": stripe_sub_id is not None,
+                        "had_stripe_customer": stripe_cust_id is not None,
+                    },
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception(
+                    "account.external_cleanup_retry_audit_write_failed",
+                    user_id=str(saved_user_id),
+                    stripe_cleanup_result=stripe_cleanup,
+                )
 
         if cancelled_ids:
             BillingService.publish_cancellation_events(cancelled_ids)
@@ -338,7 +469,7 @@ def export_account_data(
         from sqlalchemy import text
         db.execute(text("SET LOCAL statement_timeout = '15s'"))
     except Exception:
-        pass
+        logger.debug("account.export_statement_timeout_unavailable", exc_info=True)
 
     from backtestforecast.repositories.audit_events import AuditEventRepository
     from backtestforecast.repositories.backtest_runs import BacktestRunRepository
@@ -466,7 +597,7 @@ def export_account_data(
 
 
 def _cleanup_stripe(
-    billing: "BillingService",
+    billing: BillingService,
     subscription_id: str | None,
     customer_id: str | None,
     user_id: uuid.UUID,
@@ -493,9 +624,17 @@ def _cleanup_stripe(
             logger.info("account.stripe_subscription_cancelled", subscription_id_hash=short_hash(subscription_id))
         except Exception:
             sub_ok = False
+            EXTERNAL_CLEANUP_FAILURES_TOTAL.labels(
+                resource="stripe_subscription",
+                operation="cancel",
+                result="failed",
+            ).inc()
             logger.warning(
                 "account.stripe_subscription_cancel_failed",
                 subscription_id_hash=short_hash(subscription_id),
+                retry_backoff_schedule_seconds=_stripe_cleanup_retry_schedule_seconds(),
+                retry_soft_time_limit_seconds=_STRIPE_CLEANUP_RETRY_SOFT_TIME_LIMIT_SECONDS,
+                retry_time_limit_seconds=_STRIPE_CLEANUP_RETRY_TIME_LIMIT_SECONDS,
                 exc_info=True,
             )
 
@@ -505,9 +644,17 @@ def _cleanup_stripe(
             logger.info("account.stripe_customer_deleted", customer_id_hash=short_hash(customer_id))
         except Exception:
             cust_ok = False
+            EXTERNAL_CLEANUP_FAILURES_TOTAL.labels(
+                resource="stripe_customer",
+                operation="delete",
+                result="failed",
+            ).inc()
             logger.warning(
                 "account.stripe_customer_delete_failed",
                 customer_id_hash=short_hash(customer_id),
+                retry_backoff_schedule_seconds=_stripe_cleanup_retry_schedule_seconds(),
+                retry_soft_time_limit_seconds=_STRIPE_CLEANUP_RETRY_SOFT_TIME_LIMIT_SECONDS,
+                retry_time_limit_seconds=_STRIPE_CLEANUP_RETRY_TIME_LIMIT_SECONDS,
                 exc_info=True,
             )
 
@@ -549,13 +696,28 @@ def _dispatch_stripe_cleanup_retry(
             sync_result=sync_result,
             subscription_id_hash=short_hash(subscription_id),
             customer_id_hash=short_hash(customer_id),
+            initial_countdown_seconds=_STRIPE_CLEANUP_RETRY_INITIAL_DELAY_SECONDS,
+            max_retries=_STRIPE_CLEANUP_RETRY_MAX_RETRIES,
+            retry_backoff_schedule_seconds=_stripe_cleanup_retry_schedule_seconds(),
+            retry_soft_time_limit_seconds=_STRIPE_CLEANUP_RETRY_SOFT_TIME_LIMIT_SECONDS,
+            retry_time_limit_seconds=_STRIPE_CLEANUP_RETRY_TIME_LIMIT_SECONDS,
         )
     except Exception:
+        EXTERNAL_CLEANUP_FAILURES_TOTAL.labels(
+            resource="stripe_cleanup_retry",
+            operation="dispatch",
+            result="failed",
+        ).inc()
         logger.error(
             "account.stripe_cleanup_retry_dispatch_failed",
             user_id=str(user_id),
             sync_result=sync_result,
             subscription_id_hash=short_hash(subscription_id),
             customer_id_hash=short_hash(customer_id),
+            initial_countdown_seconds=_STRIPE_CLEANUP_RETRY_INITIAL_DELAY_SECONDS,
+            max_retries=_STRIPE_CLEANUP_RETRY_MAX_RETRIES,
+            retry_backoff_schedule_seconds=_stripe_cleanup_retry_schedule_seconds(),
+            retry_soft_time_limit_seconds=_STRIPE_CLEANUP_RETRY_SOFT_TIME_LIMIT_SECONDS,
+            retry_time_limit_seconds=_STRIPE_CLEANUP_RETRY_TIME_LIMIT_SECONDS,
             exc_info=True,
         )

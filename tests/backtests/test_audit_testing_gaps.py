@@ -1,9 +1,9 @@
-"""Tests covering gaps identified in the production audit.
+﻿"""Tests covering gaps identified in the production audit.
 
 TG1:  resolve_strike with DELTA_TARGET mode
 TG2:  resolve_wing_strike with DOLLAR_WIDTH and PCT_WIDTH
-TG3:  custom strategy all-short legs (fully naked) → max_loss returns None
-TG4:  custom strategy all-long legs → max_loss returns debit
+TG3:  custom strategy all-short legs (fully naked) -> max_loss returns None
+TG4:  custom strategy all-long legs -> max_loss returns debit
 TG5:  PMCC _deep_itm_call_strike depth selection
 TG6:  Extreme market conditions (penny stock, high-priced stock)
 TG7:  _approx_bsm_delta realized_vol fallback
@@ -16,10 +16,10 @@ from decimal import Decimal
 import pytest
 
 from backtestforecast.backtests.strategies.common import (
-    StrikeSelection,
-    StrikeSelectionMode,
     SpreadWidthConfig,
     SpreadWidthMode,
+    StrikeSelection,
+    StrikeSelectionMode,
     _approx_bsm_delta,
     resolve_strike,
     resolve_wing_strike,
@@ -29,9 +29,8 @@ from backtestforecast.backtests.strategies.diagonal import _deep_itm_call_strike
 from backtestforecast.backtests.types import OpenOptionLeg
 from backtestforecast.errors import DataUnavailableError
 
-
 # ---------------------------------------------------------------------------
-# TG1 / TG2: resolve_strike — DELTA_TARGET mode
+# TG1 / TG2: resolve_strike - DELTA_TARGET mode
 # ---------------------------------------------------------------------------
 
 
@@ -59,7 +58,7 @@ class TestResolveStrikeDeltaTarget:
     def test_delta_target_with_realized_vol(self):
         """realized_vol should be used as fallback when IV is unavailable."""
         sel = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
-        result_default = resolve_strike(self.STRIKES, 100.0, "call", sel, dte_days=30)
+        resolve_strike(self.STRIKES, 100.0, "call", sel, dte_days=30)
         result_high_vol = resolve_strike(
             self.STRIKES, 100.0, "call", sel, dte_days=30, realized_vol=0.80,
         )
@@ -83,7 +82,7 @@ class TestResolveStrikeDeltaTarget:
 
 
 # ---------------------------------------------------------------------------
-# TG3: resolve_wing_strike — DOLLAR_WIDTH and PCT_WIDTH
+# TG3: resolve_wing_strike - DOLLAR_WIDTH and PCT_WIDTH
 # ---------------------------------------------------------------------------
 
 
@@ -103,13 +102,13 @@ class TestResolveWingStrike:
         assert result == 90.0
 
     def test_pct_width_call_wing(self):
-        """PCT_WIDTH of 5% on $100 = $5 above 100 → 105."""
+        """PCT_WIDTH of 5% on $100 = $5 above 100 -> 105."""
         cfg = SpreadWidthConfig(mode=SpreadWidthMode.PCT_WIDTH, value=Decimal("5"))
         result = resolve_wing_strike(self.STRIKES, 100.0, 1, 100.0, cfg)
         assert result == 105.0
 
     def test_pct_width_put_wing(self):
-        """PCT_WIDTH of 5% on $100 = $5 below 100 → 95."""
+        """PCT_WIDTH of 5% on $100 = $5 below 100 -> 95."""
         cfg = SpreadWidthConfig(mode=SpreadWidthMode.PCT_WIDTH, value=Decimal("5"))
         result = resolve_wing_strike(self.STRIKES, 100.0, -1, 100.0, cfg)
         assert result == 95.0
@@ -159,19 +158,19 @@ def _make_leg(
 
 class TestCustomStrategyMaxLoss:
     def test_all_short_returns_none(self):
-        """Fully naked position → unlimited risk → None."""
+        """Fully naked position -> unlimited risk -> None."""
         legs = [_make_leg(side=-1, strike=100.0), _make_leg(side=-1, strike=110.0)]
         result = CustomNLegStrategy._estimate_max_loss(legs, net_cost=-400.0, underlying_price=105.0)
         assert result is None
 
     def test_all_long_returns_debit(self):
-        """All-long → max loss = net debit."""
+        """All-long -> max loss = net debit."""
         legs = [_make_leg(side=1, strike=100.0), _make_leg(side=1, strike=110.0)]
         result = CustomNLegStrategy._estimate_max_loss(legs, net_cost=500.0, underlying_price=105.0)
         assert result == 500.0
 
     def test_hedged_spread_returns_width(self):
-        """Bull put spread: short 100, long 95 → width = $5 × 100 = $500."""
+        """Bull put spread: short 100, long 95 -> width = $5 x 100 = $500."""
         legs = [
             _make_leg(contract_type="put", side=-1, strike=100.0),
             _make_leg(contract_type="put", side=1, strike=95.0),
@@ -180,7 +179,7 @@ class TestCustomStrategyMaxLoss:
         assert result == 500.0
 
     def test_iron_condor_max_loss(self):
-        """Iron condor: max loss = widest side × 100."""
+        """Iron condor: max loss = widest side x 100."""
         legs = [
             _make_leg(contract_type="call", side=-1, strike=110.0),
             _make_leg(contract_type="call", side=1, strike=115.0),
@@ -191,7 +190,7 @@ class TestCustomStrategyMaxLoss:
         assert result == 500.0
 
     def test_mixed_expiration_leaves_naked(self):
-        """Short and long with different expirations can't pair → naked."""
+        """Short and long with different expirations can't pair -> naked."""
         legs = [
             _make_leg(contract_type="call", side=-1, strike=100.0, exp=date(2025, 6, 20)),
             _make_leg(contract_type="call", side=1, strike=105.0, exp=date(2025, 7, 18)),
@@ -200,7 +199,7 @@ class TestCustomStrategyMaxLoss:
         assert result is None
 
     def test_mixed_contract_type_leaves_naked(self):
-        """Short call + long put can't pair → naked."""
+        """Short call + long put can't pair -> naked."""
         legs = [
             _make_leg(contract_type="call", side=-1, strike=100.0),
             _make_leg(contract_type="put", side=1, strike=95.0),
@@ -228,19 +227,19 @@ class TestDeepItmCallStrike:
         assert result <= 95.0, f"Should go deep even with narrow spacing, got {result}"
 
     def test_no_itm_strikes_raises(self):
-        """All strikes at or above underlying → DataUnavailableError."""
+        """All strikes at or above underlying -> DataUnavailableError."""
         strikes = [100.0, 105.0, 110.0]
         with pytest.raises(DataUnavailableError):
             _deep_itm_call_strike(strikes, 100.0)
 
     def test_only_one_strike_below(self):
-        """Single ITM strike → returns it."""
+        """Single ITM strike -> returns it."""
         strikes = [98.0, 100.0, 105.0]
         result = _deep_itm_call_strike(strikes, 100.0)
         assert result == 98.0
 
     def test_two_strikes_below_no_deep_candidates(self):
-        """Two strikes below but neither 5% deep → returns second-to-last."""
+        """Two strikes below but neither 5% deep -> returns second-to-last."""
         strikes = [97.0, 99.0, 100.0, 105.0]
         result = _deep_itm_call_strike(strikes, 100.0)
         assert result == 97.0
@@ -294,12 +293,12 @@ class TestBsmDeltaRealizedVolFallback:
         )
 
     def test_zero_dte_call_itm(self):
-        """At expiration, ITM call delta → 1.0."""
+        """At expiration, ITM call delta -> 1.0."""
         delta = _approx_bsm_delta(100.0, 95.0, 0, "call")
         assert delta == 1.0
 
     def test_zero_dte_put_otm(self):
-        """At expiration, OTM put delta → 0.0."""
+        """At expiration, OTM put delta -> 0.0."""
         delta = _approx_bsm_delta(100.0, 95.0, 0, "put")
         assert delta == 0.0
 

@@ -1,11 +1,9 @@
-"""Test margin calculations from backtestforecast.backtests.margin.
+﻿"""Test margin calculations from backtestforecast.backtests.margin.
 
 Covers all margin functions with known inputs/expected outputs, edge cases,
 and the diagonal spread margin factor used in strategies/diagonal.py.
 """
 from __future__ import annotations
-
-import math
 
 import pytest
 
@@ -23,8 +21,8 @@ from backtestforecast.backtests.margin import (
     naked_option_margin,
     naked_put_margin,
     ratio_backspread_margin,
-    short_straddle_strangle_margin,
     short_stock_margin,
+    short_straddle_strangle_margin,
 )
 
 
@@ -75,7 +73,7 @@ class TestNakedCallMargin:
     def test_deep_otm_call(self):
         result = naked_call_margin(underlying_price=100.0, strike=200.0, premium_per_share=0.10)
         otm = 100.0
-        method_a = 0.25 * 100.0 - otm + 0.10  # -74.9 → clamped to 0
+        method_a = 0.25 * 100.0 - otm + 0.10  # -74.9 -> clamped to 0
         method_b = 0.10 * 100.0 + 0.10         # 10.10
         expected = max(max(method_a, 0.0), max(method_b, 0.0)) * 100.0
         assert result == expected == 1010.0
@@ -154,7 +152,7 @@ class TestNakedPutMargin:
         result_put = naked_put_margin(underlying_price=100.0, strike=50.0, premium_per_share=1.0)
         method_b_put = (0.10 * 50.0 + 1.0) * 100.0   # 600.0
         otm = 50.0
-        method_a_put = (0.25 * 100.0 - otm + 1.0) * 100.0  # -2400, clamped
+        (0.25 * 100.0 - otm + 1.0) * 100.0  # -2400, clamped
         assert result_put >= method_b_put
 
 
@@ -185,10 +183,7 @@ class TestShortStraddleStrangleMargin:
         )
         call_naked = naked_call_margin(100.0, 100.0, 5.0)
         put_naked = naked_put_margin(100.0, 100.0, 5.0)
-        if call_naked >= put_naked:
-            expected = call_naked + 5.0 * 100.0
-        else:
-            expected = put_naked + 5.0 * 100.0
+        expected = call_naked + 5.0 * 100.0 if call_naked >= put_naked else put_naked + 5.0 * 100.0
         assert result == expected
 
     def test_strangle_put_side_higher(self):
@@ -201,10 +196,7 @@ class TestShortStraddleStrangleMargin:
         )
         call_naked = naked_call_margin(100.0, 110.0, 1.0)
         put_naked = naked_put_margin(100.0, 95.0, 4.0)
-        if put_naked >= call_naked:
-            expected = put_naked + 1.0 * 100.0
-        else:
-            expected = call_naked + 4.0 * 100.0
+        expected = put_naked + 1.0 * 100.0 if put_naked >= call_naked else call_naked + 4.0 * 100.0
         assert result == expected
 
     def test_zero_premiums(self):
@@ -396,7 +388,7 @@ class TestDiagonalSpreadMarginFromModule:
         assert DOUBLE_DIAGONAL_MARGIN_FACTOR == 0.50
 
     def test_pmcc_debit_capital_is_entry_value(self):
-        """For a debit PMCC (typical), capital = long mid - short mid (× 100).
+        """For a debit PMCC (typical), capital = long mid - short mid (x 100).
         When entry_value >= 0, margin is the debit paid, not a naked call formula."""
         long_mid = 12.0
         short_mid = 3.0
@@ -434,7 +426,7 @@ class TestDiagonalSpreadMarginFromModule:
         assert reduced > 0
 
     def test_diagonal_margin_scales_with_underlying(self):
-        """Higher underlying price → higher margin for the same structure."""
+        """Higher underlying price -> higher margin for the same structure."""
         low = naked_call_margin(100.0, 110.0, 2.0)
         high = naked_call_margin(500.0, 510.0, 2.0)
         assert high > low

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
@@ -28,7 +28,7 @@ UNSET = _Unset.UNSET
 
 
 class TemplateConfig(BaseModel):
-    """The reusable portion of a backtest configuration — everything except symbol and dates."""
+    """The reusable portion of a backtest configuration - everything except symbol and dates."""
     model_config = ConfigDict(extra="forbid")
 
     strategy_type: StrategyType
@@ -42,7 +42,7 @@ class TemplateConfig(BaseModel):
     # and sweep-style templates that enter on every eligible date.
     entry_rules: list[EntryRule] = Field(default_factory=list, max_length=8)
 
-    # Optional pre-fill hints — not required, but useful if the user always tests the same symbol/window
+    # Optional pre-fill hints - not required, but useful if the user always tests the same symbol/window
     default_symbol: str | None = Field(default=None, max_length=16, pattern=r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
     strategy_overrides: StrategyOverrides | None = Field(
         default=None,
@@ -57,14 +57,17 @@ class TemplateConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_template_rules(self) -> "TemplateConfig":
+    def validate_template_rules(self) -> TemplateConfig:
         if self.dte_tolerance_days >= self.target_dte:
             raise ValueError("dte_tolerance_days must be less than target_dte")
         if self.entry_rules:
             validate_entry_rule_collection(self.entry_rules)
-        if self.strategy_overrides and self.strategy_type != StrategyType.CALENDAR_SPREAD:
-            if self.strategy_overrides.calendar_contract_type is not None:
-                raise ValueError("calendar_contract_type override is only valid for calendar_spread")
+        if (
+            self.strategy_overrides
+            and self.strategy_type != StrategyType.CALENDAR_SPREAD
+            and self.strategy_overrides.calendar_contract_type is not None
+        ):
+            raise ValueError("calendar_contract_type override is only valid for calendar_spread")
         return self
 
 

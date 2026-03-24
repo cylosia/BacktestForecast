@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -107,7 +107,7 @@ class CustomNLegStrategy(StrategyDefinition):
             if exp is None:
                 raise DataUnavailableError(
                     f"Expiration offset {leg_def.expiration_offset} is not available. "
-                    f"Only offsets 0–2 are supported and the requested expiration must exist in the chain."
+                    f"Only offsets 0-2 are supported and the requested expiration must exist in the chain."
                 )
             if leg_def.contract_type == "call":
                 chain = contracts_for_expiration(calls, exp)
@@ -275,7 +275,7 @@ class CustomNLegStrategy(StrategyDefinition):
         For positions with naked shorts, returns None (unlimited risk).
 
         Pairs are sorted by width ascending (tightest first) to maximize the
-        chance of covering all shorts — same strategy as _estimate_credit_margin.
+        chance of covering all shorts - same strategy as _estimate_credit_margin.
         """
         short_legs = [leg for leg in option_legs if leg.side == -1]
         long_legs = [leg for leg in option_legs if leg.side == 1]

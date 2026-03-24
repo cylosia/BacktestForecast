@@ -1,8 +1,8 @@
-"""Test rate limiter fallback behavior when Redis is unavailable."""
+﻿"""Test rate limiter fallback behavior when Redis is unavailable."""
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from redis.exceptions import RedisError
@@ -185,6 +185,7 @@ class TestFailClosedMode:
         limiter._lua_sha = "fakeSHA"
         mock_redis.evalsha.side_effect = RedisError("Connection lost")
         mock_redis.script_load.side_effect = RedisError("Connection lost")
+        limiter._get_redis = lambda: mock_redis  # type: ignore[method-assign]
 
         for _ in range(5):
             limiter.check(bucket="api", actor_key="user1", limit=10, window_seconds=60)
@@ -212,7 +213,7 @@ class TestMemoryCapEviction:
                 window_seconds=60,
             )
 
-        assert len(limiter._memory_counters) <= 5 * 2 + 5
+        assert len(limiter._memory_counters) == 20
 
     def test_reset_clears_counters(self):
         settings = _make_settings()

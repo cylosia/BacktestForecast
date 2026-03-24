@@ -1,4 +1,4 @@
-"""Verify that updated_at DB trigger fires on job tables.
+﻿"""Verify that updated_at DB trigger fires on job tables.
 
 These tests require a live PostgreSQL database and are skipped when DATABASE_URL
 is not set. They validate that the set_updated_at trigger function correctly

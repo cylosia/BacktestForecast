@@ -1,21 +1,16 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from pathlib import Path
+from datetime import date
 
 import pytest
 
+from backtestforecast.models import NightlyPipelineRun
 from backtestforecast.security.http import (
     DynamicCORSMiddleware,
     DynamicTrustedHostMiddleware,
     RequestBodyLimitMiddleware,
 )
-
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def _read(relpath: str) -> str:
-    return (ROOT / relpath).read_text(encoding="utf-8")
+from backtestforecast.services.daily_picks import DailyPicksService
 
 
 async def _run_asgi(app, scope, receive_messages: list[dict] | None = None) -> list[dict]:
@@ -121,21 +116,18 @@ async def test_request_body_limit_middleware_reacts_to_runtime_changes() -> None
     assert allowed[0]["status"] == 204
 
 
-def test_daily_picks_history_pagination_contract_reaches_web_layer() -> None:
-    page_source = _read("apps/web/app/app/daily-picks/page.tsx")
-    api_source = _read("apps/web/lib/api/server.ts")
+def test_daily_picks_history_serializer_includes_error_code() -> None:
+    run = NightlyPipelineRun(
+        status="failed",
+        trade_date=date(2025, 3, 5),
+        stage="forecast_rank",
+        symbols_screened=10,
+        recommendations_produced=0,
+        error_code="pipeline_failed",
+        error_message="Upstream timed out",
+    )
 
-    assert "searchParams: Promise<{ next_cursor?: string; cursor?: string }>" in page_source
-    assert "const cursor = params.next_cursor?.trim() || params.cursor?.trim() || undefined;" in page_source
-    assert "await getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor)" in page_source
-    assert 'cursorParamName="next_cursor"' in page_source
-    assert 'buildCursorPaginatedPath("/v1/daily-picks/history", limit, 30, cursor)' in api_source
+    payload = DailyPicksService._run_to_dict(run)
 
-
-def test_template_contracts_do_not_allow_any_based_bypasses() -> None:
-    source = _read("apps/web/lib/templates/contracts.ts")
-    assert "as any" not in source
-    assert ": any" not in source
-    assert "isValidTemplateConfig(data.config)" in source
-    assert "return data as TemplateResponse;" in source
-    assert "return data as TemplateListResponse;" in source
+    assert payload["error_code"] == "pipeline_failed"
+    assert payload["error_message"] == "Upstream timed out"

@@ -1,4 +1,4 @@
-"""Contract test: verify CORS allows X-Requested-With header."""
+﻿"""Contract test: verify CORS allows X-Requested-With header."""
 from __future__ import annotations
 
 import pytest

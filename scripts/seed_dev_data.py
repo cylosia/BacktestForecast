@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from datetime import UTC, date, datetime, timedelta
@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import delete, select
 
 from backtestforecast.db.base import Base
-from backtestforecast.db.session import SessionLocal, build_engine
+from backtestforecast.db.session import build_engine, create_session
 from backtestforecast.models import (
     AuditEvent,
     BacktestEquityPoint,
@@ -340,7 +340,7 @@ def main() -> None:
     app_env = os.environ.get("APP_ENV", "").lower()
     if app_env in ("production", "prod", "staging"):
         print("ERROR: seed_dev_data.py must not be run against a production or staging database.")
-        print("       APP_ENV is set to %r. Aborting." % app_env)
+        print(f"       APP_ENV is set to {app_env!r}. Aborting.")
         raise SystemExit(1)
     db_url = os.environ.get("DATABASE_URL", "")
     if db_url and "sslmode=require" in db_url:
@@ -356,7 +356,7 @@ def main() -> None:
     if args.create_schema:
         Base.metadata.create_all(bind=build_engine())
 
-    with SessionLocal() as session:
+    with create_session() as session:
         user = ensure_user(
             session,
             clerk_user_id=args.clerk_user_id,

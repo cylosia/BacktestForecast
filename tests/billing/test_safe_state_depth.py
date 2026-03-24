@@ -1,4 +1,4 @@
-"""Test that _safe_state handles deeply nested dicts without RecursionError."""
+﻿"""Test that _safe_state handles deeply nested dicts without RecursionError."""
 from __future__ import annotations
 
 from backtestforecast.billing.events import _safe_state
@@ -8,7 +8,7 @@ def test_deeply_nested_dict_does_not_overflow() -> None:
     """A dict nested beyond _MAX_DEPTH should be truncated, not crash."""
     nested: dict = {}
     current = nested
-    for i in range(50):
+    for _i in range(50):
         current["level"] = {}
         current = current["level"]
     current["leaf"] = "value"

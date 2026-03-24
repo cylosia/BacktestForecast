@@ -1,14 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import date
 from enum import Enum
 
-import threading
-
-import structlog
 import redis
+import structlog
 
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
 

@@ -1,4 +1,4 @@
-"""Fix 75: Two threads must not both pass the sweep quota check.
+﻿"""Fix 75: Two threads must not both pass the sweep quota check.
 
 Simulates concurrent access to _enforce_sweep_quota using threading
 to verify the FOR UPDATE lock prevents double-booking.
@@ -6,7 +6,6 @@ to verify the FOR UPDATE lock prevents double-booking.
 from __future__ import annotations
 
 import inspect
-import threading
 
 
 class TestConcurrentSweepQuota:
@@ -64,8 +63,9 @@ class TestConcurrentSweepQuota:
         assert "running" in source, "Must count running sweeps"
 
     def test_max_concurrent_sweeps_defined(self):
-        """SweepService must define a max concurrent sweeps constant."""
+        """SweepService must expose a settings-backed concurrent sweep limit."""
+        from backtestforecast.config import Settings
         from backtestforecast.services.sweeps import SweepService
 
-        assert hasattr(SweepService, "_MAX_CONCURRENT_SWEEPS")
-        assert SweepService._MAX_CONCURRENT_SWEEPS > 0
+        assert isinstance(SweepService._max_concurrent_sweeps, property)
+        assert Settings.model_fields["max_concurrent_sweeps"].default > 0

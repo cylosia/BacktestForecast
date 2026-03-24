@@ -1,4 +1,4 @@
-from sqlalchemy import MetaData
+﻿from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
 
 NAMING_CONVENTION = {

@@ -159,34 +159,23 @@ during the holding period.
 
 ### 7. Put calendar spread support
 
-**File:** `src/backtestforecast/backtests/strategies/calendar.py:31-46` (TODO)
+**Status:** Resolved
 
-**What's missing:** Only call calendar spreads are supported. Put calendars
-(useful for bearish/neutral views) are not available.
-
-**Implementation plan (from TODO):**
-1. Add `contract_type: Literal["call", "put"]` field (default "call")
-2. Branch on contract_type in `build_position()`
-3. Use `naked_put_margin` for put short legs
-4. Update `detail_json` and assumption text
-
-**Effort:** Medium (4-8 hours)
+**Current state:** Calendar spreads already support `call` and `put`
+contract types via `strategy_overrides.calendar_contract_type`. The
+strategy branches margin handling by contract type and includes the
+selected type in position details and assumptions.
 
 ---
 
 ### 8. Replace ThreadPoolExecutor with ProcessPoolExecutor in genetic optimizer
 
-**File:** `src/backtestforecast/sweeps/genetic.py:240-248` (TODO)
+**Status:** Resolved
 
-**What's missing:** The genetic algorithm's fitness evaluation uses
-`ThreadPoolExecutor`, which is GIL-bound for CPU-intensive backtest computation.
-`ProcessPoolExecutor` would parallelize across cores.
-
-**Blocker:** `fitness_fn` is a closure capturing a DB session, backtest engine,
-and config — these can't be pickled. Requires refactoring into a top-level
-function with explicit serializable arguments.
-
-**Effort:** Medium-Large (1-2 days) — requires fitness function refactoring
+**Current state:** The genetic optimizer now uses `ProcessPoolExecutor`
+when the fitness evaluator is serializable and falls back to
+`ThreadPoolExecutor` for plain callables. The serializable runtime path is
+implemented in `backtestforecast.services.sweep_genetic_runtime`.
 
 ---
 

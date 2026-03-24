@@ -1,4 +1,4 @@
-"""Verify security headers are applied to API responses."""
+﻿"""Verify security headers are applied to API responses."""
 from __future__ import annotations
 
 import inspect
@@ -28,4 +28,5 @@ def test_hsts_in_production():
 
     source = inspect.getsource(ApiSecurityHeadersMiddleware)
     assert "Strict-Transport-Security" in source
-    assert "is_production" in source.lower() or "_is_production" in source
+    assert "_app_env_resolver" in source
+    assert 'app_env in ("production", "staging")' in source

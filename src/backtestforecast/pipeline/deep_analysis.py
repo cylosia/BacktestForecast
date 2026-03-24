@@ -1,8 +1,8 @@
-"""Single-symbol deep analysis service.
+﻿"""Single-symbol deep analysis service.
 
 Performs an exhaustive analysis of one symbol:
   1. Regime analysis (full indicator snapshot)
-  2. Strategy landscape (all strategies × dense param grid → quick backtests)
+  2. Strategy landscape (all strategies x dense param grid -> quick backtests)
   3. Top-10 deep dive (full backtests with trades + equity curve)
   4. Forecast overlay on winning configurations
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -23,18 +23,41 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES, STRATEGY_REGISTRY
-from backtestforecast.errors import ConfigurationError, ConflictError, DataUnavailableError, NotFoundError, QuotaExceededError
+from backtestforecast.errors import (
+    ConfigurationError,
+    ConflictError,
+    DataUnavailableError,
+    NotFoundError,
+    QuotaExceededError,
+)
+from backtestforecast.pipeline.scoring import compute_backtest_score
 from backtestforecast.schemas.json_shapes import (
     _REGIME_REQUIRED_KEYS,
     validate_json_shape,
 )
+from backtestforecast.strategy_catalog.capabilities import list_symbol_analysis_strategy_types
 
-UTC = timezone.utc
+UTC = UTC
+import contextlib
+
 from backtestforecast.models import SymbolAnalysis, User
-from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 from backtestforecast.pipeline.regime import classify_regime
-from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
-from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
+from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
+from backtestforecast.services.dispatch_recovery import (
+    observe_job_create_to_running_latency,
+    redispatch_if_stale_queued,
+)
+from backtestforecast.services.job_cancellation import (
+    mark_job_cancelled,
+    publish_cancellation_event,
+    revoke_celery_task,
+)
+from backtestforecast.services.job_transitions import (
+    cancellation_blocked_message,
+    deletion_blocked_message,
+    fail_job,
+    transition_job_to_running,
+)
 
 logger = structlog.get_logger("deep_analysis")
 
@@ -95,18 +118,6 @@ if len(DEEP_PARAM_GRID) > _DEEP_PARAM_GRID_MAX:
         msg="Large parameter grid will increase deep analysis runtime significantly.",
     )
 
-# Strategies to skip in landscape (custom strategies need user-defined legs)
-_SKIP_STRATEGIES = {
-    "custom_2_leg",
-    "custom_3_leg",
-    "custom_4_leg",
-    "custom_5_leg",
-    "custom_6_leg",
-    "custom_8_leg",
-    "wheel_strategy",  # multi-cycle, own execution path
-}
-
-
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -114,7 +125,7 @@ _SKIP_STRATEGIES = {
 
 @dataclass
 class LandscapeCell:
-    """One cell in the strategy × config grid."""
+    """One cell in the strategy x config grid."""
 
     strategy_type: str
     strategy_label: str
@@ -290,17 +301,17 @@ class SymbolDeepAnalysisService:
         # Re-entitlement check: verify user still has access before executing
         user = self.session.get(User, analysis.user_id)
         if user is None:
-            analysis.status = "failed"
-            analysis.error_code = "entitlement_revoked"
-            analysis.error_message = "User account not found."
+            fail_job(analysis, error_code="entitlement_revoked", error_message="User account not found.")
             self.session.commit()
             return analysis
         from backtestforecast.billing.entitlements import resolve_feature_policy
         policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
         if not policy.forecasting_access:
-            analysis.status = "failed"
-            analysis.error_code = "entitlement_revoked"
-            analysis.error_message = "Your plan no longer supports this operation."
+            fail_job(
+                analysis,
+                error_code="entitlement_revoked",
+                error_message="Your plan no longer supports deep analysis. Upgrade or restore access, then retry.",
+            )
             self.session.commit()
             return analysis
 
@@ -320,21 +331,22 @@ class SymbolDeepAnalysisService:
             else _settings.max_concurrent_analyses_default
         )
         if concurrent >= _max_concurrent:
-            analysis.status = "failed"
-            analysis.error_code = "concurrent_limit"
-            analysis.error_message = (
-                f"Too many analyses running concurrently ({concurrent}, limit: {_max_concurrent}). "
-                "Wait for existing analyses to complete."
+            fail_job(
+                analysis,
+                error_code="concurrent_limit",
+                error_message=(
+                    f"Too many analyses are already running ({concurrent}, limit: {_max_concurrent}). "
+                    "Wait for one to finish or cancel an active analysis, then retry."
+                ),
             )
             self.session.commit()
             return analysis
 
         started_at = time.monotonic()
-        analysis.status = "running"
+        transition_job_to_running(analysis)
         if not _validate_stage_transition(analysis.stage, "regime"):
             logger.warning("deep_analysis.backward_stage_transition", current=analysis.stage, target="regime", analysis_id=str(analysis_id))
         analysis.stage = "regime"
-        analysis.started_at = datetime.now(UTC)
         observe_job_create_to_running_latency(analysis)
         self.session.commit()
 
@@ -521,11 +533,11 @@ class SymbolDeepAnalysisService:
         limit: int = 20,
         offset: int = 0,
         cursor_before: tuple[datetime, UUID] | None = None,
-    ) -> list[SymbolAnalysis]:
+    ) -> tuple[list[SymbolAnalysis], int]:
         from backtestforecast.repositories.symbol_analyses import SymbolAnalysisRepository
 
         repo = SymbolAnalysisRepository(self.session)
-        return repo.list_for_user(
+        return repo.list_for_user_with_count(
             user.id, limit=limit, offset=offset, cursor_before=cursor_before,
         )
 
@@ -540,20 +552,34 @@ class SymbolDeepAnalysisService:
         if analysis is None:
             raise NotFoundError("Symbol analysis not found.")
         if analysis.status in ("queued", "running"):
-            raise ConflictError(
-                "Cannot delete an analysis that is currently queued or running. Cancel it first."
-            )
+            raise ConflictError(deletion_blocked_message("analysis"))
         self.session.delete(analysis)
         self.session.commit()
+
+    def cancel_for_user(self, analysis_id: UUID, user_id: UUID) -> SymbolAnalysis:
+        analysis = self._repo.get_for_user(analysis_id, user_id)
+        if analysis is None:
+            raise NotFoundError("Symbol analysis not found.")
+        if analysis.status not in ("queued", "running"):
+            raise ConflictError(cancellation_blocked_message("analysis"))
+        task_id = mark_job_cancelled(analysis)
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        revoke_celery_task(task_id, job_type="analysis", job_id=analysis.id)
+        publish_cancellation_event(job_type="analysis", job_id=analysis.id)
+        return analysis
 
     # -------------------------------------------------------------------
     # Internal stages
     # -------------------------------------------------------------------
 
     def _build_landscape(self, symbol: str, trade_date: date) -> list[LandscapeCell]:
-        """Test all strategies × dense param grid with 90-day quick backtests."""
+        """Test all strategies x dense param grid with 90-day quick backtests."""
         lookback_start = trade_date - timedelta(days=90)
-        strategy_types = [st for st in STRATEGY_REGISTRY.keys() if st not in _SKIP_STRATEGIES]
+        strategy_types = list_symbol_analysis_strategy_types(list(STRATEGY_REGISTRY.keys()))
 
         work_items: list[tuple[str, str, dict[str, Any]]] = []
         for strategy_type in strategy_types:
@@ -586,12 +612,7 @@ class SymbolDeepAnalysisService:
                 win_rate = summary.get("win_rate", 0.0)
                 roi = summary.get("total_roi_pct", 0.0)
                 drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
-                score = 0.0
-                if trade_count > 0:
-                    sample_factor = min(trade_count / 10.0, 1.0)
-                    score = roi * (win_rate / 100.0) * (1.0 - drawdown / 100.0) * sample_factor
-                    if drawdown >= 100.0:
-                        score = min(score, 0.0)
+                score = compute_backtest_score(summary)
                 return LandscapeCell(
                     strategy_type=strategy_type,
                     strategy_label=label,
@@ -686,10 +707,8 @@ class SymbolDeepAnalysisService:
                 logger.warning("deep_analysis.deep_dive_timeout", total_candidates=len(candidates), collected=len(backtest_results))
                 for f in futures:
                     if f not in collected_futures and f.done() and not f.cancelled():
-                        try:
+                        with contextlib.suppress(Exception):
                             backtest_results.append(f.result(timeout=0))
-                        except Exception:
-                            pass
 
         for idx, c in enumerate(candidates):
             c.stable_order = idx
@@ -701,13 +720,7 @@ class SymbolDeepAnalysisService:
                 continue
 
             roi = full.get("total_roi_pct", 0.0)
-            win_rate = full.get("win_rate", 0.0) / 100.0
-            drawdown = min(full.get("max_drawdown_pct", 50.0), 100.0)
-            trade_count = full.get("trade_count", 1)
-            sample_factor = min(trade_count / 10.0, 1.0)
-            score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
-            if drawdown >= 100.0:
-                score = min(score, 0.0)
+            score = compute_backtest_score(full)
 
             forecast: dict[str, Any] = {}
             if self.forecaster:

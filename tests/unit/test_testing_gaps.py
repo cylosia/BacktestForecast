@@ -1,21 +1,18 @@
-"""Tests closing the identified Testing Gaps from the audit.
+﻿"""Tests closing the identified Testing Gaps from the audit.
 
 Each test targets a specific gap where the audit found missing coverage.
 """
 from __future__ import annotations
 
 import inspect
-import math
 import warnings
-from datetime import date, timedelta
 from decimal import Decimal
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ============================================================================
-# TG2: Scan job ExternalServiceError retry — behavioral test
+# TG2: Scan job ExternalServiceError retry - behavioral test
 # ============================================================================
 
 def test_tg2_scan_task_has_external_error_retry_branch():
@@ -39,7 +36,7 @@ def test_tg2_scan_task_truncates_error_message():
 
 
 # ============================================================================
-# TG3: Position sizing — slippage and commission edge cases
+# TG3: Position sizing - slippage and commission edge cases
 # ============================================================================
 
 def test_tg3_position_sizing_with_slippage():
@@ -113,7 +110,7 @@ def test_tg3_position_sizing_boundary():
 
 
 # ============================================================================
-# TG4: holding_period_days — behavioral assertion
+# TG4: holding_period_days - behavioral assertion
 # ============================================================================
 
 def test_tg4_trade_result_has_both_holding_fields():
@@ -142,25 +139,25 @@ def test_tg4_holding_period_trading_days_computed():
 
 def test_tg5_reconcile_uses_for_update_skip_locked():
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.reconcile_subscriptions)
+    source = inspect.getsource(BillingService._reconcile_subscriptions_impl)
     assert "with_for_update(skip_locked=True)" in source
 
 
 def test_tg5_reconcile_has_limit():
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.reconcile_subscriptions)
+    source = inspect.getsource(BillingService._reconcile_subscriptions_impl)
     assert ".limit(100)" in source
 
 
 def test_tg5_reconcile_skips_already_locked_rows():
     """skip_locked=True means concurrent workers skip rows locked by others."""
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.reconcile_subscriptions)
+    source = inspect.getsource(BillingService._reconcile_subscriptions_impl)
     assert "skip_locked" in source
 
 
 # ============================================================================
-# TG8: Export size limit — boundary tests
+# TG8: Export size limit - boundary tests
 # ============================================================================
 
 def test_tg8_csv_size_estimation():
@@ -184,7 +181,8 @@ def test_tg8_runtime_size_check_protects_against_overflow():
     """Even if estimate passes, _check_size() catches actual overflow mid-generation."""
     from backtestforecast.services.exports import ExportService
     source = inspect.getsource(ExportService._build_csv)
-    assert "buf.tell() > _MAX_EXPORT_BYTES" in source
+    assert "def _check_size() -> None:" in source
+    assert "buf.tell() > MAX_EXPORT_BYTES" in source
 
 
 def test_tg8_pdf_max_pages_constant():
@@ -317,7 +315,7 @@ def test_tg10_mark_error_then_trip_circuit():
 
 
 def test_tg10_trip_circuit_sets_redis_key():
-    from backtestforecast.services.billing import BillingService, _STRIPE_CIRCUIT_KEY
+    from backtestforecast.services.billing import _STRIPE_CIRCUIT_KEY, BillingService
 
     service = BillingService.__new__(BillingService)
     service.settings = MagicMock()
@@ -483,10 +481,9 @@ def test_tg9_custom_7_leg_in_entitlements():
 
 def test_tg9_custom_7_leg_in_catalog():
     """custom_7_leg must have a catalog entry."""
-    from backtestforecast.strategy_catalog.catalog import get_catalog
-    catalog = get_catalog()
-    types = [e.strategy_type for e in catalog]
-    assert "custom_7_leg" in types
+    from backtestforecast.strategy_catalog.catalog import STRATEGY_CATALOG
+
+    assert "custom_7_leg" in STRATEGY_CATALOG
 
 
 # ============================================================================
@@ -520,7 +517,7 @@ def test_tg12_s3_stream_timeout_raises_error():
 
 
 def test_tg12_s3_stream_timeout_does_not_silently_break():
-    """There must be no bare 'break' after the timeout check —
+    """There must be no bare 'break' after the timeout check -
     the old code silently truncated the response."""
     from apps.api.app.routers.exports import download_export
     source = inspect.getsource(download_export)
@@ -552,7 +549,7 @@ def test_tg10_backtest_task_does_not_lock_user_row():
         from apps.worker.app.tasks import run_backtest
     source = inspect.getsource(run_backtest)
     assert "with_for_update" not in source, (
-        "run_backtest must not use with_for_update on the user row — "
+        "run_backtest must not use with_for_update on the user row - "
         "the entitlement check is a point-in-time read that doesn't "
         "need a row lock."
     )

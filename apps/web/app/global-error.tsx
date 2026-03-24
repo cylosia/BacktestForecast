@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { Inter } from "next/font/google";
+import { reportClientError } from "@/lib/observability/report-client-error";
 
 const inter = Inter({ subsets: ["latin"], display: "swap" });
 
@@ -13,7 +14,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("Global error boundary caught:", error.digest);
+    reportClientError(error, { boundary: "GlobalError", digest: error.digest });
   }, [error]);
 
   return (

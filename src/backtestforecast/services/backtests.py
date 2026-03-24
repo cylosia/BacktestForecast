@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import time as _time
 from datetime import UTC, datetime, timedelta
@@ -11,10 +11,11 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backtestforecast.backtests.run_warnings import build_user_warnings, merge_warnings
+from backtestforecast.backtests.run_warnings import build_user_warnings, make_warning, merge_warnings
 from backtestforecast.backtests.types import BacktestExecutionResult
 from backtestforecast.billing.entitlements import POLICIES, ScannerMode, resolve_feature_policy
 from backtestforecast.config import get_settings
+from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
 from backtestforecast.errors import (
     AppError,
     AppValidationError,
@@ -24,7 +25,13 @@ from backtestforecast.errors import (
     QuotaExceededError,
 )
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade, User
-from backtestforecast.observability.metrics import BACKTEST_EXECUTION_DURATION_SECONDS
+from backtestforecast.observability.metrics import (
+    BACKTEST_EXECUTION_DURATION_SECONDS,
+    DERIVED_RESPONSE_PARTIAL_DATA_TOTAL,
+    TRUNCATED_PAYLOAD_ITEMS_TOTAL,
+    TRUNCATED_PAYLOADS_TOTAL,
+)
+from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
@@ -49,14 +56,21 @@ from backtestforecast.services.dispatch_recovery import (
     observe_job_create_to_running_latency,
     redispatch_if_stale_queued,
 )
-from backtestforecast.utils import decode_cursor as _decode_cursor
-from backtestforecast.utils import encode_cursor as _encode_cursor
+from backtestforecast.services.job_cancellation import (
+    mark_job_cancelled,
+    publish_cancellation_event,
+    revoke_celery_task,
+)
+from backtestforecast.services.job_transitions import cancellation_blocked_message, deletion_blocked_message
+from backtestforecast.services.risk_free_rate import resolve_backtest_risk_free_rate
 from backtestforecast.utils import to_decimal
 from backtestforecast.version import DEFAULT_ENGINE_VERSION
 
 logger = structlog.get_logger("services.backtests")
 
 EQUITY_CURVE_LIMIT = 10_000
+_RUNNING_DELETE_CONFLICT = deletion_blocked_message("backtest run")
+_SUMMARY_PROVENANCE = "persisted_run_aggregates"
 
 class BacktestService:
     def __init__(
@@ -85,36 +99,6 @@ class BacktestService:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def _build_user_warnings(self, request: CreateBacktestRunRequest, *, resolved_risk_free_rate: float | None = None) -> list[dict[str, Any]]:
-        warnings: list[dict[str, Any]] = []
-        if request.strategy_type.value in NAKED_OPTION_STRATEGY_TYPES:
-            warnings.append(
-                _warning(
-                    "naked_option_margin_only",
-                    "This strategy is sized using broker-style margin collateral only. Reported sizing can materially understate the true economic downside of naked short-option exposure; review results with separate stress-loss limits.",
-                    severity="critical",
-                    metadata={
-                        "recommendation": "Add stress-loss sizing or scenario analysis before treating this run as production-ready.",
-                        "strategy_type": request.strategy_type.value,
-                    },
-                )
-            )
-        if request.risk_free_rate is None:
-            configured_rfr = get_settings().risk_free_rate
-            warnings.append(
-                _warning(
-                    "configured_static_risk_free_rate",
-                    f"Sharpe and Sortino are using the configured server risk-free rate ({configured_rfr:.4f}) captured at run creation, not a Treasury series matched to {request.start_date.isoformat()} through {request.end_date.isoformat()}.",
-                    metadata={
-                        "configured_risk_free_rate": configured_rfr,
-                        "resolved_risk_free_rate": resolved_risk_free_rate if resolved_risk_free_rate is not None else configured_rfr,
-                        "start_date": request.start_date.isoformat(),
-                        "end_date": request.end_date.isoformat(),
-                    },
-                )
-            )
-        return warnings
-
     @staticmethod
     def _merge_warnings(*warning_sets: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
         merged: list[dict[str, Any]] = []
@@ -128,17 +112,12 @@ class BacktestService:
                 merged.append(warning)
         return merged
 
-    @staticmethod
-    def _resolve_request_risk_free_rate(request: CreateBacktestRunRequest) -> float:
-        if request.risk_free_rate is not None:
-            return float(request.risk_free_rate)
-        return float(get_settings().risk_free_rate)
-
     def _build_initial_run(
         self,
         user_id: UUID,
         request: CreateBacktestRunRequest,
         *,
+        resolved_parameters: ResolvedExecutionParameters,
         status: str = "queued",
         started_at: datetime | None = None,
     ) -> BacktestRun:
@@ -156,14 +135,17 @@ class BacktestService:
             account_size=to_decimal(request.account_size),
             risk_per_trade_pct=to_decimal(request.risk_per_trade_pct),
             commission_per_contract=to_decimal(request.commission_per_contract),
-            risk_free_rate=to_decimal(request.risk_free_rate if request.risk_free_rate is not None else get_settings().risk_free_rate),
+            risk_free_rate=to_decimal(resolved_parameters.risk_free_rate),
             input_snapshot_json={
                 **request.model_dump(mode="json"),
-                "risk_free_rate": float(request.risk_free_rate) if request.risk_free_rate is not None else get_settings().risk_free_rate,
-                "dividend_yield": float(request.dividend_yield) if request.dividend_yield is not None else 0.0,
+                **resolved_parameters.to_snapshot_fields(),
             },
             idempotency_key=request.idempotency_key,
-            warnings_json=build_user_warnings(request, resolved_risk_free_rate=self._resolve_request_risk_free_rate(request)),
+            warnings_json=build_user_warnings(
+                request,
+                resolved_risk_free_rate=resolved_parameters.risk_free_rate,
+                risk_free_rate_source=resolved_parameters.risk_free_rate_source,
+            ),
             engine_version=DEFAULT_ENGINE_VERSION,
             data_source="massive",
             trade_count=0,
@@ -178,6 +160,27 @@ class BacktestService:
             total_net_pnl=Decimal("0"),
             starting_equity=to_decimal(request.account_size),
             ending_equity=to_decimal(request.account_size),
+        )
+
+    def _audit_execution_parameter_resolution(
+        self,
+        *,
+        run: BacktestRun,
+        resolved_parameters: ResolvedExecutionParameters,
+        user_id: UUID,
+    ) -> None:
+        self.audit.record_always(
+            event_type="backtest.execution_parameters_resolved",
+            subject_type="backtest_run",
+            subject_id=run.id,
+            user_id=user_id,
+            metadata={
+                "risk_free_rate": resolved_parameters.risk_free_rate,
+                "risk_free_rate_source": resolved_parameters.risk_free_rate_source,
+                "risk_free_rate_field_name": resolved_parameters.risk_free_rate_field_name,
+                "dividend_yield": resolved_parameters.dividend_yield,
+                "source_of_truth": resolved_parameters.source_of_truth,
+            },
         )
 
     def enqueue(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
@@ -198,7 +201,20 @@ class BacktestService:
 
         self._enforce_backtest_quota(user)
 
-        run = self._build_initial_run(user.id, request, status="queued")
+        resolved_risk_free_rate = resolve_backtest_risk_free_rate(
+            request,
+            client=self.execution_service.market_data_service.client,
+        )
+        resolved_parameters = ResolvedExecutionParameters.from_request_resolution(
+            request,
+            resolved_risk_free_rate,
+        )
+        run = self._build_initial_run(
+            user.id,
+            request,
+            resolved_parameters=resolved_parameters,
+            status="queued",
+        )
         self.run_repository.add(run)
         self.audit.record(
             event_type="backtest.created",
@@ -220,6 +236,11 @@ class BacktestService:
                 if existing is not None:
                     return existing
             raise
+        self._audit_execution_parameter_resolution(
+            run=run,
+            resolved_parameters=resolved_parameters,
+            user_id=user.id,
+        )
         return run
 
     def create_and_dispatch(
@@ -281,16 +302,20 @@ class BacktestService:
         observe_job_create_to_running_latency(run)
 
         request = CreateBacktestRunRequest.model_validate(run.input_snapshot_json)
+        resolved_parameters = ResolvedExecutionParameters.from_snapshot(run.input_snapshot_json)
 
         _exec_start = _time.monotonic()
         try:
-            execution_result = self.execution_service.execute_request(request)
+            execution_result = self.execution_service.execute_request(
+                request,
+                resolved_parameters=resolved_parameters,
+            )
             with self.session.no_autoflush:
                 self._apply_execution_result(run, execution_result)
                 completed_at = datetime.now(UTC)
                 # CAS guard: only set status to "succeeded" if the reaper has not
                 # concurrently marked this run as "failed".  The FOR UPDATE lock
-                # was released by the commit on the queued→running transition, so
+                # was released by the commit on the queued->running transition, so
                 # the reaper can legitimately change status while execution is in
                 # progress.  no_autoflush prevents the ORM dirty state from being
                 # flushed (and acquiring a row lock) before the CAS UPDATE, ensuring
@@ -381,7 +406,21 @@ class BacktestService:
 
         self._enforce_backtest_quota(user)
 
-        run = self._build_initial_run(user.id, request, status="running", started_at=datetime.now(UTC))
+        resolved_risk_free_rate = resolve_backtest_risk_free_rate(
+            request,
+            client=self.execution_service.market_data_service.client,
+        )
+        resolved_parameters = ResolvedExecutionParameters.from_request_resolution(
+            request,
+            resolved_risk_free_rate,
+        )
+        run = self._build_initial_run(
+            user.id,
+            request,
+            resolved_parameters=resolved_parameters,
+            status="running",
+            started_at=datetime.now(UTC),
+        )
         self.run_repository.add(run)
         try:
             self.session.commit()
@@ -396,9 +435,17 @@ class BacktestService:
                 if existing is not None:
                     return existing
             raise
+        self._audit_execution_parameter_resolution(
+            run=run,
+            resolved_parameters=resolved_parameters,
+            user_id=user.id,
+        )
 
         try:
-            execution_result = self.execution_service.execute_request(request)
+            execution_result = self.execution_service.execute_request(
+                request,
+                resolved_parameters=resolved_parameters,
+            )
             self._apply_execution_result(run, execution_result)
             run.status = "succeeded"
             run.completed_at = datetime.now(UTC)
@@ -468,12 +515,12 @@ class BacktestService:
             created_since = datetime.now(UTC) - timedelta(days=feature_policy.history_days)
         effective_limit = min(limit, feature_policy.history_item_limit, 200)
 
-        cursor_before: tuple[datetime, UUID] | None = None
-        if cursor:
-            cursor_before = _decode_cursor(cursor)
-            if cursor_before is None:
-                raise AppValidationError("Invalid pagination cursor.")
-            offset = 0
+        try:
+            cursor_before, offset = parse_cursor_param(cursor) if cursor else (None, offset)
+        except Exception as exc:
+            if isinstance(exc, AppError):
+                raise
+            raise
 
         runs, total = self.run_repository.list_for_user_with_count(
             user.id,
@@ -483,22 +530,15 @@ class BacktestService:
             cursor_before=cursor_before,
         )
 
-        has_next = len(runs) > effective_limit
-        if has_next:
-            runs = runs[:effective_limit]
-
         capped_total = min(total, feature_policy.history_item_limit)
-
-        next_cursor = None
-        if has_next and runs:
-            next_cursor = _encode_cursor(runs[-1].created_at, runs[-1].id)
+        page = finalize_cursor_page(runs, total=capped_total, offset=offset, limit=effective_limit)
 
         return BacktestRunListResponse(
-            items=[self._to_history_item(run) for run in runs],
-            total=capped_total,
-            offset=offset,
-            limit=effective_limit,
-            next_cursor=next_cursor,
+            items=[self._to_history_item(run) for run in page.items],
+            total=page.total,
+            offset=page.offset,
+            limit=page.limit,
+            next_cursor=page.next_cursor,
         )
 
     def get_run_status(self, user: User, run_id: UUID) -> BacktestRunStatusResponse:
@@ -521,17 +561,51 @@ class BacktestService:
         if run is None:
             raise NotFoundError("Backtest run not found.")
         trades = self.run_repository.get_trades_for_run(run_id, limit=trade_limit, user_id=user_id)
-        equity = self.run_repository.get_equity_points_for_run(run_id, limit=EQUITY_CURVE_LIMIT, user_id=user_id)
-        return self._to_detail_response(run, trades=trades, equity_points=equity)
+        equity = self.run_repository.get_equity_points_for_run(run_id, limit=EQUITY_CURVE_LIMIT + 1, user_id=user_id)
+        payload_counts = self.run_repository.get_payload_counts_for_run(run_id, user_id=user_id)
+        persisted_trade_count = payload_counts.trade_count
+        persisted_equity_point_count = payload_counts.equity_point_count
+        decided_trades = payload_counts.decided_trade_count
+        equity_curve_truncated = len(equity) > EQUITY_CURVE_LIMIT
+        if equity_curve_truncated:
+            equity_curve_points_omitted = max(persisted_equity_point_count - EQUITY_CURVE_LIMIT, 0)
+            TRUNCATED_PAYLOADS_TOTAL.labels(surface="backtest_detail", kind="equity_curve").inc()
+            TRUNCATED_PAYLOAD_ITEMS_TOTAL.labels(surface="backtest_detail", kind="equity_curve").inc(
+                equity_curve_points_omitted
+            )
+        else:
+            equity_curve_points_omitted = 0
+        trade_items_omitted = max(persisted_trade_count - len(trades), 0)
+        if persisted_trade_count > len(trades):
+            TRUNCATED_PAYLOADS_TOTAL.labels(surface="backtest_detail", kind="trades").inc()
+            TRUNCATED_PAYLOAD_ITEMS_TOTAL.labels(surface="backtest_detail", kind="trades").inc(
+                trade_items_omitted
+            )
+        return self._to_detail_response(
+            run,
+            trades=trades,
+            equity_points=equity[:EQUITY_CURVE_LIMIT],
+            equity_curve_truncated=equity_curve_truncated,
+            trade_items_omitted=trade_items_omitted,
+            equity_curve_points_omitted=equity_curve_points_omitted,
+            decided_trades=decided_trades,
+            additional_warnings=self._build_response_integrity_warnings(
+                surface="backtest_detail",
+                run=run,
+                persisted_trade_count=persisted_trade_count,
+                decided_trades=decided_trades,
+                returned_trade_count=len(trades),
+                trade_payload_truncated=persisted_trade_count > len(trades),
+                equity_curve_truncated=equity_curve_truncated,
+            ),
+        )
 
     def delete_for_user(self, run_id: UUID, user_id: UUID) -> None:
         run = self.run_repository.get_lightweight_for_user(run_id, user_id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
         if run.status in ("queued", "running"):
-            raise ConflictError(
-                "Cannot delete a job that is currently queued or running. Cancel it first."
-            )
+            raise ConflictError(_RUNNING_DELETE_CONFLICT)
         self.audit.record(
             event_type="backtest.deleted",
             subject_type="backtest_run",
@@ -545,6 +619,29 @@ class BacktestService:
         except Exception:
             self.session.rollback()
             raise
+
+    def cancel_for_user(self, run_id: UUID, user_id: UUID) -> BacktestRunStatusResponse:
+        run = self.run_repository.get_lightweight_for_user(run_id, user_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        if run.status not in ("queued", "running"):
+            raise ConflictError(cancellation_blocked_message("backtest run"))
+        task_id = mark_job_cancelled(run)
+        self.audit.record_always(
+            event_type="backtest.cancelled",
+            subject_type="backtest_run",
+            subject_id=run.id,
+            user_id=user_id,
+            metadata={"symbol": run.symbol, "strategy_type": run.strategy_type, "reason": "user_cancelled"},
+        )
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        revoke_celery_task(task_id, job_type="backtest", job_id=run.id)
+        publish_cancellation_event(job_type="backtest", job_id=run.id)
+        return self.get_run_status_for_owner(user_id=user_id, run_id=run_id)
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
         if len(request.run_ids) != len(set(request.run_ids)):
@@ -595,18 +692,65 @@ class BacktestService:
         trade_batches_by_run = self.run_repository.get_trades_for_runs(
             all_run_ids, limit_per_run=trade_limit, user_id=user.id,
         )
-        equity_by_run = self.run_repository.get_equity_points_for_runs(all_run_ids, limit_per_run=EQUITY_CURVE_LIMIT, user_id=user.id)
+        equity_by_run = self.run_repository.get_equity_points_for_runs(
+            all_run_ids,
+            limit_per_run=EQUITY_CURVE_LIMIT + 1,
+            user_id=user.id,
+        )
+        payload_counts_by_run = self.run_repository.get_payload_counts_for_runs(all_run_ids, user_id=user.id)
         truncated = any(
             trade_batches_by_run.get(run.id) is not None
             and trade_batches_by_run[run.id].exceeded_limit
-            for run in ordered
+        for run in ordered
         )
+        if truncated:
+            TRUNCATED_PAYLOADS_TOTAL.labels(surface="backtest_compare", kind="trades").inc()
+            TRUNCATED_PAYLOAD_ITEMS_TOTAL.labels(surface="backtest_compare", kind="trades").inc(
+                sum(
+                    max(batch.total_count - len(batch.trades), 0)
+                    for batch in trade_batches_by_run.values()
+                )
+            )
+        if any(len(equity_by_run.get(run.id, [])) > EQUITY_CURVE_LIMIT for run in ordered):
+            TRUNCATED_PAYLOADS_TOTAL.labels(surface="backtest_compare", kind="equity_curve").inc()
+            TRUNCATED_PAYLOAD_ITEMS_TOTAL.labels(surface="backtest_compare", kind="equity_curve").inc(
+                sum(
+                    max(payload_counts_by_run.get(run.id).equity_point_count - EQUITY_CURVE_LIMIT, 0)
+                    for run in ordered
+                )
+            )
         return CompareBacktestsResponse(
             items=[
                 self._to_detail_response(
                     run,
                     trades=(trade_batches_by_run[run.id].trades if run.id in trade_batches_by_run else []),
-                    equity_points=equity_by_run.get(run.id, []),
+                    equity_points=equity_by_run.get(run.id, [])[:EQUITY_CURVE_LIMIT],
+                    equity_curve_truncated=len(equity_by_run.get(run.id, [])) > EQUITY_CURVE_LIMIT,
+                    trade_items_omitted=max(
+                        payload_counts_by_run.get(run.id).trade_count
+                        - (len(trade_batches_by_run[run.id].trades) if run.id in trade_batches_by_run else 0),
+                        0,
+                    ),
+                    equity_curve_points_omitted=max(
+                        payload_counts_by_run.get(run.id).equity_point_count - EQUITY_CURVE_LIMIT,
+                        0,
+                    ) if len(equity_by_run.get(run.id, [])) > EQUITY_CURVE_LIMIT else 0,
+                    decided_trades=payload_counts_by_run.get(run.id).decided_trade_count,
+                    additional_warnings=self._build_response_integrity_warnings(
+                        surface="backtest_compare",
+                        run=run,
+                        persisted_trade_count=(
+                            trade_batches_by_run[run.id].total_count if run.id in trade_batches_by_run else 0
+                        ),
+                        decided_trades=payload_counts_by_run.get(run.id).decided_trade_count,
+                        returned_trade_count=(
+                            len(trade_batches_by_run[run.id].trades) if run.id in trade_batches_by_run else 0
+                        ),
+                        trade_payload_truncated=(
+                            trade_batches_by_run[run.id].exceeded_limit if run.id in trade_batches_by_run else False
+                        ),
+                        equity_curve_truncated=len(equity_by_run.get(run.id, [])) > EQUITY_CURVE_LIMIT,
+                    ),
                 )
                 for run in ordered
             ],
@@ -801,14 +945,18 @@ class BacktestService:
     def _summary_response(
         run: BacktestRun,
         *,
-        trades: list[BacktestTrade] | None = None,
+        decided_trades: int | None = None,
     ) -> BacktestSummaryResponse:
-        decided: int | None = None
-        if trades is not None:
-            decided = sum(1 for t in trades if t.net_pnl != 0)
+        """Build summary payloads from persisted run truth.
+
+        Transport-layer slices like truncated trade lists or trimmed equity
+        curves must never be used to recompute summary fields here.
+        ``decided_trades`` is passed separately because it is queried as an
+        aggregate; every other field comes directly from the stored run row.
+        """
         return BacktestSummaryResponse(
             trade_count=run.trade_count,
-            decided_trades=decided,
+            decided_trades=decided_trades,
             win_rate=run.win_rate,
             total_roi_pct=run.total_roi_pct,
             average_win_amount=run.average_win_amount,
@@ -833,24 +981,90 @@ class BacktestService:
         )
 
     @staticmethod
-    def _resolve_risk_free_rate(run: BacktestRun) -> float:
-        """Return the risk-free rate used for this run.
+    def _build_response_integrity_warnings(
+        *,
+        surface: str,
+        run: BacktestRun,
+        persisted_trade_count: int,
+        decided_trades: int | None,
+        returned_trade_count: int,
+        trade_payload_truncated: bool,
+        equity_curve_truncated: bool,
+    ) -> list[dict[str, Any]]:
+        warnings: list[dict[str, Any]] = []
 
-        Prefers the persisted column (added in migration 0031).  For older
-        runs where the column is NULL, reads the value from
-        ``input_snapshot_json`` (stored at creation time).  Falls back to
-        the current settings value only as a last resort.
-        """
-        if run.risk_free_rate is not None:
-            return float(run.risk_free_rate)
+        if persisted_trade_count != int(run.trade_count or 0):
+            DERIVED_RESPONSE_PARTIAL_DATA_TOTAL.labels(
+                surface=surface,
+                reason="summary_trade_count_mismatch",
+            ).inc()
+            warnings.append(
+                make_warning(
+                    "summary_trade_count_mismatch",
+                    "Persisted trade rows do not match the stored summary trade_count for this run. Summary metrics may reflect an execution-time aggregate that differs from the currently persisted trade dataset.",
+                    metadata={
+                        "summary_trade_count": int(run.trade_count or 0),
+                        "persisted_trade_count": persisted_trade_count,
+                    },
+                )
+            )
+
+        if decided_trades is not None and decided_trades > persisted_trade_count:
+            DERIVED_RESPONSE_PARTIAL_DATA_TOTAL.labels(
+                surface=surface,
+                reason="decided_trade_count_mismatch",
+            ).inc()
+            warnings.append(
+                make_warning(
+                    "decided_trade_count_mismatch",
+                    "The persisted decided-trade aggregate exceeds the number of persisted trade rows. Treat win-rate context as potentially inconsistent until the run is repaired.",
+                    metadata={
+                        "decided_trades": decided_trades,
+                        "persisted_trade_count": persisted_trade_count,
+                    },
+                )
+            )
+
+        if trade_payload_truncated:
+            DERIVED_RESPONSE_PARTIAL_DATA_TOTAL.labels(
+                surface=surface,
+                reason="partial_trade_payload",
+            ).inc()
+            warnings.append(
+                make_warning(
+                    "partial_trade_payload",
+                    "The returned trade list is truncated. Summary metrics come from persisted run aggregates, not from the trade slice in this response.",
+                    metadata={
+                        "persisted_trade_count": persisted_trade_count,
+                        "returned_trade_count": returned_trade_count,
+                    },
+                )
+            )
+
+        if equity_curve_truncated:
+            DERIVED_RESPONSE_PARTIAL_DATA_TOTAL.labels(
+                surface=surface,
+                reason="partial_equity_curve_payload",
+            ).inc()
+            warnings.append(
+                make_warning(
+                    "partial_equity_curve_payload",
+                    "The returned equity curve is truncated to the transport limit. Use exports or narrower date windows for the full curve.",
+                )
+            )
+
+        return warnings
+
+    @staticmethod
+    def _resolve_risk_free_rate(run: BacktestRun) -> float | None:
+        """Return the persisted risk-free rate for this run when available."""
         snapshot = run.input_snapshot_json or {}
-        snapshot_rate = snapshot.get("risk_free_rate")
-        if snapshot_rate is not None:
-            try:
-                return float(snapshot_rate)
-            except (TypeError, ValueError):
-                pass
-        return get_settings().risk_free_rate
+        return ResolvedExecutionParameters.from_snapshot(
+            {
+                **snapshot,
+                "risk_free_rate": float(run.risk_free_rate) if run.risk_free_rate is not None else snapshot.get("risk_free_rate"),
+            }
+        ).risk_free_rate
 
     def _to_history_item(self, run: BacktestRun) -> BacktestRunHistoryItemResponse:
         return BacktestRunHistoryItemResponse(
@@ -865,6 +1079,7 @@ class BacktestService:
             created_at=run.created_at,
             completed_at=run.completed_at,
             summary=self._summary_response(run),
+            summary_provenance=_SUMMARY_PROVENANCE,
         )
 
     def _to_detail_response(
@@ -874,11 +1089,27 @@ class BacktestService:
         trade_limit: int = 10_000,
         trades: list[BacktestTrade] | None = None,
         equity_points: list[BacktestEquityPoint] | None = None,
+        equity_curve_truncated: bool | None = None,
+        trade_items_omitted: int | None = None,
+        equity_curve_points_omitted: int | None = None,
+        decided_trades: int | None = None,
+        additional_warnings: list[dict[str, Any]] | None = None,
     ) -> BacktestRunDetailResponse:
         if trades is None:
             trades = self.run_repository.get_trades_for_run(run.id, limit=trade_limit, user_id=run.user_id)
         if equity_points is None:
-            equity_points = self.run_repository.get_equity_points_for_run(run.id, limit=EQUITY_CURVE_LIMIT, user_id=run.user_id)
+            equity_points = self.run_repository.get_equity_points_for_run(
+                run.id,
+                limit=EQUITY_CURVE_LIMIT + 1,
+                user_id=run.user_id,
+            )
+        if equity_curve_truncated is None:
+            equity_curve_truncated = len(equity_points) > EQUITY_CURVE_LIMIT
+        if trade_items_omitted is None:
+            trade_items_omitted = 0
+        if equity_curve_points_omitted is None:
+            equity_curve_points_omitted = max(len(equity_points) - EQUITY_CURVE_LIMIT, 0)
+        trimmed_equity_points = equity_points[:EQUITY_CURVE_LIMIT]
         return BacktestRunDetailResponse(
             id=run.id,
             symbol=run.symbol,
@@ -897,12 +1128,15 @@ class BacktestService:
             created_at=run.created_at,
             started_at=run.started_at,
             completed_at=run.completed_at,
-            warnings=merge_warnings(run.warnings_json),
+            warnings=merge_warnings(run.warnings_json, additional_warnings),
             error_code=run.error_code,
             error_message=run.error_message,
-            summary=self._summary_response(run, trades=trades),
+            summary=self._summary_response(run, decided_trades=decided_trades),
+            summary_provenance=_SUMMARY_PROVENANCE,
             trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
-            equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
-            equity_curve_truncated=len(equity_points) > EQUITY_CURVE_LIMIT,
+            equity_curve=[EquityCurvePointResponse.model_validate(point) for point in trimmed_equity_points],
+            equity_curve_truncated=equity_curve_truncated,
+            trade_items_omitted=trade_items_omitted,
+            equity_curve_points_omitted=equity_curve_points_omitted,
             risk_free_rate=self._resolve_risk_free_rate(run),
         )

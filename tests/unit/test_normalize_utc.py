@@ -1,10 +1,8 @@
-"""Tests for BillingService._normalize_utc static method."""
+﻿"""Tests for BillingService._normalize_utc static method."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
-
-import pytest
 
 from backtestforecast.services.billing import BillingService
 

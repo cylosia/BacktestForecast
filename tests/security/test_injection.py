@@ -1,4 +1,4 @@
-"""Security fuzz tests for injection attacks.
+﻿"""Security fuzz tests for injection attacks.
 
 Sends SQL injection, XSS, and template injection payloads through
 API inputs (symbol, name, description) and verifies that the server
@@ -7,13 +7,11 @@ by validation) or 2xx (safely handled/escaped).
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.app.dependencies import get_token_verifier as _get_token_verifier
 from apps.api.app.main import app
-from apps.api.app.dependencies import get_db, get_token_verifier as _get_token_verifier
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 
 INJECTION_PAYLOADS = [

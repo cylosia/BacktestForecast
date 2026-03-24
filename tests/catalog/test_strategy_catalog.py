@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from backtestforecast.schemas.backtests import StrategyType
 from backtestforecast.strategy_catalog.catalog import (

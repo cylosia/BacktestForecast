@@ -1,4 +1,4 @@
-"""Tests for rate_limit_fail_closed default and production enforcement (audit item C-5)."""
+﻿"""Tests for rate_limit_fail_closed default and production enforcement (audit item C-5)."""
 from __future__ import annotations
 
 import os
@@ -34,6 +34,7 @@ def test_production_rejects_fail_open():
             log_json=True,
             ip_hash_salt="a-very-secure-salt-value-here",
             metrics_token="metrics-secret-token",
+            admin_token="admin-secret-token",
             rate_limit_fail_closed=False,
             stripe_secret_key="sk_live_x",
             stripe_webhook_secret="whsec_x",

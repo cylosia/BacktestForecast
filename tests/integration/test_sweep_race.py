@@ -1,4 +1,4 @@
-"""Test sweep job CAS (compare-and-swap) status transitions prevent race conditions.
+﻿"""Test sweep job CAS (compare-and-swap) status transitions prevent race conditions.
 
 Uses mock DB sessions to verify that concurrent status updates via the actual
 SweepService.run_job CAS pattern are handled correctly.
@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from backtestforecast.models import SweepJob, User
-from backtestforecast.repositories.sweep_jobs import SweepJobRepository
 from backtestforecast.services.sweeps import SweepService
 
 
@@ -242,7 +241,7 @@ class TestSweepStatusTransitions:
         service.repository = MagicMock()
         service.repository.get.return_value = job
 
-        result = service.run_job(job.id)
+        service.run_job(job.id)
         assert job.status == "failed"
         assert job.error_code == "user_not_found"
 
@@ -265,7 +264,7 @@ class TestSweepStatusTransitions:
             "backtestforecast.billing.entitlements.ensure_sweep_access",
             side_effect=AppError(code="entitlement_error", message="No access"),
         ):
-            result = service.run_job(job.id)
+            service.run_job(job.id)
 
         assert job.status == "failed"
         assert job.error_code == "entitlement_revoked"
@@ -290,6 +289,5 @@ class TestCASIdempotency:
         service.repository = MagicMock()
         service.repository.get.return_value = job
 
-        original_status = job.status
         result = service.run_job(job.id)
         assert result is job

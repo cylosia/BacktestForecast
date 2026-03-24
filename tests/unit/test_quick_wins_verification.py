@@ -1,7 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -43,7 +42,7 @@ def test_daily_picks_history_cursor_pagination_reaches_web_layer() -> None:
 
     assert "searchParams: Promise<{ next_cursor?: string; cursor?: string }>" in page_source
     assert "const cursor = params.next_cursor?.trim() || params.cursor?.trim() || undefined;" in page_source
-    assert "await getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor)" in page_source
+    assert "getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor)" in page_source
     assert 'cursorParamName="next_cursor"' in page_source
     assert 'buildCursorPaginatedPath("/v1/daily-picks/history", limit, 30, cursor)' in api_source
 
@@ -78,9 +77,9 @@ def test_web_request_budget_and_schedule_copy_quick_wins_are_guarded() -> None:
 
     assert "memoizes current-user loading behind a cached token-keyed loader" in budget_source
     assert "collapse duplicate /v1/me reads" in budget_source
-    assert "avoids an extra /v1/meta round trip on the daily-picks page" in budget_source
-    assert "getDailyPicksScheduleLabel()" in budget_source
-    assert "const scheduleLabel = getDailyPicksScheduleLabel();" in page_source
+    assert "loads daily-picks schedule and page data in parallel server calls" in budget_source
+    assert "Promise.allSettled([getCurrentUser(), getMeta()])" in page_source
+    assert "getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor)" in page_source
 
 
 def test_shared_version_constant_and_live_sse_path_have_explicit_coverage() -> None:

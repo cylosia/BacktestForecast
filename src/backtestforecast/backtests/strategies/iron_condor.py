@@ -1,6 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
+
+import structlog
 
 from backtestforecast.backtests.margin import iron_condor_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
@@ -22,8 +24,6 @@ from backtestforecast.backtests.types import (
 )
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar
-
-import structlog
 
 logger = structlog.get_logger(__name__)
 

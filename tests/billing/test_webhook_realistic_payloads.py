@@ -1,4 +1,4 @@
-"""Tests for Stripe webhook handling with realistic event structures."""
+﻿"""Tests for Stripe webhook handling with realistic event structures."""
 from __future__ import annotations
 
 from datetime import UTC, datetime

@@ -1,18 +1,16 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from decimal import Decimal
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 import structlog
 
 from backtestforecast.backtests.rules import EntryRuleEvaluator
 from backtestforecast.backtests.strategies.common import (
-    choose_call_otm_strike,
     choose_primary_expiration,
-    choose_put_otm_strike,
     contracts_for_expiration,
     get_overrides,
     require_contract_for_strike,

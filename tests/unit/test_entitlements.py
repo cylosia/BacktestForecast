@@ -1,4 +1,4 @@
-"""Tests for billing entitlement resolution edge cases."""
+﻿"""Tests for billing entitlement resolution edge cases."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -52,10 +52,15 @@ class TestNormalizePlanTier:
     def test_past_due_no_period_end(self):
         assert normalize_plan_tier("pro", "past_due", None) == PlanTier.FREE
 
-    def test_unknown_status_preserves_current_tier(self):
-        assert normalize_plan_tier("pro", "some_unknown_status") == PlanTier.PRO
-        assert normalize_plan_tier("premium", "some_unknown_status") == PlanTier.PREMIUM
+    def test_unknown_status_without_period_end_downgrades_to_free(self):
+        assert normalize_plan_tier("pro", "some_unknown_status") == PlanTier.FREE
+        assert normalize_plan_tier("premium", "some_unknown_status") == PlanTier.FREE
         assert normalize_plan_tier("free", "some_unknown_status") == PlanTier.FREE
+
+    def test_unknown_status_with_future_period_end_preserves_current_tier_during_grace(self):
+        future = datetime.now(UTC) + timedelta(days=7)
+        assert normalize_plan_tier("pro", "some_unknown_status", future) == PlanTier.PRO
+        assert normalize_plan_tier("premium", "some_unknown_status", future) == PlanTier.PREMIUM
 
     def test_inactive_statuses(self):
         for status in ("canceled", "unpaid", "incomplete", "incomplete_expired", "paused"):

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -8,7 +8,6 @@ import pytest
 from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
 from backtestforecast.services.billing import BillingService
-
 
 EVENT_ID = "evt_dedup_test_001"
 
@@ -120,7 +119,7 @@ def test_handle_webhook_side_effects_only_once(billing_service, db_session, test
 
 def test_recover_stale_claim_ignores_processed_events(db_session):
     """A StripeEvent with status 'processed' older than 5 min should NOT be
-    reset by _recover_stale_claim — only 'processing' events are recovered."""
+    reset by _recover_stale_claim - only 'processing' events are recovered."""
     from backtestforecast.models import StripeEvent
     from backtestforecast.repositories.stripe_events import StripeEventRepository
 

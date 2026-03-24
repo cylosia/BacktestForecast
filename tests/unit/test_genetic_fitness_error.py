@@ -1,4 +1,4 @@
-"""Fix 62: Genetic optimizer assigns -inf fitness to failed evaluations.
+﻿"""Fix 62: Genetic optimizer assigns -inf fitness to failed evaluations.
 
 When a fitness function raises an exception for certain individuals, those
 individuals must receive ``float('-inf')`` fitness and be ranked last.
@@ -6,8 +6,6 @@ individuals must receive ``float('-inf')`` fitness and be ranked last.
 from __future__ import annotations
 
 from decimal import Decimal
-
-import pytest
 
 from backtestforecast.sweeps.genetic import GeneticConfig, GeneticOptimizer
 

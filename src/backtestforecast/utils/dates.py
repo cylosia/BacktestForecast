@@ -1,4 +1,4 @@
-"""Canonical date utilities for US-market-aligned operations.
+﻿"""Canonical date utilities for US-market-aligned operations.
 
 Holiday data comes from two sources, merged at runtime:
 
@@ -13,6 +13,7 @@ If Redis is unavailable the static set is used alone.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time as _time
 from datetime import date, datetime, timedelta
@@ -194,10 +195,8 @@ def _reset_holiday_redis() -> None:
         client = _holiday_redis_client
         _holiday_redis_client = None
     if client is not None:
-        try:
+        with contextlib.suppress(Exception):
             client.close()
-        except Exception:
-            pass
 
 
 def _get_redis_client():
@@ -208,9 +207,11 @@ def _get_redis_client():
     with _holiday_redis_lock:
         if _holiday_redis_client is not None:
             return _holiday_redis_client
-        from backtestforecast.config import get_settings, register_invalidation_callback
         import atexit
+
         import redis
+
+        from backtestforecast.config import get_settings, register_invalidation_callback
         settings = get_settings()
         url = settings.redis_cache_url or settings.redis_url
         if not url:

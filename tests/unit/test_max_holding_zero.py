@@ -1,4 +1,4 @@
-"""Fix 78: max_holding_days=0 is clamped to 1 in _resolve_exit.
+﻿"""Fix 78: max_holding_days=0 is clamped to 1 in _resolve_exit.
 
 After Fix 25, passing max_holding_days=0 should be clamped to 1, so a
 position held for 0 trading days should NOT trigger an exit.
@@ -56,7 +56,7 @@ class TestMaxHoldingZero:
         bar = _make_bar(entry_date)
         position = _make_position(entry_date, entry_index=5)
 
-        should_exit, reason = OptionsBacktestEngine._resolve_exit(
+        should_exit, _reason = OptionsBacktestEngine._resolve_exit(
             bar=bar,
             position=position,
             max_holding_days=0,
@@ -112,7 +112,7 @@ class TestMaxHoldingZero:
         bar = _make_bar(date(2023, 1, 4))
         position = _make_position(entry_date, entry_index=0)
 
-        should_exit, reason = OptionsBacktestEngine._resolve_exit(
+        should_exit, _reason = OptionsBacktestEngine._resolve_exit(
             bar=bar,
             position=position,
             max_holding_days=5,

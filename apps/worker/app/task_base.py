@@ -6,6 +6,9 @@ without duplicating the DLQ logic.
 """
 from __future__ import annotations
 
+from contextlib import suppress
+from datetime import UTC
+
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
 
@@ -22,6 +25,15 @@ _dlq_redis_pool: object | None = None
 _dlq_redis_lock = __import__("threading").Lock()
 
 
+def get_dlq_redis_open_connection_count() -> int:
+    pool = _dlq_redis_pool
+    if pool is None:
+        return 0
+    available = len(getattr(pool, "_available_connections", ()))
+    in_use = len(getattr(pool, "_in_use_connections", ()))
+    return available + in_use
+
+
 def _get_dlq_redis():
     """Return a reusable Redis connection for DLQ writes.
 
@@ -34,8 +46,9 @@ def _get_dlq_redis():
     with _dlq_redis_lock:
         if _dlq_redis_pool is not None:
             return __import__("redis").Redis(connection_pool=_dlq_redis_pool)
-        from backtestforecast.config import get_settings
         from redis import ConnectionPool
+
+        from backtestforecast.config import get_settings
         _dlq_redis_pool = ConnectionPool.from_url(
             get_settings().redis_cache_url,
             socket_timeout=5,
@@ -100,9 +113,7 @@ def _redact_args(raw_args: tuple | list | None) -> list:
         return []
     result = []
     for arg in raw_args:
-        if isinstance(arg, str) and len(arg) <= 80:
-            result.append(arg)
-        elif isinstance(arg, (int, float, bool)):
+        if (isinstance(arg, str) and len(arg) <= 80) or isinstance(arg, (int, float, bool)):
             result.append(arg)
         else:
             result.append("[REDACTED]")
@@ -139,8 +150,7 @@ def _record_task_result(
     transaction.
     """
     try:
-        from datetime import datetime, timezone
-        UTC = timezone.utc
+        from datetime import datetime
         from uuid import UUID as _UUID
 
         from backtestforecast.db.session import create_worker_session
@@ -273,10 +283,8 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                 redis_conn.ltrim(dlq_key, 0, 4999)
                 redis_conn.expire(dlq_key, 60 * 60 * 24 * 30)
                 DLQ_MESSAGES_TOTAL.labels(task_name=self.name).inc()
-                try:
+                with suppress(Exception):
                     DLQ_DEPTH.set(redis_conn.llen(dlq_key))
-                except Exception:
-                    pass
                 try:
                     import sentry_sdk as _sentry
                     _sentry.capture_message(
@@ -284,7 +292,7 @@ class BaseTaskWithDLQ(celery_app.Task):  # type: ignore[misc]
                         level="error",
                     )
                 except Exception:
-                    pass
+                    logger.debug("task.dlq_sentry_report_failed", task_name=self.name, exc_info=True)
             except Exception:
                 DLQ_WRITE_FAILURES_TOTAL.labels(task_name=self.name).inc()
                 logger.warning("task.dlq_persist_failed", task_name=self.name, exc_info=True)

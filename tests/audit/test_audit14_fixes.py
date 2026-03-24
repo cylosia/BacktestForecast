@@ -1,9 +1,7 @@
-"""Tests for audit round 14 — race conditions, GDPR, middleware fixes."""
+﻿"""Tests for audit round 14 - race conditions, GDPR, middleware fixes."""
 from __future__ import annotations
 
 import inspect
-
-import pytest
 
 
 class TestScanStatusAtomicUpdate:

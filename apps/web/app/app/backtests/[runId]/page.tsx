@@ -22,6 +22,7 @@ import { ExportActions } from "@/components/backtests/export-actions";
 import { ResultSummaryCards } from "@/components/backtests/result-summary-cards";
 import { TradeListTable } from "@/components/backtests/trade-list-table";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
+import { getBacktestPartialDataMessages, getCancellationMessage, isTradePayloadPartial } from "@/lib/jobs/ui-state";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,8 @@ export default async function BacktestDetailPage({
     const run = runResult.value;
     const user = userResult.value;
     const isComplete = isTerminalStatus(run.status);
+    const partialDataMessages = getBacktestPartialDataMessages(run);
+    const tradePayloadPartial = isTradePayloadPartial(run.summary?.trade_count, run.trades.length);
 
     return (
       <div className="space-y-6">
@@ -83,6 +86,24 @@ export default async function BacktestDetailPage({
         {isComplete ? (
           <>
             {run.summary ? <ResultSummaryCards summary={run.summary} /> : null}
+
+        {partialDataMessages.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Partial data returned</CardTitle>
+              <CardDescription>
+                The API returned a complete summary but only partial raw data for at least one section below.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {partialDataMessages.map((message, index) => (
+                <p key={`partial-${index}`} className="text-sm text-muted-foreground">
+                  {message}
+                </p>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
 
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
           <Card>
@@ -203,24 +224,24 @@ export default async function BacktestDetailPage({
           </Card>
         ) : null}
 
-        {run.equity_curve_truncated ? (
+        {run.status === "cancelled" ? (
           <Card>
             <CardHeader>
-              <CardTitle>Equity curve truncated</CardTitle>
+              <CardTitle>Backtest cancelled</CardTitle>
               <CardDescription>
-                The backend returned a partial equity curve for this run.
+                This run ended in a cancelled state instead of producing a complete result set.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
-                This chart does not include every equity point. Use exports for a fuller data extract when available.
+                {getCancellationMessage("backtest", run.error_code)}
               </p>
             </CardContent>
           </Card>
         ) : null}
 
         <EquityCurveChart points={run.equity_curve} />
-        <TradeListTable trades={run.trades} />
+        <TradeListTable trades={run.trades} totalTrades={run.summary?.trade_count} truncated={tradePayloadPartial} />
           </>
         ) : null}
 

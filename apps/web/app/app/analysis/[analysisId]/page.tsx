@@ -5,6 +5,8 @@ import { getAnalysisDetail } from "@/lib/api/server";
 import { formatCurrency, formatDateTime, formatNumber, formatPercent, strategyLabel } from "@/lib/backtests/format";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { statusBadgeVariant } from "@/lib/ui/status-badge";
+import { getCancellationMessage } from "@/lib/jobs/ui-state";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +52,7 @@ export default async function AnalysisDetailPage({
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm">Status</CardTitle></CardHeader>
-          <CardContent><Badge variant={analysis.status === "succeeded" ? "success" : analysis.status === "failed" ? "destructive" : "secondary"}>{analysis.status}</Badge></CardContent>
+          <CardContent><Badge variant={statusBadgeVariant(analysis.status)}>{analysis.status}</Badge></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm">Stage</CardTitle></CardHeader>
@@ -65,6 +67,20 @@ export default async function AnalysisDetailPage({
           <CardContent><p className="text-2xl font-semibold">{analysis.close_price != null ? formatCurrency(analysis.close_price) : "—"}</p></CardContent>
         </Card>
       </div>
+
+      {analysis.integrity_warnings && analysis.integrity_warnings.length > 0 ? (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardHeader>
+            <CardTitle>Data integrity warnings</CardTitle>
+            <CardDescription>Some stored analysis sections were omitted because persisted JSON failed validation.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            {analysis.integrity_warnings.map((warning, index) => (
+              <p key={`${index}-${warning}`}>{warning}</p>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {analysis.top_results && analysis.top_results.length > 0 ? (
         <Card>
@@ -109,6 +125,18 @@ export default async function AnalysisDetailPage({
         <Card>
           <CardHeader><CardTitle>Diagnostic</CardTitle></CardHeader>
           <CardContent className="text-sm text-muted-foreground">{analysis.error_message}</CardContent>
+        </Card>
+      ) : null}
+
+      {analysis.status === "cancelled" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Analysis cancelled</CardTitle>
+            <CardDescription>This job ended in a cancelled state before the full workflow completed.</CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            {getCancellationMessage("analysis", analysis.error_code)}
+          </CardContent>
         </Card>
       ) : null}
     </div>

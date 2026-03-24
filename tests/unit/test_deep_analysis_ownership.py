@@ -1,4 +1,4 @@
-"""Item 78: Verify deep analysis ownership uses SQL filter.
+﻿"""Item 78: Verify deep analysis ownership uses SQL filter.
 
 get_analysis must use a query with both id and user_id filters (SQL-level),
 not Python-side filtering.

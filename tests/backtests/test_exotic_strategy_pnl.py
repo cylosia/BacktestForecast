@@ -1,4 +1,4 @@
-"""Exotic strategy tests beyond the parametrized smoke test.
+﻿"""Exotic strategy tests beyond the parametrized smoke test.
 
 Covers interface conformance, losing-trade PnL correctness for jade_lizard
 and iron_butterfly, and edge cases not in test_all_strategy_pnl.py.
@@ -244,7 +244,7 @@ class TestJadeLizardCallSideLoss:
         assert float(t.net_pnl) < 0, f"Expected losing trade, got net_pnl={t.net_pnl}"
 
         detail = t.detail_json
-        entry_credit = detail["total_credit"]
+        detail["total_credit"]
         call_spread_width = (detail["call_long_strike"] - detail["call_short_strike"]) * 100
         upside_risk = detail["upside_risk"]
 

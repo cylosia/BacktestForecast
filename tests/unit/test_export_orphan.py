@@ -1,4 +1,4 @@
-"""Item 81: S3 orphan scenario — commit failure after upload.
+﻿"""Item 81: S3 orphan scenario - commit failure after upload.
 
 Documentation + logging test: verify the export service has a logger
 for warning when DB commit fails after S3 upload.

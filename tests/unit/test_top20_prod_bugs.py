@@ -1,4 +1,4 @@
-"""Verification tests for the Top 20 Bugs Most Likely Already Affecting Production.
+﻿"""Verification tests for the Top 20 Bugs Most Likely Already Affecting Production.
 
 Each test confirms the fix is in place and the bug can no longer occur.
 """
@@ -6,10 +6,6 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from decimal import Decimal
-
-import pytest
-
 
 # ---- B1: _commit_then_publish NameError ----
 
@@ -82,7 +78,7 @@ def test_b7_position_sizing_accepts_decimal():
 
 def test_b8_reconcile_locked():
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.reconcile_subscriptions)
+    source = inspect.getsource(BillingService._reconcile_subscriptions_impl)
     assert "with_for_update" in source
     assert "skip_locked" in source
 
@@ -180,7 +176,7 @@ def test_b15_slow_query_metric_exists():
 
 def test_b15_scan_recommendations_tracks_slow_queries():
     from backtestforecast.services.scans import ScanService
-    source = inspect.getsource(ScanService.get_recommendations)
+    source = inspect.getsource(ScanService._get_recommendations_impl)
     assert "API_SLOW_QUERIES_TOTAL" in source
     assert "_SLOW_QUERY_THRESHOLD" in source
 

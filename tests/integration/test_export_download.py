@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from tests.integration.test_api_critical_flows import _create_backtest, _set_user_plan
 

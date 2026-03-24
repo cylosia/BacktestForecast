@@ -1,4 +1,4 @@
-"""Fix 76: Scan service acquires row lock on User before checking entitlements.
+﻿"""Fix 76: Scan service acquires row lock on User before checking entitlements.
 
 Verifies that ScanService.create_job uses SELECT ... FOR UPDATE on the
 User row to prevent race conditions when checking entitlements.
@@ -6,7 +6,6 @@ User row to prevent race conditions when checking entitlements.
 from __future__ import annotations
 
 import inspect
-from unittest.mock import MagicMock, patch
 
 
 class TestScanEntitlementRace:
@@ -16,7 +15,7 @@ class TestScanEntitlementRace:
         """create_job must SELECT the User row with FOR UPDATE."""
         from backtestforecast.services.scans import ScanService
 
-        source = inspect.getsource(ScanService.create_job)
+        source = inspect.getsource(ScanService._create_job_impl)
         assert "with_for_update" in source, (
             "create_job must use with_for_update() on User to prevent "
             "concurrent entitlement check races"
@@ -26,7 +25,7 @@ class TestScanEntitlementRace:
         """The FOR UPDATE lock must be acquired before resolving scanner policy."""
         from backtestforecast.services.scans import ScanService
 
-        source = inspect.getsource(ScanService.create_job)
+        source = inspect.getsource(ScanService._create_job_impl)
         lock_idx = source.find("with_for_update")
         policy_idx = source.find("resolve_scanner_policy")
         assert lock_idx >= 0, "Must use with_for_update()"
@@ -39,7 +38,7 @@ class TestScanEntitlementRace:
         """The locked query must target the User model, not ScannerJob."""
         from backtestforecast.services.scans import ScanService
 
-        source = inspect.getsource(ScanService.create_job)
+        source = inspect.getsource(ScanService._create_job_impl)
         lines_before_lock = source[: source.find("with_for_update")]
         last_select = lines_before_lock.rfind("select(")
         snippet = lines_before_lock[last_select : last_select + 50]
@@ -51,7 +50,7 @@ class TestScanEntitlementRace:
         """The locked select must be executed via session.execute()."""
         from backtestforecast.services.scans import ScanService
 
-        source = inspect.getsource(ScanService.create_job)
+        source = inspect.getsource(ScanService._create_job_impl)
         assert "self.session.execute" in source, (
             "Locked query must be executed via self.session.execute()"
         )

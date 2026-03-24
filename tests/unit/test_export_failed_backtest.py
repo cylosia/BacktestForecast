@@ -1,14 +1,11 @@
-"""Item 68: Test export of failed backtest raises AppValidationError.
+﻿"""Item 68: Test export of failed backtest raises AppValidationError.
 
 Calling enqueue_export with a backtest run whose status is 'failed'
 must raise a ValidationError rather than proceeding to generate content.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from decimal import Decimal
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -21,8 +18,6 @@ from backtestforecast.errors import AppValidationError
 from backtestforecast.models import BacktestRun, User
 from backtestforecast.schemas.exports import CreateExportRequest
 from backtestforecast.services.exports import ExportService
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 

@@ -216,6 +216,15 @@ groups:
           summary: "Account deletion failed to clean up Stripe resources"
           description: "An account was deleted but Stripe subscription/customer cleanup failed. Check audit_events for the Stripe IDs and clean up manually in the Stripe dashboard."
 
+      - alert: OrphanedStripeCleanupFailures
+        expr: increase(external_cleanup_failures_total{resource=~"stripe_subscription|stripe_customer|stripe_cleanup_retry"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stripe orphan cleanup is failing"
+          description: "Stripe cleanup failures were recorded after local account deletion. Check audit events, maintenance.cleanup_stripe_orphan task logs, and the orphaned billing cleanup runbook."
+
       - alert: AccountDeletionRateHigh
         expr: increase(http_requests_total{method="DELETE",path="/v1/account/me",status="204"}[1h]) > 10
         for: 5m

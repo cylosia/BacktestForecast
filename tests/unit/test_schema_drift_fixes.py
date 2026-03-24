@@ -1,11 +1,10 @@
-"""Verification tests for the Database / Migration / Schema Drift findings.
+﻿"""Verification tests for the Database / Migration / Schema Drift findings.
 
 Covers all 6 findings: migration chain integrity, JSON validation,
 audit dedup safety, and constraint alignment.
 """
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 
 import pytest
@@ -33,11 +32,11 @@ def test_d1_migration_0034_is_merge_point():
     assert 'down_revision = ("20260319_0033", "0024_heartbeat")' in content
 
 
-# ---- D2: Duplicate 0024 — actually separate branches ----
+# ---- D2: Duplicate 0024 - actually separate branches ----
 
 def test_d2_0024_files_have_different_revision_ids():
     f1 = (VERSIONS_DIR / "20260318_0024_validate_sweep_mode_constraint.py").read_text()
-    f2 = (VERSIONS_DIR / "20260318_0024_add_heartbeat_and_trade_index.py").read_text()
+    f2 = (VERSIONS_DIR / "20260318_0045_add_heartbeat_and_trade_index.py").read_text()
     assert 'revision = "20260318_0024"' in f1
     assert 'revision = "0024_heartbeat"' in f2
 
@@ -45,7 +44,6 @@ def test_d2_0024_files_have_different_revision_ids():
 # ---- D3: strategy_type intentionally has no CHECK ----
 
 def test_d3_strategy_type_no_check_is_documented():
-    from backtestforecast.models import BacktestRun
     source = (PROJECT_ROOT / "src" / "backtestforecast" / "models.py").read_text()
     assert "strategy_type columns use String(48) without a DB-level CHECK" in source
 
@@ -53,24 +51,27 @@ def test_d3_strategy_type_no_check_is_documented():
 # ---- D4: JSON columns have shape validation ----
 
 def test_d4_backtest_trade_detail_validated():
-    from backtestforecast.services.backtests import BacktestService
     import inspect
+
+    from backtestforecast.services.backtests import BacktestService
     source = inspect.getsource(BacktestService)
     assert "validate_json_shape" in source
     assert "_TRADE_DETAIL_REQUIRED_KEYS" in source
 
 
 def test_d4_scan_recommendation_summary_validated():
-    from backtestforecast.services.scans import ScanService
     import inspect
+
+    from backtestforecast.services.scans import ScanService
     source = inspect.getsource(ScanService)
     assert "validate_json_shape" in source
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
 def test_d4_sweep_result_summary_validated():
-    from backtestforecast.services.sweeps import SweepService
     import inspect
+
+    from backtestforecast.services.sweeps import SweepService
     source = inspect.getsource(SweepService)
     assert "_SUMMARY_REQUIRED_KEYS" in source
     assert "validate_json_shape" in source
@@ -101,6 +102,7 @@ def test_d6_repeatable_events_defined():
 
 def test_d6_record_warns_on_repeatable_event():
     import inspect
+
     from backtestforecast.services.audit import AuditService
     source = inspect.getsource(AuditService.record)
     assert "_REPEATABLE_EVENT_TYPES" in source
@@ -109,6 +111,7 @@ def test_d6_record_warns_on_repeatable_event():
 
 def test_d6_record_always_uses_uuid_suffix():
     import inspect
+
     from backtestforecast.repositories.audit_events import AuditEventRepository
     source = inspect.getsource(AuditEventRepository.add_always)
     assert "uuid4" in source

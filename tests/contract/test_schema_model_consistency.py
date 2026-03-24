@@ -1,4 +1,4 @@
-"""Test 76: Verify AnalysisSummaryResponse fields have corresponding columns
+﻿"""Test 76: Verify AnalysisSummaryResponse fields have corresponding columns
 in the SymbolAnalysis model with compatible types.
 """
 from __future__ import annotations
@@ -10,7 +10,6 @@ from sqlalchemy import inspect as sa_inspect
 
 from backtestforecast.models import SymbolAnalysis
 from backtestforecast.schemas.analysis import AnalysisSummaryResponse
-
 
 _PYDANTIC_TO_SQL_COMPAT: dict[str, set[str]] = {
     "UUID": {"GUID", "UUID", "CHAR", "VARCHAR", "String"},
@@ -100,7 +99,7 @@ def test_pipeline_history_item_completed_at_is_optional_datetime():
     field = PipelineHistoryItemResponse.model_fields["completed_at"]
     annotation = field.annotation
 
-    origin = getattr(annotation, "__origin__", None)
+    getattr(annotation, "__origin__", None)
     args = getattr(annotation, "__args__", ())
 
     non_none_args = [a for a in args if a is not type(None)] if args else []

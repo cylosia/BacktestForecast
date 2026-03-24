@@ -1,15 +1,16 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import atexit
 import json
 import threading
 import time
+from contextlib import suppress
 from typing import Any
 from uuid import UUID
 
 from backtestforecast.config import get_settings, register_invalidation_callback
-from backtestforecast.schemas.common import JobStatus
 from backtestforecast.observability import get_logger
+from backtestforecast.schemas.common import JobStatus
 
 logger = get_logger("events")
 
@@ -66,14 +67,23 @@ def _reset_redis() -> None:
         _redis_client = None
         _redis_retry_after = 0.0
     if client is not None:
-        try:
+        with suppress(Exception):
             client.close()
-        except Exception:  # Intentional: best-effort cleanup; failure to close an old
-            # connection must not prevent reconnection on the next call.
-            pass
 
 
 register_invalidation_callback(_reset_redis)
+
+
+def get_redis_open_connection_count() -> int:
+    client = _redis_client
+    if client is None:
+        return 0
+    pool = getattr(client, "connection_pool", None)
+    if pool is None:
+        return 0
+    available = len(getattr(pool, "_available_connections", ()))
+    in_use = len(getattr(pool, "_in_use_connections", ()))
+    return available + in_use
 
 
 def _shutdown_redis() -> None:
@@ -167,7 +177,7 @@ def _fallback_persist_status(
 ) -> None:
     """Write status directly to the job row so polling consumers can pick it up.
 
-    Uses an atomic UPDATE … WHERE to avoid a TOCTOU race between the
+    Uses an atomic UPDATE - WHERE to avoid a TOCTOU race between the
     read-check and the write that could clobber a terminal status set
     by another worker in the meantime.
     """
@@ -234,7 +244,7 @@ def _fallback_persist_status(
                     status=status,
                 )
     except Exception:  # Intentional: this is the last-chance fallback path. If even the
-        # direct DB write fails, we can only log — there is nothing left to try.
+        # direct DB write fails, we can only log - there is nothing left to try.
         logger.error(
             "events.fallback_persist_failed",
             job_type=job_type,

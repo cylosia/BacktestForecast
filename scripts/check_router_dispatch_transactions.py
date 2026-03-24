@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Ensure routers do not manage DB transactions around service-level dispatch helpers."""
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from _bootstrap import bootstrap_repo
-
 
 ROOT = bootstrap_repo()
 ROUTERS_DIR = ROOT / "apps" / "api" / "app" / "routers"

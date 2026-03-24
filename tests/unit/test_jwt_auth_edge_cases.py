@@ -1,4 +1,4 @@
-"""Tests for JWT verification edge cases in ClerkTokenVerifier.
+﻿"""Tests for JWT verification edge cases in ClerkTokenVerifier.
 
 Uses real RSA key pairs and jwt.encode() to construct tokens, exercising
 the verification code path with clerk_jwt_key set (no JWKS fetch).
@@ -6,12 +6,11 @@ the verification code path with clerk_jwt_key set (no JWKS fetch).
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from backtestforecast.auth.verification import ClerkTokenVerifier
 from backtestforecast.config import Settings
@@ -107,7 +106,7 @@ class TestJwtAuthEdgeCases:
     def test_token_too_long_raises_auth_error(self):
         """A token exceeding 4096 bytes should fail validation.
 
-        The verifier itself may not enforce a byte limit — PyJWT will reject
+        The verifier itself may not enforce a byte limit - PyJWT will reject
         the token as malformed if it's padded beyond valid JWT structure.
         """
         settings = _make_settings()

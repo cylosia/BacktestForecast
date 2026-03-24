@@ -1,4 +1,4 @@
-"""Contract test: SSE event payloads match frontend expectations.
+﻿"""Contract test: SSE event payloads match frontend expectations.
 
 The frontend ``useSSE`` hook (hooks/use-sse.ts) and ``sweep-job-poller``
 expect SSE ``status`` events to carry a JSON payload with at least:
@@ -17,7 +17,6 @@ import pytest
 
 from backtestforecast.events import publish_job_status
 from backtestforecast.schemas.common import JobStatus
-
 
 _REQUIRED_KEYS = {"v", "status", "job_id"}
 

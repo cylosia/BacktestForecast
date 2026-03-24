@@ -1,4 +1,4 @@
-"""Test that unknown Stripe subscription statuses have a 72-hour grace period.
+﻿"""Test that unknown Stripe subscription statuses have a 72-hour grace period.
 
 Previously, unknown statuses preserved the paid tier indefinitely. Now
 the user keeps their tier for 72 hours after current_period_end, then

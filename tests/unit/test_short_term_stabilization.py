@@ -1,4 +1,4 @@
-"""Verification tests for the Short-Term Stabilization items.
+﻿"""Verification tests for the Short-Term Stabilization items.
 
 Tests all 6 items from the audit's "Short-Term Stabilization (This Week)" list:
   ST4: FOR UPDATE locking on reconcile_subscriptions
@@ -15,22 +15,19 @@ import warnings
 from decimal import Decimal
 from unittest.mock import MagicMock
 
-import pytest
-
-
 # ============================================================================
 # ST4: reconcile_subscriptions uses FOR UPDATE with skip_locked
 # ============================================================================
 
 def test_st4_reconcile_query_uses_for_update():
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.reconcile_subscriptions)
+    source = inspect.getsource(BillingService._reconcile_subscriptions_impl)
     assert "with_for_update(skip_locked=True)" in source
 
 
 def test_st4_reconcile_query_has_limit():
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.reconcile_subscriptions)
+    source = inspect.getsource(BillingService._reconcile_subscriptions_impl)
     assert ".limit(100)" in source
 
 

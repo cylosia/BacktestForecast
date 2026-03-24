@@ -1,4 +1,4 @@
-"""FIX 79: Hand-verified P&L correctness tests for long_call and long_put strategies."""
+﻿"""FIX 79: Hand-verified P&L correctness tests for long_call and long_put strategies."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -115,7 +115,7 @@ class TestLongCallPnl:
         assert abs(trade.net_pnl - expected_net) < 0.01
 
     def test_long_call_expires_worthless(self):
-        """Underlying stays below strike — call expires worthless, full premium lost."""
+        """Underlying stays below strike - call expires worthless, full premium lost."""
         entry = date(2025, 4, 2)
         expiration = date(2025, 4, 5)
         bars = [
@@ -230,7 +230,7 @@ class TestLongPutPnl:
         assert abs(trade.net_pnl - expected_net) < 0.01
 
     def test_long_put_expires_worthless(self):
-        """Underlying rises above strike — put expires worthless, full premium lost."""
+        """Underlying rises above strike - put expires worthless, full premium lost."""
         entry = date(2025, 4, 2)
         expiration = date(2025, 4, 5)
         bars = [

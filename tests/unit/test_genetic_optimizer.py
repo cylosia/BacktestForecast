@@ -1,4 +1,4 @@
-"""Tests for the genetic optimizer constraint module and GA engine."""
+﻿"""Tests for the genetic optimizer constraint module and GA engine."""
 from __future__ import annotations
 
 import random
@@ -6,7 +6,6 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Constraints: is_valid
@@ -215,7 +214,7 @@ class TestMutation:
         changed_count = 0
         for _ in range(100):
             mutated = GeneticOptimizer._mutate(individual, mutation_rate=1.0)
-            for orig, mut in zip(individual, mutated):
+            for orig, mut in zip(individual, mutated, strict=False):
                 if any(orig.get(k) != mut.get(k) for k in ("contract_type", "side", "strike_offset", "expiration_offset", "quantity_ratio")):
                     changed_count += 1
                     break
@@ -312,7 +311,7 @@ class TestGeneticSweepConfigSchema:
         from backtestforecast.schemas.sweeps import GeneticSweepConfig
 
         with pytest.raises(Exception, match="num_legs"):
-            GeneticSweepConfig(num_legs=7)
+            GeneticSweepConfig(num_legs=9)
 
     def test_elitism_must_be_less_than_population(self):
         from backtestforecast.schemas.sweeps import GeneticSweepConfig
@@ -353,7 +352,7 @@ class TestGeneticCreateSweepRequest:
 
         with patch("backtestforecast.schemas.sweeps.get_settings") as mock_settings, \
              patch("backtestforecast.utils.dates.market_date_today") as mock_today:
-            mock_settings.return_value.max_backtest_window_days = 1825
+            mock_settings.return_value.max_sweep_window_days = 1825
             from datetime import date
             mock_today.return_value = date(2025, 12, 31)
 

@@ -1,8 +1,8 @@
-"""Formal state machine for job status transitions.
+﻿"""Formal state machine for job status transitions.
 
 Validates that status transitions follow the allowed graph. Use
 ``validate_transition()`` before updating job status to catch bugs
-where code attempts an invalid transition (e.g., succeeded → running).
+where code attempts an invalid transition (e.g., succeeded -> running).
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled
 class InvalidStatusTransition(ValueError):
     def __init__(self, from_status: str, to_status: str, context: str = "") -> None:
         ctx = f" ({context})" if context else ""
-        super().__init__(f"Invalid status transition: {from_status} → {to_status}{ctx}")
+        super().__init__(f"Invalid status transition: {from_status} -> {to_status}{ctx}")
         self.from_status = from_status
         self.to_status = to_status
 
@@ -48,7 +48,7 @@ def validate_transition(
     Returns True if valid. When *strict* is True, raises
     ``InvalidStatusTransition`` instead of returning False.
     Pass ``job_type="export"`` to use the export-specific transition graph
-    which allows ``succeeded → expired``.
+    which allows ``succeeded -> expired``.
     """
     transitions = EXPORT_ALLOWED_TRANSITIONS if job_type == "export" else ALLOWED_TRANSITIONS
     allowed = transitions.get(current)
@@ -83,7 +83,7 @@ def safe_transition(
     """
     if validate_transition(current, target):
         return True
-    msg = f"Blocked invalid status transition: {current} → {target}"
+    msg = f"Blocked invalid status transition: {current} -> {target}"
     if context:
         msg += f" ({context})"
     if logger is not None:

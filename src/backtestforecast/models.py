@@ -1,10 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+import structlog
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -21,7 +22,6 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-import structlog
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.sql import func
 
@@ -30,7 +30,6 @@ from sqlalchemy.sql import func
 # eager loading (selectinload, joinedload) or separate queries. If you see
 # a "lazy load operation" error, add the appropriate loading strategy to
 # your query rather than changing the relationship to lazy="select".
-
 from backtestforecast.db.base import Base
 from backtestforecast.db.types import (
     GUID,
@@ -82,14 +81,14 @@ class User(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    backtest_runs: Mapped[list["BacktestRun"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
-    scanner_jobs: Mapped[list["ScannerJob"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
-    export_jobs: Mapped[list["ExportJob"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
-    templates: Mapped[list["BacktestTemplate"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
-    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="user", passive_deletes=True, lazy="raise")
-    symbol_analyses: Mapped[list["SymbolAnalysis"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
-    sweep_jobs: Mapped[list["SweepJob"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
-    stripe_events: Mapped[list["StripeEvent"]] = relationship(back_populates="user", foreign_keys="StripeEvent.user_id", passive_deletes=True, lazy="raise")
+    backtest_runs: Mapped[list[BacktestRun]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    scanner_jobs: Mapped[list[ScannerJob]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    export_jobs: Mapped[list[ExportJob]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    templates: Mapped[list[BacktestTemplate]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    audit_events: Mapped[list[AuditEvent]] = relationship(back_populates="user", passive_deletes=True, lazy="raise")
+    symbol_analyses: Mapped[list[SymbolAnalysis]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    sweep_jobs: Mapped[list[SweepJob]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    stripe_events: Mapped[list[StripeEvent]] = relationship(back_populates="user", foreign_keys="StripeEvent.user_id", passive_deletes=True, lazy="raise")
 
 
 class BacktestRun(Base):
@@ -186,17 +185,17 @@ class BacktestRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="backtest_runs", lazy="raise")
-    trades: Mapped[list["BacktestTrade"]] = relationship(
+    user: Mapped[User] = relationship(back_populates="backtest_runs", lazy="raise")
+    trades: Mapped[list[BacktestTrade]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="BacktestTrade.entry_date", lazy="raise"
     )
-    equity_points: Mapped[list["BacktestEquityPoint"]] = relationship(
+    equity_points: Mapped[list[BacktestEquityPoint]] = relationship(
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="BacktestEquityPoint.trade_date",
         lazy="raise",
     )
-    exports: Mapped[list["ExportJob"]] = relationship(back_populates="backtest_run", passive_deletes=True, lazy="raise")
+    exports: Mapped[list[ExportJob]] = relationship(back_populates="backtest_run", passive_deletes=True, lazy="raise")
 
 
 # NOTE: strategy_type columns use String(48) without a DB-level CHECK constraint.
@@ -243,7 +242,7 @@ class BacktestTrade(Base):
     exit_reason: Mapped[str] = mapped_column(String(128), nullable=False)
     detail_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT, deferred=True)
 
-    run: Mapped["BacktestRun"] = relationship(back_populates="trades", lazy="raise")
+    run: Mapped[BacktestRun] = relationship(back_populates="trades", lazy="raise")
 
 
 class BacktestEquityPoint(Base):
@@ -264,7 +263,7 @@ class BacktestEquityPoint(Base):
     position_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
 
-    run: Mapped["BacktestRun"] = relationship(back_populates="equity_points", lazy="raise")
+    run: Mapped[BacktestRun] = relationship(back_populates="equity_points", lazy="raise")
 
 
 class BacktestTemplate(Base):
@@ -289,7 +288,7 @@ class BacktestTemplate(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    user: Mapped["User"] = relationship(back_populates="templates", lazy="raise")
+    user: Mapped[User] = relationship(back_populates="templates", lazy="raise")
 
 
 class ScannerJob(Base):
@@ -386,8 +385,8 @@ class ScannerJob(Base):
     )
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="scanner_jobs", lazy="raise")
-    parent_job: Mapped["ScannerJob | None"] = relationship(remote_side=[id], back_populates=None, lazy="raise")
+    user: Mapped[User] = relationship(back_populates="scanner_jobs", lazy="raise")
+    parent_job: Mapped[ScannerJob | None] = relationship(remote_side=[id], back_populates=None, lazy="raise")
 
     @validates('evaluated_candidate_count')
     def _validate_evaluated_count(self, key, value):
@@ -411,7 +410,7 @@ class ScannerJob(Base):
                     candidate=self.candidate_count,
                 )
         return value
-    recommendations: Mapped[list["ScannerRecommendation"]] = relationship(
+    recommendations: Mapped[list[ScannerRecommendation]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
         order_by="ScannerRecommendation.rank",
@@ -439,20 +438,22 @@ class ScannerRecommendation(Base):
     strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
     rule_set_name: Mapped[str] = mapped_column(String(120), nullable=False)
     rule_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
-    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
-    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
-    historical_performance_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    ranking_features_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    # These payload columns must be written explicitly by the scan executor.
+    # Hidden JSON defaults make missing writes look like valid empty results.
+    request_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False)
+    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False)
+    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False)
+    historical_performance_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    ranking_features_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    job: Mapped["ScannerJob"] = relationship(back_populates="recommendations", lazy="raise")
+    job: Mapped[ScannerJob] = relationship(back_populates="recommendations", lazy="raise")
 
 
 class ExportJob(Base):
@@ -513,8 +514,8 @@ class ExportJob(Base):
     # status by a scheduled maintenance task (e.g. a periodic Celery beat job).
     # The ix_export_jobs_status_expires_at index supports efficient lookup of
     # candidates for this transition.
-    user: Mapped["User"] = relationship(back_populates="export_jobs", lazy="raise")
-    backtest_run: Mapped["BacktestRun"] = relationship(back_populates="exports", lazy="raise")
+    user: Mapped[User] = relationship(back_populates="export_jobs", lazy="raise")
+    backtest_run: Mapped[BacktestRun] = relationship(back_populates="exports", lazy="raise")
 
 
 class AuditEvent(Base):
@@ -566,7 +567,7 @@ class AuditEvent(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="audit_events", lazy="raise")
+    user: Mapped[User] = relationship(back_populates="audit_events", lazy="raise")
 
 
 class NightlyPipelineRun(Base):
@@ -636,7 +637,7 @@ class NightlyPipelineRun(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    recommendations: Mapped[list["DailyRecommendation"]] = relationship(
+    recommendations: Mapped[list[DailyRecommendation]] = relationship(
         back_populates="pipeline_run", cascade="all, delete-orphan", lazy="raise"
     )
 
@@ -663,15 +664,15 @@ class DailyRecommendation(Base):
     regime_labels: Mapped[list[str]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
     close_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     target_dte: Mapped[int] = mapped_column(Integer, nullable=False)
-    config_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    config_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
+    summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
+    forecast_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    pipeline_run: Mapped["NightlyPipelineRun"] = relationship(back_populates="recommendations", lazy="raise")
+    pipeline_run: Mapped[NightlyPipelineRun] = relationship(back_populates="recommendations", lazy="raise")
 
     @validates('regime_labels')
     def _validate_regime_labels(self, key, value):
@@ -714,7 +715,7 @@ class StripeEvent(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    user: Mapped["User | None"] = relationship(back_populates="stripe_events", lazy="raise")
+    user: Mapped[User | None] = relationship(back_populates="stripe_events", lazy="raise")
 
 
 class SymbolAnalysis(Base):
@@ -749,10 +750,12 @@ class SymbolAnalysis(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     stage: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
     close_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
-    regime_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    landscape_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
-    top_results_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
-    forecast_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    # Null means "not produced yet" or "intentionally omitted". Empty JSON means
+    # the stage ran and produced an empty result. Do not collapse those states.
+    regime_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
+    landscape_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON_VARIANT, nullable=True)
+    top_results_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON_VARIANT, nullable=True)
+    forecast_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
     strategies_tested: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     configs_tested: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     top_results_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
@@ -770,7 +773,7 @@ class SymbolAnalysis(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="symbol_analyses", lazy="raise")
+    user: Mapped[User] = relationship(back_populates="symbol_analyses", lazy="raise")
 
 
 class SweepJob(Base):
@@ -836,8 +839,8 @@ class SweepJob(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="sweep_jobs", lazy="raise")
-    results: Mapped[list["SweepResult"]] = relationship(
+    user: Mapped[User] = relationship(back_populates="sweep_jobs", lazy="raise")
+    results: Mapped[list[SweepResult]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
         order_by="SweepResult.rank",
@@ -902,17 +905,17 @@ class SweepResult(Base):
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
-    parameter_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
-    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
-    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
-    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    parameter_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False)
+    trades_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False)
+    equity_curve_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    job: Mapped["SweepJob"] = relationship(back_populates="results", lazy="raise")
+    job: Mapped[SweepJob] = relationship(back_populates="results", lazy="raise")
 
 
 class TaskResult(Base):

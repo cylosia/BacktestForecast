@@ -1,11 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import threading
 from collections.abc import Callable
 from typing import ClassVar
 
 import structlog
-
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -90,7 +89,7 @@ class Settings(BaseSettings):
     )
     prefetch_max_workers: int = Field(default=10, ge=1, le=32)
 
-    # Nightly pipeline — override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
+    # Nightly pipeline - override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
     pipeline_default_symbols_csv: str | None = None
     pipeline_default_symbols: list[str] = [
         "AAPL",
@@ -287,10 +286,10 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = Field(default=None, repr=False)
 
-    # Runtime feature flags — toggle via env vars without code deployment.
+    # Runtime feature flags - toggle via env vars without code deployment.
     #
     # Each feature supports four layers of control (see feature_flags.py):
-    #   1. Kill-switch: feature_{name}_enabled = False → disabled for all
+    #   1. Kill-switch: feature_{name}_enabled = False -> disabled for all
     #   2. Allow-list: feature_{name}_allow_user_ids = "uuid1,uuid2"
     #   3. Tier targeting: feature_{name}_tiers = "pro,premium"
     #   4. Percentage rollout: feature_{name}_rollout_pct = 50
@@ -511,16 +510,16 @@ class Settings(BaseSettings):
         return bool(self.stripe_secret_key and self.stripe_webhook_secret and self.stripe_price_lookup)
 
     # Model validators run in definition order:
-    # 1. apply_env_overrides — merges env-var CSV overrides
-    # 2. validate_redis_consistency — injects password into both redis_url and redis_cache_url
-    # 3. default_redis_cache_url — fills redis_cache_url from redis_url (after password injection)
-    # 4. validate_production_security — enforces production invariants
+    # 1. apply_env_overrides - merges env-var CSV overrides
+    # 2. validate_redis_consistency - injects password into both redis_url and redis_cache_url
+    # 3. default_redis_cache_url - fills redis_cache_url from redis_url (after password injection)
+    # 4. validate_production_security - enforces production invariants
     # Adding new validators? Place them before validate_production_security
     # so their effects are visible to the security checks.
     MAX_SYMBOLS: ClassVar[int] = 200
 
     @model_validator(mode="after")
-    def apply_env_overrides(self) -> "Settings":
+    def apply_env_overrides(self) -> Settings:
         if self.pipeline_default_symbols_csv:
             import re
             parsed = [s.strip().upper() for s in self.pipeline_default_symbols_csv.split(",") if s.strip()]
@@ -544,7 +543,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def validate_redis_consistency(self) -> "Settings":
+    def validate_redis_consistency(self) -> Settings:
         if self.redis_password:
             import urllib.parse
             from urllib.parse import urlparse, urlunparse
@@ -564,7 +563,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def default_redis_cache_url(self) -> "Settings":
+    def default_redis_cache_url(self) -> Settings:
         if not self.redis_cache_url:
             self.redis_cache_url = self.redis_url
         if not self.celery_result_backend_url:
@@ -572,11 +571,11 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _validate_cors_no_wildcard_with_credentials(self) -> "Settings":
+    def _validate_cors_no_wildcard_with_credentials(self) -> Settings:
         """Reject wildcard CORS origin in production/staging and warn elsewhere.
 
         The CORS spec forbids Access-Control-Allow-Origin: * when
-        Access-Control-Allow-Credentials: true — browsers silently ignore
+        Access-Control-Allow-Credentials: true - browsers silently ignore
         the response.  Since the API sets allow_credentials=True for Clerk
         auth cookies, a wildcard origin will break authentication.
         """
@@ -599,7 +598,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _validate_timeout_minimums(self) -> "Settings":
+    def _validate_timeout_minimums(self) -> Settings:
         _MIN_TIMEOUT = 240
         if self.scan_timeout_seconds < _MIN_TIMEOUT:
             logger.warning(
@@ -626,7 +625,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _validate_sweep_score_weights(self) -> "Settings":
+    def _validate_sweep_score_weights(self) -> Settings:
         total = (
             self.sweep_score_win_rate_weight
             + self.sweep_score_roi_weight
@@ -640,7 +639,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _validate_aws_credentials_pair(self) -> "Settings":
+    def _validate_aws_credentials_pair(self) -> Settings:
         has_key = bool(self.aws_access_key_id)
         has_secret = bool(self.aws_secret_access_key)
         if has_key != has_secret:
@@ -648,7 +647,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _validate_concurrency_tiers(self) -> "Settings":
+    def _validate_concurrency_tiers(self) -> Settings:
         if self.max_concurrent_analyses_premium < self.max_concurrent_analyses_default:
             raise ValueError(
                 f"max_concurrent_analyses_premium ({self.max_concurrent_analyses_premium}) "
@@ -657,7 +656,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def validate_production_security(self) -> "Settings":
+    def validate_production_security(self) -> Settings:
         _salt_is_placeholder = "default" in self.ip_hash_salt.lower() or "change" in self.ip_hash_salt.lower()
         if _salt_is_placeholder:
             if self.app_env in {"production", "staging"}:

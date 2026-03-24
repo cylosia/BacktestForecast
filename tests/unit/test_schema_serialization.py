@@ -1,4 +1,4 @@
-"""Unit tests for Pydantic schema serialization edge cases."""
+﻿"""Unit tests for Pydantic schema serialization edge cases."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -7,9 +7,10 @@ from datetime import UTC, datetime
 def test_pipeline_history_response_includes_next_cursor():
     from backtestforecast.schemas.analysis import PipelineHistoryResponse
 
-    data = {"items": [], "next_cursor": "2026-01-01T00:00:00"}
+    data = {"items": [], "total": 4, "offset": 0, "limit": 2, "next_cursor": "2026-01-01T00:00:00"}
     resp = PipelineHistoryResponse(**data)
     assert resp.next_cursor == "2026-01-01T00:00:00"
+    assert resp.total == 4
 
 
 def test_pipeline_history_response_next_cursor_defaults_to_none():
@@ -17,11 +18,13 @@ def test_pipeline_history_response_next_cursor_defaults_to_none():
 
     resp = PipelineHistoryResponse(items=[])
     assert resp.next_cursor is None
+    assert resp.total == 0
 
 
 def test_export_job_response_includes_expires_at():
-    from backtestforecast.schemas.exports import ExportJobResponse
     from uuid import uuid4
+
+    from backtestforecast.schemas.exports import ExportJobResponse
 
     now = datetime.now(UTC)
     resp = ExportJobResponse(
@@ -38,8 +41,9 @@ def test_export_job_response_includes_expires_at():
 
 
 def test_export_job_response_expires_at_defaults_to_none():
-    from backtestforecast.schemas.exports import ExportJobResponse
     from uuid import uuid4
+
+    from backtestforecast.schemas.exports import ExportJobResponse
 
     resp = ExportJobResponse(
         id=uuid4(),
@@ -60,7 +64,7 @@ def test_export_job_response_expires_at_defaults_to_none():
 
 def test_validate_json_shape_wheel_force_close_no_legs():
     """A dict with 'phase' key but no 'legs' should NOT log missing-key warnings.
-    The validator has a special-case: if 'phase' in data and 'legs' not in data → True."""
+    The validator has a special-case: if 'phase' in data and 'legs' not in data -> True."""
     from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
 
     wheel_force_close = {
@@ -101,10 +105,11 @@ def test_validate_json_shape_wheel_force_close_missing_entry_mid():
 
 def test_serialize_trade_roundtrips_through_trade_json_response():
     """Verify serialize_trade output is compatible with TradeJsonResponse (no id field needed)."""
+    from datetime import date
+    from types import SimpleNamespace
+
     from backtestforecast.schemas.backtests import TradeJsonResponse
     from backtestforecast.services.serialization import serialize_trade
-    from types import SimpleNamespace
-    from datetime import date
 
     trade = SimpleNamespace(
         option_ticker="O:AAPL250321C00170000",

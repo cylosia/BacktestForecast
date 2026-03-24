@@ -1,4 +1,4 @@
-"""Round 4 audit tests: Stripe cleanup metrics, audit metadata, GDPR export completeness."""
+﻿"""Round 4 audit tests: Stripe cleanup metrics, audit metadata, GDPR export completeness."""
 from __future__ import annotations
 
 import inspect
@@ -13,7 +13,7 @@ class TestStripeCleanupMetricAccuracy:
         from apps.api.app.routers.account import _cleanup_stripe
 
         billing = MagicMock()
-        billing._get_stripe_client.side_effect = Exception("No config")
+        billing.get_stripe_client.side_effect = Exception("No config")
 
         result = _cleanup_stripe(billing, "sub_1", "cus_1", uuid.uuid4())
         assert result == "client_unavailable"
@@ -23,7 +23,7 @@ class TestStripeCleanupMetricAccuracy:
 
         billing = MagicMock()
         client = MagicMock()
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, "sub_1", "cus_1", uuid.uuid4())
         assert result == "ok"
@@ -36,7 +36,7 @@ class TestStripeCleanupMetricAccuracy:
         billing = MagicMock()
         client = MagicMock()
         client.subscriptions.cancel.side_effect = Exception("fail")
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, "sub_1", "cus_1", uuid.uuid4())
         assert result == "partial"
@@ -48,7 +48,7 @@ class TestStripeCleanupMetricAccuracy:
         client = MagicMock()
         client.subscriptions.cancel.side_effect = Exception("fail")
         client.customers.delete.side_effect = Exception("fail")
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, "sub_1", "cus_1", uuid.uuid4())
         assert result == "failed"
@@ -59,7 +59,7 @@ class TestStripeCleanupMetricAccuracy:
         billing = MagicMock()
         result = _cleanup_stripe(billing, None, None, uuid.uuid4())
         assert result == "skipped"
-        billing._get_stripe_client.assert_not_called()
+        billing.get_stripe_client.assert_not_called()
 
 
 class TestAuditEventMetadataCompleteness:
@@ -106,7 +106,7 @@ class TestGDPRExportCompleteness:
         ]
         for repo_name, section_name in required_repos:
             assert repo_name in source, (
-                f"GDPR export is missing {repo_name} — "
+                f"GDPR export is missing {repo_name} - "
                 f"'{section_name}' data will not be included in the export"
             )
 
@@ -126,7 +126,7 @@ class TestGDPRExportCompleteness:
         from apps.api.app.routers.account import _cleanup_stripe
 
         billing = MagicMock()
-        billing._get_stripe_client.side_effect = Exception("unavailable")
+        billing.get_stripe_client.side_effect = Exception("unavailable")
 
         result = _cleanup_stripe(billing, "sub_1", "cus_1", uuid.uuid4())
         assert isinstance(result, str), "_cleanup_stripe must return str, not None"

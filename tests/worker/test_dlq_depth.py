@@ -1,4 +1,4 @@
-"""Verify DLQ depth metric is updated correctly."""
+﻿"""Verify DLQ depth metric is updated correctly."""
 from __future__ import annotations
 
 

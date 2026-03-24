@@ -1,4 +1,4 @@
-"""Tests for _normalize_origin function — Contract Mismatch #3 fix.
+﻿"""Tests for _normalize_origin function - Contract Mismatch #3 fix.
 
 Verifies that origin normalization handles:
 - Trailing slashes

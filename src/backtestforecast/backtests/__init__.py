@@ -1,1 +1,1 @@
-"""TODO: Backtest engine modules live here."""
+﻿"""Backtest engine and strategy support."""

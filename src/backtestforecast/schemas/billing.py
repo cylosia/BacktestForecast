@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
@@ -6,9 +6,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import BillingInterval
+from backtestforecast.schemas.common import STRIPE_SUBSCRIPTION_STATUSES as _VALID_SUBSCRIPTION_STATUSES
 from backtestforecast.schemas.common import PlanTier, sanitize_error_message
-
-
 
 
 class PricingIntervalResponse(BaseModel):
@@ -68,10 +67,6 @@ class PortalSessionResponse(BaseModel):
         if not v.startswith("https://"):
             raise ValueError("portal_url must be an HTTPS URL")
         return v
-
-
-from backtestforecast.schemas.common import STRIPE_SUBSCRIPTION_STATUSES as _VALID_SUBSCRIPTION_STATUSES
-
 
 class BillingStateResponse(BaseModel):
     plan_tier: PlanTier

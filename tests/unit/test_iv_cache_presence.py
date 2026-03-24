@@ -1,4 +1,4 @@
-"""Verify _iv_cache is present on MassiveOptionGateway and used by strategies.
+﻿"""Verify _iv_cache is present on MassiveOptionGateway and used by strategies.
 
 Audit fix 2-3: _iv_cache was removed during a prior refactor, causing a
 silent performance regression where BSM bisection was recomputed on every
@@ -37,5 +37,5 @@ def test_strategies_receive_iv_cache():
     client = MagicMock()
     gw = MassiveOptionGateway(client=client, symbol="AAPL")
     cache = getattr(gw, "_iv_cache", None)
-    assert cache is not None, "getattr(gw, '_iv_cache', None) returned None — performance regression"
+    assert cache is not None, "getattr(gw, '_iv_cache', None) returned None - performance regression"
     assert isinstance(cache, dict)

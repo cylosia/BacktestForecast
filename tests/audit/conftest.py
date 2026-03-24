@@ -1,4 +1,4 @@
-"""Audit test fixtures.
+﻿"""Audit test fixtures.
 
 WARNING: These tests run on SQLite, not PostgreSQL.  This means:
 - Partial unique indexes (e.g. uq_audit_events_dedup_null_subject) are removed.

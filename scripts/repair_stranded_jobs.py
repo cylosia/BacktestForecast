@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import structlog
 from sqlalchemy.exc import SQLAlchemyError
@@ -41,7 +41,7 @@ def main() -> int:
     with create_session() as session:
         try:
             if args.action == "list":
-                cutoff = datetime.now(timezone.utc) - older_than
+                cutoff = datetime.now(UTC) - older_than
                 rows = find_stranded_jobs(session, cutoff=cutoff, targets=DISPATCH_TARGETS)
                 if not rows:
                     print("No stranded queued jobs found.")

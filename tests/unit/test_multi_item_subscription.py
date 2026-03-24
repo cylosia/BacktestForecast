@@ -1,9 +1,7 @@
-"""Tests for BillingService._extract_price_details with multi-item subscriptions."""
+﻿"""Tests for BillingService._extract_price_details with multi-item subscriptions."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
-
-import pytest
 
 from backtestforecast.services.billing import BillingService
 

@@ -1,4 +1,4 @@
-"""Tests for /metrics and /admin/dlq admin endpoints."""
+﻿"""Tests for /metrics and /admin/dlq admin endpoints."""
 from __future__ import annotations
 
 
@@ -22,9 +22,10 @@ def test_dlq_requires_auth_even_in_dev(client):
     #  - return 403 (token required but not configured / not provided)
     #  - return 200/503 only when the source code explicitly skips auth for dev
     # After the DLQ auth-in-all-environments fix, verify the handler always checks:
-    from apps.api.app.main import app
     import inspect
-    source = inspect.getsource(app.routes[-1].endpoint) if hasattr(app.routes[-1], "endpoint") else ""
+
+    from apps.api.app.main import app
+    inspect.getsource(app.routes[-1].endpoint) if hasattr(app.routes[-1], "endpoint") else ""
 
     # Verify via the actual /admin/dlq route source that auth is NOT gated on app_env
     from backtestforecast.config import get_settings

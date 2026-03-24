@@ -1,4 +1,4 @@
-"""Tests for _resolve_position_size Decimal precision."""
+﻿"""Tests for _resolve_position_size Decimal precision."""
 from __future__ import annotations
 
 from decimal import Decimal

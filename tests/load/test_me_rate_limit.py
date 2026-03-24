@@ -1,4 +1,4 @@
-"""Load test verifying /v1/me rate limiting prevents abuse."""
+﻿"""Load test verifying /v1/me rate limiting prevents abuse."""
 import pathlib
 
 

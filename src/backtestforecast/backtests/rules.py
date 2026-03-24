@@ -1,14 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import bisect
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 import structlog
-
-from collections.abc import Sequence
 
 from backtestforecast.backtests.types import BacktestConfig, OptionDataGateway
 from backtestforecast.indicators.calculations import (
@@ -249,10 +248,7 @@ class EntryRuleEvaluator:
     @staticmethod
     def _has_crossover_rule(rules: Sequence) -> bool:
         """Check if any rule requires the previous bar (index-1) for crossover detection."""
-        for rule in rules:
-            if isinstance(rule, (MovingAverageCrossoverRule, MacdRule)):
-                return True
-        return False
+        return any(isinstance(rule, (MovingAverageCrossoverRule, MacdRule)) for rule in rules)
 
     def _get_iv_series(self) -> list[float | None]:
         if self.iv_series_cache is None:

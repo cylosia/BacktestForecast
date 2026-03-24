@@ -1,4 +1,4 @@
-"""Test that custom strategy margin estimation uses optimal pairing.
+﻿"""Test that custom strategy margin estimation uses optimal pairing.
 
 Regression test for the bug where per-short greedy pairing could leave
 one short naked when a global rearrangement would pair both shorts with
@@ -35,7 +35,7 @@ def _leg(
 
 class TestOptimalPairing:
     def test_two_shorts_two_longs_both_paired(self):
-        """Both shorts should be paired — none left naked.
+        """Both shorts should be paired - none left naked.
 
         Setup: short 100C, short 110C, long 105C, long 112C.
         Global greedy sorts candidates by width:
@@ -129,18 +129,18 @@ class TestOptimalPairing:
         Setup: short 100C, short 105C, long 104C, long 108C.
 
         Per-short greedy (iterate shorts in order):
-          short100: nearest long = 104 (width 4) → paired
-          short105: nearest remaining long = 108 (width 3) → paired
+          short100: nearest long = 104 (width 4) -> paired
+          short105: nearest remaining long = 108 (width 3) -> paired
           Total: credit_spread(4) + credit_spread(3) = 400 + 300 = 700
 
         Global greedy (sort all pairs by width):
           Candidates sorted: (1, short105, long104), (3, short105, long108),
                              (4, short100, long104), (8, short100, long108)
-          Pick (1, short105, long104) → paired
-          Pick (8, short100, long108) → paired
+          Pick (1, short105, long104) -> paired
+          Pick (8, short100, long108) -> paired
           Total: credit_spread(1) + credit_spread(8) = 100 + 800 = 900
 
-        Wait — global greedy can also produce worse results in some cases!
+        Wait - global greedy can also produce worse results in some cases!
         The key guarantee is that BOTH shorts get paired (not left naked).
         """
         legs = [

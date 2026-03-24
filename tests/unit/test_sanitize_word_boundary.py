@@ -1,4 +1,4 @@
-"""Item 80: Test sanitize regex word boundary behavior.
+﻿"""Item 80: Test sanitize regex word boundary behavior.
 
 Verifies that sanitize_error_message correctly redacts SQL keywords like
 "SELECT" but does NOT redact words that merely *contain* those keywords

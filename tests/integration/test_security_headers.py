@@ -1,4 +1,4 @@
-"""Tests for CORS and Host header validation middleware."""
+﻿"""Tests for CORS and Host header validation middleware."""
 from __future__ import annotations
 
 import pytest
@@ -45,6 +45,7 @@ def test_host_header_rejection(bad_host):
     # fixture because TrustedHostMiddleware checks the Host header derived from
     # base_url, and the shared fixture uses http://localhost which is trusted.
     from fastapi.testclient import TestClient
+
     from apps.api.app.main import app
 
     with TestClient(app, base_url=f"http://{bad_host}") as tc:

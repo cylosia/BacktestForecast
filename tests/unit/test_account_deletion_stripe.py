@@ -1,4 +1,4 @@
-"""Tests for account deletion Stripe cleanup."""
+﻿"""Tests for account deletion Stripe cleanup."""
 from __future__ import annotations
 
 import uuid
@@ -11,7 +11,7 @@ class TestCleanupStripe:
 
         billing = MagicMock()
         client = MagicMock()
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, "sub_123", "cus_456", uuid.uuid4())
 
@@ -24,7 +24,7 @@ class TestCleanupStripe:
 
         billing = MagicMock()
         client = MagicMock()
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, None, "cus_456", uuid.uuid4())
 
@@ -37,7 +37,7 @@ class TestCleanupStripe:
 
         billing = MagicMock()
         client = MagicMock()
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, "sub_123", None, uuid.uuid4())
 
@@ -51,7 +51,7 @@ class TestCleanupStripe:
         billing = MagicMock()
         client = MagicMock()
         client.subscriptions.cancel.side_effect = Exception("Stripe error")
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, "sub_123", "cus_456", uuid.uuid4())
 
@@ -62,7 +62,7 @@ class TestCleanupStripe:
         from apps.api.app.routers.account import _cleanup_stripe
 
         billing = MagicMock()
-        billing._get_stripe_client.side_effect = Exception("No Stripe config")
+        billing.get_stripe_client.side_effect = Exception("No Stripe config")
 
         result = _cleanup_stripe(billing, "sub_123", "cus_456", uuid.uuid4())
         assert result == "client_unavailable"

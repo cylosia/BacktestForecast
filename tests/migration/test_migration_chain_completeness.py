@@ -1,7 +1,6 @@
-"""Verify the migration chain is complete and consistent."""
+﻿"""Verify the migration chain is complete and consistent."""
 from __future__ import annotations
 
-import inspect
 import re
 
 import pytest

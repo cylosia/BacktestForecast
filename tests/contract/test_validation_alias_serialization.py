@@ -1,4 +1,4 @@
-"""Contract tests: validation_alias fields serialize by field name, not alias.
+﻿"""Contract tests: validation_alias fields serialize by field name, not alias.
 
 All response schemas that use validation_alias (to read from ORM column names
 like ``warnings_json``) must serialize as the Pydantic field name (``warnings``),

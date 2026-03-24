@@ -1,9 +1,7 @@
-"""Resilience and operational tests for audit round 9 fixes."""
+﻿"""Resilience and operational tests for audit round 9 fixes."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 class TestReaperHeartbeatGuard:
@@ -51,22 +49,21 @@ class TestDispatchEnqueueFailedRecovery:
         job.celery_task_id = None
         db = MagicMock()
 
-        with patch("apps.api.app.dispatch.celery_app") as mock_celery:
+        with patch("apps.worker.app.celery_app.celery_app") as mock_celery:
             mock_celery.send_task.side_effect = ConnectionError("broker down")
-            with patch("apps.api.app.dispatch.time"):
-                result = dispatch_celery_task(
-                    db=db,
-                    job=job,
-                    task_name="test.task",
-                    task_kwargs={"id": "test"},
-                    queue="test",
-                    log_event="test",
-                    logger=MagicMock(),
-                )
+            result = dispatch_celery_task(
+                db=db,
+                job=job,
+                task_name="test.task",
+                task_kwargs={"id": "test"},
+                queue="test",
+                log_event="test",
+                logger=MagicMock(),
+            )
 
         assert result == DispatchResult.ENQUEUE_FAILED
-        assert job.status == RunJobStatus.FAILED
-        assert job.error_code == "enqueue_failed"
+        assert job.status == RunJobStatus.QUEUED
+        assert job.celery_task_id is not None
 
 
 class TestCircuitBreakerClusterPropagation:

@@ -1,6 +1,6 @@
-"""Test that ScannerJob.name has a CHECK constraint preventing empty strings.
+﻿"""Test that ScannerJob.name has a CHECK constraint preventing empty strings.
 
-NULL is allowed (unnamed scan), but empty string "" is not — it would
+NULL is allowed (unnamed scan), but empty string "" is not - it would
 bypass display logic that falls back to "Unnamed scan" for NULL names.
 """
 from __future__ import annotations

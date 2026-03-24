@@ -1,4 +1,4 @@
-"""Tests for the DailyPicksRepository (formerly NightlyPipelineRunRepository)."""
+﻿"""Tests for the DailyPicksRepository (formerly NightlyPipelineRunRepository)."""
 from __future__ import annotations
 
 import uuid
@@ -71,5 +71,5 @@ class TestDailyPicksRepository:
         repo = DailyPicksRepository(session)
         cursor_dt = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
         cursor_id = uuid.uuid4()
-        result = repo.list_pipeline_history(limit=5, cursor_dt=cursor_dt, cursor_id=cursor_id)
+        result = repo.list_pipeline_history(limit=5, cursor_before=(cursor_dt, cursor_id))
         assert result == []

@@ -1,4 +1,4 @@
-"""Extended CSV sanitization tests for edge cases."""
+﻿"""Extended CSV sanitization tests for edge cases."""
 from __future__ import annotations
 
 from backtestforecast.services.exports import ExportService

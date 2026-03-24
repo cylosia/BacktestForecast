@@ -1,4 +1,4 @@
-"""Verify that sweeps with empty entry_rules ("no_filter") work correctly.
+﻿"""Verify that sweeps with empty entry_rules ("no_filter") work correctly.
 
 Sweeps intentionally use empty entry_rules to test parameter combinations
 without signal-based filtering. This test guards against regressions where

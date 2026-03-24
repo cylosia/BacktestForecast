@@ -1,7 +1,5 @@
-"""Verify observability metrics and logging configuration."""
+﻿"""Verify observability metrics and logging configuration."""
 from __future__ import annotations
-
-import pytest
 
 from backtestforecast.observability import metrics
 from backtestforecast.observability.logging import _sanitize_sensitive_keys, short_hash

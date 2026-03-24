@@ -1,4 +1,4 @@
-"""Test that Decimal-based engine calculations eliminate float precision drift.
+﻿"""Test that Decimal-based engine calculations eliminate float precision drift.
 
 Before the fix, intermediate P&L values (position_value, gross_pnl, net_pnl,
 commissions, slippage) used float arithmetic. Over hundreds of trades, IEEE 754
@@ -10,8 +10,6 @@ backtest and verifies the P&L totals are internally consistent (no drift).
 from __future__ import annotations
 
 from decimal import Decimal
-
-import pytest
 
 from backtestforecast.backtests.types import EquityPointResult, TradeResult
 

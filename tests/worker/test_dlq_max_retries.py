@@ -1,4 +1,4 @@
-"""Verify BaseTaskWithDLQ handles max_retries=None correctly."""
+﻿"""Verify BaseTaskWithDLQ handles max_retries=None correctly."""
 from __future__ import annotations
 
 from types import SimpleNamespace

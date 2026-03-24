@@ -1,1 +1,1 @@
-"""TODO: Canonical indicator definitions live here."""
+﻿"""Indicator calculation utilities."""

@@ -1,4 +1,4 @@
-"""Comprehensive endpoint coverage tests for all previously untested API routes.
+﻿"""Comprehensive endpoint coverage tests for all previously untested API routes.
 
 Covers DELETE, status, list, SSE, health, meta, root, and cross-user isolation
 endpoints that were identified as gaps during the audit.
@@ -16,7 +16,6 @@ from apps.api.app.dependencies import get_token_verifier
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 from backtestforecast.models import User
 from backtestforecast.services.scans import ScanService
-
 
 # ---------------------------------------------------------------------------
 # Helpers

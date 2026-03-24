@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -64,7 +64,7 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
         if not valid_entry_mids(sq.mid_price, lq.mid_price):
             return None
 
-        # Sell 1 × short, buy 2 × long
+        # Sell 1 x short, buy 2 x long
         entry_cost = (2 * lq.mid_price - sq.mid_price) * 100.0
         margin = ratio_backspread_margin(short_strike, long_strike)
         capital = max(margin, max(entry_cost, 0.0))

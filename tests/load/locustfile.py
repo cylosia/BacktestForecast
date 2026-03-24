@@ -1,4 +1,4 @@
-"""Locust load test configuration for critical API endpoints.
+﻿"""Locust load test configuration for critical API endpoints.
 
 Run with:
     locust -f tests/load/locustfile.py --host http://localhost:8000

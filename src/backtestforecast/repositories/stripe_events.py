@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -28,13 +28,13 @@ class StripeEventRepository:
         """Delete a stale claim (older than 15 minutes) to allow reprocessing.
 
         Targets events with ``idempotency_status`` of ``'processing'`` (stuck
-        in-flight) or ``'error'`` (failed on a previous attempt — Stripe may
+        in-flight) or ``'error'`` (failed on a previous attempt - Stripe may
         legitimately retry).  Never deletes ``'processed'`` events.
         Returns True if a stale claim was recovered.
         """
         from sqlalchemy import delete as sa_delete
 
-        cutoff = datetime.now(timezone.utc) - STALE_CLAIM_TTL
+        cutoff = datetime.now(UTC) - STALE_CLAIM_TTL
         result = self.session.execute(
             sa_delete(StripeEvent)
             .where(
@@ -136,7 +136,7 @@ class StripeEventRepository:
         """Return the most recent Stripe events, newest first.
 
         When *user_id* is provided the results are scoped to that user.
-        Without a user_id filter this returns ALL events — callers exposing
+        Without a user_id filter this returns ALL events - callers exposing
         this to non-admin endpoints MUST pass user_id for data isolation.
         """
         limit = min(limit, _MAX_PAGE_SIZE)

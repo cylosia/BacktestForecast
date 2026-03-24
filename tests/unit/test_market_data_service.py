@@ -1,4 +1,4 @@
-"""Unit tests for MarketDataService.
+﻿"""Unit tests for MarketDataService.
 
 Tests the bars cache, request coalescing, and Redis cache fallback
 without needing a live Massive API or Redis instance.
@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import OrderedDict
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from backtestforecast.errors import ExternalServiceError
 from backtestforecast.market_data.service import MarketDataService
 from backtestforecast.market_data.types import DailyBar
+from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 
 
 def _make_bar(offset: int, base_date: date | None = None) -> DailyBar:
@@ -187,3 +186,79 @@ class TestServiceClose:
         svc = _make_service()
         svc.close()
         svc.close()
+
+
+class TestPrepareBacktestExDividendDates:
+    def test_prepare_backtest_loads_and_sets_ex_dividend_dates(self):
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        svc.client.list_ex_dividend_dates.return_value = {date(2024, 1, 12), date(2024, 1, 26)}
+
+        request = CreateBacktestRunRequest(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2024, 1, 10),
+            end_date=date(2024, 1, 31),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=10,
+            account_size=10000,
+            risk_per_trade_pct=5,
+            commission_per_contract=1,
+            entry_rules=[{"type": "rsi", "operator": "lte", "threshold": 35, "period": 14}],
+        )
+
+        bundle = svc.prepare_backtest(request)
+
+        assert bundle.ex_dividend_dates == {date(2024, 1, 12), date(2024, 1, 26)}
+        assert bundle.option_gateway.get_ex_dividend_dates(date(2024, 1, 1), date(2024, 2, 29)) == {
+            date(2024, 1, 12),
+            date(2024, 1, 26),
+        }
+        svc.client.list_ex_dividend_dates.assert_called_once()
+
+    def test_prepare_backtest_populates_live_gateway_ex_dividend_cache(self):
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        svc.client.list_ex_dividend_dates.return_value = {date(2024, 1, 12)}
+
+        request = CreateBacktestRunRequest(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2024, 1, 10),
+            end_date=date(2024, 1, 31),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=10,
+            account_size=10000,
+            risk_per_trade_pct=5,
+            commission_per_contract=1,
+            entry_rules=[{"type": "rsi", "operator": "lte", "threshold": 35, "period": 14}],
+        )
+
+        bundle = svc.prepare_backtest(request)
+
+        assert bundle.option_gateway._ex_dividend_dates == {date(2024, 1, 12)}
+
+    def test_prepare_backtest_degrades_gracefully_when_ex_dividend_dates_fail(self):
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        svc.client.list_ex_dividend_dates.side_effect = ExternalServiceError("provider failed")
+
+        request = CreateBacktestRunRequest(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2024, 1, 10),
+            end_date=date(2024, 1, 31),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=10,
+            account_size=10000,
+            risk_per_trade_pct=5,
+            commission_per_contract=1,
+            entry_rules=[{"type": "rsi", "operator": "lte", "threshold": 35, "period": 14}],
+        )
+
+        bundle = svc.prepare_backtest(request)
+
+        assert bundle.ex_dividend_dates == set()

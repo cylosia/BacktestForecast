@@ -1,10 +1,7 @@
-"""Tests for audit round 15 — CAS race conditions, billing no-op, position sizing."""
+﻿"""Tests for audit round 15 - CAS race conditions, billing no-op, position sizing."""
 from __future__ import annotations
 
 import inspect
-from decimal import Decimal
-
-import pytest
 
 
 class TestSweepCASUpdate:

@@ -1,1 +1,1 @@
-"""TODO: External service adapters live here."""
+﻿"""External service integration adapters."""

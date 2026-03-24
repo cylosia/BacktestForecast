@@ -1,9 +1,9 @@
-"""Billing event log for audit trail and replay capability."""
+﻿"""Billing event log for audit trail and replay capability."""
 from __future__ import annotations
 
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -17,7 +17,7 @@ from backtestforecast.observability.metrics import (
 )
 
 logger = structlog.get_logger("billing.events")
-UTC = timezone.utc
+UTC = UTC
 _BILLING_AUDIT_FALLBACK_REDIS_KEY = "billing:audit:dead_letter"
 _BILLING_AUDIT_FALLBACK_FILE = Path(tempfile.gettempdir()) / "backtestforecast-billing-audit-fallback.jsonl"
 
@@ -82,7 +82,7 @@ def _persist_failed_billing_audit(payload: dict[str, object]) -> None:
         logger.critical("billing.audit_fallback_persist_failed", exc_info=True)
 
 
-def _replay_payload(session: "Session", payload: dict[str, object]) -> None:
+def _replay_payload(session: Session, payload: dict[str, object]) -> None:
     from backtestforecast.services.audit import AuditService
 
     user_id_raw = payload.get("user_id")
@@ -110,7 +110,7 @@ def _replay_payload(session: "Session", payload: dict[str, object]) -> None:
     )
 
 
-def drain_deferred_billing_audits(session: "Session", *, batch_size: int = 100) -> dict[str, int]:
+def drain_deferred_billing_audits(session: Session, *, batch_size: int = 100) -> dict[str, int]:
     settings = get_settings()
     redis_url = settings.redis_cache_url or settings.redis_url
     drained = 0
@@ -198,7 +198,7 @@ def log_billing_event(
     new_state: dict | None = None,
     source: str = "webhook",
     request_id: str | None = None,
-    session: "Session | None" = None,
+    session: Session | None = None,
 ) -> None:
     """Log a structured billing state change event.
 

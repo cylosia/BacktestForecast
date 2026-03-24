@@ -1,4 +1,4 @@
-"""Test DLQ redaction handles nested structures correctly.
+﻿"""Test DLQ redaction handles nested structures correctly.
 
 Covers both the worker-side _redact (task_base.py) and the read-side
 _redact_dict (/admin/dlq in main.py).

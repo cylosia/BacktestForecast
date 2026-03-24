@@ -1,13 +1,11 @@
-"""Integration test for the sweep lifecycle via the HTTP API.
+﻿"""Integration test for the sweep lifecycle via the HTTP API.
 
-Covers: create sweep → verify queued → list sweeps → get status → get results.
+Covers: create sweep -> verify queued -> list sweeps -> get status -> get results.
 Requires the integration fixtures (Postgres, TestClient, Celery stub).
 """
 from __future__ import annotations
 
 from uuid import uuid4
-
-import pytest
 
 from backtestforecast.models import User
 

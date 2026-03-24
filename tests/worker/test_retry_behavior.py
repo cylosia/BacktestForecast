@@ -1,9 +1,9 @@
-"""Test Celery retry behaviour configuration.
+﻿"""Test Celery retry behaviour configuration.
 
 Verifies that worker tasks are configured with appropriate retry
 settings for transient errors.
 
-Requires Redis for Celery app initialisation — marked as integration.
+Requires Redis for Celery app initialisation - marked as integration.
 """
 from __future__ import annotations
 

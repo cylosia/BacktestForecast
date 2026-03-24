@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
@@ -33,6 +33,7 @@ def build_user_warnings(
     request: CreateBacktestRunRequest,
     *,
     resolved_risk_free_rate: float | None = None,
+    risk_free_rate_source: str | None = None,
 ) -> list[dict[str, Any]]:
     warnings: list[dict[str, Any]] = []
     if request.strategy_type.value in NAKED_OPTION_STRATEGY_TYPES:
@@ -49,18 +50,49 @@ def build_user_warnings(
         )
     if request.risk_free_rate is None:
         configured_rfr = get_settings().risk_free_rate
-        warnings.append(
-            make_warning(
-                "configured_static_risk_free_rate",
-                f"Sharpe and Sortino are using the configured server risk-free rate ({configured_rfr:.4f}) captured at run creation, not a Treasury series matched to {request.start_date.isoformat()} through {request.end_date.isoformat()}.",
-                metadata={
-                    "configured_risk_free_rate": configured_rfr,
-                    "resolved_risk_free_rate": resolved_risk_free_rate if resolved_risk_free_rate is not None else configured_rfr,
-                    "start_date": request.start_date.isoformat(),
-                    "end_date": request.end_date.isoformat(),
-                },
+        resolved = resolved_risk_free_rate if resolved_risk_free_rate is not None else configured_rfr
+        if risk_free_rate_source == "massive_treasury":
+            warnings.append(
+                make_warning(
+                    "historical_treasury_risk_free_rate",
+                    f"Sharpe and Sortino are using the average 3-month Treasury yield fetched from Massive for {request.start_date.isoformat()} through {request.end_date.isoformat()} ({resolved:.4f}).",
+                    metadata={
+                        "configured_risk_free_rate": configured_rfr,
+                        "resolved_risk_free_rate": resolved,
+                        "risk_free_rate_source": risk_free_rate_source,
+                        "start_date": request.start_date.isoformat(),
+                        "end_date": request.end_date.isoformat(),
+                    },
+                )
             )
-        )
+        elif risk_free_rate_source == "configured_fallback":
+            warnings.append(
+                make_warning(
+                    "configured_fallback_risk_free_rate",
+                    f"Massive Treasury yields were unavailable for {request.start_date.isoformat()} through {request.end_date.isoformat()}, so Sharpe and Sortino are using the configured server risk-free rate ({configured_rfr:.4f}).",
+                    metadata={
+                        "configured_risk_free_rate": configured_rfr,
+                        "resolved_risk_free_rate": resolved,
+                        "risk_free_rate_source": risk_free_rate_source,
+                        "start_date": request.start_date.isoformat(),
+                        "end_date": request.end_date.isoformat(),
+                    },
+                )
+            )
+        else:
+            warnings.append(
+                make_warning(
+                    "resolved_risk_free_rate_recorded",
+                    f"Sharpe and Sortino are using the resolved run risk-free rate recorded at creation time ({resolved:.4f}).",
+                    metadata={
+                        "configured_risk_free_rate": configured_rfr,
+                        "resolved_risk_free_rate": resolved,
+                        "risk_free_rate_source": risk_free_rate_source or "unknown",
+                        "start_date": request.start_date.isoformat(),
+                        "end_date": request.end_date.isoformat(),
+                    },
+                )
+            )
     return warnings
 
 

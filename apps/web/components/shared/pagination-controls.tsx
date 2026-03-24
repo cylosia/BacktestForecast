@@ -7,7 +7,7 @@ interface PaginationControlsProps {
   basePath: string;
   offset: number;
   limit: number;
-  total: number;
+  total?: number;
   cursor?: string | null;
   nextCursor?: string | null;
   extraParams?: Record<string, string>;
@@ -47,19 +47,22 @@ export function PaginationControls({
   cursorParamName = "cursor",
 }: PaginationControlsProps) {
   const usingCursor = Boolean(cursor || nextCursor);
-  if (total <= limit && offset === 0) return null;
+  if (!usingCursor && (total ?? 0) <= limit && offset === 0) return null;
+  if (usingCursor && !cursor && !nextCursor) return null;
 
   const currentPage = Math.floor(offset / limit) + 1;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const totalPages = Math.max(1, Math.ceil((total ?? 0) / limit));
   const hasPrev = usingCursor ? Boolean(cursor) : offset > 0;
-  const hasNext = usingCursor ? Boolean(nextCursor) : offset + limit < total;
+  const hasNext = usingCursor ? Boolean(nextCursor) && (total == null || offset + limit < total) : offset + limit < (total ?? 0);
 
   return (
     <div className="flex items-center justify-between pt-4">
       <p className="text-sm text-muted-foreground">
         {usingCursor
-          ? `Showing up to ${limit} items from ${total}`
-          : `Showing ${offset + 1}–${Math.min(offset + limit, total)} of ${total}`}
+          ? total != null
+            ? `Showing ${Math.min(offset + 1, total)}-${Math.min(offset + limit, total)} of ${total}`
+            : `Showing up to ${limit} items`
+          : `Showing ${offset + 1}-${Math.min(offset + limit, total ?? 0)} of ${total ?? 0}`}
       </p>
       <div className="flex items-center gap-2">
         {hasPrev ? (
@@ -80,7 +83,7 @@ export function PaginationControls({
           </Button>
         )}
         <span className="text-sm text-muted-foreground">
-          {usingCursor ? "Cursor pagination" : `Page ${currentPage} of ${totalPages}`}
+          {usingCursor ? (total != null ? `Page ${currentPage} of ${totalPages}` : "Cursor pagination") : `Page ${currentPage} of ${totalPages}`}
         </span>
         {hasNext ? (
           <Button variant="outline" size="sm" asChild>

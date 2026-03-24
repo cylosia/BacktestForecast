@@ -1,4 +1,4 @@
-"""Verify billing cancellation revokes Celery tasks with terminate=False.
+﻿"""Verify billing cancellation revokes Celery tasks with terminate=False.
 
 We use terminate=False so the worker can finish any in-progress cleanup
 before exiting.  The DB status is already set to 'cancelled' before
@@ -7,8 +7,6 @@ revocation is issued.
 from __future__ import annotations
 
 import threading
-import time
-import uuid
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -17,10 +15,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
-from backtestforecast.models import BacktestRun, SweepJob, User
+from backtestforecast.models import BacktestRun, User
 from backtestforecast.services.billing import BillingService
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
@@ -74,6 +70,7 @@ def test_revoke_uses_terminate_false():
 def test_revoke_calls_terminate_false_in_source():
     """Ensure revoke uses terminate=False in source."""
     import inspect
+
     from backtestforecast.services.billing import BillingService
 
     source = inspect.getsource(BillingService.cancel_in_flight_jobs)

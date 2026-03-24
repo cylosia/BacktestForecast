@@ -1,4 +1,4 @@
-"""Integration tests for safety-net scenarios: race conditions, entitlement checks, and invalid inputs."""
+﻿"""Integration tests for safety-net scenarios: race conditions, entitlement checks, and invalid inputs."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from uuid import UUID
 import pytest
 
 from tests.integration.test_api_critical_flows import _backtest_payload, _create_backtest, _set_user_plan
-
 
 # ---------------------------------------------------------------------------
 # 1. User creation race condition (concurrent get_or_create)

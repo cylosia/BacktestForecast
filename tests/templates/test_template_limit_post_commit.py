@@ -1,4 +1,4 @@
-"""Test that the template limit is enforced with a post-commit safety check.
+﻿"""Test that the template limit is enforced with a post-commit safety check.
 
 The primary enforcement is the pre-insert count + advisory lock on Postgres.
 The post-commit check is a safety net that catches races on SQLite where

@@ -1,4 +1,4 @@
-"""Tests for long-term architectural improvements.
+﻿"""Tests for long-term architectural improvements.
 
 Covers:
 - #31: CD pipeline has database backup step
@@ -7,7 +7,6 @@ Covers:
 """
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

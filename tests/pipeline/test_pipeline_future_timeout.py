@@ -1,4 +1,4 @@
-"""Item 71: Test pipeline future timeout behavior.
+﻿"""Item 71: Test pipeline future timeout behavior.
 
 Verifies that when a pipeline future exceeds its timeout, the pipeline
 handles it gracefully (continues processing other symbols, does not crash).
@@ -6,8 +6,8 @@ handles it gracefully (continues processing other symbols, does not crash).
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
-from unittest.mock import MagicMock
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import pytest
 

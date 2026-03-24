@@ -11,8 +11,7 @@ from sqlalchemy.orm import Session
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
-from backtestforecast.errors import FeatureLockedError, NotFoundError
-from backtestforecast.schemas.common import sanitize_error_message
+from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
@@ -22,8 +21,10 @@ from backtestforecast.schemas.backtests import (
     CompareBacktestsResponse,
     CreateBacktestRunRequest,
 )
+from backtestforecast.schemas.common import RemediationActionsResponse, sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.remediation_actions import build_job_remediation_actions
 
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 logger = structlog.get_logger("api.backtests")
@@ -59,6 +60,8 @@ def create_backtest(
 ) -> BacktestRunDetailResponse:
     if not settings.feature_backtests_enabled:
         raise FeatureLockedError("Backtesting is temporarily disabled.", required_tier="free")
+    if not payload.entry_rules:
+        raise AppValidationError("At least one entry rule is required for user-created backtests.")
     get_rate_limiter().check(
         bucket="backtests:create",
         actor_key=str(user.id),
@@ -155,3 +158,43 @@ def delete_backtest(
     )
     with BacktestService(db) as service:
         service.delete_for_user(run_id, user.id)
+
+
+@router.post("/{run_id}/cancel", response_model=BacktestRunStatusResponse)
+def cancel_backtest(
+    run_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> BacktestRunStatusResponse:
+    get_rate_limiter().check(
+        bucket="backtests:delete",
+        actor_key=str(user.id),
+        limit=settings.delete_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with BacktestService(db) as service:
+        return service.cancel_for_user(run_id, user.id)
+
+
+@router.get("/{run_id}/remediation-actions", response_model=RemediationActionsResponse)
+def get_backtest_remediation_actions(
+    run_id: UUID,
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
+    settings: Settings = Depends(get_settings),
+) -> RemediationActionsResponse:
+    get_rate_limiter().check(
+        bucket="backtests:read",
+        actor_key=str(user.id),
+        limit=settings.backtest_read_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with BacktestService(db) as service:
+        status = service.get_run_status_for_owner(user_id=user.id, run_id=run_id)
+    return build_job_remediation_actions(
+        resource_type="backtest",
+        resource_id=str(run_id),
+        status=status.status,
+        base_path=f"/v1/backtests/{run_id}",
+    )

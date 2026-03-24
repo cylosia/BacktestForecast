@@ -1,23 +1,23 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
     "AppError",
+    "AppValidationError",
     "AuthenticationError",
     "AuthorizationError",
-    "QuotaExceededError",
-    "FeatureLockedError",
     "ConfigurationError",
-    "ValidationError",
-    "AppValidationError",
+    "ConflictError",
     "DataUnavailableError",
     "ExternalServiceError",
+    "FeatureLockedError",
     "NotFoundError",
+    "QuotaExceededError",
     "RateLimitError",
-    "ConflictError",
     "ServiceUnavailableError",
+    "ValidationError",
 ]
 
 

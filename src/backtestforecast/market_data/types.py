@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from dataclasses import dataclass
@@ -51,7 +51,7 @@ class OptionQuoteRecord:
 class OptionSnapshotRecord:
     """Real-time snapshot from the Massive /v3/snapshot/options endpoint.
 
-    Only available for current-day data — the API has no historical parameter.
+    Only available for current-day data - the API has no historical parameter.
     """
 
     ticker: str

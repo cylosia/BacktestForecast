@@ -142,7 +142,7 @@
 - **Severity:** High
 - **Category:** frontend-backend mismatch / correctness
 - **Location:** `apps/web/app/pricing/page.tsx`, `src/backtestforecast/schemas/billing.py`, `apps/api/app/routers/billing.py`
-- **Evidence:** The pricing page explicitly says its prices are hardcoded and TODO-backed. Checkout is authoritative, but the display contract is not sourced from backend or Stripe metadata.
+- **Evidence:** This finding is stale. The pricing page now loads its pricing contract from `/v1/billing/pricing`, and checkout remains authoritative.
 - **Why it is a problem:** The user sees one price/features list and is charged according to another authority.
 - **Real-world failure mode:** Customer-visible price mismatch after Stripe price changes or feature-packaging edits.
 - **How to fix it:** Add a backend pricing contract endpoint sourced from env/Stripe metadata and render the pricing page from that contract.

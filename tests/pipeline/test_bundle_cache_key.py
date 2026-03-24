@@ -1,13 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
 
-import pytest
-
 from backtestforecast.pipeline.adapters import PipelineBacktestExecutor
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest, RsiRule, StrategyType
-
 
 _BASE = {
     "symbol": "AAPL",
@@ -82,7 +79,6 @@ def test_none_overrides_vs_empty_overrides() -> None:
 def test_equivalent_dicts_different_insertion_order_same_key() -> None:
     """Item 97: Two override dicts with the same keys but different insertion
     order must produce the same cache key (deterministic hashing)."""
-    from collections import OrderedDict
 
     overrides_a = {"spread_width": {"mode": "strike_steps", "value": Decimal("2")}, "short_call_strike": {"mode": "nearest_otm"}}
     overrides_b = {"short_call_strike": {"mode": "nearest_otm"}, "spread_width": {"mode": "strike_steps", "value": Decimal("2")}}

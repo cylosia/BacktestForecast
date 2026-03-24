@@ -1,4 +1,4 @@
-"""Tests for export file integrity: SHA-256 computation, size limits, and storage.
+﻿"""Tests for export file integrity: SHA-256 computation, size limits, and storage.
 
 Tests exercise the actual ExportService code paths for hash computation,
 file size enforcement, CSV sanitization, and file naming.
@@ -6,18 +6,17 @@ file size enforcement, CSV sanitization, and file naming.
 from __future__ import annotations
 
 import hashlib
-import io
-from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
+from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
 from backtestforecast.exports.storage import DatabaseStorage
 from backtestforecast.services.exports import (
-    ExportService,
-    _MAX_EXPORT_BYTES,
-    _MAX_CSV_TRADES,
     _MAX_CSV_EQUITY_POINTS,
+    _MAX_CSV_TRADES,
+    _MAX_EXPORT_BYTES,
+    ExportService,
 )
 
 

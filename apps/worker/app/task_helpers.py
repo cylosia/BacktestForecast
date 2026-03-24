@@ -23,7 +23,7 @@ logger = structlog.get_logger("worker.task_helpers")
 
 
 def commit_then_publish(
-    session: "Session",
+    session: Session,
     job_type: str,
     job_id: UUID,
     status: str,
@@ -45,3 +45,16 @@ def commit_then_publish(
         publish_job_status(job_type, job_id, status, metadata=metadata)
     except Exception:
         logger.warning("commit_then_publish.publish_failed", job_type=job_type, job_id=str(job_id), exc_info=True)
+
+
+def close_owned_resource(resource: object | None, *, label: str) -> None:
+    """Best-effort close for worker-owned resources created inside a task."""
+    if resource is None:
+        return
+    close = getattr(resource, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:
+        logger.exception("worker_resource.close_failed", label=label)

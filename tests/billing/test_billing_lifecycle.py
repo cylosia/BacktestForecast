@@ -1,4 +1,4 @@
-"""Verify billing lifecycle: create → use → cancel → verify enforcement."""
+﻿"""Verify billing lifecycle: create -> use -> cancel -> verify enforcement."""
 from __future__ import annotations
 
 

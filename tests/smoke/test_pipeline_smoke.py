@@ -1,4 +1,4 @@
-"""Full-stack smoke test for the nightly pipeline.
+﻿"""Full-stack smoke test for the nightly pipeline.
 
 Requires PostgreSQL and Redis to be available (skips otherwise).
 Validates that:
@@ -20,7 +20,6 @@ from sqlalchemy.exc import IntegrityError
 from backtestforecast.market_data.types import DailyBar
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from backtestforecast.pipeline.service import NightlyPipelineService
-
 
 # ---------------------------------------------------------------------------
 # Mocks

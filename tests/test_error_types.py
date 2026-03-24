@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from backtestforecast.errors import (
     AppError,
@@ -29,6 +29,6 @@ def test_error_hierarchy() -> None:
     """Both new error types are subclasses of AppError."""
     assert issubclass(QuotaExceededError, AppError)
     assert issubclass(FeatureLockedError, AppError)
-    # They are NOT AuthorizationError — they have distinct codes
+    # They are NOT AuthorizationError - they have distinct codes
     assert QuotaExceededError("x", current_tier="free").code != AuthorizationError().code
     assert FeatureLockedError("x", required_tier="pro").code != AuthorizationError().code

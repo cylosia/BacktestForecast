@@ -1,4 +1,4 @@
-"""Verify portal session creation requires stripe_customer_id."""
+﻿"""Verify portal session creation requires stripe_customer_id."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock

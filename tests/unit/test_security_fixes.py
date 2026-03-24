@@ -1,4 +1,4 @@
-"""Verification tests for the Security Findings.
+﻿"""Verification tests for the Security Findings.
 
 Covers all 7 findings: IP hash salt, admin token, webhook limits,
 cookie auth, CSV injection, DLQ redaction, and sec-fetch-site.
@@ -8,10 +8,7 @@ from __future__ import annotations
 import inspect
 import warnings
 
-import pytest
-
-
-# ---- SF1: IP hash salt — guarded in production ----
+# ---- SF1: IP hash salt - guarded in production ----
 
 def test_sf1_ip_salt_production_guard():
     from backtestforecast.config import Settings
@@ -52,8 +49,8 @@ def test_sf3_body_limit_override_for_webhook():
 # ---- SF4: sec-fetch-site now rejects cross-site cookie auth ----
 
 def test_sf4_sec_fetch_site_rejects():
-    from apps.api.app.dependencies import get_current_user
-    source = inspect.getsource(get_current_user)
+    from apps.api.app.dependencies import _resolve_current_user
+    source = inspect.getsource(_resolve_current_user)
     assert "cookie_cross_site_rejected" in source
     assert "AuthenticationError" in source
 
@@ -146,7 +143,7 @@ def test_sf6_sanitize_error_redacts_stripe_keys():
 # ---- SF7: sec-fetch-site now blocks (not just warns) ----
 
 def test_sf7_sec_fetch_site_blocks():
-    from apps.api.app.dependencies import get_current_user
-    source = inspect.getsource(get_current_user)
+    from apps.api.app.dependencies import _resolve_current_user
+    source = inspect.getsource(_resolve_current_user)
     assert "raise AuthenticationError" in source
     assert "cross-site" in source.lower()

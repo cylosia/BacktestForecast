@@ -1,4 +1,4 @@
-"""Test that regime IV labels document their realized-vol proxy nature.
+﻿"""Test that regime IV labels document their realized-vol proxy nature.
 
 The Regime enum's HIGH_IV / LOW_IV labels are based on realized volatility
 (20-day HV rank), not actual implied volatility from options data. The enum

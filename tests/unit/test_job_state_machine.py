@@ -1,4 +1,4 @@
-"""Tests for the job status state machine."""
+﻿"""Tests for the job status state machine."""
 from __future__ import annotations
 
 import pytest
@@ -55,12 +55,12 @@ def test_export_transitions_are_superset():
 
 
 def test_strict_raises():
-    with pytest.raises(InvalidStatusTransition, match="succeeded → running"):
+    with pytest.raises(InvalidStatusTransition, match="succeeded -> running"):
         validate_transition("succeeded", "running", strict=True)
 
 
 def test_strict_raises_for_non_export_succeeded_to_expired():
-    with pytest.raises(InvalidStatusTransition, match="succeeded → expired"):
+    with pytest.raises(InvalidStatusTransition, match="succeeded -> expired"):
         validate_transition("succeeded", "expired", strict=True)
 
 
@@ -82,5 +82,5 @@ def test_unknown_status_returns_false():
 
 
 def test_job_type_default_uses_standard_transitions():
-    """Default job_type='' uses ALLOWED_TRANSITIONS (no succeeded→expired)."""
+    """Default job_type='' uses ALLOWED_TRANSITIONS (no succeeded->expired)."""
     assert validate_transition("succeeded", "expired", job_type="") is False

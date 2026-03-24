@@ -1,4 +1,4 @@
-"""Test that failed Stripe cleanup during account deletion triggers an async retry.
+﻿"""Test that failed Stripe cleanup during account deletion triggers an async retry.
 
 When the synchronous _cleanup_stripe() call returns "partial", "failed", or
 "client_unavailable", the account deletion endpoint must dispatch the
@@ -6,10 +6,7 @@ maintenance.cleanup_stripe_orphan Celery task to retry asynchronously.
 """
 from __future__ import annotations
 
-import types
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 def _make_mock_billing(cleanup_result: str = "ok"):
@@ -45,12 +42,39 @@ class TestStripeCleanupRetryDispatch:
 
         mock_celery.send_task.assert_called_once()
 
+    def test_dispatch_logs_retry_backoff_and_timeout_visibility(self, monkeypatch):
+        import sys
+        import types as _types
+        import uuid
+
+        mock_celery = MagicMock()
+        mock_celery.send_task.return_value = _types.SimpleNamespace(id="fake")
+        mock_module = _types.ModuleType("apps.worker.app.celery_app")
+        mock_module.celery_app = mock_celery
+        monkeypatch.setitem(sys.modules, "apps.worker.app.celery_app", mock_module)
+
+        from apps.api.app.routers import account
+
+        with patch.object(account, "logger") as mock_logger:
+            account._dispatch_stripe_cleanup_retry(
+                subscription_id="sub_123",
+                customer_id="cus_456",
+                user_id=uuid.uuid4(),
+                sync_result="partial",
+            )
+
+        _, kwargs = mock_logger.info.call_args
+        assert kwargs["initial_countdown_seconds"] == 30
+        assert kwargs["max_retries"] == 5
+        assert kwargs["retry_backoff_schedule_seconds"] == [30, 60, 120, 240, 480]
+        assert kwargs["retry_soft_time_limit_seconds"] == 60
+        assert kwargs["retry_time_limit_seconds"] == 90
+
     def test_dispatch_not_called_on_ok(self):
         """When _cleanup_stripe returns 'ok', no retry should be dispatched."""
         from apps.api.app.routers.account import _cleanup_stripe
 
         mock_billing = _make_mock_billing()
-        client = mock_billing.get_stripe_client.return_value
         import uuid
 
         result = _cleanup_stripe(mock_billing, "sub_123", "cus_456", uuid.uuid4())
@@ -81,15 +105,21 @@ class TestStripeCleanupRetryDispatch:
 
     def test_cleanup_stripe_returns_partial_on_sub_failure(self):
         """When subscription cancel fails but customer delete succeeds, result is 'partial'."""
-        from apps.api.app.routers.account import _cleanup_stripe
+        from apps.api.app.routers import account
 
         mock_billing = _make_mock_billing()
         client = mock_billing.get_stripe_client.return_value
         client.subscriptions.cancel.side_effect = Exception("timeout")
         import uuid
 
-        result = _cleanup_stripe(mock_billing, "sub_123", "cus_456", uuid.uuid4())
+        with patch.object(account, "logger") as mock_logger:
+            result = account._cleanup_stripe(mock_billing, "sub_123", "cus_456", uuid.uuid4())
+
         assert result == "partial"
+        warning_kwargs = mock_logger.warning.call_args_list[0].kwargs
+        assert warning_kwargs["retry_backoff_schedule_seconds"] == [30, 60, 120, 240, 480]
+        assert warning_kwargs["retry_soft_time_limit_seconds"] == 60
+        assert warning_kwargs["retry_time_limit_seconds"] == 90
 
     def test_cleanup_stripe_returns_client_unavailable(self):
         """When the Stripe client can't be created, result is 'client_unavailable'."""

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -8,7 +8,6 @@ from backtestforecast.schemas.exports import CreateExportRequest
 from backtestforecast.schemas.scans import CreateScannerJobRequest
 from backtestforecast.schemas.sweeps import CreateSweepRequest
 from backtestforecast.utils.schedules import format_utc_schedule_label
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -51,7 +50,9 @@ def test_python_schedule_formatter_matches_expected_copy() -> None:
 def test_server_component_layout_no_longer_logs_console_errors() -> None:
     source = _read("apps/web/app/app/layout.tsx")
     assert "console.error" not in source
-    assert "planError = true" in source
+    assert "try {" in source
+    assert "await getCurrentUser();" in source
+    assert "} catch {" in source
 
 
 def test_dispatch_started_at_added_to_all_async_job_models() -> None:

@@ -1,4 +1,4 @@
-"""Tests for BacktestTemplateRepository correctness."""
+﻿"""Tests for BacktestTemplateRepository correctness."""
 from __future__ import annotations
 
 import uuid

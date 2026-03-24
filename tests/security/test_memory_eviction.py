@@ -1,5 +1,7 @@
-"""Test that memory rate limiter evicts correctly."""
+﻿"""Test that memory rate limiter evicts correctly."""
 from __future__ import annotations
+
+import contextlib
 
 from backtestforecast.security.rate_limits import RateLimiter
 
@@ -16,9 +18,7 @@ def test_memory_eviction_keeps_recent_buckets():
     limiter._redis_retry_after = float("inf")
 
     for i in range(20):
-        try:
+        with contextlib.suppress(Exception):
             limiter.check(bucket="test", actor_key=f"user_{i}", limit=100, window_seconds=60)
-        except Exception:
-            pass
 
     assert len(limiter._memory_counters) <= 10

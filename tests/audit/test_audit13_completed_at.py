@@ -1,4 +1,4 @@
-"""Tests verifying completed_at is set consistently on all failure paths.
+﻿"""Tests verifying completed_at is set consistently on all failure paths.
 
 Covers:
   - Fix 3: generate_export AppError handler sets completed_at

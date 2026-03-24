@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
@@ -9,7 +9,6 @@ import pytest
 from pydantic import BaseModel
 from starlette.requests import Request
 
-from apps.api.app.routers import health as health_router
 from apps.api.app.routers import meta as meta_router
 from backtestforecast import __version__
 from backtestforecast.backtests.summary import build_summary
@@ -196,6 +195,8 @@ class TestMetaGracefulDegradation:
             feature_daily_picks_enabled=True,
             feature_billing_enabled=True,
             feature_sweeps_enabled=True,
+            daily_picks_pipeline_hour_utc=6,
+            daily_picks_pipeline_minute_utc=0,
             app_env="production",
         ))
         monkeypatch.setattr(meta_router, "_try_authenticate", lambda _request, _db: (_ for _ in ()).throw(ConnectionError("db down")))
@@ -205,6 +206,7 @@ class TestMetaGracefulDegradation:
         assert payload == {
             "service": "backtestforecast-api",
             "version": get_public_version(),
+            "daily_picks_schedule_utc": "6:00 AM UTC",
         }
 
 

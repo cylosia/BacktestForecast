@@ -1,8 +1,8 @@
-"""Optional OpenTelemetry tracing integration.
+﻿"""Optional OpenTelemetry tracing integration.
 
 Initialises the OTel SDK when the ``OTEL_EXPORTER_OTLP_ENDPOINT`` environment
 variable is set.  When the SDK is not installed or the env var is absent,
-all public functions are safe no-ops — no application code needs to check
+all public functions are safe no-ops - no application code needs to check
 for availability.
 
 Usage in application startup (e.g. ``main.py`` lifespan)::
@@ -20,7 +20,7 @@ Usage in code that wants to create spans::
         ...
 
 If the OTel SDK is not installed, ``get_tracer`` returns a no-op tracer
-that silently discards spans — no ``ImportError`` or runtime cost.
+that silently discards spans - no ``ImportError`` or runtime cost.
 
 Dependencies (add to pyproject.toml ``[project.optional-dependencies]``)::
 
@@ -55,7 +55,7 @@ def init_tracing(
     """Initialise OpenTelemetry tracing if the SDK is available and configured.
 
     Returns True if tracing was successfully initialised, False otherwise.
-    Safe to call multiple times — subsequent calls are no-ops.
+    Safe to call multiple times - subsequent calls are no-ops.
     """
     global _TRACER_PROVIDER
 
@@ -192,7 +192,7 @@ class _NoOpSpan:
     def record_exception(self, exc: BaseException, **kwargs: Any) -> None:
         pass
 
-    def __enter__(self) -> "_NoOpSpan":
+    def __enter__(self) -> _NoOpSpan:
         return self
 
     def __exit__(self, *args: Any) -> None:

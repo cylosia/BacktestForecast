@@ -1,4 +1,4 @@
-"""Test 67: Partial stage persistence on failure.
+﻿"""Test 67: Partial stage persistence on failure.
 
 Verifies that when a later stage (e.g. forecast) fails during
 execute_analysis, data from earlier completed stages is preserved
@@ -7,9 +7,8 @@ the correct stage marker.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from decimal import Decimal
-from unittest.mock import MagicMock, patch, PropertyMock
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -91,7 +90,7 @@ class TestPartialStageCommit:
 
         commit_count = session.commit.call_count
         assert commit_count >= 4, (
-            f"Expected at least 4 commits (status→running, regime, landscape, "
+            f"Expected at least 4 commits (status->running, regime, landscape, "
             f"deep_dive/forecast), got {commit_count}"
         )
 

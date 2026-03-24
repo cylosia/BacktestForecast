@@ -1,4 +1,4 @@
-"""Fix 63: _enforce_sweep_quota acquires a FOR UPDATE lock on the User row.
+﻿"""Fix 63: _enforce_sweep_quota acquires a FOR UPDATE lock on the User row.
 
 Verify that the method serializes concurrent quota checks by issuing a
 SELECT ... FOR UPDATE on the User table before counting sweeps.
@@ -6,7 +6,6 @@ SELECT ... FOR UPDATE on the User table before counting sweeps.
 from __future__ import annotations
 
 import inspect
-import textwrap
 
 from backtestforecast.services.sweeps import SweepService
 

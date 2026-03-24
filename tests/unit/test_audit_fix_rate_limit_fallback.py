@@ -1,6 +1,8 @@
-"""Verify in-memory rate limit fallback behavior when Redis is unavailable."""
+﻿"""Verify in-memory rate limit fallback behavior when Redis is unavailable."""
 from __future__ import annotations
+
 from unittest.mock import MagicMock
+
 from backtestforecast.security.rate_limits import RateLimiter
 
 
@@ -35,12 +37,13 @@ class TestInMemoryFallbackMultiplication:
         info_a = limiter_a.check(bucket="api", actor_key="user1", limit=10, window_seconds=60)
         info_b = limiter_b.check(bucket="api", actor_key="user1", limit=10, window_seconds=60)
 
-        # Each instance counts independently — effective limit is 2x
+        # Each instance counts independently - effective limit is 2x
         assert info_a.remaining == 4
         assert info_b.remaining == 4
 
     def test_single_instance_enforces_limit(self):
         import pytest
+
         from backtestforecast.errors import RateLimitError
 
         limiter = _make_limiter()

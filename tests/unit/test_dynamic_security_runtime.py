@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 from pathlib import Path
@@ -6,7 +6,11 @@ from pathlib import Path
 from fastapi.responses import PlainTextResponse
 
 from apps.api.app.main import _RequestTimeoutMiddleware
-from backtestforecast.security.http import ApiSecurityHeadersMiddleware, DynamicCORSMiddleware, RequestBodyLimitMiddleware
+from backtestforecast.security.http import (
+    ApiSecurityHeadersMiddleware,
+    DynamicCORSMiddleware,
+    RequestBodyLimitMiddleware,
+)
 
 
 def _run_asgi(app, scope: dict, body: bytes = b"") -> tuple[int, dict[str, str]]:

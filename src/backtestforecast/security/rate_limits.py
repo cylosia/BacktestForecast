@@ -1,6 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 import time
 from dataclasses import dataclass
@@ -112,7 +113,7 @@ class RateLimiter:
                     bucket=bucket,
                     msg="Redis rate-limit operation failed while fail-closed mode is enabled; rejecting request.",
                 )
-                raise ServiceUnavailableError()
+                raise ServiceUnavailableError() from None
             if degraded_memory_fallback:
                 fallback_limit = max(limit // 2, 1)
                 mem_count, _ = self._check_memory(namespaced, window_seconds)
@@ -185,10 +186,8 @@ class RateLimiter:
             redis = self._redis
             self._redis = None
         if redis is not None:
-            try:
+            with contextlib.suppress(Exception):
                 redis.close()
-            except Exception:
-                pass
 
     def reset(self) -> None:
         with self._memory_lock:

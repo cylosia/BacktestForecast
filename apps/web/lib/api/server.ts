@@ -1,6 +1,24 @@
 import { auth } from "@clerk/nextjs/server";
 import { cache } from "react";
-import { apiRequest, validatedApiRequest } from "@/lib/api/shared";
+import { validatedApiRequest } from "@/lib/api/shared";
+import {
+  validateAnalysisDetailResponse,
+  validateAnalysisListResponse,
+  validateBacktestRunListResponse,
+  validateBacktestRunDetailResponse,
+  validateCompareBacktestsResponse,
+  validateCurrentUserResponse,
+  validateDailyPicksResponse,
+  validateMetaResponse,
+  validatePipelineHistoryResponse,
+  validateScannerJobListResponse,
+  validateScannerJobResponse,
+  validateScannerRecommendationListResponse,
+  validateStrategyCatalogResponse,
+  validateSweepJobListResponse,
+  validateSweepJobResponse,
+  validateSweepResultListResponse,
+} from "@/lib/api/contracts";
 import { buildCursorPaginatedPath, buildPaginatedListPath } from "@/lib/api/pagination";
 import { validateTemplateListResponse } from "@/lib/templates/contracts";
 import type {
@@ -41,11 +59,7 @@ const getServerToken = cache(async (): Promise<string> => {
 });
 
 const loadCurrentUser = cache(async (token: string): Promise<CurrentUserResponse> => {
-  const user = await apiRequest<CurrentUserResponse>("/v1/me", token, { cache: "no-store" });
-  if (!user || typeof user.id !== "string" || typeof user.plan_tier !== "string") {
-    throw new Error("Invalid user response shape from API");
-  }
-  return user;
+  return validatedApiRequest<CurrentUserResponse>("/v1/me", token, validateCurrentUserResponse, { cache: "no-store" });
 });
 
 export async function getCurrentUser(): Promise<CurrentUserResponse> {
@@ -63,21 +77,27 @@ export interface RuntimeMetaResponse {
 
 export const getMeta = cache(async (): Promise<RuntimeMetaResponse> => {
   const token = await getServerToken();
-  return apiRequest<RuntimeMetaResponse>("/v1/meta", token, { cache: "no-store" });
+  return validatedApiRequest<RuntimeMetaResponse>("/v1/meta", token, validateMetaResponse, { cache: "no-store" });
 });
 
 export const getBacktestHistory = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<BacktestRunListResponse> => {
   const token = await getServerToken();
-  return apiRequest<BacktestRunListResponse>(
+  return validatedApiRequest<BacktestRunListResponse>(
     buildPaginatedListPath("/v1/backtests", limit, offset, 100, cursor),
     token,
+    validateBacktestRunListResponse,
     { cache: "no-store" },
   );
 });
 
 export const getBacktestRun = cache(async (runId: string): Promise<BacktestRunDetailResponse> => {
   const token = await getServerToken();
-  return apiRequest<BacktestRunDetailResponse>(`/v1/backtests/${encodeURIComponent(runId)}`, token, { cache: "no-store" });
+  return validatedApiRequest<BacktestRunDetailResponse>(
+    `/v1/backtests/${encodeURIComponent(runId)}`,
+    token,
+    validateBacktestRunDetailResponse,
+    { cache: "no-store" },
+  );
 });
 
 export const getTemplates = cache(async (): Promise<TemplateListResponse> => {
@@ -98,7 +118,7 @@ export async function compareBacktests(runIds: string[]): Promise<CompareBacktes
     throw new Error("compareBacktests requires unique run IDs.");
   }
   const token = await getServerToken();
-  return apiRequest<CompareBacktestsResponse>("/v1/backtests/compare", token, {
+  return validatedApiRequest<CompareBacktestsResponse>("/v1/backtests/compare", token, validateCompareBacktestsResponse, {
     method: "POST",
     body: JSON.stringify({ run_ids: runIds }),
     cache: "no-store",
@@ -107,71 +127,107 @@ export async function compareBacktests(runIds: string[]): Promise<CompareBacktes
 
 export const getScannerJobs = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<ScannerJobListResponse> => {
   const token = await getServerToken();
-  return apiRequest<ScannerJobListResponse>(
+  return validatedApiRequest<ScannerJobListResponse>(
     buildPaginatedListPath("/v1/scans", limit, offset, 50, cursor),
     token,
+    validateScannerJobListResponse,
     { cache: "no-store" },
   );
 });
 
 export const getScannerJob = cache(async (jobId: string): Promise<ScannerJobResponse> => {
   const token = await getServerToken();
-  return apiRequest<ScannerJobResponse>(`/v1/scans/${encodeURIComponent(jobId)}`, token, { cache: "no-store" });
+  return validatedApiRequest<ScannerJobResponse>(
+    `/v1/scans/${encodeURIComponent(jobId)}`,
+    token,
+    validateScannerJobResponse,
+    { cache: "no-store" },
+  );
 });
 
 export const getScannerRecommendations = cache(async (jobId: string): Promise<ScannerRecommendationListResponse> => {
   const token = await getServerToken();
-  return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, { cache: "no-store" });
+  return validatedApiRequest<ScannerRecommendationListResponse>(
+    `/v1/scans/${encodeURIComponent(jobId)}/recommendations`,
+    token,
+    validateScannerRecommendationListResponse,
+    { cache: "no-store" },
+  );
 });
 
 export const getSweepJobs = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<SweepJobListResponse> => {
   const token = await getServerToken();
-  return apiRequest<SweepJobListResponse>(
+  return validatedApiRequest<SweepJobListResponse>(
     buildPaginatedListPath("/v1/sweeps", limit, offset, 50, cursor),
     token,
+    validateSweepJobListResponse,
     { cache: "no-store" },
   );
 });
 
 export const getSweepJob = cache(async (jobId: string): Promise<SweepJobResponse> => {
   const token = await getServerToken();
-  return apiRequest<SweepJobResponse>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, { cache: "no-store" });
+  return validatedApiRequest<SweepJobResponse>(
+    `/v1/sweeps/${encodeURIComponent(jobId)}`,
+    token,
+    validateSweepJobResponse,
+    { cache: "no-store" },
+  );
 });
 
 export const getSweepResults = cache(async (jobId: string): Promise<SweepResultListResponse> => {
   const token = await getServerToken();
-  return apiRequest<SweepResultListResponse>(`/v1/sweeps/${encodeURIComponent(jobId)}/results`, token, { cache: "no-store" });
+  return validatedApiRequest<SweepResultListResponse>(
+    `/v1/sweeps/${encodeURIComponent(jobId)}/results`,
+    token,
+    validateSweepResultListResponse,
+    { cache: "no-store" },
+  );
 });
 
 export const getStrategyCatalog = cache(async (): Promise<StrategyCatalogResponse> => {
   const token = await getServerToken();
-  return apiRequest<StrategyCatalogResponse>("/v1/strategy-catalog", token, { cache: "no-store" });
+  return validatedApiRequest<StrategyCatalogResponse>(
+    "/v1/strategy-catalog",
+    token,
+    validateStrategyCatalogResponse,
+    { cache: "no-store" },
+  );
 });
 
 export const getDailyPicks = cache(async (): Promise<DailyPicksResponse> => {
   const token = await getServerToken();
-  return apiRequest<DailyPicksResponse>("/v1/daily-picks", token, { cache: "no-store" });
+  return validatedApiRequest<DailyPicksResponse>("/v1/daily-picks", token, validateDailyPicksResponse, {
+    cache: "no-store",
+  });
 });
 
 export const getAnalysisHistory = cache(async (limit = 10, offset = 0, cursor?: string | null) => {
   const token = await getServerToken();
-  return apiRequest<AnalysisListResponse>(
+  return validatedApiRequest<AnalysisListResponse>(
     buildPaginatedListPath("/v1/analysis", limit, offset, 50, cursor),
     token,
+    validateAnalysisListResponse,
     { cache: "no-store" },
   );
 });
 
 export const getAnalysisDetail = cache(async (analysisId: string): Promise<AnalysisDetailResponse> => {
   const token = await getServerToken();
-  return apiRequest<AnalysisDetailResponse>(`/v1/analysis/${encodeURIComponent(analysisId)}`, token, { cache: "no-store" });
+  return validatedApiRequest<AnalysisDetailResponse>(
+    `/v1/analysis/${encodeURIComponent(analysisId)}`,
+    token,
+    validateAnalysisDetailResponse,
+    { cache: "no-store" },
+  );
 });
 
 export const getDailyPicksHistory = cache(async (limit = 10, cursor?: string | null) => {
   const token = await getServerToken();
-  return apiRequest<PipelineHistoryResponse>(
+  return validatedApiRequest<PipelineHistoryResponse>(
     buildCursorPaginatedPath("/v1/daily-picks/history", limit, 30, cursor),
     token,
+    validatePipelineHistoryResponse,
     { cache: "no-store" },
   );
 });

@@ -1,4 +1,4 @@
-"""Tests for the scanner ranking algorithm (fixes 60-62).
+﻿"""Tests for the scanner ranking algorithm (fixes 60-62).
 
 Covers build_ranking_breakdown, aggregate_historical_performance,
 and _forecast_alignment_score via the public interface.
@@ -6,10 +6,8 @@ and _forecast_alignment_score via the public interface.
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-
-import pytest
 
 from backtestforecast.scans.ranking import (
     HistoricalObservation,
@@ -54,12 +52,17 @@ def _fake_forecast(
     positive_rate: float = 62.0,
 ) -> HistoricalAnalogForecastResponse:
     return HistoricalAnalogForecastResponse(
+        symbol="TSLA",
+        strategy_type="bull_call_debit_spread",
+        as_of_date=date(2025, 6, 1),
         analog_count=analog_count,
         expected_return_median_pct=Decimal(str(median_return)),
         expected_return_low_pct=Decimal(str(low_return)),
         expected_return_high_pct=Decimal(str(high_return)),
         positive_outcome_rate_pct=Decimal(str(positive_rate)),
         horizon_days=30,
+        summary="Historical analog forecast.",
+        disclaimer="Research only.",
     )
 
 

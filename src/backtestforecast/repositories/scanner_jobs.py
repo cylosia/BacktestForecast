@@ -1,12 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, desc, func, or_, select, tuple_
+from sqlalchemy import delete, desc, func, select, tuple_
 from sqlalchemy.orm import Session, noload, selectinload
 
 from backtestforecast.models import ScannerJob, ScannerRecommendation
+from backtestforecast.repositories.pagination import apply_cursor_window, list_with_total
 
 _MAX_PAGE_SIZE = 200
 
@@ -27,25 +28,42 @@ class ScannerJobRepository:
         offset: int = 0,
         cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[ScannerJob]:
-        if offset > 0 and cursor_before is not None:
-            raise ValueError("Cannot combine offset and cursor_before pagination.")
-        limit = max(limit, 1)
-        offset = max(offset, 0)
         stmt = (
             select(ScannerJob)
             .where(ScannerJob.user_id == user_id)
             .options(noload(ScannerJob.recommendations))
         )
-        if cursor_before is not None:
-            cursor_dt, cursor_id = cursor_before
-            stmt = stmt.where(
-                or_(
-                    ScannerJob.created_at < cursor_dt,
-                    and_(ScannerJob.created_at == cursor_dt, ScannerJob.id < cursor_id),
-                )
-            )
-        stmt = stmt.order_by(desc(ScannerJob.created_at), desc(ScannerJob.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+        stmt = apply_cursor_window(
+            stmt,
+            model=ScannerJob,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
         return list(self.session.scalars(stmt))
+
+    def list_for_user_with_count(
+        self,
+        user_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+        cursor_before: tuple[datetime, UUID] | None = None,
+    ) -> tuple[list[ScannerJob], int]:
+        return list_with_total(
+            self.session,
+            base_stmt=(
+                select(ScannerJob)
+                .where(ScannerJob.user_id == user_id)
+                .options(noload(ScannerJob.recommendations))
+            ),
+            count_stmt=select(func.count(ScannerJob.id)).where(ScannerJob.user_id == user_id),
+            model=ScannerJob,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
 
     def count_for_user(self, user_id: UUID) -> int:
         stmt = select(func.count(ScannerJob.id)).where(ScannerJob.user_id == user_id)
@@ -104,7 +122,7 @@ class ScannerJobRepository:
         return self.session.scalar(stmt)
 
     def delete_recommendations(self, job_id: UUID) -> None:
-        """Remove recommendations for a job. WORKER-ONLY — never call from API routes without verifying ownership first."""
+        """Remove recommendations for a job. WORKER-ONLY - never call from API routes without verifying ownership first."""
         self.session.execute(
             delete(ScannerRecommendation)
             .where(ScannerRecommendation.scanner_job_id == job_id)
@@ -113,7 +131,7 @@ class ScannerJobRepository:
 
     def list_refresh_sources(self, limit: int = 100) -> list[ScannerJob]:
         # NOTE: .distinct() with column arguments compiles to PostgreSQL's
-        # DISTINCT ON (col, …) syntax, which is not supported by SQLite.
+        # DISTINCT ON (col, -) syntax, which is not supported by SQLite.
         # Running this query against SQLite will raise an OperationalError.
         deduped = (
             select(ScannerJob.id)

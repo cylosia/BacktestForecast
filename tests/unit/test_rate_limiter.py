@@ -1,4 +1,4 @@
-"""Tests for rate limiter edge cases."""
+﻿"""Tests for rate limiter edge cases."""
 from __future__ import annotations
 
 import pytest

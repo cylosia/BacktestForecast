@@ -1,5 +1,6 @@
-"""Regression test: AppError must be called with keyword args."""
+﻿"""Regression test: AppError must be called with keyword args."""
 import pytest
+
 from backtestforecast.errors import AppError
 
 

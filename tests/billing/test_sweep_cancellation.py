@@ -1,4 +1,4 @@
-"""Verify SweepJob is cancelled when a user's subscription is revoked."""
+﻿"""Verify SweepJob is cancelled when a user's subscription is revoked."""
 from __future__ import annotations
 
 from datetime import UTC, datetime

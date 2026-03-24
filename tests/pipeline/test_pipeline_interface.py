@@ -1,4 +1,4 @@
-"""Tests for NightlyPipelineService interface and configuration.
+﻿"""Tests for NightlyPipelineService interface and configuration.
 
 Verifies the pipeline service has the expected methods and can be
 instantiated without requiring external services.
@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import inspect
 from unittest.mock import MagicMock
-
-import pytest
 
 
 class TestPipelineServiceInterface:

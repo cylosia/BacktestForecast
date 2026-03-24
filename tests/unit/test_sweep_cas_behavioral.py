@@ -1,4 +1,4 @@
-"""Fix 67: Sweep CAS transition prevents double-run.
+﻿"""Fix 67: Sweep CAS transition prevents double-run.
 
 If two workers call run_job concurrently with the same job_id, only one
 should transition the status from "queued" to "running". The other must
@@ -6,8 +6,7 @@ see rowcount == 0 and return without executing.
 """
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
-from decimal import Decimal
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, update
@@ -16,8 +15,6 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
 from backtestforecast.models import SweepJob, User
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
@@ -62,7 +59,7 @@ def _create_sweep_job(session: Session, user: User, *, status: str = "queued") -
 
 class TestSweepCASTransition:
     def test_first_cas_succeeds(self, db_session):
-        """The first queued→running CAS transition should match exactly one row."""
+        """The first queued->running CAS transition should match exactly one row."""
         user = _create_user(db_session)
         job = _create_sweep_job(db_session, user, status="queued")
 
@@ -94,7 +91,7 @@ class TestSweepCASTransition:
             .values(status="running", started_at=datetime.now(UTC))
         )
         db_session.commit()
-        assert second.rowcount == 0, "Second CAS must not match — already running"
+        assert second.rowcount == 0, "Second CAS must not match - already running"
 
     def test_status_remains_running_after_double_cas(self, db_session):
         """After two CAS attempts, the job must be 'running' (not duplicated)."""

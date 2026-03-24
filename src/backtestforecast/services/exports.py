@@ -1,11 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import hashlib
 import io
 import re
 import time as _time
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,22 +17,36 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat, ensure_export_access
 from backtestforecast.config import Settings, get_settings
+from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
 from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError
 from backtestforecast.exports.storage import DatabaseStorage, ExportStorage, get_storage
 from backtestforecast.models import ExportJob, User
+from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SECONDS
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
-from backtestforecast.schemas.backtests import BacktestRunDetailResponse
+from backtestforecast.schemas.backtests import BacktestSummaryResponse, BacktestTradeResponse, EquityCurvePointResponse
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobResponse
-from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SECONDS
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtests import BacktestService
-from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
-from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
-from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
+from backtestforecast.services.dispatch_recovery import (
+    get_dispatch_diagnostic,
+    observe_job_create_to_running_latency,
+    redispatch_if_stale_queued,
+)
+from backtestforecast.services.job_cancellation import (
+    mark_job_cancelled,
+    publish_cancellation_event,
+    revoke_celery_task,
+)
+from backtestforecast.services.job_transitions import (
+    cancellation_blocked_message,
+    deletion_blocked_message,
+    running_transition_values,
+)
+from backtestforecast.services.serialization import safe_validate_warning_list
 
 logger = structlog.get_logger("services.exports")
-UTC = timezone.utc
+UTC = UTC
 
 _LOOKS_NUMERIC = re.compile(
     r"^-?"
@@ -51,6 +66,23 @@ _MAX_CSV_TRADES = 10_000
 _MAX_CSV_EQUITY_POINTS = 50_000
 _MAX_PDF_PAGES = 50
 MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
+_MAX_EXPORT_BYTES = MAX_EXPORT_BYTES
+
+
+@dataclass(frozen=True, slots=True)
+class ExportBacktestSnapshot:
+    symbol: str
+    strategy_type: str
+    status: str
+    start_date: Any
+    end_date: Any
+    created_at: datetime
+    summary: BacktestSummaryResponse
+    trades: list[BacktestTradeResponse]
+    equity_curve: list[EquityCurvePointResponse]
+    warnings: list[dict[str, Any]]
+    risk_free_rate: float | None
+    risk_free_rate_source: str | None
 
 
 class ExportService:
@@ -74,7 +106,7 @@ class ExportService:
         except Exception:
             logger.debug("export_service.close_failed", exc_info=True)
 
-    def __enter__(self) -> "ExportService":
+    def __enter__(self) -> ExportService:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -295,7 +327,7 @@ class ExportService:
         rows = self.session.execute(
             sa_update(ExportJob)
             .where(ExportJob.id == export_job_id, ExportJob.status == "queued")
-            .values(status="running", started_at=datetime.now(UTC), updated_at=datetime.now(UTC))
+            .values(**running_transition_values())
         )
         self.session.commit()
         if rows.rowcount == 0:
@@ -330,14 +362,13 @@ class ExportService:
 
         _exec_start = _time.monotonic()
         try:
-            detail = self.backtest_service.get_run_for_owner(
-                user_id=export_job.user_id, run_id=export_job.backtest_run_id
+            detail = self._build_export_snapshot(
+                user_id=export_job.user_id,
+                run_id=export_job.backtest_run_id,
+                export_format=ExportFormat(export_job.export_format),
             )
             fmt = ExportFormat(export_job.export_format)
-            if fmt == ExportFormat.CSV:
-                content = self._build_csv(detail)
-            else:
-                content = self._build_pdf(detail)
+            content = self._build_csv(detail) if fmt == ExportFormat.CSV else self._build_pdf(detail)
             if len(content) > MAX_EXPORT_BYTES:
                 raise ValueError(
                     f"Generated export exceeds the {MAX_EXPORT_BYTES // (1024 * 1024)} MB size limit."
@@ -479,7 +510,7 @@ class ExportService:
 
         Rolls back first, then attempts a fresh UPDATE+COMMIT.  If the
         commit itself fails the job stays in "running" and the stale-job
-        reaper will eventually catch it — but we log loudly so operators
+        reaper will eventually catch it - but we log loudly so operators
         notice quickly.
         """
         self.session.rollback()
@@ -596,20 +627,18 @@ class ExportService:
         export_job = self.exports.get_for_user(export_job_id, user.id)
         if export_job is None:
             raise NotFoundError("Export not found.")
-        return self.to_response(export_job)
+        return self.to_response(export_job, **self._resolved_execution_fields_for_export(export_job))
 
     def delete_for_user(self, export_job_id: UUID, user_id: UUID) -> None:
         export_job = self.exports.get_for_user(export_job_id, user_id)
         if export_job is None:
             raise NotFoundError("Export not found.")
         if export_job.status in ("queued", "running"):
-            raise ConflictError(
-                "Cannot delete a job that is currently queued or running. Cancel it first."
-            )
+            raise ConflictError(deletion_blocked_message("export job"))
         storage_key = export_job.storage_key
         # Delete DB record first, then external storage.  If the DB commit
         # fails the storage object remains (recoverable orphan).  The reverse
-        # order would leave a ghost DB record pointing at deleted storage —
+        # order would leave a ghost DB record pointing at deleted storage -
         # an unrecoverable state.  The reconcile_s3_orphans task cleans up
         # any storage objects left behind after successful DB deletes.
         self.session.delete(export_job)
@@ -624,6 +653,29 @@ class ExportService:
                     storage_key=storage_key,
                     exc_info=True,
                 )
+
+    def cancel_for_user(self, export_job_id: UUID, user_id: UUID) -> ExportJobResponse:
+        export_job = self.exports.get_for_user(export_job_id, user_id)
+        if export_job is None:
+            raise NotFoundError("Export not found.")
+        if export_job.status not in ("queued", "running"):
+            raise ConflictError(cancellation_blocked_message("export job"))
+        task_id = mark_job_cancelled(export_job)
+        self.audit.record_always(
+            event_type="export.cancelled",
+            subject_type="export_job",
+            subject_id=export_job.id,
+            user_id=user_id,
+            metadata={"backtest_run_id": str(export_job.backtest_run_id), "reason": "user_cancelled"},
+        )
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        revoke_celery_task(task_id, job_type="export", job_id=export_job.id)
+        publish_cancellation_event(job_type="export", job_id=export_job.id)
+        return self.to_response(export_job, **self._resolved_execution_fields_for_export(export_job))
 
     def create_export(
         self,
@@ -646,7 +698,7 @@ class ExportService:
         enqueued = self.enqueue_export(user, payload, request_id=request_id, ip_address=ip_address)
         self.session.commit()
         export_job = self.execute_export_by_id(enqueued.id)
-        return self.to_response(export_job)
+        return self.to_response(export_job, **self._resolved_execution_fields_for_export(export_job))
 
     def get_export_for_download(
         self,
@@ -698,7 +750,44 @@ class ExportService:
             return "text/csv; charset=utf-8"
         return "application/pdf"
 
-    def _build_csv(self, detail: BacktestRunDetailResponse) -> bytes:
+    def _build_export_snapshot(
+        self,
+        *,
+        user_id: UUID,
+        run_id: UUID,
+        export_format: ExportFormat,
+    ) -> ExportBacktestSnapshot:
+        run = self.backtests.get_lightweight_for_user(run_id, user_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        trade_limit = _MAX_CSV_TRADES if export_format == ExportFormat.CSV else get_settings().max_pdf_trades
+        equity_limit = _MAX_CSV_EQUITY_POINTS if export_format == ExportFormat.CSV else 10_000
+        trades = self.backtests.get_trades_for_run(run.id, limit=trade_limit, user_id=user_id)
+        equity_points = self.backtests.get_equity_points_for_run(run.id, limit=equity_limit, user_id=user_id)
+        payload_counts = self.backtests.get_payload_counts_for_run(run.id, user_id=user_id)
+        snapshot = run.input_snapshot_json or {}
+        resolved_parameters = ResolvedExecutionParameters.from_snapshot(
+            {
+                **snapshot,
+                "risk_free_rate": float(run.risk_free_rate) if run.risk_free_rate is not None else snapshot.get("risk_free_rate"),
+            }
+        )
+        return ExportBacktestSnapshot(
+            symbol=run.symbol,
+            strategy_type=run.strategy_type,
+            status=run.status,
+            start_date=run.date_from,
+            end_date=run.date_to,
+            created_at=run.created_at,
+            summary=self.backtest_service._summary_response(run, decided_trades=payload_counts.decided_trade_count),
+            trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
+            equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
+            warnings=safe_validate_warning_list(run.warnings_json),
+            risk_free_rate=resolved_parameters.risk_free_rate,
+            risk_free_rate_source=resolved_parameters.risk_free_rate_source,
+        )
+
+    def _build_csv(self, detail: ExportBacktestSnapshot) -> bytes:
         estimated_rows = len(detail.trades) + len(detail.equity_curve) + 30
         estimated_bytes = estimated_rows * 200
         if estimated_bytes > MAX_EXPORT_BYTES:
@@ -726,6 +815,8 @@ class ExportService:
         writer.writerow(safe_row(["run", "status", detail.status]))
         writer.writerow(safe_row(["run", "date_from", detail.start_date.isoformat()]))
         writer.writerow(safe_row(["run", "date_to", detail.end_date.isoformat()]))
+        writer.writerow(safe_row(["run", "risk_free_rate", detail.risk_free_rate]))
+        writer.writerow(safe_row(["run", "risk_free_rate_source", detail.risk_free_rate_source]))
         writer.writerow(safe_row(["summary", "trade_count", detail.summary.trade_count]))
         writer.writerow(safe_row(["summary", "win_rate", detail.summary.win_rate]))
         writer.writerow(safe_row(["summary", "total_roi_pct", detail.summary.total_roi_pct]))
@@ -841,7 +932,7 @@ class ExportService:
         text_wrapper.detach()
         return buf.getvalue()
 
-    def _build_pdf(self, detail: BacktestRunDetailResponse) -> bytes:
+    def _build_pdf(self, detail: ExportBacktestSnapshot) -> bytes:
         try:
             from reportlab.lib.pagesizes import letter  # type: ignore
             from reportlab.lib.units import inch  # type: ignore
@@ -912,6 +1003,10 @@ class ExportService:
         line(f"Status: {detail.status}")
         line(f"Date range: {detail.start_date.isoformat()} to {detail.end_date.isoformat()}")
         line(f"Created: {detail.created_at.isoformat()}")
+        if detail.risk_free_rate is not None:
+            line(f"Risk-free rate: {_fmt(detail.risk_free_rate)}")
+        if detail.risk_free_rate_source:
+            line(f"Risk-free rate source: {detail.risk_free_rate_source}")
         line("")
         line("Summary", bold=True, step=20.0)
         line(f"Trades: {detail.summary.trade_count}")
@@ -1015,8 +1110,24 @@ class ExportService:
             return "'" + sanitized
         return sanitized
 
+    def _resolved_execution_fields_for_export(self, job: ExportJob) -> dict[str, Any]:
+        run = self.backtests.get_lightweight_for_user(job.backtest_run_id, job.user_id)
+        if run is None:
+            return {"risk_free_rate": None, "risk_free_rate_source": None}
+        snapshot = run.input_snapshot_json or {}
+        resolved = ResolvedExecutionParameters.from_snapshot(
+            {
+                **snapshot,
+                "risk_free_rate": float(run.risk_free_rate) if run.risk_free_rate is not None else snapshot.get("risk_free_rate"),
+            }
+        )
+        return {
+            "risk_free_rate": resolved.risk_free_rate,
+            "risk_free_rate_source": resolved.risk_free_rate_source,
+        }
+
     @staticmethod
-    def to_response(job: ExportJob) -> ExportJobResponse:
+    def to_response(job: ExportJob, *, risk_free_rate: float | None = None, risk_free_rate_source: str | None = None) -> ExportJobResponse:
         effective_status = job.status
         diagnostic = get_dispatch_diagnostic(job)
         if (
@@ -1040,6 +1151,8 @@ class ExportService:
             started_at=job.started_at,
             completed_at=job.completed_at,
             expires_at=job.expires_at,
+            risk_free_rate=risk_free_rate,
+            risk_free_rate_source=risk_free_rate_source,
         )
 
 

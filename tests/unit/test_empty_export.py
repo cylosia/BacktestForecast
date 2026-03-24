@@ -1,9 +1,9 @@
-"""Verify export content_bytes None-check handles empty bytes correctly."""
+﻿"""Verify export content_bytes None-check handles empty bytes correctly."""
 from __future__ import annotations
 
 
 def test_empty_bytes_passes_none_check():
-    """Empty content b'' must NOT be treated as missing — only None should be."""
+    """Empty content b'' must NOT be treated as missing - only None should be."""
     content_bytes = b""
     assert content_bytes is not None, "Empty bytes should not be treated as None"
 

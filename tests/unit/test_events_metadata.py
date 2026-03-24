@@ -1,4 +1,4 @@
-"""Item 83: Verify publish_job_status metadata cannot override reserved keys.
+﻿"""Item 83: Verify publish_job_status metadata cannot override reserved keys.
 
 The ``status`` and ``job_id`` keys in metadata must be stripped so that a
 caller cannot accidentally (or maliciously) override the canonical values.
@@ -83,7 +83,7 @@ def test_fallback_persist_status_noop_for_non_terminal_request():
     execute_result.rowcount = 0
     mock_session.execute.return_value = execute_result
 
-    with patch("backtestforecast.db.session.SessionLocal", mock_session_factory):
+    with patch("backtestforecast.db.session.create_worker_session", mock_session_factory):
         from backtestforecast.events import _fallback_persist_status
         _fallback_persist_status("backtest", job_id, "queued")
 

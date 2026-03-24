@@ -1,11 +1,9 @@
-"""Item 63: Test AuditEventRepository.add_always() with duplicate subject.
+﻿"""Item 63: Test AuditEventRepository.add_always() with duplicate subject.
 
 Calling add_always() twice with the same event_type, subject_type, subject_id
 should NOT raise IntegrityError. The UUID suffix makes each subject_id unique.
 """
 from __future__ import annotations
-
-from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session

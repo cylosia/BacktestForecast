@@ -1,4 +1,4 @@
-"""Tests for configuration validation edge cases."""
+﻿"""Tests for configuration validation edge cases."""
 from __future__ import annotations
 
 import pytest

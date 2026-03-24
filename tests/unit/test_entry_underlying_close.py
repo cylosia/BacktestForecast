@@ -1,6 +1,7 @@
-"""Tests for _entry_underlying_close with missing data."""
+﻿"""Tests for _entry_underlying_close with missing data."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
@@ -22,14 +23,17 @@ def test_returns_detail_json_value_when_no_stock_legs():
     assert OptionsBacktestEngine._entry_underlying_close(position) == 200.50
 
 
-def test_returns_zero_with_warning_when_missing():
+def test_returns_average_strike_when_missing():
     position = MagicMock()
     position.stock_legs = []
-    position.option_legs = [MagicMock()]
+    position.option_legs = [
+        SimpleNamespace(strike_price=95.0),
+        SimpleNamespace(strike_price=105.0),
+    ]
     position.detail_json = {}
     position.display_ticker = "TEST"
     result = OptionsBacktestEngine._entry_underlying_close(position)
-    assert result == 0.0
+    assert result == 100.0
 
 
 def test_returns_zero_for_none_value():

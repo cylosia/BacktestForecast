@@ -1,4 +1,4 @@
-"""Unit tests for indicator calculations with known-good expected outputs."""
+﻿"""Unit tests for indicator calculations with known-good expected outputs."""
 from __future__ import annotations
 
 import math
@@ -103,11 +103,11 @@ class TestMacd:
         macd_line, _, _ = macd(values, 12, 26, 9)
         assert macd_line[24] is None  # slow EMA not yet ready
         assert macd_line[25] is not None  # both EMAs ready
-        assert macd_line[25] > 0  # uptrend → fast > slow
+        assert macd_line[25] > 0  # uptrend -> fast > slow
 
     def test_no_none_zero_contamination(self):
         values = [100.0 + i * 0.1 for i in range(50)]
-        macd_line, signal_line, histogram = macd(values, 12, 26, 9)
+        macd_line, _signal_line, _histogram = macd(values, 12, 26, 9)
         for i in range(25, 50):
             assert macd_line[i] is not None
 
@@ -123,7 +123,7 @@ class TestBollingerBands:
 
     def test_bands_widen_with_volatility(self):
         values = [100.0] * 20 + [110.0, 90.0, 110.0, 90.0, 110.0]
-        lower, middle, upper = bollinger_bands(values, 20, 2.0)
+        lower, _middle, upper = bollinger_bands(values, 20, 2.0)
         band_width_start = upper[19] - lower[19]
         band_width_end = upper[24] - lower[24]
         assert band_width_end > band_width_start

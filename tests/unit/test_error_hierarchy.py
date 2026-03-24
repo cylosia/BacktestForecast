@@ -1,4 +1,4 @@
-"""Tests for error type hierarchy and attributes."""
+﻿"""Tests for error type hierarchy and attributes."""
 from __future__ import annotations
 
 from backtestforecast.errors import (
@@ -59,7 +59,8 @@ class TestAppError:
 
     def test_data_unavailable_error(self):
         err = DataUnavailableError("no data")
-        assert err.status_code == 422
+        assert err.status_code == 503
+        assert err.code == "data_unavailable"
 
     def test_configuration_error(self):
         err = ConfigurationError("misconfigured")

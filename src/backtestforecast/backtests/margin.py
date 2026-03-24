@@ -1,4 +1,4 @@
-"""Reg T margin calculations for options positions.
+﻿"""Reg T margin calculations for options positions.
 
 Reference: CBOE Margin Manual, FINRA Rule 4210.
 Naked option formulas use a 25% factor (conservative broker estimate,
@@ -39,10 +39,10 @@ def naked_call_margin(
     FINRA Rule 4210 minimum is 20% for equity, 15% for broad-based index.
 
     Greater of:
-      A) 25% of underlying − OTM amount + premium
+      A) 25% of underlying - OTM amount + premium
       B) 10% of underlying + premium
 
-    Returns margin per contract (× 100).
+    Returns margin per contract (x 100).
     """
     _require_non_negative(underlying_price=underlying_price, strike=strike, premium_per_share=premium_per_share)
     otm_amount = max(strike - underlying_price, 0.0)
@@ -63,10 +63,10 @@ def naked_put_margin(
     FINRA Rule 4210 minimum is 20% for equity, 15% for broad-based index.
 
     Greater of:
-      A) 25% of underlying − OTM amount + premium
+      A) 25% of underlying - OTM amount + premium
       B) 10% of strike + premium
 
-    Returns margin per contract (× 100).
+    Returns margin per contract (x 100).
     """
     _require_non_negative(underlying_price=underlying_price, strike=strike, premium_per_share=premium_per_share)
     otm_amount = max(underlying_price - strike, 0.0)
@@ -105,7 +105,7 @@ def short_straddle_strangle_margin(
     Margin = naked margin on the side with the GREATER requirement
              + premium received on the OTHER side.
 
-    Returns margin per contract (× 100).
+    Returns margin per contract (x 100).
     """
     call_naked = naked_call_margin(underlying_price, call_strike, call_premium_per_share)
     put_naked = naked_put_margin(underlying_price, put_strike, put_premium_per_share)
@@ -128,10 +128,10 @@ def credit_spread_margin(
 ) -> float:
     """Reg T margin for a credit spread (bull put or bear call).
 
-    Margin = spread width (difference between strikes) × 100.
+    Margin = spread width (difference between strikes) x 100.
     The credit received reduces capital at risk but not the margin requirement.
 
-    Returns margin per contract (× 100).
+    Returns margin per contract (x 100).
     """
     if not math.isfinite(spread_width_per_share):
         raise ValueError(f"spread_width_per_share must be finite, got {spread_width_per_share}")
@@ -149,12 +149,12 @@ def iron_condor_margin(
 ) -> float:
     """Reg T margin for an iron condor or iron butterfly.
 
-    Margin = the GREATER of the two spread widths × 100.
+    Margin = the GREATER of the two spread widths x 100.
     Only one side can be in the money at expiration.
 
     Widths may be signed; ``abs()`` is applied internally.
 
-    Returns margin per contract (× 100).
+    Returns margin per contract (x 100).
     """
     if not math.isfinite(call_spread_width_per_share) or not math.isfinite(put_spread_width_per_share):
         raise ValueError("Spread widths must be finite numbers")
@@ -169,7 +169,7 @@ def iron_condor_margin(
 def covered_call_margin(underlying_price: float) -> float:
     """Covered call: no option margin. Capital = stock cost.
 
-    Returns capital per contract unit (100 shares × price).
+    Returns capital per contract unit (100 shares x price).
     """
     _require_non_negative(underlying_price=underlying_price)
     return underlying_price * 100.0
@@ -178,7 +178,7 @@ def covered_call_margin(underlying_price: float) -> float:
 def cash_secured_put_margin(strike: float) -> float:
     """Cash-secured put: full strike collateral.
 
-    Returns capital per contract (strike × 100).
+    Returns capital per contract (strike x 100).
     """
     _require_non_negative(strike=strike)
     return strike * 100.0
@@ -208,7 +208,7 @@ def covered_strangle_margin(
 def collar_margin(underlying_price: float) -> float:
     """Collar: stock cost is the capital requirement. Options offset each other.
 
-    Returns capital per contract unit (100 shares × price).
+    Returns capital per contract unit (100 shares x price).
     """
     _require_non_negative(underlying_price=underlying_price)
     return underlying_price * 100.0
@@ -230,7 +230,7 @@ def jade_lizard_margin(
 
     Margin = greater of:
       - naked put margin
-      - call spread width × 100
+      - call spread width x 100
     Less any excess credit over the call spread width (if credit > width,
     upside risk is eliminated).
 
@@ -242,7 +242,7 @@ def jade_lizard_margin(
     # When total credit >= call spread width, upside risk is eliminated and
     # margin is just the naked put requirement. Otherwise, margin is the
     # greater of the two sides. The total credit is NOT subtracted from the
-    # overall margin — brokers require the full margin to be posted
+    # overall margin - brokers require the full margin to be posted
     # regardless of premium collected. This is broker-specific; some
     # platforms do reduce margin by the net credit on the call side only.
     if total_credit >= call_spread:

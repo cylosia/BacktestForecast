@@ -1,4 +1,4 @@
-"""CI check: classes that instantiate BacktestExecutionService must define close().
+﻿"""CI check: classes that instantiate BacktestExecutionService must define close().
 
 Scans all Python files under src/ and apps/ for classes that call
 BacktestExecutionService() and verifies they also define a close() method.

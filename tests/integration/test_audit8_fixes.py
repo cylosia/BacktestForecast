@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -165,12 +165,13 @@ def test_end_date_rejects_future_date():
             account_size=Decimal("10000"),
             risk_per_trade_pct=Decimal("5"),
             commission_per_contract=Decimal("1"),
+            entry_rules=[{"type": "rsi", "operator": "lte", "threshold": "40", "period": 14}],
         )
 
 
 def test_dte_tolerance_must_be_less_than_target_dte():
     yesterday = date.today() - timedelta(days=1)
-    with pytest.raises(PydanticValidationError, match="dte_tolerance_days must be less than target_dte"):
+    with pytest.raises(PydanticValidationError, match=r"dte_tolerance_days .* must be less than target_dte"):
         CreateBacktestRunRequest(
             symbol="AAPL",
             strategy_type="long_call",
@@ -182,6 +183,7 @@ def test_dte_tolerance_must_be_less_than_target_dte():
             account_size=Decimal("10000"),
             risk_per_trade_pct=Decimal("5"),
             commission_per_contract=Decimal("1"),
+            entry_rules=[{"type": "rsi", "operator": "lte", "threshold": "40", "period": 14}],
         )
 
 

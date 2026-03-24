@@ -1,4 +1,4 @@
-"""Test SSE slot release handles Redis failure gracefully."""
+﻿"""Test SSE slot release handles Redis failure gracefully."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -9,8 +9,9 @@ import pytest
 @pytest.mark.asyncio
 async def test_release_slot_handles_redis_error():
     """_release_sse_slot should not raise when Redis fails."""
-    from apps.api.app.routers.events import _release_sse_slot
     import uuid
+
+    from apps.api.app.routers.events import _release_sse_slot
 
     with patch("apps.api.app.routers.events._get_async_redis", new_callable=AsyncMock) as mock_redis:
         mock_pool = AsyncMock()

@@ -1,8 +1,7 @@
-"""Tests for daily recommendations cleanup task (audit items 17-19)."""
+﻿"""Tests for daily recommendations cleanup task (audit items 17-19)."""
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine
@@ -31,9 +30,9 @@ def session():
 
 def _make_pipeline_run(session: Session, *, days_ago: int) -> NightlyPipelineRun:
     run = NightlyPipelineRun(
-        trade_date=datetime.now(timezone.utc).date() - timedelta(days=days_ago),
+        trade_date=datetime.now(UTC).date() - timedelta(days=days_ago),
         status="succeeded",
-        created_at=datetime.now(timezone.utc) - timedelta(days=days_ago),
+        created_at=datetime.now(UTC) - timedelta(days=days_ago),
     )
     session.add(run)
     session.flush()
@@ -65,9 +64,10 @@ def test_old_recommendations_are_deleted(session: Session) -> None:
     session.commit()
 
     from datetime import datetime as dt
+
     from sqlalchemy import delete, select
 
-    cutoff = dt.now(timezone.utc) - timedelta(days=90)
+    cutoff = dt.now(UTC) - timedelta(days=90)
     batch_ids = list(session.scalars(
         select(DailyRecommendation.id)
         .where(DailyRecommendation.created_at < cutoff)

@@ -1,7 +1,5 @@
-"""Tests for analysis cross-user isolation (IDOR)."""
+﻿"""Tests for analysis cross-user isolation (IDOR)."""
 from __future__ import annotations
-
-from uuid import uuid4
 
 import apps.api.app.dependencies as dependencies
 from backtestforecast.auth.verification import AuthenticatedPrincipal

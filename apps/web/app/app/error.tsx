@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { reportClientError } from "@/lib/observability/report-client-error";
 
 export default function AppError({
   error,
@@ -10,7 +11,7 @@ export default function AppError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("App error boundary caught:", error);
+    reportClientError(error, { boundary: "AppError", digest: error.digest });
   }, [error]);
 
   return (

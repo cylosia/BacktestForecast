@@ -1,4 +1,4 @@
-"""Tests for billing checkout and portal session endpoints."""
+﻿"""Tests for billing checkout and portal session endpoints."""
 from __future__ import annotations
 
 from tests.integration.test_api_critical_flows import _set_user_plan

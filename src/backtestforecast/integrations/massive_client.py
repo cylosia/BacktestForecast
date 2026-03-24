@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import math
 import random
 import time
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -20,10 +20,14 @@ from backtestforecast.market_data.types import (
     OptionQuoteRecord,
     OptionSnapshotRecord,
 )
+from backtestforecast.observability.metrics import (
+    UPSTREAM_PAGINATION_FAILURES_TOTAL,
+    UPSTREAM_PAGINATION_LIMIT_EXCEEDED_TOTAL,
+)
 from backtestforecast.resilience.circuit_breaker import CircuitBreaker
 
 logger = structlog.get_logger("massive_client")
-UTC = timezone.utc
+UTC = UTC
 
 MAX_PAGINATION_PAGES = 100
 
@@ -121,6 +125,49 @@ class _MassiveClientCore:
             )
             return False
         return True
+
+    def _raise_pagination_limit_exceeded(
+        self,
+        *,
+        path: str,
+        pages_fetched: int,
+        rows_collected: int,
+    ) -> None:
+        UPSTREAM_PAGINATION_LIMIT_EXCEEDED_TOTAL.labels(provider="massive", endpoint=path).inc()
+        logger.error(
+            "massive_client.pagination_limit_exceeded",
+            path=path,
+            max_pages=MAX_PAGINATION_PAGES,
+            pages_fetched=pages_fetched,
+            rows_collected=rows_collected,
+        )
+        raise ExternalServiceError(
+            f"Massive pagination exceeded the safety limit of {MAX_PAGINATION_PAGES} pages."
+        )
+
+    def _raise_invalid_pagination_url(
+        self,
+        *,
+        path: str,
+        next_url: str,
+        pages_fetched: int,
+        rows_collected: int,
+    ) -> None:
+        UPSTREAM_PAGINATION_FAILURES_TOTAL.labels(
+            provider="massive",
+            endpoint=path,
+            reason="invalid_next_url",
+        ).inc()
+        logger.warning(
+            "massive_client.invalid_pagination_next_url",
+            endpoint=path,
+            next_url=next_url,
+            pages_fetched=pages_fetched,
+            rows_collected=rows_collected,
+        )
+        raise ExternalServiceError(
+            "Massive returned an invalid pagination continuation URL. Partial upstream data was rejected."
+        )
 
     # -- Response status handling (returns action) --------------------------
 
@@ -316,6 +363,47 @@ class _MassiveClientCore:
         return dates
 
     @staticmethod
+    def parse_ex_dividend_dates(rows: list[dict[str, Any]]) -> set[date]:
+        dates: set[date] = set()
+        for row in rows:
+            raw_date = row.get("ex_dividend_date")
+            if not isinstance(raw_date, str):
+                continue
+            try:
+                dates.add(date.fromisoformat(raw_date))
+            except ValueError:
+                logger.debug("massive_client.ex_dividend.invalid_date", raw_date=raw_date)
+        return dates
+
+    @staticmethod
+    def parse_treasury_yield_average(
+        rows: list[dict[str, Any]],
+        *,
+        field_name: str,
+    ) -> float | None:
+        values: list[float] = []
+        for row in rows:
+            raw_value = row.get(field_name)
+            if raw_value is None:
+                continue
+            try:
+                value = _parse_finite_float(raw_value, field_name)
+            except (TypeError, ValueError):
+                logger.debug("massive_client.treasury_yield_parse_skipped", row=row, field_name=field_name)
+                continue
+            if value < 0 or value > 100:
+                logger.debug(
+                    "massive_client.treasury_yield_out_of_range",
+                    field_name=field_name,
+                    value=value,
+                )
+                continue
+            values.append(value / 100.0)
+        if not values:
+            return None
+        return sum(values) / len(values)
+
+    @staticmethod
     def _pick_quote_timestamp(row: dict[str, Any]) -> int | None:
         for key in ("participant_timestamp", "sip_timestamp", "timestamp"):
             raw = row.get(key)
@@ -362,7 +450,7 @@ class MassiveClient(_MassiveClientCore):
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> "MassiveClient":
+    def __enter__(self) -> MassiveClient:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -453,26 +541,66 @@ class MassiveClient(_MassiveClientCore):
             raise last_error
         return set()
 
+    def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        rows = self._get_paginated_json(
+            "/v3/reference/dividends",
+            params={
+                "ticker": symbol,
+                "ex_dividend_date.gte": start_date.isoformat(),
+                "ex_dividend_date.lte": end_date.isoformat(),
+                "sort": "ex_dividend_date.asc",
+                "limit": 1000,
+            },
+        )
+        return self.parse_ex_dividend_dates(rows)
+
+    def get_average_treasury_yield(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        field_name: str = "yield_3_month",
+    ) -> float | None:
+        rows = self._get_paginated_json(
+            "/fed/v1/treasury-yields",
+            params={
+                "date.gte": start_date.isoformat(),
+                "date.lte": end_date.isoformat(),
+                "sort": "date.asc",
+                "limit": 50000,
+            },
+        )
+        return self.parse_treasury_yield_average(rows, field_name=field_name)
+
     # -- Transport ----------------------------------------------------------
 
     def _get_paginated_json(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         next_path: str | None = path
         next_params: dict[str, Any] | None = params.copy()
-        page = 0
+        pages_fetched = 0
         while next_path:
-            if page >= MAX_PAGINATION_PAGES:
-                break
+            if pages_fetched >= MAX_PAGINATION_PAGES:
+                self._raise_pagination_limit_exceeded(
+                    path=path,
+                    pages_fetched=pages_fetched,
+                    rows_collected=len(rows),
+                )
             payload = self._get_json(next_path, params=next_params)
             rows.extend(payload.get("results", []))
+            pages_fetched += 1
             next_url = payload.get("next_url")
             if not isinstance(next_url, str) or not next_url:
                 break
             if not self._validate_pagination_url(next_url):
-                break
+                self._raise_invalid_pagination_url(
+                    path=path,
+                    next_url=next_url,
+                    pages_fetched=pages_fetched,
+                    rows_collected=len(rows),
+                )
             next_path = next_url
             next_params = None
-            page += 1
         return rows
 
     def _request_with_retry(
@@ -562,7 +690,7 @@ class AsyncMassiveClient(_MassiveClientCore):
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def __aenter__(self) -> "MassiveClient":
+    async def __aenter__(self) -> MassiveClient:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -653,26 +781,66 @@ class AsyncMassiveClient(_MassiveClientCore):
             raise last_error
         return set()
 
+    async def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        rows = await self._get_paginated_json(
+            "/v3/reference/dividends",
+            params={
+                "ticker": symbol,
+                "ex_dividend_date.gte": start_date.isoformat(),
+                "ex_dividend_date.lte": end_date.isoformat(),
+                "sort": "ex_dividend_date.asc",
+                "limit": 1000,
+            },
+        )
+        return self.parse_ex_dividend_dates(rows)
+
+    async def get_average_treasury_yield(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        field_name: str = "yield_3_month",
+    ) -> float | None:
+        rows = await self._get_paginated_json(
+            "/fed/v1/treasury-yields",
+            params={
+                "date.gte": start_date.isoformat(),
+                "date.lte": end_date.isoformat(),
+                "sort": "date.asc",
+                "limit": 50000,
+            },
+        )
+        return self.parse_treasury_yield_average(rows, field_name=field_name)
+
     # -- Transport ----------------------------------------------------------
 
     async def _get_paginated_json(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         next_path: str | None = path
         next_params: dict[str, Any] | None = params.copy()
-        page = 0
+        pages_fetched = 0
         while next_path:
-            if page >= MAX_PAGINATION_PAGES:
-                break
+            if pages_fetched >= MAX_PAGINATION_PAGES:
+                self._raise_pagination_limit_exceeded(
+                    path=path,
+                    pages_fetched=pages_fetched,
+                    rows_collected=len(rows),
+                )
             payload = await self._get_json(next_path, params=next_params)
             rows.extend(payload.get("results", []))
+            pages_fetched += 1
             next_url = payload.get("next_url")
             if not isinstance(next_url, str) or not next_url:
                 break
             if not self._validate_pagination_url(next_url):
-                break
+                self._raise_invalid_pagination_url(
+                    path=path,
+                    next_url=next_url,
+                    pages_fetched=pages_fetched,
+                    rows_collected=len(rows),
+                )
             next_path = next_url
             next_params = None
-            page += 1
         return rows
 
     async def _request_with_retry(

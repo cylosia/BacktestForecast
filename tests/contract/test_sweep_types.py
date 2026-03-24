@@ -1,4 +1,4 @@
-"""Verify sweep schema fields are present in the response model."""
+﻿"""Verify sweep schema fields are present in the response model."""
 from __future__ import annotations
 
 from backtestforecast.schemas.sweeps import SweepJobResponse, SweepResultResponse

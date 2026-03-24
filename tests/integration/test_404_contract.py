@@ -1,11 +1,10 @@
-"""Contract tests for 404 error response shape."""
+﻿"""Contract tests for 404 error response shape."""
 from __future__ import annotations
 
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 _FAKE_ID = str(uuid.uuid4())
 

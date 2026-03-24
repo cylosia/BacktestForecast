@@ -1,4 +1,4 @@
-"""Test 74: Verify error message sanitization across response schemas.
+﻿"""Test 74: Verify error message sanitization across response schemas.
 
 BacktestRunDetailResponse, AnalysisSummaryResponse, and PipelineHistoryItemResponse
 must all sanitize error messages containing SQL, tracebacks, or file paths.
@@ -6,12 +6,9 @@ must all sanitize error messages containing SQL, tracebacks, or file paths.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from backtestforecast.schemas.common import sanitize_error_message
-
 
 _SQL_ERROR = "SELECT * FROM users WHERE id = 1; DROP TABLE users;"
 _TRACEBACK_ERROR = 'Traceback (most recent call last):\n  File "/app/main.py", line 42'
@@ -79,8 +76,8 @@ class TestBacktestRunDetailResponseSanitization:
             "commission_per_contract": "1",
             "engine_version": "options-multileg-v2",
             "data_source": "massive",
-            "created_at": datetime.now(timezone.utc),
-            "completed_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
+            "completed_at": datetime.now(UTC),
             "warnings": [],
             "error_code": "execution_failed",
             "error_message": _SQL_ERROR,
@@ -115,8 +112,8 @@ class TestBacktestRunDetailResponseSanitization:
             "commission_per_contract": "1",
             "engine_version": "options-multileg-v2",
             "data_source": "massive",
-            "created_at": datetime.now(timezone.utc),
-            "completed_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
+            "completed_at": datetime.now(UTC),
             "warnings": [],
             "error_message": _TRACEBACK_ERROR,
             "summary": {
@@ -145,7 +142,7 @@ class TestAnalysisSummaryResponseSanitization:
             "strategies_tested": 0,
             "configs_tested": 0,
             "top_results_count": 0,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
             "error_message": _SQL_ERROR,
         }
         resp = AnalysisSummaryResponse(**data)
@@ -162,7 +159,7 @@ class TestAnalysisSummaryResponseSanitization:
             "strategies_tested": 0,
             "configs_tested": 0,
             "top_results_count": 0,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
             "error_message": _FILE_PATH_LINUX,
         }
         resp = AnalysisSummaryResponse(**data)

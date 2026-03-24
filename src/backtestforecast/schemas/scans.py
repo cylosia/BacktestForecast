@@ -1,8 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-
 from typing import Any, Literal
 from uuid import UUID
 
@@ -10,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from backtestforecast.billing.entitlements import ScannerMode
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import PlanTier, RunJobStatus, sanitize_error_message
 from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
@@ -20,13 +18,21 @@ from backtestforecast.schemas.backtests import (
     TradeJsonResponse,
     validate_entry_rule_collection,
 )
+from backtestforecast.schemas.common import (
+    CursorPaginatedResponse,
+    OffsetPaginatedResponse,
+    PlanTier,
+    RunJobStatus,
+    WarningResponse,
+    sanitize_error_message,
+)
+from backtestforecast.strategy_catalog.capabilities import unsupported_scan_strategies
 from backtestforecast.version import (
     DEFAULT_ENGINE_VERSION,
     DEFAULT_RANKING_VERSION,
     ENGINE_VERSION_CHOICES,
     RANKING_VERSION_CHOICES,
 )
-
 
 ScannerJobStatus = RunJobStatus
 
@@ -45,7 +51,7 @@ class RuleSetDefinition(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_rule_set(self) -> "RuleSetDefinition":
+    def validate_rule_set(self) -> RuleSetDefinition:
         validate_entry_rule_collection(self.entry_rules)
         return self
 
@@ -104,7 +110,7 @@ class CreateScannerJobRequest(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_request(self) -> "CreateScannerJobRequest":
+    def validate_request(self) -> CreateScannerJobRequest:
         from backtestforecast.utils.dates import market_date_today
         today = market_date_today()
         if self.end_date > today:
@@ -125,6 +131,12 @@ class CreateScannerJobRequest(BaseModel):
             raise ValueError("dte_tolerance_days must be less than target_dte")
         if len({strategy.value for strategy in self.strategy_types}) != len(self.strategy_types):
             raise ValueError("strategy_types must not contain duplicates")
+        unsupported_strategies = unsupported_scan_strategies([strategy.value for strategy in self.strategy_types])
+        if unsupported_strategies:
+            joined = ", ".join(sorted(unsupported_strategies))
+            raise ValueError(
+                f"Scanner jobs do not support strategies that require user-defined structure or multi-cycle execution: {joined}"
+            )
         rule_names = [rule_set.name.lower() for rule_set in self.rule_sets]
         if len(set(rule_names)) != len(rule_names):
             raise ValueError("rule_sets must not contain duplicate names")
@@ -195,21 +207,21 @@ class ScannerRecommendationResponse(BaseModel):
     rule_set_name: str
     request_snapshot: dict[str, Any] = Field(default_factory=dict, validation_alias="request_snapshot_json")
     summary: BacktestSummaryResponse
-    warnings: list[dict[str, Any]] = Field(default_factory=list)
-    historical_performance: HistoricalPerformanceResponse
-    forecast: HistoricalAnalogForecastResponse
-    ranking_breakdown: RankingBreakdownResponse
+    warnings: list[WarningResponse] = Field(default_factory=list)
+    historical_performance: HistoricalPerformanceResponse | None = None
+    forecast: HistoricalAnalogForecastResponse | None = None
+    ranking_breakdown: RankingBreakdownResponse | None = None
     trades: list[TradeJsonResponse] = Field(default_factory=list, max_length=10000)
     equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list, max_length=10000)
     trades_truncated: bool = False
+    trade_items_omitted: int = Field(default=0, ge=0)
+    equity_curve_points_omitted: int = Field(default=0, ge=0)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
-class ScannerRecommendationListResponse(BaseModel):
+class ScannerRecommendationListResponse(OffsetPaginatedResponse):
     items: list[ScannerRecommendationResponse]
-    total: int = Field(default=0, ge=0)
-    offset: int = Field(default=0, ge=0)
     limit: int = Field(default=100, ge=1, le=200)
 
 
@@ -228,7 +240,7 @@ class ScannerJobResponse(BaseModel):
     pipeline_run_id: UUID | None = None
     ranking_version: Literal[RANKING_VERSION_CHOICES[0], RANKING_VERSION_CHOICES[1]] = DEFAULT_RANKING_VERSION
     engine_version: Literal[ENGINE_VERSION_CHOICES[0], ENGINE_VERSION_CHOICES[1]] = DEFAULT_ENGINE_VERSION
-    warnings: list[dict[str, Any]] = Field(default_factory=list, validation_alias="warnings_json")
+    warnings: list[WarningResponse] = Field(default_factory=list, validation_alias="warnings_json")
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
@@ -254,12 +266,5 @@ class ScannerJobStatusResponse(BaseModel):
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
-class ScannerJobListResponse(BaseModel):
+class ScannerJobListResponse(CursorPaginatedResponse):
     items: list[ScannerJobResponse]
-    total: int = 0
-    offset: int = 0
-    limit: int = 50
-    next_cursor: str | None = Field(
-        default=None,
-        description="Opaque cursor for keyset pagination.",
-    )

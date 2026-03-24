@@ -1,13 +1,10 @@
-"""Test that mid_price returns None for non-finite inputs instead of 0.0.
+﻿"""Test that mid_price returns None for non-finite inputs instead of 0.0.
 
 Returning 0.0 would silently corrupt downstream financial calculations.
 """
 from __future__ import annotations
 
-import math
 from datetime import date
-
-import pytest
 
 from backtestforecast.market_data.types import OptionQuoteRecord, OptionSnapshotRecord
 

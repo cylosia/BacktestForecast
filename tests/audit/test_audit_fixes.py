@@ -1,4 +1,4 @@
-"""Tests verifying key audit fixes remain in place."""
+﻿"""Tests verifying key audit fixes remain in place."""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -56,7 +56,9 @@ class TestScannerDteToleranceValidation:
 
     def test_dte_tolerance_exceeds_target_dte_rejected(self):
         from datetime import date
+
         from pydantic import ValidationError
+
         from backtestforecast.schemas.scans import CreateScannerJobRequest
         with pytest.raises(ValidationError, match="dte_tolerance_days must be less than target_dte"):
             CreateScannerJobRequest(

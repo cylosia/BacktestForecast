@@ -1,10 +1,10 @@
-"""Test 79: Verify _downsample_equity_curve reduces 501-999 point curves
-to ≤ 500 points using ceiling division.
+﻿"""Test 79: Verify _downsample_equity_curve reduces 501-999 point curves
+to â‰¤ 500 points using ceiling division.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 from backtestforecast.services.scans import ScanService
 

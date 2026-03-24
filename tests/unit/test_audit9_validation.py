@@ -1,4 +1,4 @@
-"""Validation and edge-case tests for audit round 9 fixes.
+﻿"""Validation and edge-case tests for audit round 9 fixes.
 
 Covers: date validation, export size limits, backtest window limits,
 scanner validation, feature flags, template constraints, pagination,
@@ -93,8 +93,8 @@ class TestEntitlementEnforcement:
 
     def test_pro_tier_has_csv_export_only(self):
         from backtestforecast.billing.entitlements import (
-            ExportFormat,
             FEATURE_POLICIES,
+            ExportFormat,
         )
         from backtestforecast.schemas.common import PlanTier
 
@@ -104,8 +104,8 @@ class TestEntitlementEnforcement:
 
     def test_premium_tier_has_all_exports(self):
         from backtestforecast.billing.entitlements import (
-            ExportFormat,
             FEATURE_POLICIES,
+            ExportFormat,
         )
         from backtestforecast.schemas.common import PlanTier
 
@@ -332,6 +332,5 @@ class TestConfigValidation:
             "CLERK_AUTHORIZED_PARTIES": "https://app.example.com",
             "LOG_JSON": "true",
         }
-        with patch.dict(os.environ, env, clear=False):
-            with pytest.raises((ValueError, PydanticValidationError)):
-                Settings()
+        with patch.dict(os.environ, env, clear=False), pytest.raises((ValueError, PydanticValidationError)):
+            Settings()

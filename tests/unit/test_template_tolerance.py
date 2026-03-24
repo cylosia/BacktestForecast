@@ -1,4 +1,4 @@
-"""Verify template optimistic concurrency tolerance is reasonable."""
+﻿"""Verify template optimistic concurrency tolerance is reasonable."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta

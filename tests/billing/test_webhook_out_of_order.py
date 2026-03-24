@@ -1,4 +1,4 @@
-"""Item 66: Test out-of-order webhook plan updates.
+﻿"""Item 66: Test out-of-order webhook plan updates.
 
 Verifies _apply_subscription_to_user: when a webhook with an older
 current_period_end arrives after one with a newer period_end, the older
@@ -99,7 +99,7 @@ def test_out_of_order_webhook_does_not_downgrade(db_session: Session) -> None:
     db_session.refresh(user)
 
     assert _strip_tz(user.subscription_current_period_end) == _strip_tz(datetime(2025, 4, 1, tzinfo=UTC)), (
-        "Older webhook should be ignored — period_end must remain at the newer value"
+        "Older webhook should be ignored - period_end must remain at the newer value"
     )
     assert user.plan_tier == "pro"
 

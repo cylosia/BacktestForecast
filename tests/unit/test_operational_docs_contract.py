@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from pathlib import Path
@@ -11,11 +11,8 @@ KNOWN_LIMITATIONS = REPO_ROOT / "docs" / "known-limitations.md"
 WORKFLOW_TRACE = REPO_ROOT / "docs" / "workflow-trace.md"
 RUNBOOK = REPO_ROOT / "docs" / "RUNBOOK.md"
 AUDIT_LOG = REPO_ROOT / "docs" / "audit-log.md"
-<<<<<<< codex/count-implementable-issues-in-a-session-i61zks
 DOCS_INDEX = REPO_ROOT / "docs" / "README.md"
 DOCS_CHECK_SCRIPT = REPO_ROOT / "scripts" / "check_operational_docs.py"
-=======
->>>>>>> main
 WEB_VALIDATION_CONSTANTS = REPO_ROOT / "apps" / "web" / "lib" / "validation-constants.ts"
 
 
@@ -24,12 +21,8 @@ def test_workflow_trace_is_authoritative_current_state_doc() -> None:
     lowered = text.lower()
     assert "authoritative current-state document" in lowered
     assert "**owners**" in lowered
-<<<<<<< codex/count-implementable-issues-in-a-session-i61zks
     assert "primary owner: api + worker maintainers" in lowered
     assert "backup owner: active on-call rotation" in lowered
-=======
-    assert "primary owner:" in lowered
->>>>>>> main
     assert "review cadence:" in lowered
 
 
@@ -38,17 +31,12 @@ def test_related_docs_point_to_authoritative_operational_page() -> None:
     assert workflow_name in KNOWN_LIMITATIONS.read_text(encoding="utf-8")
     assert workflow_name in RUNBOOK.read_text(encoding="utf-8")
     audit_text = AUDIT_LOG.read_text(encoding="utf-8").lower()
-<<<<<<< codex/count-implementable-issues-in-a-session-i61zks
     docs_index = DOCS_INDEX.read_text(encoding="utf-8")
     assert "historical archive" in audit_text
     assert "should not be used as the source of truth" in audit_text
     assert "Historical audit archives" in docs_index
     assert "docs/audit/" in docs_index
     assert DOCS_CHECK_SCRIPT.exists()
-=======
-    assert "historical archive" in audit_text
-    assert "should not be used as the source of truth" in audit_text
->>>>>>> main
 
 
 def test_outbox_docs_align_with_live_scheduler() -> None:
@@ -64,17 +52,14 @@ def test_outbox_docs_align_with_live_scheduler() -> None:
     assert "poll_outbox" in docs
     assert "disabled" not in docs
     assert "scaffolding only" not in docs
-    assert "commit-first gap" not in docs or "no longer evidence of a “commit-first gap”" in docs
+    assert "commit-first gap" not in docs or "no longer evidence of a -commit-first gap-" in docs
 
 
 def test_target_dte_docs_match_frontend_and_backend_validation() -> None:
     workflow_text = WORKFLOW_TRACE.read_text(encoding="utf-8").lower()
     known_text = KNOWN_LIMITATIONS.read_text(encoding="utf-8").lower()
     combined = f"{workflow_text}\n{known_text}"
-<<<<<<< codex/count-implementable-issues-in-a-session-i61zks
     assert "docs/readme.md" in combined
-=======
->>>>>>> main
     assert "target_dte >= 7" not in combined
     assert "frontend/backend schema mismatch" not in combined
 

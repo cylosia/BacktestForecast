@@ -1,4 +1,4 @@
-"""Tests for EARNINGS_IMMINENT regime detection and strategy map filtering."""
+﻿"""Tests for EARNINGS_IMMINENT regime detection and strategy map filtering."""
 from __future__ import annotations
 
 from datetime import date, timedelta

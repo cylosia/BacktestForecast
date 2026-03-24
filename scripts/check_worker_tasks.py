@@ -1,4 +1,4 @@
-"""Verify that all expected Celery tasks are registered.
+﻿"""Verify that all expected Celery tasks are registered.
 
 Imports the worker's Celery application and asserts every task name
 referenced by routers, Beat schedule, and the reaper is present in the
@@ -35,7 +35,7 @@ def main() -> int:
             print(f"  - {name}")
         return 1
 
-    print(f"OK — all {len(EXPECTED_TASKS)} expected tasks are registered.")
+    print(f"OK - all {len(EXPECTED_TASKS)} expected tasks are registered.")
     return 0
 
 

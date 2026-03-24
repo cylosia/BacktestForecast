@@ -1,4 +1,4 @@
-"""Audit-round-8 operational correctness tests.
+﻿"""Audit-round-8 operational correctness tests.
 
 Covers:
 1. Template limit raises ConfigurationError for unknown tiers
@@ -22,8 +22,6 @@ from backtestforecast.billing.entitlements import PlanTier, normalize_plan_tier
 from backtestforecast.db.base import Base
 from backtestforecast.errors import ConfigurationError
 from backtestforecast.models import BacktestRun, ExportJob, User
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 

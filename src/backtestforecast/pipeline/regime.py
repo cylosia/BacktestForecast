@@ -1,7 +1,7 @@
-"""Regime classifier for the nightly scan pipeline.
+﻿"""Regime classifier for the nightly scan pipeline.
 
 Takes daily bars for a symbol and produces a set of regime labels that
-describe the current market conditions.  No backtesting — just indicator
+describe the current market conditions.  No backtesting - just indicator
 evaluation on the most recent bar window.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from backtestforecast.indicators.calculations import (
     ema,
@@ -20,7 +20,7 @@ from backtestforecast.indicators.calculations import (
 from backtestforecast.market_data.types import DailyBar
 
 
-class Regime(str, Enum):
+class Regime(StrEnum):
     BULLISH = "bullish"
     BEARISH = "bearish"
     NEUTRAL = "neutral"
@@ -131,7 +131,7 @@ def classify_regime(
     else:
         regimes.add(Regime.NEUTRAL)
 
-    # Volatility (realized vol rank as proxy for IV — see Regime enum comment)
+    # Volatility (realized vol rank as proxy for IV - see Regime enum comment)
     if iv_rank_proxy > 60:
         regimes.add(Regime.HIGH_IV)
     elif iv_rank_proxy < 30:
@@ -152,7 +152,7 @@ def classify_regime(
     if volume_ratio > 1.5:
         regimes.add(Regime.HIGH_VOLUME)
 
-    # Earnings — flag if earnings are within 10 days ahead or 2 days behind
+    # Earnings - flag if earnings are within 10 days ahead or 2 days behind
     if earnings_dates:
         last_date = sorted_bars[-1].trade_date
         nearby = [d for d in earnings_dates if -2 <= (d - last_date).days <= 10]

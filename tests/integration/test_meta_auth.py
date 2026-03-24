@@ -1,4 +1,4 @@
-"""Test _try_authenticate returns feature flags when a valid Bearer token is provided."""
+﻿"""Test _try_authenticate returns feature flags when a valid Bearer token is provided."""
 from __future__ import annotations
 
 import pytest
@@ -37,7 +37,7 @@ def test_meta_without_auth_omits_features(client):
 
 def test_meta_with_auth_but_no_user_record_omits_features(client):
     """GET /v1/meta with a valid JWT but no pre-existing user record should
-    omit features — the meta endpoint must not create user records."""
+    omit features - the meta endpoint must not create user records."""
     response = client.get("/v1/meta", headers={"Authorization": "Bearer test-token"})
     assert response.status_code == 200
     data = response.json()

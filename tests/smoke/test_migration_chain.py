@@ -1,4 +1,4 @@
-"""Verify the Alembic migration chain has no duplicate revision IDs."""
+﻿"""Verify the Alembic migration chain has no duplicate revision IDs."""
 from __future__ import annotations
 
 import pytest

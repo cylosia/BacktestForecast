@@ -1,4 +1,4 @@
-"""Test that MassiveOptionGateway.clear_caches() does not deadlock.
+﻿"""Test that MassiveOptionGateway.clear_caches() does not deadlock.
 
 Before the fix, clear_caches() acquired self._lock (a threading.Lock),
 then called _track_remove() which also tried to acquire self._lock.
@@ -6,15 +6,13 @@ Since threading.Lock is non-reentrant, this deadlocked.
 
 After the fix, self._lock is a threading.RLock (reentrant), so the
 nested acquisition succeeds. This test verifies the fix by calling
-clear_caches() under a timeout — if it deadlocks, the test fails.
+clear_caches() under a timeout - if it deadlocks, the test fails.
 """
 from __future__ import annotations
 
 import threading
 from datetime import date
 from unittest.mock import MagicMock
-
-import pytest
 
 
 def _make_gateway():
@@ -57,7 +55,7 @@ class TestClearCachesNoDeadlock:
         t = threading.Thread(target=_run, daemon=True)
         t.start()
         assert completed.wait(timeout=2.0), (
-            "clear_caches() did not complete within 2 seconds — likely deadlocked"
+            "clear_caches() did not complete within 2 seconds - likely deadlocked"
         )
 
     def test_clear_caches_empties_all_caches(self):

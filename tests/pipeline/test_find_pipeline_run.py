@@ -1,4 +1,4 @@
-"""Test _find_pipeline_run fallback behavior."""
+﻿"""Test _find_pipeline_run fallback behavior."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -19,5 +19,5 @@ def test_find_by_run_object():
     mock_run = MagicMock()
     mock_run.id = "run-obj-id"
     session.get.return_value = "mock_run"
-    result = _find_pipeline_run(session, MagicMock, mock_run, None)
+    _find_pipeline_run(session, MagicMock, mock_run, None)
     session.get.assert_called_once()

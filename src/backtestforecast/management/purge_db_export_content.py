@@ -1,4 +1,4 @@
-"""Purge export content from DB column after migration to object storage.
+﻿"""Purge export content from DB column after migration to object storage.
 
 Queries ExportJobs where content_bytes IS NOT NULL, storage_key IS NOT NULL,
 and status = 'succeeded'. For each job, verifies content exists in storage

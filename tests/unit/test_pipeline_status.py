@@ -1,4 +1,4 @@
-"""Verify NightlyPipelineRun model allows 'cancelled' status."""
+﻿"""Verify NightlyPipelineRun model allows 'cancelled' status."""
 from __future__ import annotations
 
 import pytest

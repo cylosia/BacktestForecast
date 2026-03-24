@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
@@ -51,7 +51,12 @@ def make_quote(trade_date: date, mid: float) -> OptionQuoteRecord:
     return OptionQuoteRecord(trade_date=trade_date, bid_price=mid, ask_price=mid, participant_timestamp=None)
 
 
-def make_config(strategy_type: str) -> BacktestConfig:
+def make_config(
+    strategy_type: str,
+    *,
+    account_size: str = "10000",
+    risk_per_trade_pct: str = "5",
+) -> BacktestConfig:
     return BacktestConfig(
         symbol="AAPL",
         strategy_type=strategy_type,
@@ -60,8 +65,8 @@ def make_config(strategy_type: str) -> BacktestConfig:
         target_dte=7,
         dte_tolerance_days=7,
         max_holding_days=30,
-        account_size=Decimal("10000"),
-        risk_per_trade_pct=Decimal("5"),
+        account_size=Decimal(account_size),
+        risk_per_trade_pct=Decimal(risk_per_trade_pct),
         commission_per_contract=Decimal("0"),
         entry_rules=[],
     )
@@ -88,7 +93,7 @@ def test_short_call_is_assigned_before_ex_dividend_date() -> None:
     }
 
     result = engine.run(
-        config=make_config("calendar_spread"),
+        config=make_config("calendar_spread", account_size="200", risk_per_trade_pct="100"),
         bars=bars,
         earnings_dates=set(),
         ex_dividend_dates={date(2025, 1, 3)},
@@ -97,9 +102,10 @@ def test_short_call_is_assigned_before_ex_dividend_date() -> None:
 
     assert len(result.trades) == 1
     trade = result.trades[0]
+    assert trade.quantity == 1
     assert trade.exit_date == date(2025, 1, 2)
     assert trade.exit_reason == "early_assignment_call_ex_div"
-    assert trade.gross_pnl == Decimal("55")
+    assert trade.gross_pnl == Decimal("-100.0")
     assert trade.detail_json["assignment"] is True
     assert trade.detail_json["assignment_detail"]["assignment_trigger"] == "ex_dividend"
     assert trade.detail_json["assignment_detail"]["settlement_price"] == 12.0
@@ -126,7 +132,7 @@ def test_naked_call_is_assigned_before_ex_dividend_date() -> None:
     }
 
     result = engine.run(
-        config=make_config("naked_call"),
+        config=make_config("naked_call", account_size="3000", risk_per_trade_pct="100"),
         bars=bars,
         earnings_dates=set(),
         ex_dividend_dates={date(2025, 1, 3)},
@@ -135,6 +141,7 @@ def test_naked_call_is_assigned_before_ex_dividend_date() -> None:
 
     assert len(result.trades) == 1
     trade = result.trades[0]
+    assert trade.quantity == 1
     assert trade.exit_reason == "early_assignment_call_ex_div"
     assert trade.exit_date == date(2025, 1, 2)
     assert trade.detail_json["assignment_detail"]["assignment_trigger"] == "ex_dividend"
@@ -158,7 +165,7 @@ def test_deep_itm_short_put_is_assigned_near_expiry() -> None:
     }
 
     result = engine.run(
-        config=make_config("naked_put"),
+        config=make_config("naked_put", account_size="10000", risk_per_trade_pct="100"),
         bars=bars,
         earnings_dates=set(),
         option_gateway=AssignmentGateway(contracts=contracts, quotes=quotes),
@@ -166,6 +173,7 @@ def test_deep_itm_short_put_is_assigned_near_expiry() -> None:
 
     assert len(result.trades) == 1
     trade = result.trades[0]
+    assert trade.quantity == 1
     assert trade.exit_date == date(2025, 1, 2)
     assert trade.exit_reason == "early_assignment_put_deep_itm"
     assert trade.gross_pnl == Decimal("-880")
@@ -195,7 +203,7 @@ def test_assignment_only_marks_the_short_leg_in_mixed_position() -> None:
     }
 
     result = engine.run(
-        config=make_config("calendar_spread"),
+        config=make_config("calendar_spread", account_size="200", risk_per_trade_pct="100"),
         bars=bars,
         earnings_dates=set(),
         ex_dividend_dates={date(2025, 1, 3)},

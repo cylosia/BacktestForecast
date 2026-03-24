@@ -1,4 +1,4 @@
-"""Tests for event publishing constants and logic.
+﻿"""Tests for event publishing constants and logic.
 
 Avoids importing backtestforecast.events directly at module level to prevent
 Prometheus metric re-registration conflicts when running all unit tests.

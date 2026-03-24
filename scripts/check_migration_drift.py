@@ -1,4 +1,4 @@
-"""Detect drift between Alembic migrations and SQLAlchemy ORM models.
+﻿"""Detect drift between Alembic migrations and SQLAlchemy ORM models.
 
 Runs ``alembic upgrade head`` against the connected database, then uses
 Alembic's autogenerate comparison to find columns, indexes, or constraints
@@ -18,9 +18,9 @@ from pathlib import Path
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect
 
-import backtestforecast.models  # noqa: F401  — register all models
+import backtestforecast.models  # noqa: F401  - register all models
 from alembic import command
 from backtestforecast.config import get_settings
 from backtestforecast.db.base import Base
@@ -57,11 +57,10 @@ def _check_check_constraints(engine) -> list[str]:
         db_checks = {c["name"] for c in inspector.get_check_constraints(table.name) if c.get("name")}
         for constraint in table.constraints:
             from sqlalchemy import CheckConstraint as CC
-            if isinstance(constraint, CC) and constraint.name:
-                if constraint.name not in db_checks:
-                    issues.append(
-                        f"  {table.name}: CheckConstraint {constraint.name!r} missing from DB"
-                    )
+            if isinstance(constraint, CC) and constraint.name and constraint.name not in db_checks:
+                issues.append(
+                    f"  {table.name}: CheckConstraint {constraint.name!r} missing from DB"
+                )
     return issues
 
 
@@ -146,24 +145,24 @@ def main() -> int:
     all_issues: list[str] = []
 
     if diffs:
-        all_issues.append(f"Schema drift — {len(diffs)} difference(s):")
+        all_issues.append(f"Schema drift - {len(diffs)} difference(s):")
         for diff in diffs:
             all_issues.append(f"  {diff}")
 
     if default_issues:
-        all_issues.append(f"Server-default drift — {len(default_issues)} issue(s):")
+        all_issues.append(f"Server-default drift - {len(default_issues)} issue(s):")
         all_issues.extend(default_issues)
 
     if constraint_issues:
-        all_issues.append(f"CheckConstraint drift — {len(constraint_issues)} issue(s):")
+        all_issues.append(f"CheckConstraint drift - {len(constraint_issues)} issue(s):")
         all_issues.extend(constraint_issues)
 
     if trigger_issues:
-        all_issues.append(f"_TRIGGER_TABLES drift — {len(trigger_issues)} issue(s):")
+        all_issues.append(f"_TRIGGER_TABLES drift - {len(trigger_issues)} issue(s):")
         all_issues.extend(trigger_issues)
 
     if not all_issues:
-        print("OK — no migration drift detected (schema, defaults, constraints, and triggers all match).")
+        print("OK - no migration drift detected (schema, defaults, constraints, and triggers all match).")
         return 0
 
     print("DRIFT DETECTED:")

@@ -1,4 +1,4 @@
-"""Fix 80: ExportService.create_export raises AssertionError in production.
+﻿"""Fix 80: ExportService.create_export refuses non-test environments.
 
 Tests that the synchronous create_export method refuses to run when
 app_env is 'production' or 'staging'.
@@ -21,8 +21,8 @@ class TestExportProductionGuard:
         assert "production" in source, (
             "create_export must check for 'production' app_env"
         )
-        assert "assert" in source or "AssertionError" in source, (
-            "create_export must use an assertion to block production usage"
+        assert "RuntimeError" in source, (
+            "create_export must raise RuntimeError to block production usage"
         )
 
     def test_create_export_asserts_non_staging(self):
@@ -30,11 +30,11 @@ class TestExportProductionGuard:
         from backtestforecast.services.exports import ExportService
 
         source = inspect.getsource(ExportService.create_export)
-        assert "staging" in source, (
-            "create_export must check for 'staging' app_env"
+        assert '("test", "development")' in source, (
+            "create_export must only allow test/development environments"
         )
 
-    def test_create_export_raises_assertion_error_in_production(self, monkeypatch):
+    def test_create_export_raises_runtime_error_in_production(self, monkeypatch):
         """Calling create_export with app_env='production' must raise."""
         from unittest.mock import MagicMock
 
@@ -64,10 +64,10 @@ class TestExportProductionGuard:
         mock_user = MagicMock()
         mock_payload = MagicMock()
 
-        with pytest.raises(AssertionError, match="production"):
+        with pytest.raises(RuntimeError, match="production"):
             service.create_export(mock_user, mock_payload)
 
-    def test_create_export_raises_assertion_error_in_staging(self, monkeypatch):
+    def test_create_export_raises_runtime_error_in_staging(self, monkeypatch):
         """Calling create_export with app_env='staging' must also raise."""
         from unittest.mock import MagicMock
 
@@ -95,5 +95,5 @@ class TestExportProductionGuard:
         mock_user = MagicMock()
         mock_payload = MagicMock()
 
-        with pytest.raises(AssertionError, match="production"):
+        with pytest.raises(RuntimeError, match="production"):
             service.create_export(mock_user, mock_payload)

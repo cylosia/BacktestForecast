@@ -1,12 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import ExportFormat
-from backtestforecast.schemas.common import JobStatus, sanitize_error_message
+from backtestforecast.schemas.common import CursorPaginatedResponse, JobStatus, sanitize_error_message
 
 
 class CreateExportRequest(BaseModel):
@@ -43,13 +44,11 @@ class ExportJobResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     expires_at: datetime | None = None
+    risk_free_rate: Decimal | None = None
+    risk_free_rate_source: str | None = None
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
-class ExportJobListResponse(BaseModel):
+class ExportJobListResponse(CursorPaginatedResponse):
     items: list[ExportJobResponse]
-    total: int = 0
-    offset: int = 0
-    limit: int = 50
-    next_cursor: str | None = None

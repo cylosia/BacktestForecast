@@ -1,4 +1,4 @@
-"""Test that GDPR data export correctly serializes nullable fields.
+﻿"""Test that GDPR data export correctly serializes nullable fields.
 
 Regression test for the bug where str(None) produced the string "None"
 instead of JSON null for nullable fields like total_net_pnl and
@@ -29,7 +29,6 @@ def test_conditional_str_preserves_value():
 
 def test_gdpr_export_backtest_serialization():
     """Simulate the GDPR export serialization for a backtest with nullable fields."""
-    from decimal import Decimal
     from unittest.mock import MagicMock
 
     run = MagicMock()

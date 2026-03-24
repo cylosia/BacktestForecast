@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import time
@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import Response
@@ -155,10 +156,7 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
                      "causing opaque CORS errors. Add them to API_ALLOWED_HOSTS_RAW.",
             )
 
-    register_invalidation_callback(reset_trusted_networks)
-    register_invalidation_callback(reset_token_verifier)
-
-    register_invalidation_callback(_invalidate_dlq_redis)
+    _register_startup_invalidation_callbacks()
 
     logger.info(
         "startup.config_reload_surfaces",
@@ -210,13 +208,9 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 
     global _dlq_redis
     with _dlq_redis_lock:
-        if _dlq_redis is not None:
-            try:
-                _dlq_redis.close()
-                _dlq_redis = None
-                logger.info("lifespan.dlq_redis_closed")
-            except Exception:
-                logger.warning("lifespan.dlq_redis_close_failed", exc_info=True)
+        old_redis = _dlq_redis
+        _dlq_redis = None
+    _close_dlq_redis_client(old_redis, log_event="lifespan.dlq_redis_closed")
 
     from backtestforecast.db.session import _get_engine
 
@@ -232,7 +226,7 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title=_startup_settings.app_name,
     version=get_public_version(),
-    description="BacktestForecast API — options backtesting, scanning, forecasting, and portfolio analysis.",
+    description="BacktestForecast API - options backtesting, scanning, forecasting, and portfolio analysis.",
     openapi_url="/openapi.json" if _startup_settings.app_env in ("development", "test") else None,
     docs_url="/docs" if _startup_settings.app_env in ("development", "test") else None,
     redoc_url="/redoc" if _startup_settings.app_env in ("development", "test") else None,
@@ -300,7 +294,10 @@ def _custom_openapi():
             responses = operation.setdefault("responses", {})
             responses.setdefault("401", {"description": "Authentication required or session expired.", **_error_content})
             responses.setdefault("403", {"description": "Insufficient permissions or feature locked.", **_error_content})
-            responses["422"] = {"description": "Validation error — request payload did not match the expected schema.", **_error_content}
+            responses["422"] = {
+                "description": "Validation error - request payload did not match the expected schema.",
+                **_error_content,
+            }
             responses.setdefault("429", {"description": "Rate limit exceeded. See Retry-After header.", **_error_content})
             responses.setdefault("500", {"description": "Unexpected server error.", **_error_content})
             if method in ("get", "delete"):
@@ -361,13 +358,13 @@ class _CancelledErrorMiddleware:
 
 
 # Middleware execution order (outermost to innermost):
-# 1. PrometheusMiddleware — records request metrics (including 499s)
-# 2. _CancelledErrorMiddleware — converts CancelledError to 499
-# 3. RequestContextMiddleware — binds request_id to structlog context
-# 4. DynamicTrustedHostMiddleware — rejects requests with invalid Host headers
-# 5. DynamicCORSMiddleware — handles cross-origin preflight and response headers
-# 6. RequestBodyLimitMiddleware — enforces max request body size
-# 7. ApiSecurityHeadersMiddleware — adds security response headers
+# 1. PrometheusMiddleware - records request metrics (including 499s)
+# 2. _CancelledErrorMiddleware - converts CancelledError to 499
+# 3. RequestContextMiddleware - binds request_id to structlog context
+# 4. DynamicTrustedHostMiddleware - rejects requests with invalid Host headers
+# 5. DynamicCORSMiddleware - handles cross-origin preflight and response headers
+# 6. RequestBodyLimitMiddleware - enforces max request body size
+# 7. ApiSecurityHeadersMiddleware - adds security response headers
 #
 # Starlette builds middleware LIFO: the last add_middleware call is outermost.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
@@ -594,6 +591,29 @@ def prometheus_metrics(request: Request) -> Response:
 
 _dlq_redis: Redis | None = None
 _dlq_redis_lock = __import__("threading").Lock()
+_startup_invalidation_callbacks_registered = False
+_startup_invalidation_callbacks_lock = __import__("threading").Lock()
+
+
+def _register_startup_invalidation_callbacks() -> None:
+    global _startup_invalidation_callbacks_registered
+    with _startup_invalidation_callbacks_lock:
+        if _startup_invalidation_callbacks_registered:
+            return
+        register_invalidation_callback(reset_trusted_networks)
+        register_invalidation_callback(reset_token_verifier)
+        register_invalidation_callback(_invalidate_dlq_redis)
+        _startup_invalidation_callbacks_registered = True
+
+
+def _close_dlq_redis_client(redis_client: Redis | None, *, log_event: str) -> None:
+    if redis_client is None:
+        return
+    try:
+        redis_client.close()
+        logger.info(log_event)
+    except Exception:
+        logger.warning(f"{log_event}_failed", exc_info=True)
 
 
 def _get_dlq_redis():
@@ -612,8 +632,34 @@ def _get_dlq_redis():
 
 def _invalidate_dlq_redis() -> None:
     global _dlq_redis
+    old_redis: Redis | None
     with _dlq_redis_lock:
+        old_redis = _dlq_redis
         _dlq_redis = None
+    _close_dlq_redis_client(old_redis, log_event="settings_invalidation.dlq_redis_closed")
+
+
+def _require_admin_token(request: Request, *, rate_limit_bucket: str) -> JSONResponse | None:
+    ip_address = _extract_client_ip(request)
+    get_rate_limiter().check(bucket=rate_limit_bucket, actor_key=ip_address or "unknown", limit=30, window_seconds=60)
+    import hmac as _hmac
+
+    auth = request.headers.get("Authorization", "")
+    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    settings = get_settings()
+    expected_token = settings.admin_token or settings.metrics_token
+    if not expected_token or not token or not _hmac.compare_digest(token, expected_token):
+        return JSONResponse(status_code=403, content={"error": {"code": "forbidden", "message": "Forbidden"}})
+    return None
+
+
+class _AdminRemediationRequest(BaseModel):
+    action: str = Field(max_length=64)
+    job_type: str | None = Field(default=None, max_length=32)
+    job_id: str | None = Field(default=None, max_length=64)
+    subscription_id: str | None = Field(default=None, max_length=128)
+    customer_id: str | None = Field(default=None, max_length=128)
+    user_id: str | None = Field(default=None, max_length=64)
 
 
 @app.get("/admin/dlq", include_in_schema=False)
@@ -623,16 +669,10 @@ def dlq_status(request: Request) -> Response:
     Requires the admin token (falls back to metrics token if admin_token is not set).
     """
     ip_address = _extract_client_ip(request)
-    get_rate_limiter().check(bucket="admin_dlq", actor_key=ip_address or "unknown", limit=30, window_seconds=60)
-    import hmac as _hmac
-
-    auth = request.headers.get("Authorization", "")
-    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-    _dlq_settings = get_settings()
-    expected_token = _dlq_settings.admin_token or _dlq_settings.metrics_token
-    if not expected_token or not token or not _hmac.compare_digest(token, expected_token):
+    auth_failure = _require_admin_token(request, rate_limit_bucket="admin_dlq")
+    if auth_failure is not None:
         logger.warning("admin.dlq_auth_failed", ip=ip_address)
-        return JSONResponse(status_code=403, content={"error": {"code": "forbidden", "message": "Forbidden"}})
+        return auth_failure
     logger.info("admin.dlq_accessed", ip=ip_address)
     try:
         import json
@@ -690,8 +730,8 @@ def dlq_status(request: Request) -> Response:
                 recent.append(item)
             except (ValueError, TypeError, UnicodeDecodeError):
                 recent.append({"raw": "[binary data]"})
-        from backtestforecast.services.dispatch_recovery import get_queue_diagnostics
         from backtestforecast.db.session import create_session as _create_session
+        from backtestforecast.services.dispatch_recovery import get_queue_diagnostics
 
         queue_diagnostics: dict[str, object]
         try:
@@ -705,6 +745,112 @@ def dlq_status(request: Request) -> Response:
     except Exception:
         logger.exception("admin.dlq_unavailable")
         return JSONResponse(status_code=503, content={"error": {"code": "dlq_unavailable", "message": "Dead-letter queue is currently unavailable."}})
+
+
+@app.post("/admin/remediation", include_in_schema=False)
+def admin_remediation(request: Request, payload: _AdminRemediationRequest) -> Response:
+    ip_address = _extract_client_ip(request)
+    auth_failure = _require_admin_token(request, rate_limit_bucket="admin_remediation")
+    if auth_failure is not None:
+        logger.warning("admin.remediation_auth_failed", ip=ip_address)
+        return auth_failure
+
+    try:
+        from uuid import UUID
+
+        from apps.api.app.routers.account import _dispatch_stripe_cleanup_retry
+        from backtestforecast.db.session import create_session as _create_session
+        from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis
+        from backtestforecast.services.audit import AuditService
+        from backtestforecast.services.job_cancellation import (
+            mark_job_cancelled,
+            publish_cancellation_event,
+            revoke_celery_task,
+        )
+
+        if payload.action == "cancel_job":
+            model_map = {
+                "backtest": (BacktestRun, "backtest"),
+                "export": (ExportJob, "export"),
+                "scan": (ScannerJob, "scan"),
+                "sweep": (SweepJob, "sweep"),
+                "analysis": (SymbolAnalysis, "analysis"),
+            }
+            if payload.job_type not in model_map or not payload.job_id:
+                return JSONResponse(
+                    status_code=422,
+                    content={"error": {"code": "invalid_request", "message": "cancel_job requires a supported job_type and job_id."}},
+                )
+            model_cls, job_type = model_map[payload.job_type]
+            with _create_session() as session:
+                job = session.get(model_cls, UUID(payload.job_id))
+                if job is None:
+                    return JSONResponse(status_code=404, content={"error": {"code": "not_found", "message": "Job not found."}})
+                if getattr(job, "status", None) not in ("queued", "running"):
+                    return JSONResponse(
+                        status_code=409,
+                        content={"error": {"code": "conflict", "message": "Only queued or running jobs can be cancelled."}},
+                    )
+                task_id = mark_job_cancelled(job, error_code="cancelled_by_support", error_message="Cancelled by support remediation.")
+                AuditService(session).record_always(
+                    event_type="support.remediation_cancelled_job",
+                    subject_type=model_cls.__name__.lower(),
+                    subject_id=job.id,
+                    user_id=None,
+                    ip_address=ip_address,
+                    metadata={"job_type": job_type, "reason": "support_remediation"},
+                )
+                session.commit()
+                revoke_celery_task(task_id, job_type=job_type, job_id=job.id)
+                publish_cancellation_event(job_type=job_type, job_id=job.id, error_code="cancelled_by_support")
+                return JSONResponse(
+                    content={
+                        "action": "cancel_job",
+                        "job_type": job_type,
+                        "job_id": str(job.id),
+                        "status": job.status,
+                    }
+                )
+
+        if payload.action == "dispatch_stripe_cleanup":
+            if not payload.user_id:
+                return JSONResponse(
+                    status_code=422,
+                    content={"error": {"code": "invalid_request", "message": "dispatch_stripe_cleanup requires user_id."}},
+                )
+            user_id = UUID(payload.user_id)
+            _dispatch_stripe_cleanup_retry(payload.subscription_id, payload.customer_id, user_id, "support_manual_dispatch")
+            with _create_session() as session:
+                AuditService(session).record_always(
+                    event_type="support.remediation_dispatched_stripe_cleanup",
+                    subject_type="user",
+                    subject_id=user_id,
+                    user_id=None,
+                    ip_address=ip_address,
+                    metadata={
+                        "subscription_id_present": payload.subscription_id is not None,
+                        "customer_id_present": payload.customer_id is not None,
+                    },
+                )
+                session.commit()
+            return JSONResponse(
+                content={
+                    "action": "dispatch_stripe_cleanup",
+                    "user_id": str(user_id),
+                    "queued": True,
+                }
+            )
+
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "invalid_request", "message": "Unsupported remediation action."}},
+        )
+    except Exception:
+        logger.exception("admin.remediation_failed", action=payload.action, ip=ip_address)
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"code": "internal_error", "message": "Admin remediation failed."}},
+        )
 
 
 @app.get("/")

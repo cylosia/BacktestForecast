@@ -1,7 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
+
+from urllib.parse import urljoin, urlparse
 
 import structlog
-from urllib.parse import urljoin, urlparse
 
 from backtestforecast.errors import AppValidationError
 

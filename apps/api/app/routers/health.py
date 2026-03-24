@@ -11,7 +11,7 @@ from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.db.session import ping_database
 from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
 from backtestforecast.services.dispatch_recovery import get_queue_diagnostics
-from backtestforecast.version import API_HEALTH_READY_PATH, API_SERVICE_NAME, get_public_version
+from backtestforecast.version import API_SERVICE_NAME, get_public_version
 
 router = APIRouter(tags=["health"])
 

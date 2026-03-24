@@ -1,1 +1,1 @@
-"""Scanner ranking, orchestration, and persistence helpers."""
+﻿"""Scanner ranking, orchestration, and persistence helpers."""

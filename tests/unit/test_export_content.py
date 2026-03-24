@@ -1,4 +1,4 @@
-"""Unit tests for export content generation.
+﻿"""Unit tests for export content generation.
 
 Verifies CSV column headers, trade field presence, and formula sanitization.
 The sanitization logic lives in ExportService._sanitize_csv_cell (a static method).

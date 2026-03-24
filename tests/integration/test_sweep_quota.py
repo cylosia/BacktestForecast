@@ -1,7 +1,5 @@
-"""Integration tests for sweep quota enforcement."""
+﻿"""Integration tests for sweep quota enforcement."""
 from __future__ import annotations
-
-import pytest
 
 from backtestforecast.models import User
 

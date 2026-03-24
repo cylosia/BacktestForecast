@@ -1,4 +1,4 @@
-"""Tests for custom SQLAlchemy types."""
+﻿"""Tests for custom SQLAlchemy types."""
 from __future__ import annotations
 
 import uuid

@@ -1,4 +1,4 @@
-"""Verify sweep service can create internal backtest requests with empty entry_rules.
+﻿"""Verify sweep service can create internal backtest requests with empty entry_rules.
 
 This guards against the regression where min_length=1 on CreateBacktestRunRequest
 broke all sweeps. The schema must allow empty entry_rules for internal use.

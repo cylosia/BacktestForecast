@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 
 def format_utc_schedule_label(hour: int, minute: int) -> str:

@@ -1,4 +1,4 @@
-"""Comprehensive tests covering ALL audit findings across categories.
+﻿"""Comprehensive tests covering ALL audit findings across categories.
 
 Testing Gaps covered:
   TG-1: Backtest success-path race with reaper
@@ -6,7 +6,7 @@ Testing Gaps covered:
   TG-3: SIGTERM collateral damage (terminate flag)
   TG-4: completed_at consistency across ALL failure modes in ALL tasks
   TG-5: _iv_cache memory growth / eviction
-  TG-6: _track_add negative → counter drift
+  TG-6: _track_add negative -> counter drift
   TG-7: Account deletion + concurrent worker commit
   TG-8: Webhook double-delivery during rollback
 
@@ -45,8 +45,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
-# ── TG-1 / CF-1 / QW-1: Backtest success-path race guard ──────────────
+# â"€â"€ TG-1 / CF-1 / QW-1: Backtest success-path race guard â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestBacktestSuccessRaceGuard:
     def test_success_path_uses_conditional_update(self):
@@ -60,7 +59,7 @@ class TestBacktestSuccessRaceGuard:
         assert "success_overwrite_prevented" in src
 
 
-# ── TG-2 / CF-2 / QW-4: Billing cancel split-brain ────────────────────
+# â"€â"€ TG-2 / CF-2 / QW-4: Billing cancel split-brain â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestBillingCancelFlush:
     def test_flush_before_sse_publish(self):
@@ -77,7 +76,7 @@ class TestBillingCancelFlush:
         assert ".returning(" in src
 
 
-# ── TG-3 / CF-3 / SF-2 / QW-3: terminate=False ────────────────────────
+# â"€â"€ TG-3 / CF-3 / SF-2 / QW-3: terminate=False â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestBillingTerminateFalse:
     def test_no_terminate_true(self):
@@ -92,7 +91,7 @@ class TestBillingTerminateFalse:
         assert "SIGTERM" not in src
 
 
-# ── TG-4 / CF-6 / QW-2: completed_at on ALL AppError paths ────────────
+# â"€â"€ TG-4 / CF-6 / QW-2: completed_at on ALL AppError paths â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestCompletedAtConsistency:
     """Every task's AppError handler must set completed_at."""
@@ -134,7 +133,7 @@ class TestCompletedAtConsistency:
         assert "completed_at" in block
 
 
-# ── CF-4 / QW-7: updated_at in all bulk UPDATEs ───────────────────────
+# â"€â"€ CF-4 / QW-7: updated_at in all bulk UPDATEs â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestUpdatedAtInBulkUpdates:
     def test_billing_cancel_has_updated_at(self):
@@ -167,7 +166,7 @@ class TestUpdatedAtInBulkUpdates:
         assert "updated_at" in src
 
 
-# ── TG-5 / CF-5 / PF-5 / QW-5: _iv_cache bounded ─────────────────────
+# â"€â"€ TG-5 / CF-5 / PF-5 / QW-5: _iv_cache bounded â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestIvCacheBounded:
     def test_iv_cache_is_ordered_dict(self):
@@ -199,7 +198,7 @@ class TestIvCacheBounded:
         assert "len(self._iv_cache)" in src
 
 
-# ── TG-6 / QW-6: _track_add negative guard ────────────────────────────
+# â"€â"€ TG-6 / QW-6: _track_add negative guard â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestTrackAddNegativeGuard:
     def test_track_add_guards_negative(self):
@@ -223,7 +222,7 @@ class TestTrackAddNegativeGuard:
                 svc._global_cache_entries = old_val
 
 
-# ── CF-15: AppError visible to Celery monitoring ───────────────────────
+# â"€â"€ CF-15: AppError visible to Celery monitoring â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestAppErrorReRaised:
     """AppError on the backtest task re-raises via execute_run_by_id."""
@@ -240,7 +239,7 @@ class TestAppErrorReRaised:
         assert "raise" in block, "AppError must be re-raised"
 
 
-# ── CF-17: OutboxMessage documentation ─────────────────────────────────
+# â"€â"€ CF-17: OutboxMessage documentation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestOutboxMessageDocumented:
     def test_outbox_message_has_warning_docstring(self):
@@ -249,7 +248,7 @@ class TestOutboxMessageDocumented:
         assert "Infrastructure" in OutboxMessage.__doc__ or "STATUS" in OutboxMessage.__doc__
 
 
-# ── PF-6: DailyRecommendation count uses estimate ─────────────────────
+# â"€â"€ PF-6: DailyRecommendation count uses estimate â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestDailyRecCountEstimate:
     def test_uses_pg_class_estimate(self):
@@ -258,7 +257,7 @@ class TestDailyRecCountEstimate:
         assert "pg_class" in src or "reltuples" in src
 
 
-# ── Reaper per-model sessions ──────────────────────────────────────────
+# â"€â"€ Reaper per-model sessions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestReaperPerModelSessions:
     def test_multiple_session_opens(self):
@@ -268,7 +267,7 @@ class TestReaperPerModelSessions:
         assert session_opens >= 5, f"Expected >= 5 session opens, got {session_opens}"
 
 
-# ── Thundering herd prevention ─────────────────────────────────────────
+# â"€â"€ Thundering herd prevention â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestThunderingHerd:
     def test_double_checked_locking(self):
@@ -278,7 +277,7 @@ class TestThunderingHerd:
         assert lock_count >= 3, f"Need >= 3 lock acquisitions, got {lock_count}"
 
 
-# ── Export size pre-check ──────────────────────────────────────────────
+# â"€â"€ Export size pre-check â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class TestExportSizePreCheck:
     def test_csv_builder_has_size_estimation(self):

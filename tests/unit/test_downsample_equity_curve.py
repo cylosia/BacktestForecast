@@ -1,4 +1,4 @@
-"""Test that downsample_equity_curve uses a single pass and preserves max drawdown.
+﻿"""Test that downsample_equity_curve uses a single pass and preserves max drawdown.
 
 Regression test for the performance issue where the max drawdown index
 was found in a separate O(n) scan before the main sampling loop.

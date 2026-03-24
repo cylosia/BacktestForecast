@@ -1,24 +1,33 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import random
-from typing import TYPE_CHECKING, TypeVar
+from contextlib import suppress
+from datetime import UTC
+from random import SystemRandom
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
-
-_ModelT = TypeVar("_ModelT")  # Used by _find_pipeline_run for type-safe model lookups
 
 if TYPE_CHECKING:
     from datetime import date
 
     from sqlalchemy.orm import Session
 
+    from backtestforecast.models import OutboxMessage
+
 import structlog
 from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 
 from apps.worker.app.celery_app import celery_app
-from backtestforecast.db.session import create_worker_session
+from apps.worker.app.task_base import BaseTaskWithDLQ, _get_dlq_redis  # noqa: F401
+from apps.worker.app.task_helpers import close_owned_resource as _close_owned_resource
+from apps.worker.app.task_helpers import commit_then_publish as _commit_then_publish
 from backtestforecast.billing.entitlements import resolve_feature_policy
+from backtestforecast.db.session import create_worker_session
 from backtestforecast.errors import AppError, ExternalServiceError
 from backtestforecast.events import _VALID_TARGET_STATUSES, publish_job_status
+from backtestforecast.models import BacktestRun, SymbolAnalysis, User
+from backtestforecast.models import ExportJob as ExportJobModel
+from backtestforecast.models import ScannerJob as ScannerJobModel
+from backtestforecast.models import SweepJob as SweepJobModel
 from backtestforecast.observability.metrics import (
     ANALYSIS_JOBS_TOTAL,
     BACKTEST_RUNS_TOTAL,
@@ -31,14 +40,6 @@ from backtestforecast.observability.metrics import (
     SCAN_JOBS_TOTAL,
     SWEEP_JOBS_TOTAL,
 )
-from backtestforecast.models import (
-    BacktestRun,
-    ExportJob as ExportJobModel,
-    ScannerJob as ScannerJobModel,
-    SweepJob as SweepJobModel,
-    SymbolAnalysis,
-    User,
-)
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.dispatch_recovery import DISPATCH_SLA, repair_stranded_jobs
 from backtestforecast.services.exports import ExportService
@@ -46,10 +47,7 @@ from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("worker.tasks")
-
-
-from apps.worker.app.task_helpers import commit_then_publish as _commit_then_publish
-from apps.worker.app.task_base import BaseTaskWithDLQ, _get_dlq_redis  # noqa: F401
+_retry_rng = SystemRandom()
 
 
 @celery_app.task(name="maintenance.ping", ignore_result=True)
@@ -61,14 +59,33 @@ def ping() -> dict[str, str]:
     }
 
 
-def _find_pipeline_run(
+def _compute_retry_delay(base_delay_seconds: int, retries: int) -> int:
+    return int(base_delay_seconds * (retries + 1) * _retry_rng.uniform(0.8, 1.2))
+
+
+def _publish_job_status_safe(
+    target: str,
+    obj_id: UUID,
+    status: str,
+    *,
+    metadata: dict[str, object] | None = None,
+    log_event: str,
+    **log_fields: object,
+) -> None:
+    try:
+        publish_job_status(target, obj_id, status, metadata=metadata)
+    except Exception:
+        logger.warning(log_event, exc_info=True, **log_fields)
+
+
+def _find_pipeline_run[ModelT](
     session: Session,
-    model_cls: type[_ModelT],
-    run: _ModelT | None,
+    model_cls: type[ModelT],
+    run: ModelT | None,
     trade_date: date,
     *,
     run_id: UUID | None = None,
-) -> _ModelT | None:
+) -> ModelT | None:
     """Return the pipeline run object for failure marking.
 
     When *run_id* is provided we look up by exact ID (preferred).
@@ -80,9 +97,7 @@ def _find_pipeline_run(
     effective_id = run_id or (run.id if run is not None else None)
     if effective_id is not None:
         return session.get(model_cls, effective_id)
-    from sqlalchemy import select, desc
-
-    from sqlalchemy import func
+    from sqlalchemy import desc, func, select
 
     running_count = session.scalar(
         select(func.count()).select_from(model_cls).where(
@@ -103,7 +118,7 @@ def _find_pipeline_run(
             "pipeline.find_run_ambiguous",
             trade_date=str(trade_date),
             running_count=running_count,
-            msg="Multiple running pipeline runs for this date — refusing to guess.",
+            msg="Multiple running pipeline runs for this date - refusing to guess.",
         )
         return None
     stmt = (
@@ -127,14 +142,13 @@ def nightly_scan_pipeline(
     if symbols is not None and len(symbols) > 500:
         raise ValueError(f"symbols list too large ({len(symbols)}); maximum is 500")
 
-    from datetime import date, datetime, timezone
-    UTC = timezone.utc
+    from datetime import date, datetime
 
     from backtestforecast.config import get_settings
-    from backtestforecast.models import NightlyPipelineRun
     from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
     from backtestforecast.integrations.massive_client import MassiveClient
     from backtestforecast.market_data.service import MarketDataService
+    from backtestforecast.models import NightlyPipelineRun
     from backtestforecast.pipeline.adapters import (
         PipelineBacktestExecutor,
         PipelineForecaster,
@@ -165,7 +179,7 @@ def nightly_scan_pipeline(
                         symbols = parsed[:500]
                         logger.info("pipeline.symbols_from_redis", count=len(symbols))
             except Exception:
-                pass
+                logger.debug("pipeline.symbols_from_redis_failed", exc_info=True)
         if symbols is None:
             symbols = settings.pipeline_default_symbols
 
@@ -240,10 +254,8 @@ def nightly_scan_pipeline(
                 except Exception as exc:
                     session.rollback()
                     logger.exception("pipeline.task_failed", trade_date=str(trade_date))
-                    try:
+                    with suppress(Exception):
                         lock.release()
-                    except Exception:
-                        pass
                     try:
                         raise self.retry(exc=exc, countdown=300, kwargs={
                             "symbols": symbols,
@@ -273,40 +285,28 @@ def nightly_scan_pipeline(
                     "duration_seconds": (float(run.duration_seconds) if run.duration_seconds else 0),
                 }
         finally:
-            try:
+            with suppress(Exception):
                 lock.release()
-            except Exception:
-                pass
-            try:
+            with suppress(Exception):
                 redis_client.close()
-            except Exception:
-                pass
     finally:
-        try:
-            shared_mds.close()
-        except Exception:
-            logger.exception("shared_mds.close_failed")
-        try:
-            executor.close()
-        except Exception:
-            logger.exception("executor.close_failed")
-        try:
-            client.close()
-        except Exception:
-            logger.exception("client.close_failed")
+        _close_owned_resource(shared_mds, label="nightly_scan.market_data_service")
+        _close_owned_resource(shared_exec, label="nightly_scan.execution_service")
+        _close_owned_resource(executor, label="nightly_scan.executor")
+        _close_owned_resource(client, label="nightly_scan.massive_client")
 
 
 _TERMINAL_STATUSES = _VALID_TARGET_STATUSES | frozenset({"expired"})
 
 
-def _update_heartbeat(session: "Session", model_cls: type, obj_id: UUID) -> None:
+def _update_heartbeat(session: Session, model_cls: type, obj_id: UUID) -> None:
     """Best-effort heartbeat update for long-running tasks.
 
     Uses a savepoint to avoid committing unrelated dirty ORM state from
     the caller's transaction.
     """
-    from datetime import datetime, timezone
-    UTC = timezone.utc
+    from datetime import datetime
+
     from sqlalchemy import update
     nested = None
     try:
@@ -319,13 +319,11 @@ def _update_heartbeat(session: "Session", model_cls: type, obj_id: UUID) -> None
         nested.commit()
     except Exception:
         if nested is not None:
-            try:
+            with suppress(Exception):
                 nested.rollback()
-            except Exception:
-                pass
 
 
-def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, expected_task_id: str | None) -> bool:
+def _validate_task_ownership(session: Session, model_cls: type, obj_id: UUID, expected_task_id: str | None) -> bool:
     """Return True if this Celery delivery owns the job, False if it's a duplicate.
 
     When the DB record has no ``celery_task_id`` yet (API failed to set it, or
@@ -337,7 +335,7 @@ def _validate_task_ownership(session: "Session", model_cls: type, obj_id: UUID, 
     Re-delivery after worker crash: if the stored task ID differs but the job
     is still in a non-terminal state, allow the new delivery to claim it.
     """
-    from sqlalchemy import or_, update
+    from sqlalchemy import update
 
     if expected_task_id is None:
         return True
@@ -426,8 +424,8 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 run_obj.error_message = "Your plan no longer supports this operation."
                 _commit_then_publish(session, "backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
-            from datetime import datetime, timezone
-            UTC = timezone.utc
+            from datetime import datetime
+
             from backtestforecast.repositories.backtest_runs import BacktestRunRepository
             repo = BacktestRunRepository(session)
             now = datetime.now(UTC)
@@ -452,15 +450,14 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             if isinstance(exc, ExternalServiceError):
                 session.rollback()
                 session.expire_all()
-                delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                delay = _compute_retry_delay(60, self.request.retries)
                 try:
                     raise self.retry(exc=exc, countdown=delay)
                 except self.MaxRetriesExceededError:
                     pass
             session.rollback()
             session.expire_all()
-            from datetime import datetime as _dt_app, timezone
-            UTC = timezone.utc
+            from datetime import datetime as _dt_app
             run_obj = session.get(BacktestRun, UUID(run_id))
             if run_obj is not None and run_obj.status in ("queued", "running"):
                 run_obj.status = "failed"
@@ -474,7 +471,14 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                     session.rollback()
             BACKTEST_RUNS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
-            publish_job_status("backtest", UUID(run_id), "failed", metadata={"error_code": exc.code})
+            _publish_job_status_safe(
+                "backtest",
+                UUID(run_id),
+                "failed",
+                metadata={"error_code": exc.code},
+                log_event="backtest.publish_status_failed",
+                run_id=run_id,
+            )
             return {
                 "status": "failed",
                 "run_id": run_id,
@@ -483,8 +487,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
         except SoftTimeLimitExceeded:
             session.rollback()
             session.expire_all()
-            from datetime import datetime, timezone
-            UTC = timezone.utc
+            from datetime import datetime
 
             run_obj = session.get(BacktestRun, UUID(run_id))
             if run_obj is not None and run_obj.status in ("queued", "running"):
@@ -499,9 +502,13 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                     session.rollback()
             BACKTEST_RUNS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
-            publish_job_status(
-                "backtest", UUID(run_id), "failed",
+            _publish_job_status_safe(
+                "backtest",
+                UUID(run_id),
+                "failed",
                 metadata={"error_code": "time_limit_exceeded"},
+                log_event="backtest.publish_status_failed",
+                run_id=run_id,
             )
             raise
         except Exception as exc:  # Intentional broad catch: any unexpected failure triggers
@@ -509,11 +516,10 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             session.rollback()
             session.expire_all()
             try:
-                delay = int(30 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                delay = _compute_retry_delay(30, self.request.retries)
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
-                from datetime import datetime, timezone
-                UTC = timezone.utc
+                from datetime import datetime
 
                 run_obj = session.get(BacktestRun, UUID(run_id))
                 if run_obj is not None and run_obj.status in ("queued", "running"):
@@ -528,24 +534,28 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                         session.rollback()
                 BACKTEST_RUNS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status="failed").inc()
-                publish_job_status(
-                    "backtest", UUID(run_id), "failed",
+                _publish_job_status_safe(
+                    "backtest",
+                    UUID(run_id),
+                    "failed",
                     metadata={"error_code": "max_retries_exceeded"},
+                    log_event="backtest.publish_status_failed",
+                    run_id=run_id,
                 )
                 raise
         finally:
-            try:
-                service.close()
-            except Exception:
-                logger.exception("service.close_failed")
+            _close_owned_resource(service, label="backtests.run.service")
 
         _update_heartbeat(session, BacktestRun, UUID(run_id))
         BACKTEST_RUNS_TOTAL.labels(status=run.status).inc()
         CELERY_TASKS_TOTAL.labels(task_name="backtests.run", status=run.status).inc()
-        try:
-            publish_job_status("backtest", UUID(run_id), run.status)
-        except Exception:
-            logger.warning("backtest.publish_status_failed", run_id=run_id, exc_info=True)
+        _publish_job_status_safe(
+            "backtest",
+            UUID(run_id),
+            run.status,
+            log_event="backtest.publish_status_failed",
+            run_id=run_id,
+        )
         return {
             "status": run.status,
             "run_id": run_id,
@@ -597,15 +607,14 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             if isinstance(exc, ExternalServiceError):
                 session.rollback()
                 session.expire_all()
-                delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                delay = _compute_retry_delay(60, self.request.retries)
                 try:
                     raise self.retry(exc=exc, countdown=delay)
                 except self.MaxRetriesExceededError:
                     pass
             session.rollback()
             session.expire_all()
-            from datetime import datetime as _dt_app, timezone
-            UTC = timezone.utc
+            from datetime import datetime as _dt_app
             ej_obj = session.get(ExportJobModel, UUID(export_job_id))
             if ej_obj is not None and ej_obj.status in ("queued", "running"):
                 ej_obj.status = "failed"
@@ -618,7 +627,14 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                     session.rollback()
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
             EXPORT_JOBS_TOTAL.labels(status="failed").inc()
-            publish_job_status("export", UUID(export_job_id), "failed", metadata={"error_code": exc.code})
+            _publish_job_status_safe(
+                "export",
+                UUID(export_job_id),
+                "failed",
+                metadata={"error_code": exc.code},
+                log_event="export.publish_status_failed",
+                export_job_id=export_job_id,
+            )
             return {
                 "status": "failed",
                 "export_job_id": export_job_id,
@@ -627,8 +643,7 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
         except SoftTimeLimitExceeded:
             session.rollback()
             session.expire_all()
-            from datetime import datetime, timezone
-            UTC = timezone.utc
+            from datetime import datetime
 
             export_obj = session.get(ExportJobModel, UUID(export_job_id))
             if export_obj is not None and export_obj.status in ("queued", "running"):
@@ -643,9 +658,13 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                     session.rollback()
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
             EXPORT_JOBS_TOTAL.labels(status="failed").inc()
-            publish_job_status(
-                "export", UUID(export_job_id), "failed",
+            _publish_job_status_safe(
+                "export",
+                UUID(export_job_id),
+                "failed",
                 metadata={"error_code": "time_limit_exceeded"},
+                log_event="export.publish_status_failed",
+                export_job_id=export_job_id,
             )
             raise
         except Exception as exc:  # Intentional broad catch: any unexpected export failure
@@ -653,11 +672,10 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
             session.rollback()
             session.expire_all()
             try:
-                delay = int(15 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                delay = _compute_retry_delay(15, self.request.retries)
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
-                from datetime import datetime, timezone
-                UTC = timezone.utc
+                from datetime import datetime
 
                 export_obj = session.get(ExportJobModel, UUID(export_job_id))
                 if export_obj is not None and export_obj.status in ("queued", "running"):
@@ -672,26 +690,30 @@ def generate_export(self, export_job_id: str) -> dict[str, str | int]:
                         session.rollback()
                 CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
                 EXPORT_JOBS_TOTAL.labels(status="failed").inc()
-                publish_job_status(
-                    "export", UUID(export_job_id), "failed",
+                _publish_job_status_safe(
+                    "export",
+                    UUID(export_job_id),
+                    "failed",
                     metadata={"error_code": "max_retries_exceeded"},
+                    log_event="export.publish_status_failed",
+                    export_job_id=export_job_id,
                 )
                 raise
         finally:
-            try:
-                service.close()
-            except Exception:
-                logger.exception("service.close_failed")
+            _close_owned_resource(service, label="exports.generate.service")
 
         if job.status == "succeeded":
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="succeeded").inc()
         else:
             CELERY_TASKS_TOTAL.labels(task_name="exports.generate", status="failed").inc()
         EXPORT_JOBS_TOTAL.labels(status=job.status).inc()
-        try:
-            publish_job_status("export", UUID(export_job_id), job.status)
-        except Exception:
-            logger.warning("export.publish_status_failed", export_job_id=export_job_id, exc_info=True)
+        _publish_job_status_safe(
+            "export",
+            UUID(export_job_id),
+            job.status,
+            log_event="export.publish_status_failed",
+            export_job_id=export_job_id,
+        )
         return {
             "status": job.status,
             "export_job_id": export_job_id,
@@ -746,7 +768,8 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 sa_obj.error_message = "Your plan no longer supports this operation."
                 _commit_then_publish(session, "analysis", UUID(analysis_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "analysis_id": analysis_id, "error_code": "entitlement_revoked"}
-            from sqlalchemy import func, select as sa_select
+            from sqlalchemy import func
+            from sqlalchemy import select as sa_select
             concurrent = session.scalar(
                 sa_select(func.count()).select_from(SymbolAnalysis).where(
                     SymbolAnalysis.user_id == sa_obj.user_id,
@@ -778,7 +801,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 if isinstance(exc, ExternalServiceError):
                     session.rollback()
                     session.expire_all()
-                    delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                    delay = _compute_retry_delay(60, self.request.retries)
                     try:
                         raise self.retry(exc=exc, countdown=delay)
                     except self.MaxRetriesExceededError:
@@ -787,8 +810,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 session.expire_all()
                 sa_fail = session.get(SymbolAnalysis, UUID(analysis_id))
                 if sa_fail is not None and sa_fail.status in ("queued", "running"):
-                    from datetime import datetime as _dt_analysis_app, timezone
-                    UTC = timezone.utc
+                    from datetime import datetime as _dt_analysis_app
                     sa_fail.status = "failed"
                     sa_fail.error_code = exc.code
                     sa_fail.error_message = str(exc.message)[:500] if exc.message else None
@@ -799,7 +821,14 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                         session.rollback()
                 ANALYSIS_JOBS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
-                publish_job_status("analysis", UUID(analysis_id), "failed", metadata={"error_code": exc.code})
+                _publish_job_status_safe(
+                    "analysis",
+                    UUID(analysis_id),
+                    "failed",
+                    metadata={"error_code": exc.code},
+                    log_event="analysis.publish_status_failed",
+                    analysis_id=analysis_id,
+                )
                 return {
                     "status": "failed",
                     "analysis_id": analysis_id,
@@ -813,8 +842,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                     analysis.status = "failed"
                     analysis.error_code = "time_limit_exceeded"
                     analysis.error_message = "Analysis exceeded the time limit."
-                    from datetime import datetime as _dt_stl, timezone
-                    UTC = timezone.utc
+                    from datetime import datetime as _dt_stl
                     analysis.completed_at = _dt_stl.now(UTC)
                     try:
                         session.commit()
@@ -823,9 +851,13 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                         session.rollback()
                 ANALYSIS_JOBS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
-                publish_job_status(
-                    "analysis", UUID(analysis_id), "failed",
+                _publish_job_status_safe(
+                    "analysis",
+                    UUID(analysis_id),
+                    "failed",
                     metadata={"error_code": "time_limit_exceeded"},
+                    log_event="analysis.publish_status_failed",
+                    analysis_id=analysis_id,
                 )
                 raise
             except Exception as exc:  # Intentional broad catch: any unexpected analysis failure
@@ -833,7 +865,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                 session.rollback()
                 session.expire_all()
                 try:
-                    delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                    delay = _compute_retry_delay(60, self.request.retries)
                     raise self.retry(exc=exc, countdown=delay)
                 except self.MaxRetriesExceededError:
                     analysis = session.get(SymbolAnalysis, UUID(analysis_id))
@@ -841,8 +873,7 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                         analysis.status = "failed"
                         analysis.error_code = "max_retries_exceeded"
                         analysis.error_message = "Analysis failed after exhausting retries."
-                        from datetime import datetime as _dt_mr, timezone
-                        UTC = timezone.utc
+                        from datetime import datetime as _dt_mr
                         analysis.completed_at = _dt_mr.now(UTC)
                         try:
                             session.commit()
@@ -851,9 +882,13 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
                             session.rollback()
                     ANALYSIS_JOBS_TOTAL.labels(status="failed").inc()
                     CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status="failed").inc()
-                    publish_job_status(
-                        "analysis", UUID(analysis_id), "failed",
+                    _publish_job_status_safe(
+                        "analysis",
+                        UUID(analysis_id),
+                        "failed",
                         metadata={"error_code": "max_retries_exceeded"},
+                        log_event="analysis.publish_status_failed",
+                        analysis_id=analysis_id,
                     )
                     raise
 
@@ -861,28 +896,22 @@ def run_deep_analysis(self, analysis_id: str) -> dict[str, str | int]:
             effective_status = "succeeded" if result.status == "succeeded" else "failed"
             CELERY_TASKS_TOTAL.labels(task_name="analysis.deep_symbol", status=effective_status).inc()
             ANALYSIS_JOBS_TOTAL.labels(status=result.status).inc()
-            try:
-                publish_job_status("analysis", UUID(analysis_id), result.status)
-            except Exception:
-                logger.warning("analysis.publish_status_failed", analysis_id=analysis_id, exc_info=True)
+            _publish_job_status_safe(
+                "analysis",
+                UUID(analysis_id),
+                result.status,
+                log_event="analysis.publish_status_failed",
+                analysis_id=analysis_id,
+            )
             return {
                 "status": result.status,
                 "analysis_id": analysis_id,
                 "top_results": result.top_results_count,
             }
     finally:
-        try:
-            shared_mds.close()
-        except Exception:
-            logger.exception("shared_mds.close_failed")
-        try:
-            executor.close()
-        except Exception:
-            logger.exception("executor.close_failed")
-        try:
-            client.close()
-        except Exception:
-            logger.exception("client.close_failed")
+        _close_owned_resource(shared_mds, label="analysis.market_data_service")
+        _close_owned_resource(executor, label="analysis.executor")
+        _close_owned_resource(client, label="analysis.massive_client")
 
 
 @celery_app.task(name="scans.run_job", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=3, soft_time_limit=600, time_limit=660)
@@ -920,15 +949,14 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             if isinstance(exc, ExternalServiceError):
                 session.rollback()
                 session.expire_all()
-                delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                delay = _compute_retry_delay(60, self.request.retries)
                 try:
                     raise self.retry(exc=exc, countdown=delay)
                 except self.MaxRetriesExceededError:
                     pass
             session.rollback()
             session.expire_all()
-            from datetime import datetime as _dt_scan, timezone
-            UTC = timezone.utc
+            from datetime import datetime as _dt_scan
             sj_obj = session.get(ScannerJobModel, UUID(job_id))
             if sj_obj is not None and sj_obj.status in ("queued", "running"):
                 sj_obj.status = "failed"
@@ -941,7 +969,14 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                     session.rollback()
             SCAN_JOBS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
-            publish_job_status("scan", UUID(job_id), "failed", metadata={"error_code": exc.code})
+            _publish_job_status_safe(
+                "scan",
+                UUID(job_id),
+                "failed",
+                metadata={"error_code": exc.code},
+                log_event="scan.publish_status_failed",
+                job_id=job_id,
+            )
             return {
                 "status": "failed",
                 "job_id": job_id,
@@ -950,8 +985,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
         except SoftTimeLimitExceeded:
             session.rollback()
             session.expire_all()
-            from datetime import datetime, timezone
-            UTC = timezone.utc
+            from datetime import datetime
 
             scan_obj = session.get(ScannerJobModel, UUID(job_id))
             if scan_obj is not None and scan_obj.status in ("queued", "running"):
@@ -966,9 +1000,13 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                     session.rollback()
             SCAN_JOBS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
-            publish_job_status(
-                "scan", UUID(job_id), "failed",
+            _publish_job_status_safe(
+                "scan",
+                UUID(job_id),
+                "failed",
                 metadata={"error_code": "time_limit_exceeded"},
+                log_event="scan.publish_status_failed",
+                job_id=job_id,
             )
             raise
         except Exception as exc:  # Intentional broad catch: any unexpected scan failure
@@ -976,11 +1014,10 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             session.rollback()
             session.expire_all()
             try:
-                delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                delay = _compute_retry_delay(60, self.request.retries)
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
-                from datetime import datetime, timezone
-                UTC = timezone.utc
+                from datetime import datetime
 
                 scan_obj = session.get(ScannerJobModel, UUID(job_id))
                 if scan_obj is not None and scan_obj.status in ("queued", "running"):
@@ -995,25 +1032,29 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
                         session.rollback()
                 SCAN_JOBS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status="failed").inc()
-                publish_job_status(
-                    "scan", UUID(job_id), "failed",
+                _publish_job_status_safe(
+                    "scan",
+                    UUID(job_id),
+                    "failed",
                     metadata={"error_code": "max_retries_exceeded"},
+                    log_event="scan.publish_status_failed",
+                    job_id=job_id,
                 )
                 raise
         finally:
-            try:
-                service.close()
-            except Exception:
-                logger.exception("service.close_failed")
+            _close_owned_resource(service, label="scans.run_job.service")
 
         _update_heartbeat(session, ScannerJobModel, UUID(job_id))
         effective_status = "succeeded" if job.status == "succeeded" else "failed"
         CELERY_TASKS_TOTAL.labels(task_name="scans.run_job", status=effective_status).inc()
         SCAN_JOBS_TOTAL.labels(status=job.status).inc()
-        try:
-            publish_job_status("scan", UUID(job_id), job.status)
-        except Exception:
-            logger.warning("scan.publish_status_failed", job_id=job_id, exc_info=True)
+        _publish_job_status_safe(
+            "scan",
+            UUID(job_id),
+            job.status,
+            log_event="scan.publish_status_failed",
+            job_id=job_id,
+        )
         return {
             "status": job.status,
             "job_id": job_id,
@@ -1047,8 +1088,8 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
             _commit_then_publish(session, "sweep", UUID(job_id), "failed", metadata={"error_code": "entitlement_revoked"})
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         if policy.monthly_sweep_quota is not None:
-            from datetime import datetime as _dt_sweep_quota, timezone
-            UTC = timezone.utc
+            from datetime import datetime as _dt_sweep_quota
+
             from backtestforecast.repositories.sweep_jobs import SweepJobRepository
             sweep_repo = SweepJobRepository(session)
             now = _dt_sweep_quota.now(UTC)
@@ -1079,15 +1120,14 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
             if isinstance(exc, ExternalServiceError):
                 session.rollback()
                 session.expire_all()
-                delay = int(60 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                delay = _compute_retry_delay(60, self.request.retries)
                 try:
                     raise self.retry(exc=exc, countdown=delay)
                 except self.MaxRetriesExceededError:
                     pass
             session.rollback()
             session.expire_all()
-            from datetime import datetime as _dt_sweep_app, timezone
-            UTC = timezone.utc
+            from datetime import datetime as _dt_sweep_app
             sweep_obj = session.get(SweepJobModel, UUID(job_id))
             if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
                 sweep_obj.status = "failed"
@@ -1100,13 +1140,19 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                     session.rollback()
             SWEEP_JOBS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
-            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": exc.code})
+            _publish_job_status_safe(
+                "sweep",
+                UUID(job_id),
+                "failed",
+                metadata={"error_code": exc.code},
+                log_event="sweep.publish_status_failed",
+                job_id=job_id,
+            )
             return {"status": "failed", "job_id": job_id, "error_code": exc.code}
         except SoftTimeLimitExceeded:
             session.rollback()
             session.expire_all()
-            from datetime import datetime, timezone
-            UTC = timezone.utc
+            from datetime import datetime
 
             sweep_obj = session.get(SweepJobModel, UUID(job_id))
             if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
@@ -1121,17 +1167,23 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                     session.rollback()
             SWEEP_JOBS_TOTAL.labels(status="failed").inc()
             CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
-            publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "time_limit_exceeded"})
+            _publish_job_status_safe(
+                "sweep",
+                UUID(job_id),
+                "failed",
+                metadata={"error_code": "time_limit_exceeded"},
+                log_event="sweep.publish_status_failed",
+                job_id=job_id,
+            )
             raise
         except Exception as exc:
             session.rollback()
             session.expire_all()
             try:
-                delay = int(120 * (self.request.retries + 1) * random.uniform(0.8, 1.2))
+                delay = _compute_retry_delay(120, self.request.retries)
                 raise self.retry(exc=exc, countdown=delay)
             except self.MaxRetriesExceededError:
-                from datetime import datetime, timezone
-                UTC = timezone.utc
+                from datetime import datetime
 
                 sweep_obj = session.get(SweepJobModel, UUID(job_id))
                 if sweep_obj is not None and sweep_obj.status in ("queued", "running"):
@@ -1146,21 +1198,28 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                         session.rollback()
                 SWEEP_JOBS_TOTAL.labels(status="failed").inc()
                 CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status="failed").inc()
-                publish_job_status("sweep", UUID(job_id), "failed", metadata={"error_code": "max_retries_exceeded"})
+                _publish_job_status_safe(
+                    "sweep",
+                    UUID(job_id),
+                    "failed",
+                    metadata={"error_code": "max_retries_exceeded"},
+                    log_event="sweep.publish_status_failed",
+                    job_id=job_id,
+                )
                 raise
         finally:
-            try:
-                service.close()
-            except Exception:
-                logger.exception("sweep.service.close_failed")
+            _close_owned_resource(service, label="sweeps.run.service")
 
         effective_status = "succeeded" if job.status == "succeeded" else "failed"
         CELERY_TASKS_TOTAL.labels(task_name="sweeps.run", status=effective_status).inc()
         SWEEP_JOBS_TOTAL.labels(status=job.status).inc()
-        try:
-            publish_job_status("sweep", UUID(job_id), job.status)
-        except Exception:
-            logger.warning("sweep.publish_status_failed", job_id=job_id, exc_info=True)
+        _publish_job_status_safe(
+            "sweep",
+            UUID(job_id),
+            job.status,
+            log_event="sweep.publish_status_failed",
+            job_id=job_id,
+        )
         return {
             "status": job.status,
             "job_id": job_id,
@@ -1172,7 +1231,6 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
 def refresh_prioritized_scans(self) -> dict[str, int]:
     from sqlalchemy import update as sa_update
 
-    from backtestforecast.config import get_settings
     from backtestforecast.models import ScannerJob
     from backtestforecast.utils import create_cache_redis
 
@@ -1210,23 +1268,25 @@ def refresh_prioritized_scans(self) -> dict[str, int]:
                             job_obj.error_message = "Unable to dispatch scheduled refresh."
                             try:
                                 session.commit()
-                                publish_job_status("scan", job.id, "failed", metadata={"error_code": "enqueue_failed"})
+                                _publish_job_status_safe(
+                                    "scan",
+                                    job.id,
+                                    "failed",
+                                    metadata={"error_code": "enqueue_failed"},
+                                    log_event="scan.publish_status_failed",
+                                    job_id=str(job.id),
+                                )
                             except Exception:
                                 session.rollback()
             finally:
-                try:
-                    service.close()
-                except Exception:
-                    logger.exception("service.close_failed")
+                _close_owned_resource(service, label="scans.refresh_prioritized.service")
 
         return {
             "scheduled_jobs": dispatched,
         }
     finally:
-        try:
+        with suppress(Exception):
             lock.release()
-        except Exception:
-            pass
         redis.close()
 
 
@@ -1241,6 +1301,7 @@ def _process_orphan_batch(
 ) -> tuple[int, bool]:
     """Check a batch of S3 keys against the DB and delete orphans."""
     from sqlalchemy import select
+
     from backtestforecast.models import ExportJob
     from backtestforecast.observability.metrics import ORPHAN_DETECTIONS_TOTAL
 
@@ -1272,10 +1333,8 @@ def reconcile_s3_orphans(self) -> None:
     """Remove S3 objects that have no corresponding ExportJob in the database."""
     logger.info("s3_orphan_reconciliation_started")
     try:
-        from sqlalchemy import select
         from backtestforecast.config import get_settings
         from backtestforecast.exports.storage import S3Storage
-        from backtestforecast.models import ExportJob
 
         settings = get_settings()
         if not settings.s3_bucket:
@@ -1321,7 +1380,6 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
     stale_minutes = max(stale_minutes, 5)
 
-    from backtestforecast.config import get_settings
     from backtestforecast.observability.metrics import CELERY_WORKERS_ONLINE
     from backtestforecast.utils import create_cache_redis
 
@@ -1338,7 +1396,7 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
         finally:
             _count_redis.close()
     except Exception:
-        pass
+        logger.debug("reaper.worker_heartbeat_count_failed", exc_info=True)
 
     redis = None
     lock = None
@@ -1351,7 +1409,7 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
             logger.info("reaper.skipped_locked")
             return {"skipped": 1}
     except Exception:  # Intentional: if Redis is down we cannot acquire the lock, but the
-        # reaper should not crash — it will retry on the next scheduled beat.
+        # reaper should not crash - it will retry on the next scheduled beat.
         logger.warning("reaper.lock_unavailable", exc_info=True)
         return {"skipped": 1, "reason": "lock_unavailable"}
 
@@ -1362,15 +1420,11 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
     finally:
         REAPER_DURATION_SECONDS.observe(_time.monotonic() - _reaper_start)
         if lock is not None and lock_acquired:
-            try:
+            with suppress(Exception):
                 lock.release()
-            except Exception:
-                pass
         if redis is not None:
-            try:
+            with suppress(Exception):
                 redis.close()
-            except Exception:
-                pass
 
 
 @celery_app.task(name="maintenance.reconcile_stranded_jobs", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=180, time_limit=240)
@@ -1421,8 +1475,7 @@ def _reap_queued_jobs(
     for job_id in stale_ids:
         try:
             task_id = str(uuid4())
-            from datetime import datetime as _dt_reap, timezone
-            UTC = timezone.utc
+            from datetime import datetime as _dt_reap
             rows = session.execute(
                 update(model_cls)
                 .where(model_cls.id == job_id, model_cls.celery_task_id.is_(None))
@@ -1460,8 +1513,7 @@ def _fail_stale_running_jobs(
     counts_key: str,
 ) -> None:
     """Fail jobs stuck in 'running' state longer than *cutoff*."""
-    from datetime import datetime, timezone
-    UTC = timezone.utc
+    from datetime import datetime
 
     from sqlalchemy import or_, select, update
 
@@ -1500,33 +1552,50 @@ def _fail_stale_running_jobs(
         )
         session.commit()
         for rid in stale_running_ids:
-            try:
-                publish_job_status(job_type, rid, "failed", metadata={"error_code": "stale_running"})
-            except Exception:
-                pass
+            _publish_job_status_safe(
+                job_type,
+                rid,
+                "failed",
+                metadata={"error_code": "stale_running"},
+                log_event="reaper.publish_status_failed",
+                model=model_name,
+                job_id=str(rid),
+            )
     counts[counts_key] = len(stale_running_ids)
     JOBS_STUCK_RUNNING.labels(model=model_name).set(len(stale_running_ids))
 
 
 def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
-    from datetime import datetime, timedelta, timezone
-    UTC = timezone.utc
+    from datetime import datetime, timedelta
 
     from sqlalchemy import or_, select, update
 
-    from backtestforecast.models import BacktestRun, DailyRecommendation, ExportJob, NightlyPipelineRun, ScannerJob, SweepJob, SymbolAnalysis
-    from backtestforecast.observability.metrics import DAILY_RECOMMENDATIONS_COUNT, JOBS_STUCK_RUNNING, OPTION_CACHE_ENTRIES, QUEUE_DEPTH
+    from backtestforecast.models import (
+        BacktestRun,
+        ExportJob,
+        NightlyPipelineRun,
+        ScannerJob,
+        SweepJob,
+        SymbolAnalysis,
+    )
+    from backtestforecast.observability.metrics import (
+        DAILY_RECOMMENDATIONS_COUNT,
+        JOBS_STUCK_RUNNING,
+        OPTION_CACHE_ENTRIES,
+        QUEUE_DEPTH,
+    )
 
     try:
         from backtestforecast.market_data.service import get_global_cache_entries
         OPTION_CACHE_ENTRIES.set(get_global_cache_entries())
     except Exception:
-        pass
+        logger.debug("reaper.option_cache_metric_failed", exc_info=True)
 
     try:
+        from redis import Redis as _Redis
+
         from backtestforecast.config import get_settings as _gs
         from backtestforecast.utils import create_cache_redis as _create_metric_redis
-        from redis import Redis as _Redis
 
         _broker_r = _Redis.from_url(_gs().redis_url, decode_responses=True, socket_timeout=5)
         try:
@@ -1637,12 +1706,10 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                         try:
                             result_obj = celery_app.AsyncResult(stale_task_id)
                             state = result_obj.state
-                            if state in ("STARTED", "RETRY", "RECEIVED"):
-                                task_alive = True
-                            elif state == "PENDING" and created_at > result_expires_cutoff:
+                            if state in ("STARTED", "RETRY", "RECEIVED") or (state == "PENDING" and created_at > result_expires_cutoff):
                                 task_alive = True
                         except Exception:
-                            pass
+                            logger.debug("reaper.result_backend_probe_failed", task_id=stale_task_id, exc_info=True)
                     if not task_alive:
                         session.execute(
                             update(model_cls)
@@ -1666,7 +1733,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
             ) or 0
             DAILY_RECOMMENDATIONS_COUNT.set(rec_count)
     except Exception:
-        pass
+        logger.debug("reaper.daily_recommendations_metric_failed", exc_info=True)
 
     total = sum(counts.values())
     if total > 0:
@@ -1707,10 +1774,8 @@ def refresh_market_holidays(self) -> dict[str, int | str]:
         except MaxRetriesExceededError:
             raise
     finally:
-        try:
+        with suppress(Exception):
             client.close()
-        except Exception:
-            pass
 
 
 @celery_app.task(
@@ -1735,13 +1800,15 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
         logger.info("audit.cleanup_disabled")
         return {"deleted": 0, "batches_run": 0, "limit_reached": False, "reason": "disabled"}
 
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
+
     from sqlalchemy import delete, select
+
     from backtestforecast.models import AuditEvent
 
     BATCH_SIZE = 5000
     max_batches = 500
-    cutoff = datetime.now(timezone.utc) - timedelta(days=_audit_settings.audit_cleanup_retention_days)
+    cutoff = datetime.now(UTC) - timedelta(days=_audit_settings.audit_cleanup_retention_days)
     high_volume_types = (
         "export.downloaded",
         "backtest.viewed",
@@ -1799,8 +1866,7 @@ def cleanup_audit_events(self) -> dict:  # type: ignore[override]
 )
 def cleanup_outbox(self) -> dict:  # type: ignore[override]
     """Remove outbox messages older than 7 days (batched)."""
-    from datetime import datetime, timedelta, timezone
-    UTC = timezone.utc
+    from datetime import datetime, timedelta
 
     from sqlalchemy import delete, select
 
@@ -1842,7 +1908,7 @@ def cleanup_daily_recommendations(self, retention_days: int = 90, dry_run: bool 
 
     When *dry_run* is True, counts eligible records but does not delete.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from sqlalchemy import delete, select
 
@@ -1854,7 +1920,7 @@ def cleanup_daily_recommendations(self, retention_days: int = 90, dry_run: bool 
 
     BATCH_SIZE = 2000
     max_batches = 200
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
     deleted_recs = 0
     deleted_runs = 0
     batches_run = 0
@@ -1935,15 +2001,15 @@ _OUTBOX_TASK_ID_KWARG: dict[str, str] = {
 }
 
 
-def _fail_outbox_correlated_job(session: "Session", msg: "OutboxMessage") -> None:
+def _fail_outbox_correlated_job(session: Session, msg: OutboxMessage) -> None:
     """Mark the job correlated to a permanently-failed outbox message as failed.
 
     Uses the task name to determine the model class and the kwargs to find
     the job ID, then performs a CAS UPDATE to set the status to "failed"
     only if the job is still in a non-terminal state.
     """
-    from datetime import datetime, timezone
-    UTC = timezone.utc
+    from datetime import datetime
+
     from sqlalchemy import update
 
     from backtestforecast import models
@@ -2023,15 +2089,14 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
     message is marked "failed" and the correlated job (if any) is also
     marked failed so the user sees an error instead of a stuck job.
     """
-    from datetime import datetime, timedelta, timezone
-    UTC = timezone.utc
+    from datetime import datetime, timedelta
 
-    from sqlalchemy import select, update
+    from sqlalchemy import select
 
     from backtestforecast.models import OutboxMessage
     from backtestforecast.observability.metrics import OUTBOX_RECOVERED_TOTAL
 
-    _OUTBOX_MAX_RETRIES = 30  # ~30 poll cycles × 60s = 30min recovery window
+    _OUTBOX_MAX_RETRIES = 30  # ~30 poll cycles x 60s = 30min recovery window
     sent = 0
     skipped = 0
     failed = 0
@@ -2056,8 +2121,7 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
                     kwargs=msg.task_kwargs_json,
                     queue=msg.queue,
                 )
-                from datetime import datetime as _dt_outbox, timezone
-                UTC = timezone.utc
+                from datetime import datetime as _dt_outbox
                 msg.status = "sent"
                 msg.completed_at = _dt_outbox.now(UTC)
                 sent += 1
@@ -2097,7 +2161,6 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
             session.rollback()
             logger.exception("outbox.poll_commit_failed")
 
-    from backtestforecast.observability.metrics import OUTBOX_RECOVERED_TOTAL as _ort
     if sent or failed or skipped:
         logger.info(
             "outbox.poll_complete",
@@ -2113,7 +2176,7 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
                 level="warning",
             )
         except Exception:
-            pass
+            logger.debug("outbox.poll_sentry_report_failed", exc_info=True)
     return {"sent": sent, "failed": failed, "skipped": skipped}
 
 
@@ -2273,8 +2336,8 @@ def cleanup_stripe_orphan(
 @celery_app.task(name="maintenance.expire_old_exports", base=BaseTaskWithDLQ, max_retries=1)
 def expire_old_exports(self):
     """Transition succeeded exports past their expires_at to 'expired' status."""
-    from datetime import datetime, timezone
-    UTC = timezone.utc
+    from datetime import datetime
+
     from sqlalchemy import update as sa_update
 
     CELERY_TASKS_TOTAL.labels(task_name="maintenance.expire_old_exports", status="started").inc()

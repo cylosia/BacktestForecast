@@ -1,7 +1,8 @@
-"""Verify audit cleanup task structure."""
+﻿"""Verify audit cleanup task structure."""
 from __future__ import annotations
 
 import inspect
+
 from apps.worker.app.tasks import cleanup_audit_events
 
 

@@ -1,4 +1,4 @@
-"""Verify BacktestRunDetailResponse has end_date, not date_to."""
+﻿"""Verify BacktestRunDetailResponse has end_date, not date_to."""
 from __future__ import annotations
 
 from backtestforecast.schemas.backtests import BacktestRunDetailResponse

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, timedelta
 
@@ -295,7 +295,7 @@ class TestRecoveryFactorMultiPeak:
             10800.0,  # peak 2
             10200.0,  # valley 2 (dd = 600 from peak 10800)
             11000.0,  # peak 3 (new high)
-            10300.0,  # valley 3 (dd = 700 from peak 11000) ← deepest
+            10300.0,  # valley 3 (dd = 700 from peak 11000) â† deepest
             10900.0,  # recovery
             11200.0,  # new peak 4
             11000.0,  # minor dip

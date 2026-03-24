@@ -1,4 +1,4 @@
-"""FIX 76-78: Entry rules, earnings avoidance, and combined slippage+commission tests."""
+﻿"""FIX 76-78: Entry rules, earnings avoidance, and combined slippage+commission tests."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,7 +24,7 @@ def _make_bars(
 ) -> list[DailyBar]:
     vols = volumes or [1_000_000.0] * len(closes)
     bars = []
-    for i, (c, v) in enumerate(zip(closes, vols)):
+    for i, (c, v) in enumerate(zip(closes, vols, strict=False)):
         d = start + timedelta(days=i)
         bars.append(DailyBar(trade_date=d, open_price=c, high_price=c, low_price=c, close_price=c, volume=v))
     return bars

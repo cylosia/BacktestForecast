@@ -1,4 +1,4 @@
-"""Placeholder for real JWT integration tests.
+﻿"""Placeholder for real JWT integration tests.
 
 These tests require a valid Clerk test environment with real keys.
 They are skipped by default and should be run manually against a staging
@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.skip(reason="Requires real Clerk test environment — run manually")
+@pytest.mark.skip(reason="Requires real Clerk test environment - run manually")
 def test_real_jwt_verification():
     """Verify JWT parsing with real Clerk tokens."""
     # TODO: Configure CLERK_JWT_KEY or CLERK_JWKS_URL with test credentials
@@ -18,7 +18,7 @@ def test_real_jwt_verification():
     pass
 
 
-@pytest.mark.skip(reason="Requires real Clerk test environment — run manually")
+@pytest.mark.skip(reason="Requires real Clerk test environment - run manually")
 def test_expired_jwt_rejected():
     """Verify expired tokens are rejected."""
     pass

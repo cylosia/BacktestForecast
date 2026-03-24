@@ -1,4 +1,4 @@
-"""Verify quota enforcement boundary conditions in worker tasks."""
+﻿"""Verify quota enforcement boundary conditions in worker tasks."""
 from __future__ import annotations
 
 import inspect

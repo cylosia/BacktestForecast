@@ -1,12 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backtestforecast.models import SymbolAnalysis
+from backtestforecast.repositories.pagination import apply_cursor_window, list_with_total
 
 _MAX_PAGE_SIZE = 200
 
@@ -47,24 +48,34 @@ class SymbolAnalysisRepository:
         offset: int = 0,
         cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[SymbolAnalysis]:
-        if offset > 0 and cursor_before is not None:
-            raise ValueError("Cannot combine offset and cursor_before pagination.")
-        limit = max(limit, 1)
-        offset = max(offset, 0)
-        stmt = (
-            select(SymbolAnalysis)
-            .where(SymbolAnalysis.user_id == user_id)
+        stmt = apply_cursor_window(
+            select(SymbolAnalysis).where(SymbolAnalysis.user_id == user_id),
+            model=SymbolAnalysis,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
         )
-        if cursor_before is not None:
-            cursor_dt, cursor_id = cursor_before
-            stmt = stmt.where(
-                or_(
-                    SymbolAnalysis.created_at < cursor_dt,
-                    and_(SymbolAnalysis.created_at == cursor_dt, SymbolAnalysis.id < cursor_id),
-                )
-            )
-        stmt = stmt.order_by(desc(SymbolAnalysis.created_at), desc(SymbolAnalysis.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
         return list(self.session.scalars(stmt))
+
+    def list_for_user_with_count(
+        self,
+        user_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        cursor_before: tuple[datetime, UUID] | None = None,
+    ) -> tuple[list[SymbolAnalysis], int]:
+        return list_with_total(
+            self.session,
+            base_stmt=select(SymbolAnalysis).where(SymbolAnalysis.user_id == user_id),
+            count_stmt=select(func.count()).select_from(SymbolAnalysis).where(SymbolAnalysis.user_id == user_id),
+            model=SymbolAnalysis,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
 
     def count_for_user(self, user_id: UUID) -> int:
         """Return the total number of analyses for a user."""

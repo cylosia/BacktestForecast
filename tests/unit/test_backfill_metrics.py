@@ -1,4 +1,4 @@
-"""Test: backfill_metrics script.
+﻿"""Test: backfill_metrics script.
 
 Verifies that the backfill function correctly identifies runs missing
 metrics and fills them in from trades + equity curve data.
@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest

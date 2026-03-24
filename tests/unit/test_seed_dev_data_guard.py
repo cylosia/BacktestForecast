@@ -1,4 +1,4 @@
-"""Test production guards in seed_dev_data.py.
+﻿"""Test production guards in seed_dev_data.py.
 
 Covers all three safety checks:
 1. APP_ENV=production/staging blocks execution

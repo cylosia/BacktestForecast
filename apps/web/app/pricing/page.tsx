@@ -1,34 +1,12 @@
 import Link from "next/link";
 import { ArrowRight, Check } from "lucide-react";
 import type { PlanTier } from "@backtestforecast/api-client";
+import { validatePricingContractResponse, type PricingContractResponseShape } from "@/lib/api/contracts";
 import { CheckoutButton } from "@/components/billing/checkout-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const API_BASE = (process.env.API_INTERNAL_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
-
-type PricingIntervalResponse = {
-  price_id: string | null;
-  unit_amount_usd: number | null;
-  display_price: string;
-  available: boolean;
-};
-
-type PricingPlanResponse = {
-  tier: "free" | "pro" | "premium";
-  title: string;
-  headline: string;
-  description: string;
-  features: string[];
-  monthly: PricingIntervalResponse | null;
-  yearly: PricingIntervalResponse | null;
-};
-
-type PricingContractResponse = {
-  currency: string;
-  checkout_authoritative: boolean;
-  plans: PricingPlanResponse[];
-};
 
 type PaidPlanTier = Exclude<PlanTier, "free">;
 
@@ -36,12 +14,12 @@ function isPaidPlanTier(tier: PlanTier): tier is PaidPlanTier {
   return tier === "pro" || tier === "premium";
 }
 
-async function getPricingContract(): Promise<PricingContractResponse> {
+async function getPricingContract(): Promise<PricingContractResponseShape> {
   const response = await fetch(`${API_BASE}/v1/billing/pricing`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Failed to load pricing contract (${response.status}).`);
   }
-  return response.json() as Promise<PricingContractResponse>;
+  return validatePricingContractResponse((await response.json()) as unknown);
 }
 
 export default async function PricingPage() {

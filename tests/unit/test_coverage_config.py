@@ -1,4 +1,4 @@
-"""Test that coverage configuration exists and critical modules have tests.
+﻿"""Test that coverage configuration exists and critical modules have tests.
 
 Ensures pyproject.toml has a [tool.coverage.report] section with
 fail_under set to at least 80%, and validates that critical modules

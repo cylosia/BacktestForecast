@@ -1,4 +1,4 @@
-"""Pre-commit / CI check: every non-nullable column should have a server_default.
+﻿"""Pre-commit / CI check: every non-nullable column should have a server_default.
 
 Reads all Alembic migration files in ``alembic/versions/`` and warns when a
 column is declared with ``nullable=False`` but has no ``server_default``.
@@ -70,7 +70,7 @@ def main() -> int:
         all_warnings.extend(_check_file(migration))
 
     if not all_warnings:
-        print("OK — all non-nullable columns have server_default (excluding PKs and FKs).")
+        print("OK - all non-nullable columns have server_default (excluding PKs and FKs).")
         return 0
 
     print(f"WARNING: {len(all_warnings)} column(s) with nullable=False but no server_default:")

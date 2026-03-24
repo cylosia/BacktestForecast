@@ -1,4 +1,4 @@
-"""Test that unknown feature names return False and log an error."""
+﻿"""Test that unknown feature names return False and log an error."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch

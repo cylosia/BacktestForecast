@@ -1,7 +1,8 @@
-"""Verify pipeline uses Redis lock to prevent concurrent runs."""
+﻿"""Verify pipeline uses Redis lock to prevent concurrent runs."""
 from __future__ import annotations
 
 import inspect
+
 from apps.worker.app.tasks import nightly_scan_pipeline
 
 

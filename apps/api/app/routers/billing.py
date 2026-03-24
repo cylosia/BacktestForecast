@@ -125,9 +125,15 @@ def stripe_webhook(
             )
     except Exception as exc:
         from backtestforecast.errors import (
-            AuthenticationError as _AuthErr,
             AppError as _AppErr,
+        )
+        from backtestforecast.errors import (
+            AuthenticationError as _AuthErr,
+        )
+        from backtestforecast.errors import (
             ExternalServiceError as _ExtErr,
+        )
+        from backtestforecast.errors import (
             NotFoundError as _NotFoundErr,
         )
         if isinstance(exc, _AuthErr):
@@ -137,7 +143,7 @@ def stripe_webhook(
             raise HTTPException(
                 status_code=401,
                 detail={"code": "signature_verification_failed", "message": "Invalid webhook signature."},
-            )
+            ) from exc
         if isinstance(exc, _NotFoundErr):
             _webhook_logger.warning(
                 "webhook.user_not_found_will_retry",
@@ -147,7 +153,7 @@ def stripe_webhook(
             raise HTTPException(
                 status_code=500,
                 detail={"code": "user_not_found", "message": "User not yet provisioned; Stripe should retry."},
-            )
+            ) from exc
 
         if isinstance(exc, _ExtErr):
             _webhook_logger.exception(
@@ -156,7 +162,7 @@ def stripe_webhook(
             raise HTTPException(
                 status_code=500,
                 detail={"code": exc.code, "message": "Transient error; Stripe should retry."},
-            )
+            ) from exc
         if isinstance(exc, _AppErr):
             _webhook_logger.warning(
                 "webhook.deterministic_error", code=exc.code, ip=ip_address, request_id=request_id,

@@ -1,4 +1,4 @@
-"""Comprehensive beat schedule validation.
+﻿"""Comprehensive beat schedule validation.
 
 Verifies that all expected periodic tasks are registered in the beat
 schedule, their task references resolve to real task names, and their
@@ -7,7 +7,6 @@ queue routing is correct.
 from __future__ import annotations
 
 import pytest
-
 
 EXPECTED_BEAT_ENTRIES = {
     "refresh-prioritized-scans-daily",
@@ -32,7 +31,6 @@ def beat_schedule() -> dict:
 
 @pytest.fixture(scope="module")
 def registered_task_names() -> set[str]:
-    from apps.worker.app import tasks as _  # noqa: F841 — force task registration
     from apps.worker.app.celery_app import celery_app
     return set(celery_app.tasks.keys())
 

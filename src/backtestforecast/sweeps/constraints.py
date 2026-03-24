@@ -1,4 +1,4 @@
-"""Constraint validation, repair, and random generation for custom leg individuals.
+﻿"""Constraint validation, repair, and random generation for custom leg individuals.
 
 An *individual* is a list of leg dicts, each with the same fields as
 ``CustomLegDefinition``: contract_type, side, strike_offset,
@@ -53,9 +53,8 @@ def is_valid(individual: Individual) -> bool:
         return False
 
     for leg in individual:
-        if leg.get("asset_type", "option") == "option":
-            if leg.get("contract_type") not in CONTRACT_TYPES:
-                return False
+        if leg.get("asset_type", "option") == "option" and leg.get("contract_type") not in CONTRACT_TYPES:
+            return False
         if leg["side"] not in SIDES:
             return False
         if not (-20 <= leg.get("strike_offset", 0) <= 20):
@@ -66,10 +65,7 @@ def is_valid(individual: Individual) -> bool:
         if not (Decimal("0.1") <= Decimal(str(ratio)) <= Decimal("10")):
             return False
 
-    if _has_cancelling_legs(option_legs):
-        return False
-
-    return True
+    return not _has_cancelling_legs(option_legs)
 
 
 def _has_cancelling_legs(option_legs: list[LegDict]) -> bool:
@@ -90,9 +86,8 @@ def _has_cancelling_legs(option_legs: list[LegDict]) -> bool:
 def repair(individual: Individual) -> Individual:
     """Fix constraint violations in-place and return the individual."""
     for leg in individual:
-        if leg.get("asset_type", "option") == "option":
-            if leg.get("contract_type") not in CONTRACT_TYPES:
-                leg["contract_type"] = random.choice(CONTRACT_TYPES)
+        if leg.get("asset_type", "option") == "option" and leg.get("contract_type") not in CONTRACT_TYPES:
+            leg["contract_type"] = random.choice(CONTRACT_TYPES)
 
         if leg["side"] not in SIDES:
             leg["side"] = random.choice(SIDES)

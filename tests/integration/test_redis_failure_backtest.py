@@ -1,4 +1,4 @@
-"""Integration tests: backtest creation when Redis is unavailable.
+﻿"""Integration tests: backtest creation when Redis is unavailable.
 
 When rate_limit_fail_closed is True (default), the rate limiter should
 reject requests with ServiceUnavailableError when Redis connection fails.

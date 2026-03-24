@@ -1,4 +1,4 @@
-"""Tests for shared serialization helpers."""
+﻿"""Tests for shared serialization helpers."""
 from __future__ import annotations
 
 from datetime import date

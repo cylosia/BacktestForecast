@@ -6,6 +6,7 @@ import { Download, FileText, Loader2, Sheet } from "lucide-react";
 import { createExport, downloadExport, fetchExportStatus } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/shared";
 import { getOrCreatePendingIdempotencyKey } from "@/lib/idempotency";
+import { getExportTerminalMessage } from "@/lib/jobs/ui-state";
 import type { ExportFormat } from "@backtestforecast/api-client";
 import { isPlanLimitError, UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { Button } from "@/components/ui/button";
@@ -141,7 +142,7 @@ export function ExportActions({
         }
 
         if (result.status === "failed" || result.status === "cancelled" || result.status === "expired") {
-          throw new Error(result.error_message || "Export generation failed on the server.");
+          throw new Error(getExportTerminalMessage(result));
         }
       }
       throw new Error("Export is still processing. Please try downloading from the history later.");

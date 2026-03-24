@@ -1,7 +1,7 @@
-"""Strategy-regime mapping for the nightly scan pipeline.
+﻿"""Strategy-regime mapping for the nightly scan pipeline.
 
 Maps regime combinations to the strategies most likely to perform well.
-This is a configuration table, not code — tunable over time.
+This is a configuration table, not code - tunable over time.
 """
 
 from __future__ import annotations

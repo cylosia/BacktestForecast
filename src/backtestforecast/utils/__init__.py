@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import math
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 DECIMAL_QUANT = Decimal("0.0001")
 
@@ -68,7 +68,7 @@ def create_cache_redis(
 
     Centralises the connection parameters that were previously scattered
     across worker tasks, health checks, and utility functions.  Always
-    uses ``redis_cache_url`` from settings — never ``redis_url`` (the
+    uses ``redis_cache_url`` from settings - never ``redis_url`` (the
     broker).
 
     Callers are responsible for closing the returned client.

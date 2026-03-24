@@ -1,4 +1,4 @@
-"""Tests for UserRepository correctness.
+﻿"""Tests for UserRepository correctness.
 
 Includes mock-based tests for fast isolation and SQLite-backed tests for
 integration with real SQLAlchemy queries.
@@ -15,7 +15,6 @@ from backtestforecast.db.base import Base
 from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
 from tests.conftest import strip_partial_indexes_for_sqlite
-
 
 # ---- Mock-based tests (original) ----------------------------------------
 
@@ -132,7 +131,7 @@ class TestGetOrCreate:
         second = repo.get_or_create("clerk_existing", "first@example.com")
         assert second.id == first.id
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         count = db_session.scalar(
             select(func.count()).select_from(User).where(User.clerk_user_id == "clerk_existing")
         )

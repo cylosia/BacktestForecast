@@ -1,4 +1,4 @@
-"""Test that the sweep concurrent limit uses settings, not a hardcoded value.
+﻿"""Test that the sweep concurrent limit uses settings, not a hardcoded value.
 
 Before the fix, SweepService._enforce_sweep_quota used a hardcoded
 _MAX_CONCURRENT_SWEEPS = 2 while the router used settings.max_concurrent_sweeps
@@ -9,8 +9,6 @@ After the fix, the service uses settings.max_concurrent_sweeps via a property.
 from __future__ import annotations
 
 import inspect
-
-import pytest
 
 
 class TestSweepLimitFromSettings:
@@ -36,7 +34,7 @@ class TestSweepLimitFromSettings:
 
         source = inspect.getsource(sweeps_router)
         assert "max_concurrent_sweeps" not in source, (
-            "Router should not check max_concurrent_sweeps — "
+            "Router should not check max_concurrent_sweeps - "
             "the service enforces this atomically"
         )
 

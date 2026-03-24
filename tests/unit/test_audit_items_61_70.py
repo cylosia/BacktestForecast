@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from backtestforecast.db import session as db_session
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -88,4 +87,4 @@ class TestPaginationPlumbingContracts:
 
         assert 'const cursor = params.next_cursor?.trim() || params.cursor?.trim() || undefined;' in source
         assert 'cursorParamName="next_cursor"' in source
-        assert 'getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor);' in source
+        assert "getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor)" in source

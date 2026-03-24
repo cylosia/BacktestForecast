@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import inspect
 from pathlib import Path
@@ -34,8 +34,8 @@ def test_pricing_page_fetches_backend_contract() -> None:
 
 
 def test_export_download_separates_metadata_from_db_content_load() -> None:
-    from backtestforecast.services.exports import ExportService
     from apps.api.app.routers.exports import download_export
+    from backtestforecast.services.exports import ExportService
 
     source = inspect.getsource(ExportService.get_export_for_download)
     assert 'include_content=False' in source

@@ -1,12 +1,10 @@
-"""Tests for audit round 16 — SSE-before-commit, stale subscription guard,
+﻿"""Tests for audit round 16 - SSE-before-commit, stale subscription guard,
 OpenAPI snapshot completeness, and sweep type alignment."""
 from __future__ import annotations
 
 import inspect
 import json
 from pathlib import Path
-
-import pytest
 
 
 class TestSSEPublishAfterCommit:
@@ -18,7 +16,7 @@ class TestSSEPublishAfterCommit:
         from backtestforecast.services.billing import BillingService
         source = inspect.getsource(BillingService.cancel_in_flight_jobs)
         assert "publish_job_status" not in source, (
-            "cancel_in_flight_jobs must NOT publish SSE events inline — "
+            "cancel_in_flight_jobs must NOT publish SSE events inline - "
             "it must return the IDs so the caller can publish after commit"
         )
 

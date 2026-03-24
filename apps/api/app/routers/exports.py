@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 import time as _time
-from typing import Annotated, Generator
+from collections.abc import Generator
+from typing import Annotated
 from uuid import UUID
 
 import structlog
@@ -15,10 +16,12 @@ from apps.api.app.dependencies import get_current_user, get_current_user_readonl
 from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.models import User
-from backtestforecast.schemas.common import sanitize_error_message
+from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
+from backtestforecast.schemas.common import RemediationActionsResponse, sanitize_error_message
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobListResponse, ExportJobResponse
 from backtestforecast.security import get_rate_limiter
-from backtestforecast.services.exports import ExportService, MAX_EXPORT_BYTES
+from backtestforecast.services.exports import MAX_EXPORT_BYTES, ExportService
+from backtestforecast.services.remediation_actions import build_job_remediation_actions
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 logger = structlog.get_logger("api.exports")
@@ -39,30 +42,22 @@ def list_exports(
         limit=settings.export_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    from backtestforecast.utils import decode_cursor, encode_cursor
-
-    cursor_before = None
-    if cursor:
-        cursor_before = decode_cursor(cursor)
-        if cursor_before is None:
-            from backtestforecast.errors import ValidationError
-            raise ValidationError("Invalid pagination cursor.")
-        offset = 0
+    cursor_before, offset = parse_cursor_param(cursor) if cursor else (None, offset)
 
     with ExportService(db) as service:
         jobs, total = service.exports.list_for_user_with_count(
             user.id, limit=limit + 1, offset=offset, cursor_before=cursor_before,
         )
-        has_next = len(jobs) > limit
-        if has_next:
-            jobs = jobs[:limit]
-        next_cursor = encode_cursor(jobs[-1].created_at, jobs[-1].id) if has_next and jobs else None
+        page = finalize_cursor_page(jobs, total=total, offset=offset, limit=limit)
         return ExportJobListResponse(
-            items=[service.to_response(j) for j in jobs],
-            total=total,
-            offset=offset,
-            limit=limit,
-            next_cursor=next_cursor,
+            items=[
+                service.to_response(j, **service._resolved_execution_fields_for_export(j))
+                for j in page.items
+            ],
+            total=page.total,
+            offset=page.offset,
+            limit=page.limit,
+            next_cursor=page.next_cursor,
         )
 
 
@@ -160,6 +155,47 @@ def delete_export(
         service.delete_for_user(export_job_id, user.id)
 
 
+@router.post("/{export_job_id}/cancel", response_model=ExportJobResponse)
+def cancel_export(
+    export_job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ExportJobResponse:
+    get_rate_limiter().check(
+        bucket="exports:delete",
+        actor_key=str(user.id),
+        limit=settings.delete_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with ExportService(db) as service:
+        return service.cancel_for_user(export_job_id, user.id)
+
+
+@router.get("/{export_job_id}/remediation-actions", response_model=RemediationActionsResponse)
+def get_export_remediation_actions(
+    export_job_id: UUID,
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
+    settings: Settings = Depends(get_settings),
+) -> RemediationActionsResponse:
+    get_rate_limiter().check(
+        bucket="exports:read",
+        actor_key=str(user.id),
+        limit=settings.export_read_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with ExportService(db) as service:
+        export_job = service.get_export_status(user, export_job_id)
+    return build_job_remediation_actions(
+        resource_type="export",
+        resource_id=str(export_job_id),
+        status=export_job.status,
+        base_path=f"/v1/exports/{export_job_id}",
+        retry_path=f"/v1/exports/{export_job_id}/retry",
+    )
+
+
 @router.get(
     "/{export_job_id}",
     responses={
@@ -210,7 +246,7 @@ def download_export(
 
         if storage_key and content is None:
             try:
-                from backtestforecast.exports.storage import get_storage, S3Storage
+                from backtestforecast.exports.storage import S3Storage, get_storage
 
                 s3_storage = get_storage(settings)
                 if not isinstance(s3_storage, S3Storage):
@@ -283,10 +319,12 @@ def download_export(
                 )
             except NotImplementedError:
                 pass
-            except Exception:
+            except Exception as exc:
                 logger.warning("export.s3_stream_unavailable", export_job_id=str(export_job_id), exc_info=True)
                 from backtestforecast.errors import ExternalServiceError
-                raise ExternalServiceError("Export storage is temporarily unavailable. Please retry in a moment.")
+                raise ExternalServiceError(
+                    "Export storage is temporarily unavailable. Please retry in a moment."
+                ) from exc
 
         content = service.get_db_content_bytes_for_download(user, export_job_id)
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import suppress
@@ -152,7 +152,7 @@ def get_db() -> Generator[Session, None, None]:
     request finishes.
 
     Services should commit at the end of their public method after all
-    mutations are applied.  Routers should not commit — that is the
+    mutations are applied.  Routers should not commit - that is the
     responsibility of the service layer.
     """
     db = create_session()

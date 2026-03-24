@@ -1,10 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import bisect
 import math
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import date
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -282,10 +283,10 @@ def resolve_strike(
     """Resolve a strike based on the selection config, or fall back to nearest OTM.
 
     For DELTA_TARGET mode, the resolution order is:
-      1. *delta_lookup* — pre-built (strike, expiration)->delta map (from API chain snapshot)
-      2. IV-improved BSM — estimate IV from the market quote for each candidate
-      3. *realized_vol* — historical realized volatility (if available)
-      4. Hardcoded 30% vol BSM — final fallback
+      1. *delta_lookup* - pre-built (strike, expiration)->delta map (from API chain snapshot)
+      2. IV-improved BSM - estimate IV from the market quote for each candidate
+      3. *realized_vol* - historical realized volatility (if available)
+      4. Hardcoded 30% vol BSM - final fallback
     """
     if selection is None or selection.mode == StrikeSelectionMode.NEAREST_OTM:
         if contract_type == "call":
@@ -406,10 +407,7 @@ def resolve_wing_strike(
         )
         if wrong_side:
             fallback = offset_strike(unique_sorted, short_strike, direction, presorted=True)
-            if fallback is not None and fallback != short_strike:
-                result = fallback
-            else:
-                result = None
+            result = fallback if fallback is not None and fallback != short_strike else None
 
     if result is None:
         _logger.debug(

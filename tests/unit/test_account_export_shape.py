@@ -1,13 +1,14 @@
-"""Verify account export response contains expected keys."""
+﻿"""Verify account export response contains expected keys."""
 
 
 def test_export_response_keys():
     expected_keys = {
         "user", "pagination", "backtests", "templates",
-        "scanner_jobs", "sweep_jobs", "export_jobs", "symbol_analyses", "audit_events",
+        "scanner_jobs", "sweep_jobs", "export_jobs", "symbol_analyses", "audit_events", "totals",
     }
-    from apps.api.app.routers.account import export_account_data
     import inspect
+
+    from apps.api.app.routers.account import export_account_data
     source = inspect.getsource(export_account_data)
     for key in expected_keys:
         assert f'"{key}"' in source, f"Missing key '{key}' in export response"
@@ -25,4 +26,18 @@ def test_export_pagination_model_exposes_all_offsets():
         "exports_offset",
         "analyses_offset",
         "audit_offset",
+    }
+
+
+def test_export_totals_include_audit_events_count():
+    from apps.api.app.routers.account import _GdprTotals
+
+    assert set(_GdprTotals.model_fields) == {
+        "backtests",
+        "templates",
+        "scanner_jobs",
+        "sweep_jobs",
+        "export_jobs",
+        "symbol_analyses",
+        "audit_events",
     }

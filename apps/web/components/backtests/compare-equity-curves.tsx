@@ -34,17 +34,6 @@ export function CompareEquityCurves({
     .map((r, i) => ({ run: r, originalIndex: i }))
     .filter((entry) => (entry.run.equity_curve ?? []).length > 0);
 
-  if (nonEmptyEntries.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Equity curves</CardTitle>
-          <CardDescription>No equity data is available for the compared runs.</CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
-
   let globalMin = Infinity;
   let globalMax = -Infinity;
 
@@ -92,6 +81,17 @@ export function CompareEquityCurves({
         .join(" ");
     };
   }, [globalMin, range]);
+
+  if (nonEmptyEntries.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Equity curves</CardTitle>
+          <CardDescription>No equity data is available for the compared runs.</CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
 
   return (
     <Card>

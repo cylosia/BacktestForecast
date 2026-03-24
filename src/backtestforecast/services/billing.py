@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import time as _time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PAID_STATUSES, BillingInterval, PlanTier
@@ -33,10 +33,15 @@ from backtestforecast.schemas.billing import (
     PortalSessionResponse,
 )
 from backtestforecast.services.audit import AuditService
-from backtestforecast.services.billing_components import CheckoutService, PortalService, ReconciliationService, WebhookHandler
+from backtestforecast.services.billing_components import (
+    CheckoutService,
+    PortalService,
+    ReconciliationService,
+    WebhookHandler,
+)
 
 logger = get_logger("billing")
-UTC = timezone.utc
+UTC = UTC
 
 _KNOWN_STRIPE_EVENTS = frozenset({
     "checkout.session.completed",
@@ -547,7 +552,8 @@ class BillingService:
                 else None,
             }
             try:
-                assert client is not None
+                if client is None:
+                    raise RuntimeError("Stripe client must be available when reconciling stale users.")
                 subscription = client.subscriptions.retrieve(sub_id)
                 stripe_status = str(subscription.get("status", ""))
                 action["stripe_status"] = stripe_status
@@ -619,7 +625,8 @@ class BillingService:
         for the caller to pass to :meth:`publish_cancellation_events`.
         """
         from sqlalchemy import update as sa_update
-        from backtestforecast.models import BacktestRun, ScannerJob, ExportJob, SymbolAnalysis, SweepJob
+
+        from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis
 
         _ACTIVE = ("queued", "running")
         task_ids: list[str] = []

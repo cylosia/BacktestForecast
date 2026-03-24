@@ -1,4 +1,4 @@
-"""Regression tests for bounded in-memory scan recommendation selection."""
+﻿"""Regression tests for bounded in-memory scan recommendation selection."""
 from __future__ import annotations
 
 import inspect

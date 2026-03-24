@@ -1,4 +1,4 @@
-"""Test that MassiveClient retry logic is not duplicated.
+﻿"""Test that MassiveClient retry logic is not duplicated.
 
 Both _get_json and get_market_holidays should delegate to the shared
 _request_with_retry method instead of duplicating the circuit-breaker

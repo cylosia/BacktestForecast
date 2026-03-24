@@ -1,4 +1,4 @@
-"""Fixtures for full-stack smoke tests.
+﻿"""Fixtures for full-stack smoke tests.
 
 Uses SMOKE_TEST_DATABASE_URL if set (Postgres), otherwise sqlite://.
 Skips when required infra (Postgres/Redis) is unavailable.
@@ -34,7 +34,7 @@ def _check_redis_available() -> bool:
     try:
         import redis
 
-        url = os.environ.get("REDIS_URL", os.environ.get("redis_url", "redis://localhost:6379/0"))
+        url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
         client = redis.from_url(url)
         client.ping()
         client.close()

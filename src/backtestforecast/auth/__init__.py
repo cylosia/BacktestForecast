@@ -1,1 +1,1 @@
-"""Clerk authentication and JWT verification."""
+﻿"""Clerk authentication and JWT verification."""

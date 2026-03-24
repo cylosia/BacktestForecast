@@ -1,22 +1,28 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from datetime import date, datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backtestforecast.config import get_settings
-from backtestforecast.schemas.common import JobStatus, PlanTier, RunJobStatus, sanitize_error_message
+from backtestforecast.schemas.common import (
+    CursorPaginatedResponse,
+    PlanTier,
+    RunJobStatus,
+    WarningResponse,
+    sanitize_error_message,
+)
 from backtestforecast.version import DEFAULT_ENGINE_VERSION, ENGINE_VERSION_CHOICES
 
 SYMBOL_ALLOWED_CHARS = re.compile(r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
 
 
-class StrategyType(str, Enum):
+class StrategyType(StrEnum):
     LONG_CALL = "long_call"
     LONG_PUT = "long_put"
     COVERED_CALL = "covered_call"
@@ -56,25 +62,25 @@ class StrategyType(str, Enum):
     NAKED_PUT = "naked_put"
 
 
-class ComparisonOperator(str, Enum):
+class ComparisonOperator(StrEnum):
     LT = "lt"
     LTE = "lte"
     GT = "gt"
     GTE = "gte"
 
 
-class CrossoverDirection(str, Enum):
+class CrossoverDirection(StrEnum):
     BULLISH = "bullish"
     BEARISH = "bearish"
 
 
-class BollingerBand(str, Enum):
+class BollingerBand(StrEnum):
     LOWER = "lower"
     MIDDLE = "middle"
     UPPER = "upper"
 
 
-class SupportResistanceMode(str, Enum):
+class SupportResistanceMode(StrEnum):
     NEAR_SUPPORT = "near_support"
     NEAR_RESISTANCE = "near_resistance"
     BREAKOUT_ABOVE_RESISTANCE = "breakout_above_resistance"
@@ -100,7 +106,7 @@ class MovingAverageCrossoverRule(BaseModel):
     direction: CrossoverDirection
 
     @model_validator(mode="after")
-    def validate_period_order(self) -> "MovingAverageCrossoverRule":
+    def validate_period_order(self) -> MovingAverageCrossoverRule:
         if self.fast_period >= self.slow_period:
             raise ValueError("fast_period must be less than slow_period")
         return self
@@ -115,7 +121,7 @@ class MacdRule(BaseModel):
     signal_period: int = Field(default=9, ge=2, le=100)
 
     @model_validator(mode="after")
-    def validate_period_order(self) -> "MacdRule":
+    def validate_period_order(self) -> MacdRule:
         if self.fast_period >= self.slow_period:
             raise ValueError("fast_period must be less than slow_period")
         return self
@@ -169,7 +175,7 @@ class AvoidEarningsRule(BaseModel):
     days_after: int = Field(default=0, ge=0, le=30)
 
     @model_validator(mode="after")
-    def validate_non_zero_window(self) -> "AvoidEarningsRule":
+    def validate_non_zero_window(self) -> AvoidEarningsRule:
         if self.days_before == 0 and self.days_after == 0:
             raise ValueError("At least one of days_before or days_after must be > 0")
         return self
@@ -286,7 +292,7 @@ class CustomLegDefinition(BaseModel):
     quantity_ratio: Decimal = Field(default=Decimal("1.0"), ge=Decimal("0.1"), le=Decimal("10.0"))
 
     @model_validator(mode="after")
-    def validate_leg(self) -> "CustomLegDefinition":
+    def validate_leg(self) -> CustomLegDefinition:
         if self.asset_type == "option" and self.contract_type is None:
             raise ValueError("contract_type is required for option legs")
         if self.asset_type == "stock":
@@ -302,20 +308,20 @@ class CustomLegDefinition(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class StrikeSelectionMode(str, Enum):
+class StrikeSelectionMode(StrEnum):
     """How to choose a strike for a strategy leg."""
 
     NEAREST_OTM = "nearest_otm"
     """First listed strike OTM (default, current behavior)."""
 
     PCT_FROM_SPOT = "pct_from_spot"
-    """Place at spot × (1 ± value/100). E.g., value=5 → 5% above/below spot."""
+    """Place at spot x (1 +/- value/100). E.g., value=5 -> 5% above/below spot."""
 
     ATM_OFFSET_STEPS = "atm_offset_steps"
-    """N listed-strike increments from ATM. E.g., value=2 → two strikes OTM."""
+    """N listed-strike increments from ATM. E.g., value=2 -> two strikes OTM."""
 
     DELTA_TARGET = "delta_target"
-    """Target absolute delta. E.g., value=30 → ~30Δ. Uses BSM approximation (no provider greeks required)."""
+    """Target absolute delta. E.g., value=30 -> ~30delta. Uses BSM approximation (no provider greeks required)."""
 
 
 class StrikeSelection(BaseModel):
@@ -326,38 +332,35 @@ class StrikeSelection(BaseModel):
     value: Decimal | None = Field(
         default=None,
         description=(
-            "Interpretation depends on mode: pct_from_spot → percentage, "
-            "atm_offset_steps → integer steps, delta_target → absolute delta (0-100)."
+            "Interpretation depends on mode: pct_from_spot -> percentage, "
+            "atm_offset_steps -> integer steps, delta_target -> absolute delta (0-100)."
         ),
     )
 
     @model_validator(mode="after")
-    def validate_selection(self) -> "StrikeSelection":
+    def validate_selection(self) -> StrikeSelection:
         if self.mode != StrikeSelectionMode.NEAREST_OTM and self.value is None:
             raise ValueError(f"value is required when mode is {self.mode.value}")
-        if self.mode == StrikeSelectionMode.PCT_FROM_SPOT and self.value is not None:
-            if self.value < 0 or self.value > 50:
-                raise ValueError("pct_from_spot value must be between 0 and 50")
-        if self.mode == StrikeSelectionMode.ATM_OFFSET_STEPS and self.value is not None:
-            if self.value < 0 or self.value > 20:
-                raise ValueError("atm_offset_steps value must be between 0 and 20")
-        if self.mode == StrikeSelectionMode.DELTA_TARGET and self.value is not None:
-            if self.value < 1 or self.value > 99:
-                raise ValueError("delta_target value must be between 1 and 99")
+        if self.mode == StrikeSelectionMode.PCT_FROM_SPOT and self.value is not None and not 0 <= self.value <= 50:
+            raise ValueError("pct_from_spot value must be between 0 and 50")
+        if self.mode == StrikeSelectionMode.ATM_OFFSET_STEPS and self.value is not None and not 0 <= self.value <= 20:
+            raise ValueError("atm_offset_steps value must be between 0 and 20")
+        if self.mode == StrikeSelectionMode.DELTA_TARGET and self.value is not None and not 1 <= self.value <= 99:
+            raise ValueError("delta_target value must be between 1 and 99")
         return self
 
 
-class SpreadWidthMode(str, Enum):
+class SpreadWidthMode(StrEnum):
     """How to determine the width of a spread (distance between short and long strikes)."""
 
     STRIKE_STEPS = "strike_steps"
     """N listed-strike increments (default: 1)."""
 
     DOLLAR_WIDTH = "dollar_width"
-    """Fixed dollar amount (e.g., 5 → $5 wide)."""
+    """Fixed dollar amount (e.g., 5 -> $5 wide)."""
 
     PCT_WIDTH = "pct_width"
-    """Percentage of the underlying (e.g., 3 → 3% wide)."""
+    """Percentage of the underlying (e.g., 3 -> 3% wide)."""
 
 
 def validate_spread_width(mode: SpreadWidthMode, value: Decimal) -> None:
@@ -368,9 +371,8 @@ def validate_spread_width(mode: SpreadWidthMode, value: Decimal) -> None:
     elif mode == SpreadWidthMode.DOLLAR_WIDTH:
         if value < Decimal("0.5") or value > Decimal("100"):
             raise ValueError("dollar_width must be between 0.50 and 100")
-    elif mode == SpreadWidthMode.PCT_WIDTH:
-        if value < Decimal("0.5") or value > Decimal("30"):
-            raise ValueError("pct_width must be between 0.5 and 30")
+    elif mode == SpreadWidthMode.PCT_WIDTH and (value < Decimal("0.5") or value > Decimal("30")):
+        raise ValueError("pct_width must be between 0.5 and 30")
 
 
 class SpreadWidthConfig(BaseModel):
@@ -381,7 +383,7 @@ class SpreadWidthConfig(BaseModel):
     value: Decimal = Field(default=Decimal("1"), gt=0)
 
     @model_validator(mode="after")
-    def validate_width(self) -> "SpreadWidthConfig":
+    def validate_width(self) -> SpreadWidthConfig:
         validate_spread_width(self.mode, self.value)
         return self
 
@@ -418,11 +420,15 @@ class CreateBacktestRunRequest(BaseModel):
     end_date: date = Field(description="Backtest end date. Must be after start_date.")
     target_dte: int = Field(ge=1, le=365)
     dte_tolerance_days: int = Field(default=5, ge=0, le=60)
-    max_holding_days: int = Field(ge=1, le=120, description="Maximum holding period in trading days (weekdays only). 30 trading days ≈ 6 calendar weeks.")
+    max_holding_days: int = Field(ge=1, le=120, description="Maximum holding period in trading days (weekdays only). 30 trading days ~= 6 calendar weeks.")
     account_size: Decimal = Field(ge=Decimal("100"), le=Decimal("100000000"))
     risk_per_trade_pct: Decimal = Field(gt=0, le=100)
     commission_per_contract: Decimal = Field(ge=0, le=Decimal("100"))
-    entry_rules: list[EntryRule] = Field(min_length=1, max_length=8)
+    entry_rules: list[EntryRule] = Field(
+        min_length=0,
+        max_length=8,
+        description="Entry rules for the backtest. Internal scan/sweep flows may intentionally use an empty list; the public create-backtest API rejects empty entry_rules.",
+    )
     idempotency_key: str | None = Field(
         default=None,
         min_length=4,
@@ -445,7 +451,7 @@ class CreateBacktestRunRequest(BaseModel):
     risk_free_rate: Decimal | None = Field(
         default=None, ge=Decimal("0"), le=Decimal("0.20"),
         description="Annualized risk-free rate for Sharpe/Sortino calculations. "
-                    "If not provided, uses the server default (see /v1/meta). "
+                    "If not provided, resolves from Massive Treasury yields for the backtest window and falls back to the configured server default if Massive is unavailable. "
                     "Set to 0.0 for ZIRP-era backtests.",
     )
     dividend_yield: Decimal | None = Field(
@@ -463,7 +469,7 @@ class CreateBacktestRunRequest(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_request(self) -> "CreateBacktestRunRequest":
+    def validate_request(self) -> CreateBacktestRunRequest:
         from backtestforecast.utils.dates import market_date_today
         if self.end_date > market_date_today():
             raise ValueError("end_date cannot be in the future (US Eastern time).")
@@ -497,9 +503,12 @@ class CreateBacktestRunRequest(BaseModel):
             if long_count == 0 or short_count == 0:
                 raise ValueError("custom_legs must contain at least one long and one short leg")
 
-        if self.strategy_overrides and self.strategy_type != StrategyType.CALENDAR_SPREAD:
-            if self.strategy_overrides.calendar_contract_type is not None:
-                raise ValueError("calendar_contract_type override is only valid for calendar_spread")
+        if (
+            self.strategy_overrides
+            and self.strategy_type != StrategyType.CALENDAR_SPREAD
+            and self.strategy_overrides.calendar_contract_type is not None
+        ):
+            raise ValueError("calendar_contract_type override is only valid for calendar_spread")
 
         return self
 
@@ -531,7 +540,7 @@ class CurrentUserResponse(BaseModel):
     ``features`` and ``usage`` are computed fields that do not correspond to
     database columns on the User model.  Callers must construct this response
     explicitly (see ``BacktestService.to_current_user_response``) rather than
-    passing an ORM User object directly — ``from_attributes`` is enabled only
+    passing an ORM User object directly - ``from_attributes`` is enabled only
     for the flat scalar fields inherited from the User row.
     """
 
@@ -559,7 +568,7 @@ class BacktestSummaryResponse(BaseModel):
     on BacktestRunDetailResponse) AND manual construction from JSON blobs
     (scanner/sweep ``summary_json`` fields). Fields like ``decided_trades``
     that don't exist on the ORM model will silently default to ``None``.
-    Do not add validators that assume ORM context — they will break the
+    Do not add validators that assume ORM context - they will break the
     JSON construction path.
     """
     # NOTE: Used both for ORM mapping (BacktestRun detail) and JSON blob
@@ -610,7 +619,7 @@ class BacktestTradeResponse(BaseModel):
     holding_period_trading_days: int | None = Field(default=None, description="Trading days (market-open days) held. None for wheel strategy.")
     entry_underlying_close: Decimal
     exit_underlying_close: Decimal
-    entry_mid: Decimal = Field(description="Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value × 100 × quantity.")
+    entry_mid: Decimal = Field(description="Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value x 100 x quantity.")
     exit_mid: Decimal = Field(description="Per-unit position value at exit divided by 100. Same convention as entry_mid.")
     gross_pnl: Decimal
     net_pnl: Decimal
@@ -680,6 +689,10 @@ class BacktestRunHistoryItemResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     summary: BacktestSummaryResponse
+    summary_provenance: Literal["persisted_run_aggregates"] = Field(
+        default="persisted_run_aggregates",
+        description="Indicates that summary metrics were serialized from persisted run aggregates, not recomputed from returned trade or equity slices.",
+    )
 
 
 class BacktestRunDetailResponse(BaseModel):
@@ -700,13 +713,27 @@ class BacktestRunDetailResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    warnings: list[dict[str, Any]] = Field(validation_alias="warnings_json", max_length=100)
+    warnings: list[WarningResponse] = Field(validation_alias="warnings_json", max_length=100)
     error_code: str | None = None
     error_message: str | None = None
     summary: BacktestSummaryResponse
+    summary_provenance: Literal["persisted_run_aggregates"] = Field(
+        default="persisted_run_aggregates",
+        description="Indicates that summary metrics were serialized from persisted run aggregates, not recomputed from returned trade or equity slices.",
+    )
     trades: list[BacktestTradeResponse] = Field(max_length=10000)
     equity_curve: list[EquityCurvePointResponse] = Field(max_length=10000)
     equity_curve_truncated: bool = False
+    trade_items_omitted: int = Field(
+        default=0,
+        ge=0,
+        description="Number of persisted trades omitted from the returned trade slice.",
+    )
+    equity_curve_points_omitted: int = Field(
+        default=0,
+        ge=0,
+        description="Number of persisted equity points omitted from the returned equity-curve slice.",
+    )
     risk_free_rate: Decimal | None = Field(
         default=None,
         description=(
@@ -732,15 +759,8 @@ class BacktestRunStatusResponse(BaseModel):
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
-class BacktestRunListResponse(BaseModel):
+class BacktestRunListResponse(CursorPaginatedResponse):
     items: list[BacktestRunHistoryItemResponse]
-    total: int = 0
-    offset: int = 0
-    limit: int = 50
-    next_cursor: str | None = Field(
-        default=None,
-        description="Opaque cursor for keyset pagination. Pass as `cursor` on the next request to fetch the next page.",
-    )
 
 
 class CompareBacktestsRequest(BaseModel):

@@ -1,4 +1,4 @@
-"""Verify account deletion requires confirmation and creates audit trail."""
+﻿"""Verify account deletion requires confirmation and creates audit trail."""
 from __future__ import annotations
 
 

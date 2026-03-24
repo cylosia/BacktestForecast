@@ -1,4 +1,4 @@
-"""Integration tests for ScanService orchestration logic.
+﻿"""Integration tests for ScanService orchestration logic.
 
 Fixes 61-65: Verify combinatorial expansion, recommendation ordering,
 per-symbol error handling, and max_recommendations cap.
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import inspect
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

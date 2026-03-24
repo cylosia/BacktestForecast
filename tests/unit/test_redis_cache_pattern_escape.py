@@ -1,4 +1,4 @@
-"""Test that Redis SCAN patterns escape glob metacharacters in symbols.
+﻿"""Test that Redis SCAN patterns escape glob metacharacters in symbols.
 
 Regression test for the bug where invalidate_symbol("*") would match
 every key in the cache, or "SPY?" would match "SPYG" etc.
@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import threading
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from backtestforecast.market_data.redis_cache import OptionDataRedisCache
 
@@ -27,8 +25,9 @@ def _make_cache() -> OptionDataRedisCache:
 def _get_scan_pattern(cache: OptionDataRedisCache, symbol: str) -> str:
     """Call invalidate_symbol and capture the SCAN match pattern."""
     mock_redis = cache._client
+    cache._conn = lambda: mock_redis  # type: ignore[attr-defined]
+    mock_redis.smembers.return_value = set()
     mock_redis.scan.return_value = (0, [])
-    mock_redis.get.return_value = None
     cache.invalidate_symbol(symbol)
     call_args = mock_redis.scan.call_args
     return call_args[1].get("match") or call_args[0][1]

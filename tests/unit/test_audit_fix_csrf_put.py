@@ -1,7 +1,8 @@
-"""Verify that PUT requests via cookie auth require X-Requested-With header."""
+﻿"""Verify that PUT requests via cookie auth require X-Requested-With header."""
 from __future__ import annotations
-from unittest.mock import MagicMock, patch
+
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 

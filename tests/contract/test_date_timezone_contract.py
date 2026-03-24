@@ -1,4 +1,4 @@
-"""Contract test: frontend date validation matches backend ET behavior.
+﻿"""Contract test: frontend date validation matches backend ET behavior.
 
 The backend rejects end_date > market_date_today() (US Eastern time).
 The frontend must be at least as restrictive, using an ET-aware boundary
@@ -10,9 +10,6 @@ would need a browser environment for the frontend JavaScript).
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VALIDATION_TS = PROJECT_ROOT / "apps" / "web" / "lib" / "backtests" / "validation.ts"
@@ -64,8 +61,9 @@ def test_utils_has_daysAgoET_function() -> None:
 
 def test_backend_uses_market_date_today() -> None:
     """Backend date validation must use market_date_today(), not datetime.now()."""
-    from backtestforecast.schemas.backtests import CreateBacktestRunRequest
     import inspect
+
+    from backtestforecast.schemas.backtests import CreateBacktestRunRequest
     source = inspect.getsource(CreateBacktestRunRequest.validate_request)
     assert "market_date_today" in source, (
         "CreateBacktestRunRequest.validate_request must use market_date_today() "

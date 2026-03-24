@@ -1,4 +1,4 @@
-"""Verify template config schema fields are round-trippable."""
+﻿"""Verify template config schema fields are round-trippable."""
 from __future__ import annotations
 
 

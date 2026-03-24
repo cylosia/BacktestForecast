@@ -1,4 +1,4 @@
-from backtestforecast import __version__
+﻿from backtestforecast import __version__
 
 API_SERVICE_NAME = "backtestforecast-api"
 API_META_PATH = "/meta"

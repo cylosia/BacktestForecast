@@ -1,4 +1,4 @@
-"""Test that rate limiting actually returns 429 when the limit is exceeded.
+﻿"""Test that rate limiting actually returns 429 when the limit is exceeded.
 
 Unlike other integration tests, this fixture does NOT reset the rate
 limiter between requests, so the rate-limit middleware is exercised.
@@ -23,7 +23,7 @@ from backtestforecast.security.rate_limits import get_rate_limiter
 def _make_engine():
     url = os.environ.get("DATABASE_URL")
     if not url:
-        pytest.skip("DATABASE_URL is not set — integration tests require Postgres.")
+        pytest.skip("DATABASE_URL is not set - integration tests require Postgres.")
     return create_engine(url)
 
 

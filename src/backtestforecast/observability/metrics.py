@@ -1,10 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 import time
 
 import structlog
-
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -219,6 +218,12 @@ REDIS_POOL_SIZE = Gauge(
 REDIS_POOL_IN_USE = Gauge(
     "redis_pool_in_use",
     "Redis connections currently checked out from the pool",
+)
+
+WORKER_REDIS_OPEN_CONNECTIONS = Gauge(
+    "worker_redis_open_connections",
+    "Approximate number of open Redis connections held by the worker process",
+    ["pool"],
 )
 
 ACTIVE_SSE_CONNECTIONS = Gauge(
@@ -438,6 +443,42 @@ EXPORT_EXECUTION_DURATION_SECONDS = Histogram(
     buckets=[0.5, 1, 2.5, 5, 10, 30, 60],
 )
 
+TRUNCATED_PAYLOADS_TOTAL = Counter(
+    "truncated_payloads_total",
+    "Count of API payloads that returned truncated transport data",
+    ["surface", "kind"],
+)
+
+TRUNCATED_PAYLOAD_ITEMS_TOTAL = Counter(
+    "truncated_payload_items_total",
+    "Count of trade or equity items omitted from truncated API payloads",
+    ["surface", "kind"],
+)
+
+DERIVED_RESPONSE_PARTIAL_DATA_TOTAL = Counter(
+    "derived_response_partial_data_total",
+    "Warnings emitted when derived response fields rely on partial or inconsistent persisted data",
+    ["surface", "reason"],
+)
+
+UPSTREAM_PAGINATION_LIMIT_EXCEEDED_TOTAL = Counter(
+    "upstream_pagination_limit_exceeded_total",
+    "Times an upstream pagination safety cap was exceeded and surfaced explicitly",
+    ["provider", "endpoint"],
+)
+
+UPSTREAM_PAGINATION_FAILURES_TOTAL = Counter(
+    "upstream_pagination_failures_total",
+    "Times an upstream pagination continuation failed and was surfaced explicitly",
+    ["provider", "endpoint", "reason"],
+)
+
+EXTERNAL_CLEANUP_FAILURES_TOTAL = Counter(
+    "external_cleanup_failures_total",
+    "Failures while cleaning up external resources after local state changes",
+    ["resource", "operation", "result"],
+)
+
 DISPATCH_RESULTS_TOTAL = Counter(
     "dispatch_results_total",
     "Celery dispatch outcomes",
@@ -492,10 +533,7 @@ def _normalize_path(path: str) -> str:
             idx = path.find(prefix) + len(prefix)
             rest = path[idx:]
             slug_end = rest.find("/")
-            if slug_end == -1:
-                path = path[:idx] + "{symbol}"
-            else:
-                path = path[:idx] + "{symbol}" + rest[slug_end:]
+            path = path[:idx] + "{symbol}" if slug_end == -1 else path[:idx] + "{symbol}" + rest[slug_end:]
             break
     if not any(path.startswith(p) for p in _KNOWN_PATH_PREFIXES):
         with _unknown_path_lock:

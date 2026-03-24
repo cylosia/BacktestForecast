@@ -1,7 +1,8 @@
-"""Verify that every model with an updated_at column is correctly mapped."""
+﻿"""Verify that every model with an updated_at column is correctly mapped."""
 from __future__ import annotations
 
-from sqlalchemy import DateTime, inspect as sa_inspect
+from sqlalchemy import DateTime
+from sqlalchemy import inspect as sa_inspect
 
 from backtestforecast.models import (
     BacktestRun,

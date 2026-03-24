@@ -1,4 +1,4 @@
-"""Fix 72: SSE event data must be valid JSON and within size limits.
+﻿"""Fix 72: SSE event data must be valid JSON and within size limits.
 
 Tests the validation logic in the events.py SSE router (_subscribe_redis)
 that rejects oversized or malformed messages before forwarding to clients.

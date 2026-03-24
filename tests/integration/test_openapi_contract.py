@@ -1,4 +1,4 @@
-"""Contract test: validate API responses against the OpenAPI snapshot.
+﻿"""Contract test: validate API responses against the OpenAPI snapshot.
 
 Loads the OpenAPI spec from openapi.snapshot.json and validates that
 the critical endpoint response shapes match the declared schemas.

@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import heapq
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -11,26 +11,23 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backtestforecast.observability.metrics import (
-    SCAN_CANDIDATE_FAILURES_TOTAL,
-    SCAN_EXECUTION_DURATION_SECONDS,
-    _normalize_scan_failure_reason,
-)
 from backtestforecast.billing.entitlements import (
     ScannerAccessPolicy,
     ensure_forecasting_access,
     resolve_scanner_policy,
     validate_strategy_access,
 )
-
-UTC = timezone.utc
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError, QuotaExceededError
-from backtestforecast.schemas.json_shapes import _FORECAST_REQUIRED_KEYS, validate_json_shape
-from backtestforecast.utils.dates import market_date_today
 from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import ScannerJob, ScannerRecommendation, User
+from backtestforecast.observability.metrics import (
+    SCAN_CANDIDATE_FAILURES_TOTAL,
+    SCAN_EXECUTION_DURATION_SECONDS,
+    _normalize_scan_failure_reason,
+)
+from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
 from backtestforecast.repositories.scanner_jobs import ScannerJobRepository
 from backtestforecast.scans.ranking import (
     HistoricalObservation,
@@ -42,43 +39,69 @@ from backtestforecast.scans.ranking import (
     rule_set_hash,
 )
 from backtestforecast.schemas.backtests import (
-    BacktestSummaryResponse,
     CreateBacktestRunRequest,
     EquityCurvePointResponse,
-    TradeJsonResponse,
     RsiRule,
+    TradeJsonResponse,
 )
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
+from backtestforecast.schemas.json_shapes import _FORECAST_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.schemas.scans import (
     CreateScannerJobRequest,
     HistoricalAnalogForecastResponse,
+    HistoricalPerformanceResponse,
+    RankingBreakdownResponse,
     ScannerJobListResponse,
     ScannerJobResponse,
+    ScannerJobStatusResponse,
     ScannerRecommendationListResponse,
     ScannerRecommendationResponse,
 )
-from backtestforecast.version import DEFAULT_ENGINE_VERSION, DEFAULT_RANKING_VERSION
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
-from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
-from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
-from backtestforecast.utils import to_decimal
+from backtestforecast.services.dispatch_recovery import (
+    observe_job_create_to_running_latency,
+    redispatch_if_stale_queued,
+)
+from backtestforecast.services.job_cancellation import (
+    mark_job_cancelled,
+    publish_cancellation_event,
+    revoke_celery_task,
+)
+from backtestforecast.services.job_transitions import (
+    cancellation_blocked_message,
+    deletion_blocked_message,
+    fail_job,
+    fail_job_if_active,
+    running_transition_values,
+)
+from backtestforecast.services.scan_components import ScanExecutor, ScanJobFactory, ScanPresenter
 from backtestforecast.services.serialization import (
     downsample_equity_curve,
     serialize_equity_point,
     serialize_summary,
     serialize_trade,
 )
-
-logger = structlog.get_logger("services.scans")
-
-
 from backtestforecast.services.serialization import (
     safe_validate_json as _safe_validate_json,
+)
+from backtestforecast.services.serialization import (
     safe_validate_list as _safe_validate_list,
+)
+from backtestforecast.services.serialization import (
+    safe_validate_model as _safe_validate_model,
+)
+from backtestforecast.services.serialization import (
     safe_validate_summary as _safe_validate_summary,
 )
-from backtestforecast.services.scan_components import ScanExecutor, ScanJobFactory, ScanPresenter
+from backtestforecast.services.serialization import (
+    safe_validate_warning_list as _safe_validate_warning_list,
+)
+from backtestforecast.utils import to_decimal
+from backtestforecast.utils.dates import market_date_today
+from backtestforecast.version import DEFAULT_ENGINE_VERSION, DEFAULT_RANKING_VERSION
+
+logger = structlog.get_logger("services.scans")
 
 
 def _get_fallback_entry_rules() -> list[RsiRule]:
@@ -86,7 +109,7 @@ def _get_fallback_entry_rules() -> list[RsiRule]:
 
     This fallback is used when no entry rules are provided by the user's
     rule sets. It affects the indicator warmup window (RSI-14 needs ~14
-    bars) but does NOT affect which trades the engine takes — the engine
+    bars) but does NOT affect which trades the engine takes - the engine
     still requires the user's configured entry rules to fire.
 
     If you change the default period here, update
@@ -143,7 +166,7 @@ class ScanService:
         if self._execution_service is not None:
             self._execution_service.close()
 
-    def __enter__(self) -> "ScanService":
+    def __enter__(self) -> ScanService:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -165,8 +188,20 @@ class ScanService:
     def get_recommendations(self, user: User, job_id: UUID) -> ScannerRecommendationListResponse:
         return self.presenter.get_recommendations(user, job_id)
 
-    def build_forecast(self, job: ScannerJob, recommendation: ScannerRecommendation) -> ForecastEnvelopeResponse:
-        return self.executor.build_forecast(job, recommendation)
+    def build_forecast(
+        self,
+        *,
+        user: User,
+        symbol: str,
+        strategy_type: str | None,
+        horizon_days: int,
+    ) -> ForecastEnvelopeResponse:
+        return self.executor.build_forecast(
+            user=user,
+            symbol=symbol,
+            strategy_type=strategy_type,
+            horizon_days=horizon_days,
+        )
 
     @property
     def forecaster(self) -> HistoricalAnalogForecaster:
@@ -313,10 +348,7 @@ class ScanService:
 
         user = self.session.get(User, job.user_id)
         if user is None:
-            job.status = "failed"
-            job.error_code = "user_not_found"
-            job.error_message = "User account not found."
-            job.completed_at = datetime.now(UTC)
+            fail_job(job, error_code="user_not_found", error_message="User account not found.")
             self.session.commit()
             return job
 
@@ -327,10 +359,7 @@ class ScanService:
                 subscription_current_period_end=user.subscription_current_period_end,
             )
         except AppError:
-            job.status = "failed"
-            job.error_code = "entitlement_revoked"
-            job.error_message = "Subscription no longer active."
-            job.completed_at = datetime.now(UTC)
+            fail_job(job, error_code="entitlement_revoked", error_message="Subscription no longer active.")
             self.session.commit()
             return job
 
@@ -341,16 +370,10 @@ class ScanService:
         rows_updated = self.session.execute(
             sa_update(ScannerJob)
             .where(ScannerJob.id == job.id, ScannerJob.status == "queued")
-            .values(
-                status="running",
-                started_at=datetime.now(UTC),
-                completed_at=None,
-                error_code=None,
-                error_message=None,
+            .values(**running_transition_values(
                 recommendation_count=0,
                 evaluated_candidate_count=0,
-                updated_at=datetime.now(UTC),
-            )
+            ))
         ).rowcount
         self.session.commit()
         if rows_updated == 0:
@@ -370,11 +393,12 @@ class ScanService:
                 self.session.rollback()
                 self.session.expire_all()
                 job = self.repository.get(job_id, for_update=True)
-                if job is not None and job.status not in ("succeeded", "cancelled"):
-                    job.status = "failed"
-                    job.error_code = "internal_error"
-                    job.error_message = "An unexpected error occurred during scan execution."
-                    job.completed_at = datetime.now(UTC)
+                if job is not None:
+                    fail_job_if_active(
+                        job,
+                        error_code="internal_error",
+                        error_message="An unexpected error occurred during scan execution.",
+                    )
                     self.session.commit()
             except Exception:  # Intentional: the recovery handler itself must not raise,
                 # otherwise the original exception would be masked.
@@ -492,21 +516,32 @@ class ScanService:
                         if len(candidates_heap) >= keep_limit and sort_key >= candidates_heap[0].sort_key:
                             continue
 
+                        serialized_trades = [
+                            self._serialize_trade(trade)
+                            for trade in execution_result.trades[:50]
+                        ]
+                        summary = self._serialize_summary(execution_result.summary)
+                        serialized_trade_count = len(serialized_trades)
+                        full_trade_count = max(
+                            int(summary.get("trade_count") or 0),
+                            serialized_trade_count,
+                        )
                         candidate = {
                             "symbol": symbol,
                             "strategy_type": strategy.value,
                             "rule_set_name": rule_set.name,
                             "rule_set_hash": candidate_rule_set_hash,
                             "request_snapshot": request.model_dump(mode="json"),
-                            "summary": self._serialize_summary(execution_result.summary),
+                            "summary": summary,
                             "warnings": execution_result.warnings,
-                            "trades": [
-                                self._serialize_trade(trade)
-                                for trade in execution_result.trades[:50]
-                            ],
-                            "trades_truncated": len(execution_result.trades) > 50,
-                            "equity_curve": self._downsample_equity_curve(
-                                execution_result.equity_curve
+                            "trades": serialized_trades,
+                            "trade_count": full_trade_count,
+                            "serialized_trade_count": serialized_trade_count,
+                            "equity_curve": self._downsample_equity_curve(execution_result.equity_curve),
+                            "equity_point_count": len(execution_result.equity_curve),
+                            "serialized_equity_point_count": min(
+                                len(execution_result.equity_curve),
+                                get_settings().max_scan_equity_points,
                             ),
                             "historical": historical.model_dump(mode="json"),
                             "forecast": forecast.model_dump(mode="json"),
@@ -582,7 +617,10 @@ class ScanService:
                 validate_json_shape(candidate["forecast"], "ScannerRecommendation.forecast_json", required_keys=_FORECAST_REQUIRED_KEYS)
                 rank = rank_lookup[(candidate["symbol"], candidate["strategy_type"], candidate["rule_set_name"])]
                 ranking_with_meta = dict(candidate["ranking"])
-                ranking_with_meta["trades_truncated"] = candidate.get("trades_truncated", False)
+                ranking_with_meta["trade_count"] = candidate.get("trade_count", 0)
+                ranking_with_meta["serialized_trade_count"] = candidate.get("serialized_trade_count", 0)
+                ranking_with_meta["equity_point_count"] = candidate.get("equity_point_count", 0)
+                ranking_with_meta["serialized_equity_point_count"] = candidate.get("serialized_equity_point_count", 0)
                 job.recommendations.append(
                     ScannerRecommendation(
                         rank=rank,
@@ -645,30 +683,18 @@ class ScanService:
         offset: int = 0,
         cursor: str | None = None,
     ) -> ScannerJobListResponse:
-        from backtestforecast.utils import decode_cursor, encode_cursor
-
         effective_limit = min(limit, 200)
-        cursor_before = None
-        if cursor:
-            cursor_before = decode_cursor(cursor)
-            if cursor_before is None:
-                from backtestforecast.errors import ValidationError
-                raise ValidationError("Invalid pagination cursor.")
-            offset = 0
-        jobs = self.repository.list_for_user(
+        cursor_before, offset = parse_cursor_param(cursor) if cursor else (None, offset)
+        jobs, total = self.repository.list_for_user_with_count(
             user.id, limit=effective_limit + 1, offset=offset, cursor_before=cursor_before,
         )
-        has_next = len(jobs) > effective_limit
-        if has_next:
-            jobs = jobs[:effective_limit]
-        total = self.repository.count_for_user(user.id)
-        next_cursor = encode_cursor(jobs[-1].created_at, jobs[-1].id) if has_next and jobs else None
+        page = finalize_cursor_page(jobs, total=total, offset=offset, limit=effective_limit)
         return ScannerJobListResponse(
-            items=[self._to_job_response(job) for job in jobs],
-            total=total,
-            offset=offset,
-            limit=effective_limit,
-            next_cursor=next_cursor,
+            items=[self._to_job_response(job) for job in page.items],
+            total=page.total,
+            offset=page.offset,
+            limit=page.limit,
+            next_cursor=page.next_cursor,
         )
 
     def _get_job_impl(self, user: User, job_id: UUID) -> ScannerJobResponse:
@@ -682,9 +708,7 @@ class ScanService:
         if job is None:
             raise NotFoundError("Scanner job not found.")
         if job.status in ("queued", "running"):
-            raise ConflictError(
-                "Cannot delete a job that is currently queued or running. Cancel it first."
-            )
+            raise ConflictError(deletion_blocked_message("scanner job"))
         snapshot = job.request_snapshot_json or {}
         symbols = snapshot.get("symbols", [])
         self.audit.record(
@@ -700,6 +724,39 @@ class ScanService:
         except Exception:
             self.session.rollback()
             raise
+
+    def cancel_for_user(self, job_id: UUID, user_id: UUID) -> ScannerJobStatusResponse:
+        job = self.repository.get_for_user(job_id, user_id)
+        if job is None:
+            raise NotFoundError("Scanner job not found.")
+        if job.status not in ("queued", "running"):
+            raise ConflictError(cancellation_blocked_message("scanner job"))
+        task_id = mark_job_cancelled(job)
+        snapshot = job.request_snapshot_json or {}
+        symbols = snapshot.get("symbols", [])
+        self.audit.record_always(
+            event_type="scan.cancelled",
+            subject_type="scanner_job",
+            subject_id=job.id,
+            user_id=user_id,
+            metadata={"symbols": symbols[:5], "mode": job.mode, "reason": "user_cancelled"},
+        )
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        revoke_celery_task(task_id, job_type="scan", job_id=job.id)
+        publish_cancellation_event(job_type="scan", job_id=job.id)
+        return ScannerJobStatusResponse(
+            id=job.id,
+            status=job.status,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+            error_code=job.error_code,
+            error_message=job.error_message,
+        )
 
     def _get_recommendations_impl(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
@@ -840,8 +897,8 @@ class ScanService:
         effective_strategy = strategy_type or "long_call"
         try:
             StrategyType(effective_strategy)
-        except ValueError:
-            raise AppValidationError(f"Unknown strategy_type: {effective_strategy}")
+        except ValueError as exc:
+            raise AppValidationError(f"Unknown strategy_type: {effective_strategy}") from exc
         today = market_date_today()
         request = CreateBacktestRunRequest(
             symbol=symbol,
@@ -877,7 +934,7 @@ class ScanService:
         )
 
     def _enforce_concurrent_scan_limit(self, user: User) -> None:
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         concurrent = self.session.scalar(
             select(func.count()).select_from(ScannerJob).where(
                 ScannerJob.user_id == user.id,
@@ -1142,6 +1199,7 @@ class ScanService:
 
     @staticmethod
     def _to_job_response(job: ScannerJob) -> ScannerJobResponse:
+        warnings = _safe_validate_warning_list(job.warnings_json)
         return ScannerJobResponse(
             id=job.id,
             name=job.name,
@@ -1156,7 +1214,7 @@ class ScanService:
             refresh_priority=job.refresh_priority,
             ranking_version=job.ranking_version,
             engine_version=job.engine_version,
-            warnings=job.warnings_json,
+            warnings=warnings,
             error_code=job.error_code,
             error_message=job.error_message,
             idempotency_key=job.idempotency_key,
@@ -1167,6 +1225,36 @@ class ScanService:
 
     @staticmethod
     def _to_recommendation_response(recommendation: ScannerRecommendation) -> ScannerRecommendationResponse:
+        warnings = _safe_validate_warning_list(recommendation.warnings_json)
+        trades = _safe_validate_list(
+            TradeJsonResponse,
+            recommendation.trades_json,
+            "trades",
+            response_warnings=warnings,
+        )
+        equity_curve = _safe_validate_list(
+            EquityCurvePointResponse,
+            recommendation.equity_curve_json,
+            "equity_curve",
+            response_warnings=warnings,
+        )
+        persisted_trade_count = max(
+            int((recommendation.ranking_features_json or {}).get("trade_count") or 0),
+            int((recommendation.summary_json or {}).get("trade_count") or 0),
+            len(recommendation.trades_json or []),
+        )
+        serialized_trade_count = max(
+            int((recommendation.ranking_features_json or {}).get("serialized_trade_count") or 0),
+            len(recommendation.trades_json or []),
+        )
+        persisted_equity_point_count = max(
+            int((recommendation.ranking_features_json or {}).get("equity_point_count") or 0),
+            len(recommendation.equity_curve_json or []),
+        )
+        serialized_equity_point_count = max(
+            int((recommendation.ranking_features_json or {}).get("serialized_equity_point_count") or 0),
+            len(recommendation.equity_curve_json or []),
+        )
         return ScannerRecommendationResponse(
             id=recommendation.id,
             rank=recommendation.rank,
@@ -1174,23 +1262,64 @@ class ScanService:
             symbol=recommendation.symbol,
             strategy_type=recommendation.strategy_type,
             rule_set_name=recommendation.rule_set_name,
-            request_snapshot=recommendation.request_snapshot_json,
-            summary=_safe_validate_summary(recommendation.summary_json),
-            warnings=recommendation.warnings_json,
-            historical_performance=_safe_validate_json(recommendation.historical_performance_json, "historical_performance", default={}),
-            forecast=_safe_validate_json(recommendation.forecast_json, "forecast"),
-            ranking_breakdown=_safe_validate_json(recommendation.ranking_features_json, "ranking_breakdown", default={}),
-            trades=_safe_validate_list(TradeJsonResponse, recommendation.trades_json, "trades"),
-            equity_curve=_safe_validate_list(EquityCurvePointResponse, recommendation.equity_curve_json, "equity_curve"),
-            trades_truncated=bool(
-                (recommendation.ranking_features_json or {}).get(
-                    "trades_truncated",
-                    len(recommendation.trades_json or []) >= 50,
-                )
+            request_snapshot=_safe_validate_json(
+                recommendation.request_snapshot_json,
+                "request_snapshot_json",
+                default={},
+                response_warnings=warnings,
+            ),
+            summary=_safe_validate_summary(
+                recommendation.summary_json,
+                field_name="summary_json",
+                response_warnings=warnings,
+            ),
+            warnings=warnings,
+            historical_performance=_safe_validate_model(
+                HistoricalPerformanceResponse,
+                recommendation.historical_performance_json,
+                "historical_performance_json",
+                default=None,
+                response_warnings=warnings,
+                required_keys={
+                    "sample_count",
+                    "weighted_win_rate",
+                    "weighted_total_roi_pct",
+                    "weighted_total_net_pnl",
+                    "weighted_max_drawdown_pct",
+                },
+            ),
+            forecast=_safe_validate_model(
+                HistoricalAnalogForecastResponse,
+                recommendation.forecast_json,
+                "forecast_json",
+                default=None,
+                response_warnings=warnings,
+            ),
+            ranking_breakdown=_safe_validate_model(
+                RankingBreakdownResponse,
+                recommendation.ranking_features_json,
+                "ranking_features_json",
+                default=None,
+                response_warnings=warnings,
+                required_keys={
+                    "current_performance_score",
+                    "historical_performance_score",
+                    "forecast_alignment_score",
+                    "final_score",
+                },
+            ),
+            trades=trades,
+            equity_curve=equity_curve,
+            trades_truncated=persisted_trade_count > serialized_trade_count,
+            trade_items_omitted=max(persisted_trade_count - serialized_trade_count, 0),
+            equity_curve_points_omitted=max(
+                persisted_equity_point_count - serialized_equity_point_count,
+                0,
             ),
         )
 
 
-assert ScanService._CANDIDATE_TIMEOUT_SECONDS < 300, (
-    "_CANDIDATE_TIMEOUT_SECONDS must be shorter than the worker statement_timeout (300s)"
-)
+if ScanService._CANDIDATE_TIMEOUT_SECONDS >= 300:
+    raise RuntimeError(
+        "_CANDIDATE_TIMEOUT_SECONDS must be shorter than the worker statement_timeout (300s)"
+    )

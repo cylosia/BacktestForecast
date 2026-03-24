@@ -1,10 +1,8 @@
-"""Item 73: E2E test for scanner symbol limit enforcement.
+﻿"""Item 73: E2E test for scanner symbol limit enforcement.
 
 Verifies PRO basic max_symbols is 5 and PRO advanced/premium allows more.
 """
 from __future__ import annotations
-
-import pytest
 
 
 def test_pro_basic_scanner_max_symbols() -> None:

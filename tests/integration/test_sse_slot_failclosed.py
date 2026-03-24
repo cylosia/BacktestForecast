@@ -1,4 +1,4 @@
-"""Test 69: SSE slot Redis-failure behavior.
+﻿"""Test 69: SSE slot Redis-failure behavior.
 
 Verifies that _acquire_sse_slot falls back to in-process tracking when Redis
 raises an exception, and that the Lua-based acquire/release works correctly
@@ -15,7 +15,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_acquire_sse_slot_falls_back_on_redis_error():
     """_acquire_sse_slot must fall back to in-process tracking when Redis errors."""
-    from apps.api.app.routers.events import _acquire_sse_slot, _sse_user_connections
+    from apps.api.app.routers.events import _acquire_sse_slot
 
     user_id = uuid4()
 

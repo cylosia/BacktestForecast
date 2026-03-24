@@ -1,4 +1,4 @@
-"""Tests that run_scan_job retries on ExternalServiceError like run_backtest does."""
+﻿"""Tests that run_scan_job retries on ExternalServiceError like run_backtest does."""
 from __future__ import annotations
 
 import inspect

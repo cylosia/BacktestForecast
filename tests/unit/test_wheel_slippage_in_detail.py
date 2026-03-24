@@ -1,4 +1,4 @@
-"""Test that wheel strategy trade results include slippage in detail_json.
+﻿"""Test that wheel strategy trade results include slippage in detail_json.
 
 The main engine stores total_slippage, entry_slippage, exit_slippage in
 each trade's detail_json. The wheel engine must do the same so consumers

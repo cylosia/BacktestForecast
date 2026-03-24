@@ -1,4 +1,4 @@
-"""Contract test: verify that the generated frontend TypeScript types match the
+﻿"""Contract test: verify that the generated frontend TypeScript types match the
 live OpenAPI schema produced by the FastAPI backend.
 
 This script ensures the auto-generated API client types (produced by

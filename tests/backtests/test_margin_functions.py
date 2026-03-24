@@ -1,4 +1,4 @@
-"""Comprehensive tests for all margin calculation functions.
+﻿"""Comprehensive tests for all margin calculation functions.
 
 Reference: CBOE Margin Manual, FINRA Rule 4210.
 All formulas verified against src/backtestforecast/backtests/margin.py.
@@ -23,7 +23,6 @@ from backtestforecast.backtests.margin import (
     short_stock_margin,
     short_straddle_strangle_margin,
 )
-
 
 # ---------------------------------------------------------------------------
 # naked_call_margin

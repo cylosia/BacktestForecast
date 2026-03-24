@@ -1,4 +1,4 @@
-"""Test that S3 export streaming uses chunked transfer for large files.
+﻿"""Test that S3 export streaming uses chunked transfer for large files.
 
 Regression test for the bug where S3 downloads were silently truncated
 at the 5-minute timeout when Content-Length was set, leaving clients

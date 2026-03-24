@@ -1,7 +1,6 @@
-"""Integration tests for sweep endpoints."""
+﻿"""Integration tests for sweep endpoints."""
 from __future__ import annotations
 
-import pytest
 from uuid import uuid4
 
 

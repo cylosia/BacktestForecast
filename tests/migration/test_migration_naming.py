@@ -1,4 +1,4 @@
-"""Verify migration files follow naming conventions."""
+﻿"""Verify migration files follow naming conventions."""
 from __future__ import annotations
 
 import re

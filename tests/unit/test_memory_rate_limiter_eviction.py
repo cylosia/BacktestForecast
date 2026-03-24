@@ -1,9 +1,8 @@
-"""Tests for memory rate limiter eviction accuracy."""
+﻿"""Tests for memory rate limiter eviction accuracy."""
 from __future__ import annotations
 
 import time
 from threading import Lock
-from unittest.mock import patch
 
 from backtestforecast.config import get_settings
 from backtestforecast.security.rate_limits import RateLimiter
@@ -59,9 +58,9 @@ class TestSoftEviction:
 
 class TestAggressiveEviction:
     """When len(_memory_counters) > max_keys * 2 after soft eviction, the hard
-    cap kicks in and keeps only the most recent max_keys entries."""
+    cap aggressively removes stale/older buckets without evicting current-bucket actors."""
 
-    def test_hard_cap_trims_to_max_keys(self):
+    def test_hard_cap_preserves_current_bucket_entries(self):
         limiter = _make_limiter(max_keys=5)
         window = 60
         current_bucket = int(time.time() // window)
@@ -71,7 +70,8 @@ class TestAggressiveEviction:
 
         count, _ = limiter._check_memory("newest:key", window)
         assert count == 1
-        assert len(limiter._memory_counters) <= 5 + 1
+        assert len(limiter._memory_counters) == 16
+        assert f"newest:key:{current_bucket}" in limiter._memory_counters
 
     def test_most_recent_actor_preserved_after_hard_eviction(self):
         limiter = _make_limiter(max_keys=5)
@@ -156,6 +156,6 @@ class TestFullCheckFallback:
 
         final = limiter.check(bucket="test", actor_key="final_actor", limit=100, window_seconds=60)
         assert final.remaining == 99
-        # Hard eviction triggers at > max_keys*2, trimming to max_keys.
-        # Between hard caps, up to max_keys new entries accumulate.
-        assert len(limiter._memory_counters) <= 10 * 2
+        current_bucket = int(time.time() // 60)
+        assert len(limiter._memory_counters) == 26
+        assert f"bff:rate-limit:test:final_actor:{current_bucket}" in limiter._memory_counters

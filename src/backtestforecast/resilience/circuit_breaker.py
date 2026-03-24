@@ -1,12 +1,12 @@
-"""Circuit breaker for external API calls with optional Redis-backed
+﻿"""Circuit breaker for external API calls with optional Redis-backed
 cluster-wide state sharing.  When *redis_client* is provided the failure
 count and open/closed state are stored in Redis so all workers share the
 same circuit.  Without Redis the breaker falls back to per-process state.
 """
 from __future__ import annotations
 
-import time
 import threading
+import time
 from enum import Enum
 from typing import Any
 
@@ -54,11 +54,14 @@ class CircuitBreaker:
     @property
     def state(self) -> CircuitState:
         with self._lock:
-            if self._state == CircuitState.OPEN and self._last_failure_time is not None:
-                if time.monotonic() - self._last_failure_time >= self.recovery_timeout:
-                    self._state = CircuitState.HALF_OPEN
-                    self._half_open_calls = 0
-                    self._probe_in_flight = False
+            if (
+                self._state == CircuitState.OPEN
+                and self._last_failure_time is not None
+                and time.monotonic() - self._last_failure_time >= self.recovery_timeout
+            ):
+                self._state = CircuitState.HALF_OPEN
+                self._half_open_calls = 0
+                self._probe_in_flight = False
             return self._state
 
     @property
@@ -136,11 +139,7 @@ class CircuitBreaker:
             self._last_failure_time = time.monotonic()
             local_count = self._failure_count
             was_closed = self._state == CircuitState.CLOSED
-            if self._state == CircuitState.HALF_OPEN:
-                self._state = CircuitState.OPEN
-                self._probe_in_flight = False
-                self._probe_started_at = None
-            elif local_count >= self.failure_threshold:
+            if self._state == CircuitState.HALF_OPEN or local_count >= self.failure_threshold:
                 self._state = CircuitState.OPEN
                 self._probe_in_flight = False
                 self._probe_started_at = None
@@ -177,20 +176,22 @@ class CircuitBreaker:
                     self._state = CircuitState.OPEN
                     self._last_failure_time = time.monotonic()
                     self._update_state_gauge()
-            if self._state == CircuitState.HALF_OPEN and self._probe_in_flight:
-                if (
-                    self._probe_started_at is not None
-                    and time.monotonic() - self._probe_started_at > self.probe_timeout
-                ):
-                    self._probe_in_flight = False
-                    self._probe_started_at = None
-                    logger.warning("circuit_breaker.probe_timeout", name=self.name)
-            if self._state == CircuitState.OPEN and self._last_failure_time is not None:
-                if time.monotonic() - self._last_failure_time >= self.recovery_timeout:
-                    self._state = CircuitState.HALF_OPEN
-                    self._half_open_calls = 0
-                    self._probe_in_flight = False
-                    self._probe_started_at = None
+            if self._state == CircuitState.HALF_OPEN and self._probe_in_flight and (
+                self._probe_started_at is not None
+                and time.monotonic() - self._probe_started_at > self.probe_timeout
+            ):
+                self._probe_in_flight = False
+                self._probe_started_at = None
+                logger.warning("circuit_breaker.probe_timeout", name=self.name)
+            if (
+                self._state == CircuitState.OPEN
+                and self._last_failure_time is not None
+                and time.monotonic() - self._last_failure_time >= self.recovery_timeout
+            ):
+                self._state = CircuitState.HALF_OPEN
+                self._half_open_calls = 0
+                self._probe_in_flight = False
+                self._probe_started_at = None
             if self._state == CircuitState.CLOSED:
                 return True
             if self._state == CircuitState.HALF_OPEN:

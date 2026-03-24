@@ -1,4 +1,4 @@
-"""Verify Stripe circuit breaker behavior."""
+﻿"""Verify Stripe circuit breaker behavior."""
 from __future__ import annotations
 
 

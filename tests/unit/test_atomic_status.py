@@ -1,4 +1,4 @@
-"""Item 68: TOCTOU race prevented with atomic status update.
+﻿"""Item 68: TOCTOU race prevented with atomic status update.
 
 Verify that the atomic update pattern in backtests.py correctly sets status
 to 'failed' only when the current status is NOT 'succeeded'. This prevents
@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -65,7 +64,7 @@ def _create_run(session: Session, user: User, status: str) -> BacktestRun:
 
 
 def test_atomic_update_does_not_overwrite_succeeded(db_session):
-    """When status is already 'succeeded', the atomic UPDATE … WHERE status != 'succeeded'
+    """When status is already 'succeeded', the atomic UPDATE - WHERE status != 'succeeded'
     must not change it to 'failed'."""
     from sqlalchemy import update
 

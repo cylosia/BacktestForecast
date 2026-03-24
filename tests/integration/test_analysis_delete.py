@@ -1,4 +1,4 @@
-"""Integration tests for DELETE /v1/analysis/{id}."""
+﻿"""Integration tests for DELETE /v1/analysis/{id}."""
 from __future__ import annotations
 
 from uuid import uuid4

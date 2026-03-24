@@ -1,4 +1,4 @@
-"""Tests for EntryRuleEvaluator covering all 8 rule types."""
+﻿"""Tests for EntryRuleEvaluator covering all 8 rule types."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -35,7 +35,7 @@ def _make_bars(
 ) -> list[DailyBar]:
     vols = volumes or [1_000_000.0] * len(closes)
     bars = []
-    for i, (c, v) in enumerate(zip(closes, vols)):
+    for i, (c, v) in enumerate(zip(closes, vols, strict=False)):
         d = start + timedelta(days=i)
         bars.append(DailyBar(trade_date=d, open_price=c, high_price=c, low_price=c, close_price=c, volume=v))
     return bars
@@ -287,7 +287,7 @@ def test_iv_percentile_zero_when_current_is_minimum(monkeypatch):
 
     ev = _build_evaluator(closes, [rule])
     assert ev.is_entry_allowed(49) is True, (
-        "Current IV is the minimum — percentile should be 0%, satisfying <= 0 threshold"
+        "Current IV is the minimum - percentile should be 0%, satisfying <= 0 threshold"
     )
 
 

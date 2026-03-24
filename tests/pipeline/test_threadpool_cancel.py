@@ -1,4 +1,4 @@
-"""Test 66: ThreadPoolExecutor timeout cancellation.
+﻿"""Test 66: ThreadPoolExecutor timeout cancellation.
 
 Verifies that when as_completed times out, remaining futures are properly
 cancelled via cancel_futures=True in the shutdown call (mirrors the pattern
@@ -7,7 +7,7 @@ used in deep_analysis._build_landscape).
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed, Future
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import pytest
@@ -30,7 +30,7 @@ class TestThreadPoolCancelFutures:
         hold = threading.Event()
         pool = ThreadPoolExecutor(max_workers=1)
         try:
-            first = pool.submit(lambda: (hold.wait(timeout=5.0), "done")[1])
+            pool.submit(lambda: (hold.wait(timeout=5.0), "done")[1])
             pending = pool.submit(_slow_task, 10.0)
             pool.shutdown(wait=False, cancel_futures=True)
         finally:

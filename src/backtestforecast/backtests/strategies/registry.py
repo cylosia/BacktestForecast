@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.butterfly import BUTTERFLY_STRATEGY

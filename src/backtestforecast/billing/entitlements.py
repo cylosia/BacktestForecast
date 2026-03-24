@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from enum import Enum
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
 import structlog
 
@@ -11,20 +11,20 @@ from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.schemas.common import PlanTier
 
 _logger = structlog.get_logger("billing.entitlements")
-UTC = timezone.utc
+UTC = UTC
 
 
-class BillingInterval(str, Enum):
+class BillingInterval(StrEnum):
     MONTHLY = "monthly"
     YEARLY = "yearly"
 
 
-class ExportFormat(str, Enum):
+class ExportFormat(StrEnum):
     CSV = "csv"
     PDF = "pdf"
 
 
-class ScannerMode(str, Enum):
+class ScannerMode(StrEnum):
     BASIC = "basic"
     ADVANCED = "advanced"
 

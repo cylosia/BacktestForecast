@@ -1,4 +1,4 @@
-"""Tests for audit round 2 findings (items 61-85)."""
+﻿"""Tests for audit round 2 findings (items 61-85)."""
 from __future__ import annotations
 
 import re
@@ -103,7 +103,7 @@ class TestSlippageInNetPnl:
             slippage_pct=1.0,
         )
 
-        trade, cash_delta = engine._close_position(
+        trade, _cash_delta = engine._close_position(
             position,
             config,
             600.0,

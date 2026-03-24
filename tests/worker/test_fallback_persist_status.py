@@ -1,7 +1,7 @@
-"""Tests for _fallback_persist_status terminal-state guard."""
+﻿"""Tests for _fallback_persist_status terminal-state guard."""
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 from uuid import uuid4

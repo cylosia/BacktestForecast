@@ -1,4 +1,4 @@
-"""Tests for audit round 10 fixes.
+﻿"""Tests for audit round 10 fixes.
 
 Covers: sweep entitlements, genetic timeout, health check circuit breaker,
 export cleanup ordering, fallback persist session, scanner determinism,
@@ -6,10 +6,7 @@ zero-result sweep status, recommendation validation safety.
 """
 from __future__ import annotations
 
-import time
-from datetime import UTC, datetime
-from decimal import Decimal
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -19,7 +16,8 @@ class TestSweepEntitlementEnforcement:
     """Item 1: Verify sweep creation requires forecasting access."""
 
     def test_create_job_calls_ensure_forecasting_access(self):
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
+
         from backtestforecast.services.sweeps import SweepService
 
         mock_session = MagicMock()
@@ -45,6 +43,7 @@ class TestGeneticSweepTimeout:
     def test_genetic_timeout_uses_config_setting(self):
         """The genetic fitness function should use the configurable timeout, not a hardcoded constant."""
         import inspect
+
         from backtestforecast.services.sweeps import SweepService
 
         source = inspect.getsource(SweepService._execute_genetic)
@@ -58,7 +57,6 @@ class TestHealthCheckCircuitBreaker:
     """Item 3: Verify health check uses module-level circuit breaker."""
 
     def test_check_massive_config_detects_open_circuit(self):
-        from apps.api.app.routers.health import _check_massive_health
 
         settings = MagicMock()
         settings.massive_api_key = "test-key"
@@ -70,6 +68,7 @@ class TestHealthCheckCircuitBreaker:
     def test_check_massive_config_uses_module_circuit_breaker(self):
         """Ensure the function imports _massive_sync_circuit, not a class attribute."""
         import inspect
+
         from apps.api.app.routers.health import _check_massive_health
 
         source = inspect.getsource(_check_massive_health)
@@ -85,6 +84,7 @@ class TestExportCleanupOrdering:
     def test_cleanup_commits_db_before_storage_delete(self):
         """Verify the ordering: DB commit happens before storage.delete."""
         import inspect
+
         from backtestforecast.services.exports import ExportService
 
         source = inspect.getsource(ExportService.cleanup_expired_exports)
@@ -101,6 +101,7 @@ class TestFallbackPersistSession:
     def test_fallback_uses_worker_session(self):
         """Ensure _fallback_persist_status uses create_worker_session, not SessionLocal."""
         import inspect
+
         from backtestforecast.events import _fallback_persist_status
 
         source = inspect.getsource(_fallback_persist_status)
@@ -116,6 +117,7 @@ class TestScannerDeterminism:
     def test_scanner_shuffle_is_seeded(self):
         """Ensure _execute_scan uses a seeded random shuffle."""
         import inspect
+
         from backtestforecast.services.scans import ScanService
 
         source = inspect.getsource(ScanService._execute_scan)
@@ -129,6 +131,7 @@ class TestZeroResultSweepStatus:
     def test_zero_result_sweep_marked_failed(self):
         """Ensure _execute_sweep sets status='failed' when no candidates succeed."""
         import inspect
+
         from backtestforecast.services.sweeps import SweepService
 
         source = inspect.getsource(SweepService._execute_sweep)
@@ -143,6 +146,7 @@ class TestProductionIpHashSalt:
     def test_default_salt_triggers_warning(self):
         """Ensure the default ip_hash_salt value is flagged during production validation."""
         import inspect
+
         from backtestforecast.config import Settings
 
         source = inspect.getsource(Settings)
@@ -154,8 +158,9 @@ class TestRecommendationValidationSafety:
     """Item 29: Verify malformed trade JSON doesn't crash recommendation listing."""
 
     def test_safe_validate_list_skips_malformed(self):
-        from backtestforecast.services.scans import _safe_validate_list
         from pydantic import BaseModel
+
+        from backtestforecast.services.scans import _safe_validate_list
 
         class DummyModel(BaseModel):
             x: int
@@ -184,6 +189,7 @@ class TestCSPHeaders:
 
     def test_csp_has_frame_ancestors(self):
         import inspect
+
         from backtestforecast.security.http import ApiSecurityHeadersMiddleware
 
         source = inspect.getsource(ApiSecurityHeadersMiddleware)

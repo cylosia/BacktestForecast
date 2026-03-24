@@ -1,4 +1,4 @@
-"""Structural tests for Celery task definitions.
+﻿"""Structural tests for Celery task definitions.
 
 These tests verify task registration, signatures, and error handling
 without deep mocking.
@@ -6,8 +6,6 @@ without deep mocking.
 from __future__ import annotations
 
 import inspect
-
-import pytest
 
 
 class TestTaskRegistration:

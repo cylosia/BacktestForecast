@@ -1,4 +1,4 @@
-"""Fix 79: All job models must have a last_heartbeat_at column.
+﻿"""Fix 79: All job models must have a last_heartbeat_at column.
 
 Schema-level test that verifies BacktestRun, ScannerJob, SweepJob,
 ExportJob, SymbolAnalysis, and NightlyPipelineRun all define the

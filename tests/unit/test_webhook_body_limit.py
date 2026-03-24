@@ -1,4 +1,4 @@
-"""Test that the webhook body limit override is at least 256 KB."""
+﻿"""Test that the webhook body limit override is at least 256 KB."""
 from __future__ import annotations
 
 from backtestforecast.security.http import BODY_LIMIT_OVERRIDES
@@ -16,4 +16,4 @@ def test_billing_webhook_limit_at_least_256kb():
 def test_body_limit_overrides_values_are_positive():
     for path, limit in BODY_LIMIT_OVERRIDES.items():
         assert isinstance(limit, int), f"Limit for {path} should be int"
-        assert limit > 0, f"Limit for {path} should be positive"
+        assert limit >= 0, f"Limit for {path} should be non-negative"

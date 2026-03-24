@@ -1,4 +1,4 @@
-"""Shared fake/stub classes for integration tests.
+﻿"""Shared fake/stub classes for integration tests.
 
 Extracted from test_api_critical_flows.py to avoid circular imports
 between conftest.py and test files.

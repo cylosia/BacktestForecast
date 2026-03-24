@@ -1,4 +1,4 @@
-"""Verify template parsing handles unknown rule types gracefully."""
+﻿"""Verify template parsing handles unknown rule types gracefully."""
 from __future__ import annotations
 
 

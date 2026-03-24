@@ -1,4 +1,4 @@
-"""Verify that runtime-sensitive code paths use get_settings() not module-level settings."""
+﻿"""Verify that runtime-sensitive code paths use get_settings() not module-level settings."""
 from __future__ import annotations
 
 import inspect
@@ -20,8 +20,8 @@ def test_dlq_endpoint_uses_get_settings():
     from apps.api.app.main import dlq_status
 
     source = inspect.getsource(dlq_status)
-    assert "get_settings()" in source or "_dlq_settings" in source, (
-        "/admin/dlq must call get_settings() per-request"
+    assert "_require_admin_token" in source, (
+        "/admin/dlq must delegate token validation through the per-request admin auth helper"
     )
 
 

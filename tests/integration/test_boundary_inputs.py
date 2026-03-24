@@ -1,4 +1,4 @@
-"""Tests for empty/null/boundary inputs on critical endpoints."""
+﻿"""Tests for empty/null/boundary inputs on critical endpoints."""
 from __future__ import annotations
 
 import uuid

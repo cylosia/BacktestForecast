@@ -1,4 +1,4 @@
-"""Tests verifying the audit round 4 (fixes 1-30) correctness.
+﻿"""Tests verifying the audit round 4 (fixes 1-30) correctness.
 
 Covers:
   - Fix 1:  Backtest success-path race guard (WHERE status='running')
@@ -18,12 +18,9 @@ Covers:
 from __future__ import annotations
 
 import inspect
-import threading
 from collections import OrderedDict
 from datetime import date
 from unittest.mock import MagicMock
-
-import pytest
 
 
 class TestFix1BacktestSuccessGuard:

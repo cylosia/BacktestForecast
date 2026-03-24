@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ScannerJobPoller } from "@/components/scanner/scanner-job-poller";
 import { RecommendationList } from "@/components/scanner/recommendation-list";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
+import { getCancellationMessage } from "@/lib/jobs/ui-state";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +127,18 @@ export default async function ScannerDetailPage({
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">{job.error_message}</p>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {job.status === "cancelled" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Scan cancelled</CardTitle>
+              <CardDescription>This scan stopped before all candidates were evaluated.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">{getCancellationMessage("scan", job.error_code)}</p>
             </CardContent>
           </Card>
         ) : null}

@@ -1,11 +1,10 @@
-"""Tests for the Redis option data cache, gateway integration, prefetcher,
+﻿"""Tests for the Redis option data cache, gateway integration, prefetcher,
 and sweep schema validation."""
 from __future__ import annotations
 
-import json
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +16,6 @@ from backtestforecast.market_data.types import (
     OptionQuoteRecord,
 )
 
-
 # ---------------------------------------------------------------------------
 # Redis cache serialization round-trip
 # ---------------------------------------------------------------------------
@@ -25,8 +23,8 @@ from backtestforecast.market_data.types import (
 class TestOptionDataRedisCacheSerialization:
     def test_contract_serialization_round_trip(self):
         from backtestforecast.market_data.redis_cache import (
-            _serialize_contracts,
             _deserialize_contracts,
+            _serialize_contracts,
         )
 
         contracts = [
@@ -57,8 +55,8 @@ class TestOptionDataRedisCacheSerialization:
 
     def test_quote_serialization_round_trip(self):
         from backtestforecast.market_data.redis_cache import (
-            _serialize_quote,
             _deserialize_quote,
+            _serialize_quote,
         )
 
         quote = OptionQuoteRecord(
@@ -79,8 +77,8 @@ class TestOptionDataRedisCacheSerialization:
 
     def test_null_quote_serialization(self):
         from backtestforecast.market_data.redis_cache import (
-            _serialize_quote,
             _deserialize_quote,
+            _serialize_quote,
         )
 
         raw = _serialize_quote(None)
@@ -89,8 +87,8 @@ class TestOptionDataRedisCacheSerialization:
 
     def test_empty_contracts_list(self):
         from backtestforecast.market_data.redis_cache import (
-            _serialize_contracts,
             _deserialize_contracts,
+            _serialize_contracts,
         )
 
         raw = _serialize_contracts([])
@@ -342,14 +340,15 @@ class TestOptionDataPrefetcher:
         )
 
         assert summary.dates_processed == 2
-        # 2 dates × 2 types (put, call) = 4 list_contracts calls
+        # 2 dates x 2 types (put, call) = 4 list_contracts calls
         assert mock_client.list_option_contracts.call_count == 4
-        # 2 contracts × 2 dates × 2 types = 8 quote calls
+        # 2 contracts x 2 dates x 2 types = 8 quote calls
         assert summary.quotes_fetched == 8
 
     def test_prefetch_uses_concurrency(self):
         """Verify that multiple dates are processed by the thread pool."""
         import threading
+
         from backtestforecast.market_data.prefetch import OptionDataPrefetcher
         from backtestforecast.market_data.service import MassiveOptionGateway
 
@@ -357,7 +356,6 @@ class TestOptionDataPrefetcher:
         gw = MassiveOptionGateway(mock_client, "TSLA")
 
         observed_threads: set[int] = set()
-        original_list = mock_client.list_option_contracts
 
         def _track_thread(*args, **kwargs):
             observed_threads.add(threading.current_thread().ident)
@@ -398,7 +396,7 @@ class TestSweepSchemaValidation:
 
         with patch("backtestforecast.schemas.sweeps.get_settings") as mock_settings, \
              patch("backtestforecast.utils.dates.market_date_today", return_value=date(2025, 12, 31)):
-            mock_settings.return_value.max_backtest_window_days = 1825
+            mock_settings.return_value.max_sweep_window_days = 1825
 
             req = CreateSweepRequest(
                 symbol="TSLA",
@@ -447,7 +445,7 @@ class TestSweepSchemaValidation:
 
         with patch("backtestforecast.schemas.sweeps.get_settings") as mock_settings, \
              patch("backtestforecast.utils.dates.market_date_today", return_value=date(2025, 12, 31)):
-            mock_settings.return_value.max_backtest_window_days = 1825
+            mock_settings.return_value.max_sweep_window_days = 1825
 
             with pytest.raises(Exception, match="duplicate"):
                 CreateSweepRequest(
@@ -547,7 +545,7 @@ class TestSweepServiceScoring:
 
         with patch("backtestforecast.schemas.sweeps.get_settings") as mock_settings, \
              patch("backtestforecast.utils.dates.market_date_today", return_value=date(2025, 12, 31)):
-            mock_settings.return_value.max_backtest_window_days = 1825
+            mock_settings.return_value.max_sweep_window_days = 1825
 
             payload = CreateSweepRequest(
                 symbol="TSLA",
@@ -572,7 +570,7 @@ class TestSweepServiceScoring:
             )
 
             count = SweepService._compute_candidate_count(payload)
-            # 2 strategies × 2 entry_sets × 3 deltas × 1 width × 2 exits = 24
+            # 2 strategies x 2 entry_sets x 3 deltas x 1 width x 2 exits = 24
             assert count == 24
 
 

@@ -1,4 +1,4 @@
-"""Verify global cache tracking counts all cache types, not just contracts.
+﻿"""Verify global cache tracking counts all cache types, not just contracts.
 
 Audit fixes 9-14: The original implementation only tracked contract cache
 entries in _global_cache_entries, missing quote and snapshot caches.
@@ -6,11 +6,10 @@ entries in _global_cache_entries, missing quote and snapshot caches.
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from backtestforecast.market_data.service import (
     MassiveOptionGateway,
-    _global_cache_entries,
     _global_cache_lock,
     get_global_cache_entries,
 )

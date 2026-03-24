@@ -593,6 +593,13 @@
             "title": "Equity Curve Truncated",
             "type": "boolean"
           },
+          "equity_curve_points_omitted": {
+            "default": 0,
+            "description": "Number of persisted equity points omitted from the returned equity-curve slice.",
+            "minimum": 0.0,
+            "title": "Equity Curve Points Omitted",
+            "type": "integer"
+          },
           "error_code": {
             "anyOf": [
               {
@@ -664,12 +671,26 @@
           "summary": {
             "$ref": "#/components/schemas/BacktestSummaryResponse"
           },
+          "summary_provenance": {
+            "const": "persisted_run_aggregates",
+            "default": "persisted_run_aggregates",
+            "description": "Indicates that summary metrics come from persisted run-level aggregates, not recomputation over the transport payload.",
+            "title": "Summary Provenance",
+            "type": "string"
+          },
           "symbol": {
             "title": "Symbol",
             "type": "string"
           },
           "target_dte": {
             "title": "Target Dte",
+            "type": "integer"
+          },
+          "trade_items_omitted": {
+            "default": 0,
+            "description": "Number of persisted trades omitted from the returned trade slice.",
+            "minimum": 0.0,
+            "title": "Trade Items Omitted",
             "type": "integer"
           },
           "trades": {
@@ -706,6 +727,7 @@
           "created_at",
           "warnings",
           "summary",
+          "summary_provenance",
           "trades",
           "equity_curve"
         ],
@@ -2860,6 +2882,29 @@
           "mime_type": {
             "title": "Mime Type",
             "type": "string"
+          },
+          "risk_free_rate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Free Rate"
+          },
+          "risk_free_rate_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Free Rate Source"
           },
           "sha256_hex": {
             "anyOf": [

@@ -1,4 +1,4 @@
-"""Verify webhook error handling categorizes errors correctly."""
+﻿"""Verify webhook error handling categorizes errors correctly."""
 from __future__ import annotations
 
 import inspect
@@ -31,7 +31,7 @@ def test_webhook_logs_ignored_event_types():
     """Unknown Stripe event types should be logged for monitoring."""
     from backtestforecast.services.billing import BillingService
 
-    source = inspect.getsource(BillingService.handle_webhook)
+    source = inspect.getsource(BillingService._handle_webhook_impl)
     assert "ignored" in source.lower() or "unhandled" in source.lower(), (
         "Webhook handler must log/track ignored event types"
     )

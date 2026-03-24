@@ -1,19 +1,19 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
-from enum import Enum
+from enum import StrEnum as _StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class StrEnum(str, Enum):
+class StrEnum(_StrEnum):
     """Py3.10-compatible fallback for enum.StrEnum."""
 
 
 _SENSITIVE_PATTERNS = [
     re.compile(r"Traceback \(most recent call"),
     re.compile(
-        r"\b(SELECT|INSERT|UPDATE|DELETE)\b\s+.{0,200}\b(FROM|INTO|SET|TABLE|WHERE|VALUES)\b",
+        r"\b(SELECT|INSERT|UPDATE|DELETE)\b\s+.{0,2000}\b(FROM|INTO|SET|TABLE|WHERE|VALUES)\b",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
@@ -99,3 +99,50 @@ class ErrorDetail(BaseModel):
 class ErrorResponse(BaseModel):
     """Standard error envelope returned by all API error handlers."""
     error: ErrorDetail
+
+
+_CURSOR_TOTAL_DESCRIPTION = (
+    "Total number of matching records for the current filters before page slicing. "
+    "This value does not shrink after applying a cursor."
+)
+_CURSOR_NEXT_DESCRIPTION = (
+    "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request "
+    "to fetch the next page."
+)
+
+
+class CursorPaginatedResponse(BaseModel):
+    total: int = Field(default=0, ge=0, description=_CURSOR_TOTAL_DESCRIPTION)
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1)
+    next_cursor: str | None = Field(default=None, description=_CURSOR_NEXT_DESCRIPTION)
+
+
+class OffsetPaginatedResponse(BaseModel):
+    total: int = Field(default=0, ge=0, description=_CURSOR_TOTAL_DESCRIPTION)
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1)
+
+
+class RemediationActionResponse(BaseModel):
+    action: str = Field(max_length=64)
+    label: str = Field(max_length=80)
+    description: str = Field(max_length=300)
+    method: str = Field(max_length=10)
+    href: str = Field(max_length=300)
+    allowed: bool = True
+    reason: str | None = Field(default=None, max_length=300)
+
+
+class RemediationActionsResponse(BaseModel):
+    resource_type: str = Field(max_length=64)
+    resource_id: str = Field(max_length=64)
+    status: str = Field(max_length=32)
+    actions: list[RemediationActionResponse] = Field(default_factory=list, max_length=10)
+
+
+class WarningResponse(BaseModel):
+    code: str = Field(max_length=128)
+    message: str = Field(max_length=2000)
+    severity: str | None = Field(default=None, max_length=32)
+    error_code: str | None = Field(default=None, max_length=128)

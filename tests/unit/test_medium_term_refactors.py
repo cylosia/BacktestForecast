@@ -1,7 +1,7 @@
-"""Verification tests for the Medium-Term Refactors (This Sprint).
+﻿"""Verification tests for the Medium-Term Refactors (This Sprint).
 
 Covers all 6 items:
-  MT10: Split tasks.py — task_helpers.py exists, imports used
+  MT10: Split tasks.py - task_helpers.py exists, imports used
   MT11: Option cache staleness detection
   MT12: JSON schema validation for JSON_VARIANT columns
   MT13: Audit event archival before deletion
@@ -15,7 +15,6 @@ import warnings
 from pathlib import Path
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -223,4 +222,4 @@ def test_mt15_csv_export_has_entry_mid_note():
 def test_mt15_typescript_schema_has_entry_mid_description():
     ts_path = PROJECT_ROOT / "packages" / "api-client" / "src" / "schema.d.ts"
     content = ts_path.read_text()
-    assert "Per-share position value" in content
+    assert "Per-unit position value divided by 100" in content

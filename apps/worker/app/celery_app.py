@@ -1,14 +1,20 @@
+﻿import os
+import tempfile
 import threading
+from contextlib import suppress
+from http.server import HTTPServer
+from pathlib import Path
 
 import structlog
 from celery import Celery
 from celery.schedules import crontab
 from celery.signals import beat_init, task_postrun, task_prerun, worker_ready, worker_shutdown, worker_shutting_down
 from kombu import Queue
-from redbeat import RedBeatSchedulerEntry  # noqa: F401 — registers the custom scheduler
+from redbeat import RedBeatSchedulerEntry  # noqa: F401 - registers the custom scheduler
 
 from backtestforecast.config import get_settings
 from backtestforecast.observability import configure_logging
+from backtestforecast.observability.metrics import WORKER_REDIS_OPEN_CONNECTIONS
 from backtestforecast.version import PROMETHEUS_TEXT_FORMAT_VERSION
 
 _shutdown_logger = structlog.get_logger("worker.lifecycle")
@@ -72,10 +78,11 @@ celery_app.conf.update(
 
 _visibility_timeout = celery_app.conf.broker_transport_options.get("visibility_timeout", 3600)
 _hard_limit = celery_app.conf.task_time_limit or 3900
-assert _visibility_timeout > _hard_limit, (
-    f"visibility_timeout ({_visibility_timeout}s) must exceed task_time_limit ({_hard_limit}s) "
-    f"to prevent premature task redelivery"
-)
+if _visibility_timeout <= _hard_limit:
+    raise RuntimeError(
+        f"visibility_timeout ({_visibility_timeout}s) must exceed task_time_limit ({_hard_limit}s) "
+        f"to prevent premature task redelivery"
+    )
 
 celery_app.conf.task_queues = (
     Queue("research"),
@@ -117,9 +124,8 @@ celery_app.conf.beat_schedule = {
         "task": "scans.refresh_prioritized",
         "schedule": crontab(hour=6, minute=30),
     },
-    # Runs at 6:00 UTC (~1 AM EST / 2 AM EDT) to ensure end-of-day prices
-    # from market data providers are fully finalized before the pipeline
-    # consumes them.
+    # Runs at the configured UTC schedule to ensure end-of-day prices from
+    # market data providers are fully finalized before the pipeline consumes them.
     "nightly-scan-pipeline": {
         "task": "pipeline.nightly_scan",
         "schedule": crontab(hour=_settings.daily_picks_pipeline_hour_utc, minute=_settings.daily_picks_pipeline_minute_utc),
@@ -185,24 +191,25 @@ def _bind_task_context(task_id, task, *args, **kwargs):  # type: ignore[no-untyp
         if traceparent:
             ctx["traceparent"] = traceparent
     structlog.contextvars.bind_contextvars(**ctx)
+    _set_worker_redis_connection_metrics()
 
 
 @task_postrun.connect
 def _clear_task_context(task_id, task, *args, **kwargs):  # type: ignore[no-untyped-def]
     structlog.contextvars.clear_contextvars()
+    _set_worker_redis_connection_metrics()
 
 
 def _start_worker_metrics_server() -> None:
     """Start a lightweight HTTP server to expose Prometheus metrics from the worker process."""
     import hmac
-    import os
-    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from http.server import BaseHTTPRequestHandler
 
     port = int(os.environ.get("WORKER_METRICS_PORT", "9090"))
     metrics_token = settings.metrics_token
 
     class _MetricsHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             if self.path == "/metrics":
                 if not metrics_token and settings.app_env in ("production", "staging"):
                     self.send_response(403)
@@ -227,7 +234,7 @@ def _start_worker_metrics_server() -> None:
                 self.send_response(404)
                 self.end_headers()
 
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        def log_message(self, format: str, *args: object) -> None:
             pass
 
     if not metrics_token:
@@ -255,6 +262,24 @@ _metrics_server: "HTTPServer | None" = None
 _worker_heartbeat_key: str | None = None
 _heartbeat_thread = None
 _heartbeat_stop = threading.Event()
+_heartbeat_redis_open_connections = 0
+
+
+def _set_worker_redis_connection_metrics() -> None:
+    try:
+        from apps.worker.app.task_base import get_dlq_redis_open_connection_count
+        from backtestforecast.events import get_redis_open_connection_count
+
+        WORKER_REDIS_OPEN_CONNECTIONS.labels(pool="heartbeat").set(_heartbeat_redis_open_connections)
+        WORKER_REDIS_OPEN_CONNECTIONS.labels(pool="events").set(get_redis_open_connection_count())
+        WORKER_REDIS_OPEN_CONNECTIONS.labels(pool="dlq").set(get_dlq_redis_open_connection_count())
+    except Exception:
+        _shutdown_logger.debug("worker.redis_connection_metrics_failed", exc_info=True)
+
+
+def _reset_worker_redis_connection_metrics() -> None:
+    for pool_name in ("heartbeat", "events", "dlq"):
+        WORKER_REDIS_OPEN_CONNECTIONS.labels(pool=pool_name).set(0)
 
 
 def _start_heartbeat_loop() -> None:
@@ -268,30 +293,34 @@ def _start_heartbeat_loop() -> None:
 
     def _loop() -> None:
         from redis import Redis
+        global _heartbeat_redis_open_connections
         conn: Redis | None = None
         consecutive_errors = 0
         while not _heartbeat_stop.is_set():
             try:
                 if conn is None:
                     conn = Redis.from_url(settings.redis_cache_url, socket_timeout=5)
+                    _heartbeat_redis_open_connections = 1
+                    _set_worker_redis_connection_metrics()
                 conn.setex(_worker_heartbeat_key, 90, "1")
                 consecutive_errors = 0
+                _set_worker_redis_connection_metrics()
                 _heartbeat_stop.wait(30)
             except Exception:
                 consecutive_errors += 1
                 if conn is not None:
-                    try:
+                    with suppress(Exception):
                         conn.close()
-                    except Exception:
-                        pass
                     conn = None
+                _heartbeat_redis_open_connections = 0
+                _set_worker_redis_connection_metrics()
                 sleep_secs = min(5 * (2 ** consecutive_errors), 60)
                 _heartbeat_stop.wait(sleep_secs)
         if conn is not None:
-            try:
+            with suppress(Exception):
                 conn.close()
-            except Exception:
-                pass
+        _heartbeat_redis_open_connections = 0
+        _set_worker_redis_connection_metrics()
 
     global _heartbeat_thread
     t = threading.Thread(target=_loop, daemon=True)
@@ -302,6 +331,7 @@ def _start_heartbeat_loop() -> None:
 @worker_ready.connect
 def _on_worker_ready(**kwargs):  # type: ignore[no-untyped-def]
     _shutdown_logger.info("worker.ready")
+    _set_worker_redis_connection_metrics()
     try:
         from backtestforecast.observability.tracing import init_tracing
         if init_tracing(service_name="backtestforecast-worker"):
@@ -363,6 +393,7 @@ def _on_worker_shutting_down(sig, how, exitcode, **kwargs):  # type: ignore[no-u
 
 @worker_shutdown.connect
 def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
+    global _heartbeat_redis_open_connections
     _shutdown_logger.info("worker.shutdown_cleanup_started")
     _heartbeat_stop.set()
     if _metrics_server is not None:
@@ -380,7 +411,7 @@ def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
             finally:
                 r.close()
         except Exception:
-            pass
+            _shutdown_logger.debug("worker.heartbeat_key_delete_failed", exc_info=True)
     try:
         from backtestforecast.db.session import _get_worker_engine
 
@@ -398,10 +429,12 @@ def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
         _shutdown_logger.info("worker.redis_closed")
     except Exception:
         _shutdown_logger.warning("worker.redis_close_failed", exc_info=True)
+    _heartbeat_redis_open_connections = 0
+    _reset_worker_redis_connection_metrics()
     _shutdown_logger.info("worker.shutdown_cleanup_complete")
 
 
-_BEAT_HEARTBEAT_FILE = "/tmp/celerybeat_heartbeat"
+_BEAT_HEARTBEAT_FILE = os.path.join(os.environ.get("TMPDIR") or tempfile.gettempdir(), "celerybeat_heartbeat")
 
 
 @beat_init.connect
@@ -412,8 +445,7 @@ def _on_beat_init(**kwargs):  # type: ignore[no-untyped-def]
     healthcheck can verify the scheduler is not just alive but actively
     running its tick loop.
     """
-    import pathlib
-    pathlib.Path(_BEAT_HEARTBEAT_FILE).write_text(str(int(__import__("time").time())))
+    Path(_BEAT_HEARTBEAT_FILE).write_text(str(int(__import__("time").time())))
     _shutdown_logger.info("beat.heartbeat_init", file=_BEAT_HEARTBEAT_FILE)
 
     import time as _beat_time
@@ -421,9 +453,9 @@ def _on_beat_init(**kwargs):  # type: ignore[no-untyped-def]
     def _beat_heartbeat_loop():
         while not _heartbeat_stop.is_set():
             try:
-                pathlib.Path(_BEAT_HEARTBEAT_FILE).write_text(str(int(_beat_time.time())))
+                Path(_BEAT_HEARTBEAT_FILE).write_text(str(int(_beat_time.time())))
             except Exception:
-                pass
+                _shutdown_logger.debug("beat.heartbeat_write_failed", exc_info=True)
             _heartbeat_stop.wait(30)
 
     t = threading.Thread(target=_beat_heartbeat_loop, daemon=True, name="beat-heartbeat")

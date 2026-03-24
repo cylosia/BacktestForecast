@@ -1,4 +1,4 @@
-"""Check that the committed OpenAPI snapshot matches the live FastAPI schema.
+﻿"""Check that the committed OpenAPI snapshot matches the live FastAPI schema.
 
 Exit 0 if identical, exit 1 with a diff if drifted.
 

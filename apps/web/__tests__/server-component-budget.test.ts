@@ -27,9 +27,11 @@ describe("server component request budget", () => {
     expect(source).toContain("Promise.allSettled([getCurrentUser(), getBacktestHistory(10)])");
   });
 
-  it("avoids an extra /v1/meta round trip on the daily-picks page", () => {
+  it("loads daily-picks schedule and page data in parallel server calls", () => {
     const source = read("app/app/daily-picks/page.tsx");
-    expect(source).not.toContain("getMeta(");
-    expect(source).toContain("getDailyPicksScheduleLabel()");
+    expect(source).toContain("Promise.allSettled([getCurrentUser(), getMeta()])");
+    expect(source).toContain("Promise.allSettled([");
+    expect(source).toContain("getDailyPicks()");
+    expect(source).toContain("getDailyPicksHistory(HISTORY_PAGE_SIZE, cursor)");
   });
 });

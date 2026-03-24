@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from dataclasses import dataclass
@@ -207,13 +207,13 @@ class HistoricalAnalogForecaster:
         # that raw magnitude differences (e.g. RSI 0-100 vs volume ratio ~1)
         # don't dominate.  The values were calibrated empirically on US large-
         # cap daily bars:
-        #   0: 5-day return %  (scale  8)   – typical swing ~±8%
-        #   1: 20-day return % (scale 15)   – wider window, larger moves
-        #   2: RSI-14          (scale 20)   – 0-100 range, 20 keeps it moderate
-        #   3: EMA8/EMA21 gap% (scale  5)   – usually within a few percent
-        #   4: Volume ratio    (scale 1.5)  – centered around 1.0
-        #   5: Annualised vol  (scale 25)   – typically 10-40%
-        #   6: 1-day return %  (scale  4)   – single-day shock
+        #   0: 5-day return %  (scale  8)   - typical swing ~+/-8%
+        #   1: 20-day return % (scale 15)   - wider window, larger moves
+        #   2: RSI-14          (scale 20)   - 0-100 range, 20 keeps it moderate
+        #   3: EMA8/EMA21 gap% (scale  5)   - usually within a few percent
+        #   4: Volume ratio    (scale 1.5)  - centered around 1.0
+        #   5: Annualised vol  (scale 25)   - typically 10-40%
+        #   6: 1-day return %  (scale  4)   - single-day shock
         #
         # Weights emphasise 20-day momentum (1.2) and volatility regime (1.1)
         # while down-weighting volume ratio (0.7) and single-day return (0.6).
@@ -240,8 +240,8 @@ class HistoricalAnalogForecaster:
         if len(values) == 1:
             return values[0]
         position = (len(values) - 1) * fraction
-        lower_index = int(math.floor(position))
-        upper_index = int(math.ceil(position))
+        lower_index = math.floor(position)
+        upper_index = math.ceil(position)
         if lower_index == upper_index:
             return values[lower_index]
         lower_value = values[lower_index]

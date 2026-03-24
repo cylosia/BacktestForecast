@@ -1,12 +1,13 @@
-"""Verify forecast fallback produces a valid response."""
+﻿"""Verify forecast fallback produces a valid response."""
 from __future__ import annotations
 
 
 def test_fallback_forecast_has_zero_analog_count():
     """When no analogs are found, analog_count should be 0."""
-    from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
     from datetime import date
     from decimal import Decimal
+
+    from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
 
     fallback = HistoricalAnalogForecastResponse(
         symbol="TEST",

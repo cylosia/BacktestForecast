@@ -1,4 +1,4 @@
-"""Test that record_always preserves ip_hash from the original event.
+﻿"""Test that record_always preserves ip_hash from the original event.
 
 Regression test for the bug where add_always constructed a new AuditEvent
 without copying ip_hash, causing all repeatable events (export.downloaded,
@@ -6,7 +6,6 @@ backtest.viewed) to lose IP attribution.
 """
 from __future__ import annotations
 
-import warnings
 from uuid import uuid4
 
 import pytest

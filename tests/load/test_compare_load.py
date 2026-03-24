@@ -1,20 +1,16 @@
-"""Test 78: Verify compare endpoint response size is bounded by the trade limit.
+﻿"""Test 78: Verify compare endpoint response size is bounded by the trade limit.
 
 When comparing multiple runs each with many trades, the response must be
-bounded — the per-run trade list should be capped at the configured limit.
+bounded - the per-run trade list should be capped at the configured limit.
 """
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
-from decimal import Decimal
+from datetime import UTC, datetime
 
 from backtestforecast.schemas.backtests import (
     BacktestRunDetailResponse,
-    BacktestSummaryResponse,
-    BacktestTradeResponse,
     CompareBacktestsResponse,
-    EquityCurvePointResponse,
 )
 
 
@@ -58,8 +54,8 @@ def _make_run(num_trades: int) -> dict:
         "commission_per_contract": "1",
         "engine_version": "options-multileg-v2",
         "data_source": "massive",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
         "warnings": [],
         "summary": {
             "trade_count": num_trades,
@@ -95,7 +91,7 @@ def test_compare_response_serialization_with_many_trades():
 
 def test_compare_response_json_size_is_bounded():
     """The serialized JSON of a compare response with many trades should
-    remain within a reasonable size (< 5 MB for 4 runs × 200 trades)."""
+    remain within a reasonable size (< 5 MB for 4 runs x 200 trades)."""
     runs = [_make_run(200) for _ in range(4)]
     items = [BacktestRunDetailResponse(**run) for run in runs]
     response = CompareBacktestsResponse(items=items, comparison_limit=8)

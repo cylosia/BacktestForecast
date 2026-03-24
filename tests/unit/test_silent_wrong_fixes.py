@@ -1,4 +1,4 @@
-"""Tests for the 'looks correct but silently wrong' fixes.
+﻿"""Tests for the 'looks correct but silently wrong' fixes.
 
 Covers:
 - #2: ScannerJob validator no longer uses misleading hasattr
@@ -9,10 +9,7 @@ Covers:
 from __future__ import annotations
 
 import inspect
-import math
 from datetime import date
-
-import pytest
 
 
 class TestScannerJobValidator:
@@ -22,7 +19,7 @@ class TestScannerJobValidator:
         from backtestforecast.models import ScannerJob
         source = inspect.getsource(ScannerJob._validate_evaluated_count)
         assert "hasattr" not in source, (
-            "ScannerJob._validate_evaluated_count should not use hasattr — "
+            "ScannerJob._validate_evaluated_count should not use hasattr - "
             "it is always True for mapped attributes and is misleading"
         )
 

@@ -1,10 +1,7 @@
-"""Security-focused tests for audit round 9 fixes."""
+﻿"""Security-focused tests for audit round 9 fixes."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
-
-import pytest
 
 
 class TestAdminTokenSeparation:
@@ -41,13 +38,15 @@ class TestCSPHeaders:
         from backtestforecast.security.http import ApiSecurityHeadersMiddleware
 
         middleware = ApiSecurityHeadersMiddleware(MagicMock(), app_env="production")
-        assert middleware._is_production is True
+        assert callable(middleware._app_env_resolver)
+        assert middleware._app_env_resolver() == "production"
 
     def test_security_headers_dev_mode(self):
         from backtestforecast.security.http import ApiSecurityHeadersMiddleware
 
         middleware = ApiSecurityHeadersMiddleware(MagicMock(), app_env="development")
-        assert middleware._is_production is False
+        assert callable(middleware._app_env_resolver)
+        assert middleware._app_env_resolver() == "development"
 
 
 class TestMetricsRateLimit:

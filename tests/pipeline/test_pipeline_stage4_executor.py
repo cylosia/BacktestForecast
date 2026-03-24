@@ -1,9 +1,7 @@
-"""Verify pipeline Stage 4 passes the executor kwarg correctly."""
+﻿"""Verify pipeline Stage 4 passes the executor kwarg correctly."""
 from __future__ import annotations
 
 import inspect
-
-import pytest
 
 
 class TestPipelineStage4ExecutorKwarg:

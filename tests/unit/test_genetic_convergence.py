@@ -1,4 +1,4 @@
-"""Verify genetic optimizer convergence detection."""
+﻿"""Verify genetic optimizer convergence detection."""
 from __future__ import annotations
 
 

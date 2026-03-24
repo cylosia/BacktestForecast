@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 import threading
 from dataclasses import dataclass
 from typing import Any
 
-import structlog
 import jwt
+import structlog
 from jwt import InvalidTokenError, PyJWKClient
 
 from backtestforecast.config import Settings, get_settings, register_invalidation_callback
@@ -104,9 +104,16 @@ class ClerkTokenVerifier:
 
         email: str | None = None
         raw_email = claims.get("email") or claims.get("primary_email_address")
-        if isinstance(raw_email, str) and raw_email:
-            if re.match(r'^[a-zA-Z0-9.!#$%&\'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$', raw_email) and len(raw_email) <= 320:
-                email = raw_email
+        if (
+            isinstance(raw_email, str)
+            and raw_email
+            and re.match(
+                r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$",
+                raw_email,
+            )
+            and len(raw_email) <= 320
+        ):
+            email = raw_email
 
         session_id = claims.get("sid") if isinstance(claims.get("sid"), str) else None
 

@@ -1,4 +1,4 @@
-"""Verify the Alembic migration chain converges to a single head."""
+﻿"""Verify the Alembic migration chain converges to a single head."""
 from __future__ import annotations
 
 import ast
@@ -41,7 +41,7 @@ def _parse_revision_fields(text: str) -> tuple[str | None, list[str]]:
 def test_migration_chain_has_single_head():
     """The chain must converge to a single head.
 
-    Merge migrations (tuple down_revision) are valid — they deliberately
+    Merge migrations (tuple down_revision) are valid - they deliberately
     join two branches into one.  The test verifies that all branches are
     ultimately merged so only one head exists.
     """
@@ -67,7 +67,7 @@ def test_migration_chain_has_single_head():
 
     all_revs = set(revisions.keys())
     is_parent = set()
-    for parent, kids in children_of.items():
+    for parent, _kids in children_of.items():
         if parent != "__root__":
             is_parent.add(parent)
     heads = all_revs - is_parent

@@ -1,8 +1,7 @@
-"""Tests for SSE connection limit constants and in-process slot management."""
+﻿"""Tests for SSE connection limit constants and in-process slot management."""
 from __future__ import annotations
 
-import asyncio
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -12,13 +11,16 @@ from apps.api.app.routers.events import (
     _acquire_sse_slot_in_process,
     _release_sse_slot_in_process,
     _sse_user_connections,
-    _sse_user_connections_lock,
 )
 
 
 class TestSSEConstants:
-    def test_process_limit_is_200(self):
-        assert SSE_MAX_CONNECTIONS_PROCESS == 200
+    def test_process_limit_stays_below_redis_pool_limit(self):
+        from backtestforecast.config import get_settings
+
+        settings = get_settings()
+        assert SSE_MAX_CONNECTIONS_PROCESS > 0
+        assert settings.sse_redis_max_connections > SSE_MAX_CONNECTIONS_PROCESS
 
     def test_per_user_limit_is_10(self):
         assert SSE_MAX_CONNECTIONS_PER_USER == 10

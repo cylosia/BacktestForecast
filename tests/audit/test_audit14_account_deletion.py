@@ -1,4 +1,4 @@
-"""Tests verifying account deletion safety.
+﻿"""Tests verifying account deletion safety.
 
 Testing Gaps:
   TG-7: Account deletion + concurrent worker commit

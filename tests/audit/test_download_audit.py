@@ -1,4 +1,4 @@
-"""Audit assertion tests for export download and deduplication behavior."""
+﻿"""Audit assertion tests for export download and deduplication behavior."""
 
 from __future__ import annotations
 

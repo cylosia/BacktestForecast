@@ -1,13 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-import uuid
 
 from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis
 from backtestforecast.utils import decode_cursor, encode_cursor
 from tests.integration.test_endpoint_coverage import _ensure_user, _set_user_plan
-
 
 SAME_TIME = datetime(2025, 3, 10, 12, 0, 0, tzinfo=UTC)
 OLDER_TIME = SAME_TIME - timedelta(minutes=1)
@@ -146,6 +145,73 @@ def test_exports_cursor_pagination_handles_same_timestamp_records(client, auth_h
     expected = {str(job.id) for job in jobs}
     assert set(seen) == expected
     assert len(seen) == len(expected)
+
+
+def test_backtests_cursor_total_is_stable_across_cursor_pages(client, auth_headers, db_session):
+    _ensure_user(client, auth_headers)
+    user = _set_user_plan(db_session)
+    runs = [
+        _create_backtest_run(user.id, created_at=SAME_TIME, symbol="AAA"),
+        _create_backtest_run(user.id, created_at=SAME_TIME, symbol="BBB"),
+        _create_backtest_run(user.id, created_at=SAME_TIME, symbol="CCC"),
+        _create_backtest_run(user.id, created_at=OLDER_TIME, symbol="DDD"),
+    ]
+    db_session.add_all(runs)
+    db_session.commit()
+
+    first = client.get("/v1/backtests", params={"limit": 2}, headers=auth_headers)
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    second = client.get(
+        "/v1/backtests",
+        params={"limit": 2, "cursor": first_body["next_cursor"]},
+        headers=auth_headers,
+    )
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+
+    assert first_body["total"] == 4
+    assert second_body["total"] == 4
+
+
+def test_exports_cursor_total_is_stable_across_cursor_pages(client, auth_headers, db_session):
+    _ensure_user(client, auth_headers)
+    user = _set_user_plan(db_session)
+    run = _create_backtest_run(user.id, created_at=OLDER_TIME - timedelta(minutes=1), symbol="EXP")
+    db_session.add(run)
+    db_session.flush()
+    jobs = [
+        ExportJob(
+            user_id=user.id,
+            backtest_run_id=run.id,
+            export_format="csv",
+            status="succeeded",
+            file_name=f"export-{idx}.csv",
+            mime_type="text/csv",
+            content_bytes=b"id\n1\n",
+            expires_at=SAME_TIME + timedelta(days=30),
+        )
+        for idx in range(4)
+    ]
+    for idx, job in enumerate(jobs):
+        job.created_at = SAME_TIME if idx < 3 else OLDER_TIME
+        job.completed_at = job.created_at
+    db_session.add_all(jobs)
+    db_session.commit()
+
+    first = client.get("/v1/exports", params={"limit": 2}, headers=auth_headers)
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    second = client.get(
+        "/v1/exports",
+        params={"limit": 2, "cursor": first_body["next_cursor"]},
+        headers=auth_headers,
+    )
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+
+    assert first_body["total"] == 4
+    assert second_body["total"] == 4
 
 
 

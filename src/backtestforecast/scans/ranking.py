@@ -1,14 +1,15 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
 import math
-
-import structlog
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Iterable, Sequence
+from typing import Any
+
+import structlog
 
 from backtestforecast.backtests.strategies.registry import (
     BEARISH_STRATEGIES,
@@ -23,7 +24,7 @@ from backtestforecast.schemas.scans import (
     RankingBreakdownResponse,
 )
 
-# Current-backtest scoring weights — how much each metric contributes to the
+# Current-backtest scoring weights - how much each metric contributes to the
 # composite score.  Must sum to 1.0 (sign on drawdown is applied in code).
 CURRENT_ROI_WEIGHT = 0.35
 CURRENT_WIN_RATE_WEIGHT = 0.15
@@ -31,14 +32,14 @@ CURRENT_NET_PNL_WEIGHT = 0.20
 CURRENT_TRADE_COUNT_WEIGHT = 0.10
 CURRENT_DRAWDOWN_WEIGHT = 0.20
 
-# Scaling denominators — normalise each metric into roughly [-1, 1] before
+# Scaling denominators - normalise each metric into roughly [-1, 1] before
 # weighting.  Chosen empirically so that "typical" backtest values map to the
 # middle of the range.
-CURRENT_ROI_SCALE = 30.0          # ±30% ROI → ±1
-CURRENT_WIN_RATE_SCALE = 50.0     # Win rate deviation from 50% → ±1
-CURRENT_NET_PNL_SCALE = 0.20      # Net PnL as fraction of account → ±1
-CURRENT_TRADE_COUNT_SCALE = 12.0  # 12 trades → 1 (capped)
-CURRENT_DRAWDOWN_SCALE = 30.0     # 30% drawdown → 1 (capped)
+CURRENT_ROI_SCALE = 30.0          # +/-30% ROI -> +/-1
+CURRENT_WIN_RATE_SCALE = 50.0     # Win rate deviation from 50% -> +/-1
+CURRENT_NET_PNL_SCALE = 0.20      # Net PnL as fraction of account -> +/-1
+CURRENT_TRADE_COUNT_SCALE = 12.0  # 12 trades -> 1 (capped)
+CURRENT_DRAWDOWN_SCALE = 30.0     # 30% drawdown -> 1 (capped)
 
 
 @dataclass(frozen=True, slots=True)

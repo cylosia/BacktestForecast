@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -9,7 +9,6 @@ from backtestforecast.backtests.strategies.common import (
     choose_secondary_expiration,
     contracts_for_expiration,
     get_overrides,
-    offset_strike,
     require_contract_for_strike,
     resolve_strike,
     resolve_wing_strike,
@@ -38,7 +37,7 @@ def _deep_itm_call_strike(strikes: list[float], underlying_close: float) -> floa
     """
     below = sorted([s for s in strikes if s < underlying_close])
     if not below:
-        raise DataUnavailableError("No deep ITM call strike available for PMCC — all strikes are at or above the underlying price.")
+        raise DataUnavailableError("No deep ITM call strike available for PMCC - all strikes are at or above the underlying price.")
     target = underlying_close * 0.90
     deep_candidates = [s for s in below if s <= underlying_close * 0.95]
     if deep_candidates:
@@ -189,7 +188,7 @@ class DiagonalSpreadStrategy(StrategyDefinition):
         # (higher strike, closer expiration). If opened for a debit: max loss =
         # debit paid (both options expire worthless). Max profit is path-
         # dependent because the legs have different expirations, so it cannot
-        # be precisely capped at entry — set to None. If opened for a credit:
+        # be precisely capped at entry - set to None. If opened for a credit:
         # capital = naked call margin, max loss = None (uncapped risk if the
         # underlying moves sharply and the near-dated short call loses more
         # than the far-dated long call gains due to different time decay).

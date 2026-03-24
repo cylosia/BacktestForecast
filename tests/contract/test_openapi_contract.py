@@ -1,4 +1,4 @@
-"""Contract tests: verify the runtime FastAPI app's OpenAPI schema matches key expectations."""
+﻿"""Contract tests: verify the runtime FastAPI app's OpenAPI schema matches key expectations."""
 
 from __future__ import annotations
 
@@ -43,6 +43,20 @@ def test_422_uses_error_envelope(openapi_schema: dict) -> None:
     schema_ref = json_content.get("schema", {}).get("$ref")
     assert schema_ref is not None, "422 must have a schema reference"
     assert "ErrorEnvelope" in schema_ref, "422 must reference ErrorEnvelope, not default Pydantic ValidationError"
+
+
+def test_create_backtest_entry_rules_boundary_is_documented(openapi_schema: dict) -> None:
+    """The shared request schema may allow empty entry_rules internally, but the public create route must document the boundary."""
+    create_schema = (
+        openapi_schema.get("components", {})
+        .get("schemas", {})
+        .get("CreateBacktestRunRequest", {})
+    )
+    properties = create_schema.get("properties", {})
+    entry_rules = properties.get("entry_rules", {})
+    description = entry_rules.get("description", "")
+    assert "empty list" in description.lower()
+    assert "public create-backtest api rejects empty entry_rules" in description.lower()
 
 
 def test_export_download_describes_binary(openapi_schema: dict) -> None:
@@ -119,7 +133,7 @@ def test_scanner_job_response_has_warnings_json_field() -> None:
 
 def test_scanner_max_symbols_matches_backend_policy() -> None:
     """Verify the PRO basic max_symbols from ScannerAccessPolicy matches the
-    frontend constant used in scanner-form.tsx (mode=basic → 5)."""
+    frontend constant used in scanner-form.tsx (mode=basic -> 5)."""
     from backtestforecast.billing.entitlements import (
         POLICIES,
         PlanTier,
@@ -147,6 +161,23 @@ def test_error_envelope_schema_shape(openapi_schema: dict) -> None:
     error_required = error_props.get("required", [])
     assert "code" in error_required, "error.code must be required"
     assert "message" in error_required, "error.message must be required"
+
+
+def test_cursor_paginated_totals_are_documented_as_pre_cursor_counts(openapi_schema: dict) -> None:
+    """OpenAPI should explain that list totals are full matching counts, not post-cursor counts."""
+    schemas = openapi_schema.get("components", {}).get("schemas", {})
+    response_names = (
+        "BacktestRunListResponse",
+        "ExportJobListResponse",
+        "ScannerJobListResponse",
+        "SweepJobListResponse",
+        "AnalysisListResponse",
+    )
+    for schema_name in response_names:
+        total_schema = schemas.get(schema_name, {}).get("properties", {}).get("total", {})
+        description = total_schema.get("description", "")
+        assert "before page slicing" in description, schema_name
+        assert "does not shrink after applying a cursor" in description, schema_name
 
 
 # ---------------------------------------------------------------------------

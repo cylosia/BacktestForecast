@@ -1,18 +1,20 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import contextlib
 import math
 import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
 import structlog
 
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError
-from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
+from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
 from backtestforecast.schemas.backtests import (
     AvoidEarningsRule,
     BollingerBandsRule,
@@ -28,13 +30,16 @@ from backtestforecast.schemas.backtests import (
 
 logger = structlog.get_logger("market_data")
 
+if TYPE_CHECKING:
+    from backtestforecast.market_data.redis_cache import OptionDataRedisCache
+
 
 @dataclass(frozen=True, slots=True)
 class HistoricalDataBundle:
     bars: list[DailyBar]
     earnings_dates: set[date]
     ex_dividend_dates: set[date]
-    option_gateway: "MassiveOptionGateway"
+    option_gateway: MassiveOptionGateway
 
 
 _GATEWAY_CONTRACT_CACHE_MAX = 2_000
@@ -57,7 +62,7 @@ class MassiveOptionGateway:
         self,
         client: MassiveClient,
         symbol: str,
-        redis_cache: "OptionDataRedisCache | None" = None,
+        redis_cache: OptionDataRedisCache | None = None,
     ) -> None:
         self.client = client
         self.symbol = symbol
@@ -289,6 +294,12 @@ class MassiveOptionGateway:
                 inflight_event.set()
 
     def set_ex_dividend_dates(self, ex_dividend_dates: set[date]) -> None:
+        """Store ex-dividend dates on the live option gateway.
+
+        This is part of the production backtest path: ``prepare_backtest()``
+        loads dates from the market-data client and injects them here before
+        the engine starts requesting assignment-relevant windows.
+        """
         self._ex_dividend_dates = set(ex_dividend_dates)
 
     def get_ex_dividend_dates(self, start_date: date, end_date: date) -> set[date]:
@@ -390,10 +401,8 @@ class MarketDataService:
     def close(self) -> None:
         """Release Redis cache resources."""
         if hasattr(self, '_redis_cache') and self._redis_cache is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._redis_cache.close()
-            except Exception:
-                pass
 
     @staticmethod
     def _build_redis_cache() -> OptionDataRedisCache | None:
@@ -512,14 +521,20 @@ class MarketDataService:
             )
 
         earnings_dates = self._load_earnings_dates_if_required(request)
+        ex_dividend_dates = self._load_ex_dividend_dates(
+            request.symbol,
+            start_date=bars[0].trade_date,
+            end_date=bars[-1].trade_date,
+        )
         option_gateway = MassiveOptionGateway(
             self.client, request.symbol, redis_cache=self._redis_cache,
         )
+        option_gateway.set_ex_dividend_dates(ex_dividend_dates)
 
         return HistoricalDataBundle(
             bars=bars,
             earnings_dates=earnings_dates,
-            ex_dividend_dates=set(),
+            ex_dividend_dates=ex_dividend_dates,
             option_gateway=option_gateway,
         )
 
@@ -548,6 +563,25 @@ class MarketDataService:
                 "The avoid_earnings rule requires an earnings-capable Massive endpoint, "
                 "but earnings data could not be retrieved."
             ) from exc
+
+    def _load_ex_dividend_dates(
+        self,
+        symbol: str,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> set[date]:
+        try:
+            return self.client.list_ex_dividend_dates(symbol, start_date, end_date)
+        except ExternalServiceError:
+            logger.warning(
+                "market_data.ex_dividend_dates_unavailable",
+                symbol=symbol,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+                exc_info=True,
+            )
+            return set()
 
     @staticmethod
     def _validate_bars(raw_bars: list[DailyBar], symbol: str) -> list[DailyBar]:
@@ -610,8 +644,6 @@ class MarketDataService:
                 warmup = max(warmup, rule.period + 2)
             elif isinstance(rule, (IvRankRule, IvPercentileRule)):
                 warmup = max(warmup, rule.lookback_days + 5)
-            elif isinstance(rule, VolumeSpikeRule):
-                warmup = max(warmup, rule.lookback_period + 2)
-            elif isinstance(rule, SupportResistanceRule):
+            elif isinstance(rule, (VolumeSpikeRule, SupportResistanceRule)):
                 warmup = max(warmup, rule.lookback_period + 2)
         return max(warmup, 2)

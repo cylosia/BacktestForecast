@@ -1,4 +1,4 @@
-"""Unit tests for the RateLimiter class.
+﻿"""Unit tests for the RateLimiter class.
 
 All tests use the in-memory fallback path (no Redis required) by patching
 ``_get_redis`` to return ``None``.  This keeps tests fast, deterministic,
@@ -6,7 +6,7 @@ and dependency-free.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from redis.exceptions import RedisError
@@ -144,7 +144,7 @@ def test_rate_limit_info_fields():
 
 def test_high_load_rejects_after_limit_and_stays_rejected():
     """After reaching the limit, every subsequent request must be rejected
-    within the same time window — the counter must not reset unexpectedly."""
+    within the same time window - the counter must not reset unexpectedly."""
     limiter = _make_limiter()
     limit = 5
     params = dict(bucket="highload", actor_key="user-load", limit=limit, window_seconds=60)

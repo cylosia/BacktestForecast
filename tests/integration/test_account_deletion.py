@@ -1,7 +1,5 @@
-"""Verify account deletion requires confirmation and cancels in-flight jobs."""
+﻿"""Verify account deletion requires confirmation and cancels in-flight jobs."""
 from __future__ import annotations
-
-import pytest
 
 
 def test_delete_account_requires_confirmation_header(client, auth_headers):

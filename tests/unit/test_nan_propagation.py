@@ -1,11 +1,10 @@
-"""Fix 77: NaN values in trade detail JSON must be sanitized to None.
+﻿"""Fix 77: NaN values in trade detail JSON must be sanitized to None.
 
 Tests that _build_trade_detail_json replaces NaN capital_required_per_unit
 with None instead of propagating NaN into the JSON output.
 """
 from __future__ import annotations
 
-import math
 from datetime import date
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
@@ -49,7 +48,7 @@ class TestNaNPropagation:
     """Verify NaN is sanitized to None in trade detail JSON."""
 
     def test_nan_capital_required_becomes_none(self):
-        """NaN capital_required_per_unit × quantity should produce None."""
+        """NaN capital_required_per_unit x quantity should produce None."""
         position = _make_position(capital_required_per_unit=float("nan"))
         exit_prices = {"AAPL230120C00150000": 3.5}
         detail = OptionsBacktestEngine._build_trade_detail_json(
@@ -69,7 +68,7 @@ class TestNaNPropagation:
         assert detail["capital_required_total"] == 500.0
 
     def test_nan_max_loss_becomes_none(self):
-        """NaN max_loss_per_unit × quantity should produce None."""
+        """NaN max_loss_per_unit x quantity should produce None."""
         position = _make_position(max_loss_per_unit=float("nan"))
         exit_prices = {"AAPL230120C00150000": 3.5}
         detail = OptionsBacktestEngine._build_trade_detail_json(
@@ -78,7 +77,7 @@ class TestNaNPropagation:
         assert detail["max_loss_total"] is None
 
     def test_nan_max_profit_becomes_none(self):
-        """NaN max_profit_per_unit × quantity should produce None."""
+        """NaN max_profit_per_unit x quantity should produce None."""
         position = _make_position(max_profit_per_unit=float("nan"))
         exit_prices = {"AAPL230120C00150000": 3.5}
         detail = OptionsBacktestEngine._build_trade_detail_json(

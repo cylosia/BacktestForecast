@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -7,8 +7,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
-from backtestforecast.schemas.common import RunJobStatus, sanitize_error_message
+from backtestforecast.schemas.backtests import (
+    SYMBOL_ALLOWED_CHARS,
+    BacktestSummaryResponse,
+    EquityCurvePointResponse,
+    TradeJsonResponse,
+)
+from backtestforecast.schemas.common import CursorPaginatedResponse, RunJobStatus, sanitize_error_message
 
 DailyPicksStatus = Literal["ok", "no_data"]
 
@@ -70,11 +75,11 @@ class AnalysisTopResult(BaseModel):
     strategy_type: str = ""
     strategy_label: str = ""
     target_dte: int = 0
-    config: dict[str, Any] = Field(default_factory=dict)
-    summary: dict[str, Any] = Field(default_factory=dict)
-    trades: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
-    equity_curve: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
-    forecast: dict[str, Any] = Field(default_factory=dict)
+    config: dict[str, Any] | None = None
+    summary: BacktestSummaryResponse | None = None
+    trades: list[TradeJsonResponse] = Field(default_factory=list, max_length=10000)
+    equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list, max_length=10000)
+    forecast: dict[str, Any] | None = None
     score: float = 0.0
 
 
@@ -85,6 +90,7 @@ class AnalysisDetailResponse(AnalysisSummaryResponse):
     landscape: list[LandscapeCell] | None = Field(default=None, validation_alias="landscape_json")
     top_results: list[AnalysisTopResult] | None = Field(default=None, validation_alias="top_results_json")
     forecast: dict[str, Any] | None = Field(default=None, validation_alias="forecast_json")
+    integrity_warnings: list[str] = Field(default_factory=list)
 
 
 class CreateAnalysisRequest(BaseModel):
@@ -109,12 +115,8 @@ class CreateAnalysisRequest(BaseModel):
         return v
 
 
-class AnalysisListResponse(BaseModel):
+class AnalysisListResponse(CursorPaginatedResponse):
     items: list[AnalysisSummaryResponse]
-    total: int = Field(default=0, ge=0)
-    offset: int = Field(default=0, ge=0)
-    limit: int = Field(default=50, ge=1)
-    next_cursor: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +164,9 @@ class DailyPickItemResponse(BaseModel):
     regime_labels: list[str] = Field(default_factory=list)
     close_price: Decimal
     target_dte: int
-    config_snapshot: dict[str, Any] = Field(default_factory=dict)
-    summary: DailyPickSummary = Field(default_factory=DailyPickSummary)
-    forecast: DailyPickForecast = Field(default_factory=DailyPickForecast)
+    config_snapshot: dict[str, Any] | None = None
+    summary: DailyPickSummary | None = None
+    forecast: DailyPickForecast | None = None
 
     @field_validator("regime_labels", mode="before")
     @classmethod
@@ -196,6 +198,5 @@ class PipelineHistoryItemResponse(BaseModel):
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
-class PipelineHistoryResponse(BaseModel):
+class PipelineHistoryResponse(CursorPaginatedResponse):
     items: list[PipelineHistoryItemResponse]
-    next_cursor: str | None = None

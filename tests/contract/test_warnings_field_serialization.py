@@ -1,4 +1,4 @@
-"""Contract test: warnings field uses field name 'warnings', not alias 'warnings_json'.
+﻿"""Contract test: warnings field uses field name 'warnings', not alias 'warnings_json'.
 
 The DB column is ``warnings_json``, but the Pydantic response schemas expose it
 as ``warnings`` via ``validation_alias``.  Serialised JSON (sent to the
@@ -11,7 +11,6 @@ import pytest
 from backtestforecast.schemas.backtests import BacktestRunDetailResponse
 from backtestforecast.schemas.scans import ScannerJobResponse
 from backtestforecast.schemas.sweeps import SweepJobResponse
-
 
 _SCHEMAS_WITH_WARNINGS = [
     BacktestRunDetailResponse,

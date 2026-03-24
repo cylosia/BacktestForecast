@@ -1,4 +1,4 @@
-"""Hand-verified P&L correctness tests for all strategy types NOT covered by test_strategy_pnl.py.
+﻿"""Hand-verified P&L correctness tests for all strategy types NOT covered by test_strategy_pnl.py.
 
 test_strategy_pnl.py covers: long_call, long_put.
 This file covers every remaining registered strategy with at least one profitable-trade test each.
@@ -71,10 +71,10 @@ class TestBullPutCreditSpreadPnl:
     """Hand-verified P&L for bull_put_credit_spread.
 
     Sell P100 at 2.50, Buy P95 at 1.00.  Underlying stays above 100.
-    entry_vpu = (1*1.00 − 1*2.50)*100 = −150  (net credit $150)
+    entry_vpu = (1*1.00 - 1*2.50)*100 = -150  (net credit $150)
     exit_vpu  = 0  (both expire worthless)
-    Gross PnL/unit = 0 − (−150) = +150
-    Commission/unit = 0.65 × 2 legs × 2 (entry+exit) = 2.60
+    Gross PnL/unit = 0 - (-150) = +150
+    Commission/unit = 0.65 x 2 legs x 2 (entry+exit) = 2.60
     Net PnL/unit = 147.40
     """
 
@@ -110,7 +110,7 @@ class TestBullPutCreditSpreadPnl:
         assert abs(t.net_pnl - expected_net) < 0.01
 
     def test_losing_trade(self):
-        """Underlying drops to 88 — both puts are deep ITM, max loss on spread."""
+        """Underlying drops to 88 - both puts are deep ITM, max loss on spread."""
         bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 94), _bar(_EXP, 88)]
         contracts = {
             (_ENTRY, "put"): [
@@ -138,7 +138,7 @@ class TestBearCallCreditSpreadPnl:
     """Hand-verified P&L for bear_call_credit_spread.
 
     Sell C100 at 3.00, Buy C105 at 1.00.  Underlying stays below 100.
-    entry_vpu = (1*1.00 − 1*3.00)*100 = −200  (net credit $200)
+    entry_vpu = (1*1.00 - 1*3.00)*100 = -200  (net credit $200)
     exit_vpu  = 0
     Gross PnL/unit = +200
     Commission/unit = 2.60
@@ -175,7 +175,7 @@ class TestBearCallCreditSpreadPnl:
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
 
     def test_losing_trade(self):
-        """Underlying rises to 112 — both calls deep ITM, max loss on spread."""
+        """Underlying rises to 112 - both calls deep ITM, max loss on spread."""
         bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 108), _bar(_EXP, 112)]
         contracts = {
             (_ENTRY, "call"): [
@@ -208,9 +208,9 @@ class TestBullCallDebitSpreadPnl:
     """Hand-verified P&L for bull_call_debit_spread.
 
     Buy C100 at 3.00, Sell C105 at 1.00.  Underlying rises to 110.
-    entry_vpu = (1*3.00 − 1*1.00)*100 = 200  (debit)
-    exit_vpu  = (10 − 5)*100 = 500  (both ITM at expiration)
-    Gross PnL/unit = 500 − 200 = 300
+    entry_vpu = (1*3.00 - 1*1.00)*100 = 200  (debit)
+    exit_vpu  = (10 - 5)*100 = 500  (both ITM at expiration)
+    Gross PnL/unit = 500 - 200 = 300
     Commission/unit = 2.60
     Net PnL/unit = 297.40
     """
@@ -250,9 +250,9 @@ class TestBearPutDebitSpreadPnl:
     """Hand-verified P&L for bear_put_debit_spread.
 
     Buy P105 at 4.00, Sell P100 at 1.50.  Underlying drops from 105 to 90.
-    entry_vpu = (1*4.00 − 1*1.50)*100 = 250  (debit)
-    exit_vpu  = (15 − 10)*100 = 500  (P105 intrinsic=15, P100 intrinsic=10)
-    Gross PnL/unit = 500 − 250 = 250  (= width $500 − debit $250)
+    entry_vpu = (1*4.00 - 1*1.50)*100 = 250  (debit)
+    exit_vpu  = (15 - 10)*100 = 500  (P105 intrinsic=15, P100 intrinsic=10)
+    Gross PnL/unit = 500 - 250 = 250  (= width $500 - debit $250)
     Commission/unit = 2.60
     Net PnL/unit = 247.40
     """
@@ -297,11 +297,11 @@ class TestIronCondorPnl:
     """Hand-verified P&L for iron_condor (4 legs).
 
     Long P90 at 0.30, Short P95 at 1.00, Short C105 at 1.00, Long C110 at 0.30.
-    Underlying stays at 100 — all expire worthless.
-    entry_vpu = (0.30 + 0.30 − 1.00 − 1.00)*100 = −140  (credit)
+    Underlying stays at 100 - all expire worthless.
+    entry_vpu = (0.30 + 0.30 - 1.00 - 1.00)*100 = -140  (credit)
     exit_vpu  = 0
     Gross PnL/unit = +140
-    Commission/unit = 0.65 × 4 × 2 = 5.20
+    Commission/unit = 0.65 x 4 x 2 = 5.20
     Net PnL/unit = 134.80
     """
 
@@ -342,7 +342,7 @@ class TestIronCondorPnl:
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
 
     def test_losing_trade(self):
-        """Underlying breaks through the call wing to 112 — short call spread loses."""
+        """Underlying breaks through the call wing to 112 - short call spread loses."""
         bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 108), _bar(_EXP, 112)]
         contracts = {
             (_ENTRY, "put"): [
@@ -377,12 +377,12 @@ class TestIronCondorPnl:
 class TestButterflyPnl:
     """Hand-verified P&L for butterfly (3 contracts, 4 option-units).
 
-    Buy C95 at 6.00, Sell 2×C100 at 3.50, Buy C105 at 1.50.
-    Underlying pins at 100 — max profit scenario.
-    entry_vpu = (1*6.00 + 1*1.50 − 2*3.50)*100 = 50  (debit)
-    exit_vpu  = (1*5 + 1*0 − 2*0)*100 = 500  (C95 intrinsic=5, rest=0)
-    Gross PnL/unit = 500 − 50 = 450
-    Commission/unit = 0.65 × 4 (1+2+1 contracts) × 2 = 5.20
+    Buy C95 at 6.00, Sell 2xC100 at 3.50, Buy C105 at 1.50.
+    Underlying pins at 100 - max profit scenario.
+    entry_vpu = (1*6.00 + 1*1.50 - 2*3.50)*100 = 50  (debit)
+    exit_vpu  = (1*5 + 1*0 - 2*0)*100 = 500  (C95 intrinsic=5, rest=0)
+    Gross PnL/unit = 500 - 50 = 450
+    Commission/unit = 0.65 x 4 (1+2+1 contracts) x 2 = 5.20
     Net PnL/unit = 444.80
     """
 
@@ -428,11 +428,11 @@ class TestIronButterflyPnl:
     """Hand-verified P&L for iron_butterfly (4 legs).
 
     Buy P95 at 0.50, Sell P100 at 3.00, Sell C100 at 3.00, Buy C105 at 0.50.
-    Underlying stays at 100 — max profit (all ATM options expire at 0).
-    entry_vpu = (0.50 + 0.50 − 3.00 − 3.00)*100 = −500  (credit)
+    Underlying stays at 100 - max profit (all ATM options expire at 0).
+    entry_vpu = (0.50 + 0.50 - 3.00 - 3.00)*100 = -500  (credit)
     exit_vpu  = 0
     Gross PnL/unit = +500
-    Commission/unit = 0.65 × 4 × 2 = 5.20
+    Commission/unit = 0.65 x 4 x 2 = 5.20
     Net PnL/unit = 494.80
     """
 
@@ -482,10 +482,10 @@ class TestCoveredCallPnl:
     """Hand-verified P&L for covered_call.
 
     Long 100 shares at 100, Short C105 at 2.00.  Underlying rises to 105.
-    entry_vpu = (−1*2.00*100) + (1*100*100) = 9800
-    exit_vpu  = (−1*0*100) + (1*100*105) = 10500  (call expires worthless)
-    Gross PnL/unit = 10500 − 9800 = 700
-    Commission/unit = 0.65 × 1 × 2 = 1.30  (only option legs)
+    entry_vpu = (-1*2.00*100) + (1*100*100) = 9800
+    exit_vpu  = (-1*0*100) + (1*100*105) = 10500  (call expires worthless)
+    Gross PnL/unit = 10500 - 9800 = 700
+    Commission/unit = 0.65 x 1 x 2 = 1.30  (only option legs)
     Net PnL/unit = 698.70
     """
 
@@ -517,7 +517,7 @@ class TestCoveredCallPnl:
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
 
     def test_losing_trade(self):
-        """Stock drops from 100 to 85 — long stock loss overwhelms call premium."""
+        """Stock drops from 100 to 85 - long stock loss overwhelms call premium."""
         bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 92), _bar(_EXP, 85)]
         contracts = {
             (_ENTRY, "call"): [OptionContractRecord("C105", "call", _EXP, 105, 100)],
@@ -545,10 +545,10 @@ class TestCashSecuredPutPnl:
     """Hand-verified P&L for cash_secured_put.
 
     Short P100 at 3.00.  Underlying stays above 100, put expires worthless.
-    entry_vpu = −1*3.00*100 = −300  (credit)
+    entry_vpu = -1*3.00*100 = -300  (credit)
     exit_vpu  = 0
     Gross PnL/unit = +300
-    Commission/unit = 0.65 × 1 × 2 = 1.30
+    Commission/unit = 0.65 x 1 x 2 = 1.30
     Net PnL/unit = 298.70
     """
 
@@ -579,7 +579,7 @@ class TestCashSecuredPutPnl:
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
 
     def test_losing_trade(self):
-        """Stock drops to 85 — short put goes deep ITM, large loss."""
+        """Stock drops to 85 - short put goes deep ITM, large loss."""
         bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 92), _bar(_EXP, 85)]
         contracts = {
             (_ENTRY, "put"): [OptionContractRecord("P100", "put", _EXP, 100, 100)],
@@ -604,11 +604,11 @@ class TestCollarPnl:
     """Hand-verified P&L for collar.
 
     Long 100 shares at 100, Short C105 at 2.00, Long P95 at 1.50.
-    Underlying stays at 100 — both options expire worthless.
-    entry_vpu = (−1*2.00*100) + (1*1.50*100) + (1*100*100) = 9950
+    Underlying stays at 100 - both options expire worthless.
+    entry_vpu = (-1*2.00*100) + (1*1.50*100) + (1*100*100) = 9950
     exit_vpu  = 0 + 0 + (1*100*100) = 10000
-    Gross PnL/unit = 10000 − 9950 = 50
-    Commission/unit = 0.65 × 2 × 2 = 2.60  (2 option legs)
+    Gross PnL/unit = 10000 - 9950 = 50
+    Commission/unit = 0.65 x 2 x 2 = 2.60  (2 option legs)
     Net PnL/unit = 47.40
     """
 
@@ -645,11 +645,11 @@ class TestCoveredStranglePnl:
     """Hand-verified P&L for covered_strangle.
 
     Long 100 shares at 100, Short C105 at 2.00, Short P95 at 1.50.
-    Underlying stays at 100 — both options expire worthless.
-    entry_vpu = (−1*2.00*100) + (−1*1.50*100) + (1*100*100) = 9650
+    Underlying stays at 100 - both options expire worthless.
+    entry_vpu = (-1*2.00*100) + (-1*1.50*100) + (1*100*100) = 9650
     exit_vpu  = 0 + 0 + (1*100*100) = 10000
-    Gross PnL/unit = 10000 − 9650 = 350
-    Commission/unit = 0.65 × 2 × 2 = 2.60
+    Gross PnL/unit = 10000 - 9650 = 350
+    Commission/unit = 0.65 x 2 x 2 = 2.60
     Net PnL/unit = 347.40
     """
 
@@ -691,10 +691,10 @@ class TestNakedCallPnl:
     """Hand-verified P&L for naked_call.
 
     Short C105 at 2.00.  Underlying stays at 100, call expires worthless.
-    entry_vpu = −1*2.00*100 = −200  (credit)
+    entry_vpu = -1*2.00*100 = -200  (credit)
     exit_vpu  = 0
     Gross PnL/unit = +200
-    Commission/unit = 0.65 × 1 × 2 = 1.30
+    Commission/unit = 0.65 x 1 x 2 = 1.30
     Net PnL/unit = 198.70
     """
 
@@ -729,7 +729,7 @@ class TestNakedPutPnl:
     """Hand-verified P&L for naked_put.
 
     Short P95 at 2.00.  Underlying stays at 100, put expires worthless.
-    entry_vpu = −1*2.00*100 = −200  (credit)
+    entry_vpu = -1*2.00*100 = -200  (credit)
     exit_vpu  = 0
     Gross PnL/unit = +200
     Commission/unit = 1.30
@@ -772,10 +772,10 @@ class TestShortStraddlePnl:
     """Hand-verified P&L for short_straddle.
 
     Short C100 at 3.00, Short P100 at 3.00.  Underlying stays at 100.
-    entry_vpu = (−1*3.00 + −1*3.00)*100 = −600  (credit)
+    entry_vpu = (-1*3.00 + -1*3.00)*100 = -600  (credit)
     exit_vpu  = 0
     Gross PnL/unit = +600
-    Commission/unit = 0.65 × 2 × 2 = 2.60
+    Commission/unit = 0.65 x 2 x 2 = 2.60
     Net PnL/unit = 597.40
     """
 
@@ -811,7 +811,7 @@ class TestShortStranglePnl:
     """Hand-verified P&L for short_strangle.
 
     Short C105 at 2.00, Short P95 at 2.00.  Underlying stays at 100.
-    entry_vpu = (−1*2.00 + −1*2.00)*100 = −400  (credit)
+    entry_vpu = (-1*2.00 + -1*2.00)*100 = -400  (credit)
     exit_vpu  = 0
     Gross PnL/unit = +400
     Commission/unit = 2.60
@@ -852,7 +852,7 @@ class TestLongStraddlePnl:
     Long C100 at 3.00, Long P100 at 3.00.  Underlying moves to 110.
     entry_vpu = (1*3.00 + 1*3.00)*100 = 600  (debit)
     exit_vpu  = (10 + 0)*100 = 1000  (C100 intrinsic=10, P100=0)
-    Gross PnL/unit = 1000 − 600 = 400
+    Gross PnL/unit = 1000 - 600 = 400
     Commission/unit = 2.60
     Net PnL/unit = 397.40
     """
@@ -892,7 +892,7 @@ class TestLongStranglePnl:
     Long C105 at 1.50, Long P95 at 1.50.  Underlying drops to 85.
     entry_vpu = (1*1.50 + 1*1.50)*100 = 300  (debit)
     exit_vpu  = (0 + 10)*100 = 1000  (C105=0, P95 intrinsic=10)
-    Gross PnL/unit = 1000 − 300 = 700
+    Gross PnL/unit = 1000 - 300 = 700
     Commission/unit = 2.60
     Net PnL/unit = 697.40
     """
@@ -936,10 +936,10 @@ class TestCalendarSpreadPnl:
 
     Long C100 far (exp 4/19, mid 5.00), Short C100 near (exp 4/5, mid 2.00).
     At near expiration: near leg expires worthless, far leg retains time value.
-    entry_vpu = (1*5.00 − 1*2.00)*100 = 300  (debit)
-    exit_vpu  = (1*3.50 − 1*0)*100 = 350  (far leg has residual value)
-    Gross PnL/unit = 350 − 300 = 50
-    Commission/unit = 0.65 × 2 × 2 = 2.60
+    entry_vpu = (1*5.00 - 1*2.00)*100 = 300  (debit)
+    exit_vpu  = (1*3.50 - 1*0)*100 = 350  (far leg has residual value)
+    Gross PnL/unit = 350 - 300 = 50
+    Commission/unit = 0.65 x 2 x 2 = 2.60
     Net PnL/unit = 47.40
     """
 
@@ -977,7 +977,7 @@ class TestCalendarSpreadPnl:
         assert abs(t.net_pnl - (expected_gross - expected_comm)) < 0.01
 
     def test_losing_trade(self):
-        """Underlying moves sharply to 115 — near and far legs both deep ITM,
+        """Underlying moves sharply to 115 - near and far legs both deep ITM,
         time-value differential collapses, net debit position loses."""
         bars = [_bar(date(2025, 4, 1), 99), _bar(_ENTRY, 100), _bar(_MID, 110), _bar(_EXP, 115)]
         contracts = {
@@ -1010,10 +1010,10 @@ class TestPoorMansCoveredCallPnl:
 
     Long deep-ITM C90 far (exp 4/19, mid 12.00), Short OTM C105 near (exp 4/5, mid 1.50).
     At near expiration (underlying=100): short expires worthless, long retains value.
-    entry_vpu = (1*12.00 − 1*1.50)*100 = 1050  (debit)
-    exit_vpu  = (1*13.00 − 1*0)*100 = 1300  (C90 far quoted at 13.00)
-    Gross PnL/unit = 1300 − 1050 = 250
-    Commission/unit = 0.65 × 2 × 2 = 2.60
+    entry_vpu = (1*12.00 - 1*1.50)*100 = 1050  (debit)
+    exit_vpu  = (1*13.00 - 1*0)*100 = 1300  (C90 far quoted at 13.00)
+    Gross PnL/unit = 1300 - 1050 = 250
+    Commission/unit = 0.65 x 2 x 2 = 2.60
     Net PnL/unit = 247.40
     """
 
@@ -1061,11 +1061,11 @@ class TestPoorMansCoveredCallPnl:
 class TestRatioCallBackspreadPnl:
     """Hand-verified P&L for ratio_call_backspread.
 
-    Short 1×C100 at 3.50, Long 2×C105 at 2.00.  Underlying rises to 115.
-    entry_vpu = (−1*1*3.50 + 1*2*2.00)*100 = 50  (small debit)
-    exit_vpu  = (−1*1*15 + 1*2*10)*100 = 500
-    Gross PnL/unit = 500 − 50 = 450
-    Commission/unit = 0.65 × 3 (1+2 contracts) × 2 = 3.90
+    Short 1xC100 at 3.50, Long 2xC105 at 2.00.  Underlying rises to 115.
+    entry_vpu = (-1*1*3.50 + 1*2*2.00)*100 = 50  (small debit)
+    exit_vpu  = (-1*1*15 + 1*2*10)*100 = 500
+    Gross PnL/unit = 500 - 50 = 450
+    Commission/unit = 0.65 x 3 (1+2 contracts) x 2 = 3.90
     Net PnL/unit = 446.10
     """
 
@@ -1103,11 +1103,11 @@ class TestRatioCallBackspreadPnl:
 class TestRatioPutBackspreadPnl:
     """Hand-verified P&L for ratio_put_backspread.
 
-    Short 1×P100 at 3.50, Long 2×P95 at 2.00.  Underlying drops to 80.
-    entry_vpu = (−1*1*3.50 + 1*2*2.00)*100 = 50  (small debit)
-    exit_vpu  = (−1*1*20 + 1*2*15)*100 = 1000  (P100 intrinsic=20, P95=15)
-    Gross PnL/unit = 1000 − 50 = 950
-    Commission/unit = 0.65 × 3 × 2 = 3.90
+    Short 1xP100 at 3.50, Long 2xP95 at 2.00.  Underlying drops to 80.
+    entry_vpu = (-1*1*3.50 + 1*2*2.00)*100 = 50  (small debit)
+    exit_vpu  = (-1*1*20 + 1*2*15)*100 = 1000  (P100 intrinsic=20, P95=15)
+    Gross PnL/unit = 1000 - 50 = 950
+    Commission/unit = 0.65 x 3 x 2 = 3.90
     Net PnL/unit = 946.10
     """
 
@@ -1151,11 +1151,11 @@ class TestJadeLizardPnl:
     """Hand-verified P&L for jade_lizard.
 
     Short P95 at 2.00 + Short C105 at 2.50 + Long C110 at 1.00.
-    Underlying stays at 100 — all expire worthless.
-    entry_vpu = (−1*2.00 + −1*2.50 + 1*1.00)*100 = −350  (credit)
+    Underlying stays at 100 - all expire worthless.
+    entry_vpu = (-1*2.00 + -1*2.50 + 1*1.00)*100 = -350  (credit)
     exit_vpu  = 0
     Gross PnL/unit = +350
-    Commission/unit = 0.65 × 3 × 2 = 3.90
+    Commission/unit = 0.65 x 3 x 2 = 3.90
     Net PnL/unit = 346.10
     """
 
@@ -1197,10 +1197,10 @@ class TestSyntheticPutPnl:
     """Hand-verified P&L for synthetic_put.
 
     Short 100 shares at 100, Long C100 at 3.00.  Underlying drops to 90.
-    entry_vpu = (1*3.00*100) + (−1*100*100) = −9700
-    exit_vpu  = (1*0*100) + (−1*100*90) = −9000  (call worthless, stock at 90)
-    Gross PnL/unit = −9000 − (−9700) = 700
-    Commission/unit = 0.65 × 1 × 2 = 1.30  (only option leg)
+    entry_vpu = (1*3.00*100) + (-1*100*100) = -9700
+    exit_vpu  = (1*0*100) + (-1*100*90) = -9000  (call worthless, stock at 90)
+    Gross PnL/unit = -9000 - (-9700) = 700
+    Commission/unit = 0.65 x 1 x 2 = 1.30  (only option leg)
     Net PnL/unit = 698.70
     """
 
@@ -1236,11 +1236,11 @@ class TestReverseConversionPnl:
     """Hand-verified P&L for reverse_conversion.
 
     Short 100 shares at 100, Long C100 at 2.50, Short P100 at 3.00.
-    Underlying stays at 100 — options expire worthless, small net credit.
-    entry_vpu = (1*2.50*100) + (−1*3.00*100) + (−1*100*100) = −10050
-    exit_vpu  = 0 + 0 + (−1*100*100) = −10000
-    Gross PnL/unit = −10000 − (−10050) = 50
-    Commission/unit = 0.65 × 2 × 2 = 2.60  (2 option legs)
+    Underlying stays at 100 - options expire worthless, small net credit.
+    entry_vpu = (1*2.50*100) + (-1*3.00*100) + (-1*100*100) = -10050
+    exit_vpu  = 0 + 0 + (-1*100*100) = -10000
+    Gross PnL/unit = -10000 - (-10050) = 50
+    Commission/unit = 0.65 x 2 x 2 = 2.60  (2 option legs)
     Net PnL/unit = 47.40
     """
 

@@ -1,4 +1,4 @@
-"""Test that earnings blackout rule uses bisect for O(log n) lookups.
+﻿"""Test that earnings blackout rule uses bisect for O(log n) lookups.
 
 Regression test for the performance issue where the earnings blackout
 check did a linear scan of all earnings dates for every bar evaluated.
@@ -58,6 +58,6 @@ def test_empty_earnings_always_allows():
     sorted_earnings: list[date] = []
     bar_date = date(2024, 6, 15)
     blackout_start = bar_date - timedelta(days=5)
-    blackout_end = bar_date + timedelta(days=5)
+    bar_date + timedelta(days=5)
     lo = bisect.bisect_left(sorted_earnings, blackout_start)
     assert lo >= len(sorted_earnings)

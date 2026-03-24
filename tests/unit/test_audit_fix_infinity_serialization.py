@@ -1,9 +1,10 @@
-"""Verify serialize_summary handles Infinity and NaN without crashing."""
+﻿"""Verify serialize_summary handles Infinity and NaN without crashing."""
 from __future__ import annotations
+
 import json
-import math
 from types import SimpleNamespace
-from backtestforecast.services.serialization import serialize_summary, _safe_decimal, _opt_decimal
+
+from backtestforecast.services.serialization import _opt_decimal, _safe_decimal, serialize_summary
 
 
 def _make_summary(**overrides):

@@ -1,4 +1,4 @@
-"""Test: reaper double-dispatch scenario.
+﻿"""Test: reaper double-dispatch scenario.
 
 Verifies that the distributed lock prevents multiple reaper invocations
 from redispatching the same stuck jobs simultaneously.
@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
@@ -107,10 +107,10 @@ def test_reaper_does_not_double_dispatch_same_run(db_session, db_session_factory
     monkeypatch.setattr(tasks_module, "SessionLocal", db_session_factory)
     monkeypatch.setattr(tasks_module.celery_app, "send_task", fake_send_task)
 
-    result = tasks_module._reap_stale_jobs_inner(stale_minutes=30)
+    tasks_module._reap_stale_jobs_inner(stale_minutes=30)
 
     first_dispatch_count = len(dispatched)
-    result2 = tasks_module._reap_stale_jobs_inner(stale_minutes=30)
+    tasks_module._reap_stale_jobs_inner(stale_minutes=30)
 
     assert len(dispatched) == first_dispatch_count, (
         "Second reaper run should not dispatch the same job again"
@@ -120,7 +120,7 @@ def test_reaper_does_not_double_dispatch_same_run(db_session, db_session_factory
 def test_reaper_runs_without_lock_when_redis_unavailable(db_session, db_session_factory, monkeypatch):
     """When Redis is unavailable, the reaper still runs (lock=None path)
     and still dispatches stale tasks. Without the lock, concurrent reapers
-    could double-dispatch — the test demonstrates the code path proceeds."""
+    could double-dispatch - the test demonstrates the code path proceeds."""
     user = User(
         id=uuid4(),
         clerk_user_id="user_redis_down",

@@ -1,4 +1,4 @@
-"""Verify all authenticated endpoints reject unauthenticated requests.
+﻿"""Verify all authenticated endpoints reject unauthenticated requests.
 
 Every protected endpoint must return 401 (or 403) when no Bearer token
 is provided. This test parametrizes over all known protected routes.
@@ -15,7 +15,7 @@ from apps.api.app.main import app
 
 @pytest.fixture()
 def anon_client() -> TestClient:
-    """Unauthenticated client — no auth overrides applied."""
+    """Unauthenticated client - no auth overrides applied."""
     app.dependency_overrides.clear()
     with TestClient(app, base_url="http://localhost", raise_server_exceptions=False) as tc:
         yield tc
@@ -84,9 +84,7 @@ def test_endpoint_rejects_unauthenticated(
 ) -> None:
     """Every protected endpoint must return 401 without a valid Bearer token."""
     body: dict | bytes | None = None
-    if method == "POST":
-        body = {}
-    elif method == "PATCH":
+    if method == "POST" or method == "PATCH":
         body = {}
 
     if method == "GET":
@@ -100,7 +98,7 @@ def test_endpoint_rejects_unauthenticated(
     else:
         pytest.fail(f"Unsupported method: {method}")
 
-    # 422 is NOT acceptable — it means the request bypassed auth and reached
+    # 422 is NOT acceptable - it means the request bypassed auth and reached
     # input validation.  Only 401 (unauthenticated) or 403 (forbidden) prove
     # the auth layer rejected the request before any business logic ran.
     assert resp.status_code in (401, 403), (

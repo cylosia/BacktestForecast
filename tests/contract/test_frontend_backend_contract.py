@@ -1,13 +1,12 @@
-"""Contract tests verifying frontend TypeScript types match backend Pydantic schemas.
+﻿"""Contract tests verifying frontend TypeScript types match backend Pydantic schemas.
 
 These tests ensure that fields added to the backend are reflected in the
 TypeScript API client types, preventing silent frontend-backend drift.
 """
 from __future__ import annotations
 
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TS_SCHEMA_PATH = PROJECT_ROOT / "packages" / "api-client" / "src" / "schema.d.ts"
@@ -27,6 +26,24 @@ def test_ts_schema_has_decided_trades():
     )
 
 
+def test_ts_schema_has_equity_curve_truncated():
+    """Backtest detail payload must expose equity_curve_truncated to the frontend."""
+    ts = _read_ts_schema()
+    assert "equity_curve_truncated" in ts, (
+        "TypeScript schema missing 'equity_curve_truncated' field. "
+        "Regenerate with: pnpm --filter @backtestforecast/api-client generate"
+    )
+
+
+def test_ts_schema_has_compare_truncation_flag():
+    """Compare payload must expose trades_truncated to the frontend."""
+    ts = _read_ts_schema()
+    assert "trades_truncated" in ts, (
+        "TypeScript schema missing 'trades_truncated' field. "
+        "Regenerate with: pnpm --filter @backtestforecast/api-client generate"
+    )
+
+
 def test_ts_schema_has_holding_period_trading_days_on_trade():
     """BacktestTradeResponse must include holding_period_trading_days."""
     ts = _read_ts_schema()
@@ -39,8 +56,8 @@ def test_ts_schema_has_holding_period_trading_days_on_trade():
 def test_ts_schema_entry_mid_has_description():
     """entry_mid field must have a description explaining the /100 convention."""
     ts = _read_ts_schema()
-    assert "Per-share position value" in ts, (
-        "TypeScript schema entry_mid missing per-share description"
+    assert "Per-unit position value divided by 100" in ts, (
+        "TypeScript schema entry_mid missing divided-by-100 description"
     )
 
 
@@ -90,8 +107,62 @@ def test_backtest_run_detail_response_fields():
     """BacktestRunDetailResponse must have core fields."""
     from backtestforecast.schemas.backtests import BacktestRunDetailResponse
     fields = BacktestRunDetailResponse.model_fields
-    for f in ("id", "symbol", "strategy_type", "status", "summary", "trades", "equity_curve"):
+    for f in ("id", "symbol", "strategy_type", "status", "summary", "trades", "equity_curve", "equity_curve_truncated", "risk_free_rate"):
         assert f in fields, f"BacktestRunDetailResponse missing field: {f}"
+
+
+def test_backtest_summary_core_fields_match_frontend_contract():
+    """Core summary fields used by the frontend must exist in both backend and generated TS types."""
+    from backtestforecast.schemas.backtests import BacktestSummaryResponse
+
+    required = {
+        "trade_count",
+        "decided_trades",
+        "win_rate",
+        "total_roi_pct",
+        "total_net_pnl",
+        "max_drawdown_pct",
+        "profit_factor",
+        "sharpe_ratio",
+        "sortino_ratio",
+        "expectancy",
+    }
+    backend_fields = set(BacktestSummaryResponse.model_fields.keys())
+    assert required.issubset(backend_fields)
+
+    ts = _read_ts_schema()
+    for field_name in required:
+        assert field_name in ts, (
+            f"TypeScript schema missing summary field '{field_name}'. "
+            "Regenerate with: pnpm --filter @backtestforecast/api-client generate"
+        )
+
+
+def test_compare_response_fields_match_frontend_contract():
+    """Compare response must expose summary items and truncation metadata end to end."""
+    from backtestforecast.schemas.backtests import CompareBacktestsResponse
+
+    fields = CompareBacktestsResponse.model_fields
+    for field_name in ("items", "comparison_limit", "trade_limit_per_run", "trades_truncated"):
+        assert field_name in fields
+
+
+def test_cursor_paginated_list_responses_share_contract_fields():
+    from backtestforecast.schemas.analysis import AnalysisListResponse
+    from backtestforecast.schemas.backtests import BacktestRunListResponse
+    from backtestforecast.schemas.exports import ExportJobListResponse
+    from backtestforecast.schemas.scans import ScannerJobListResponse
+    from backtestforecast.schemas.sweeps import SweepJobListResponse
+
+    expected = {"items", "total", "offset", "limit", "next_cursor"}
+    for model in (
+        BacktestRunListResponse,
+        ExportJobListResponse,
+        ScannerJobListResponse,
+        SweepJobListResponse,
+        AnalysisListResponse,
+    ):
+        assert expected.issubset(model.model_fields.keys()), model.__name__
 
 
 def test_scanner_recommendation_response_fields():
@@ -141,7 +212,7 @@ def test_plan_tier_enum_values():
 
 def test_error_response_structure():
     """ErrorResponse must wrap an ErrorDetail."""
-    from backtestforecast.schemas.common import ErrorResponse, ErrorDetail
+    from backtestforecast.schemas.common import ErrorResponse
     fields = ErrorResponse.model_fields
     assert "error" in fields
 

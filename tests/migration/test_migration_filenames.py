@@ -1,4 +1,4 @@
-"""Verify migration filenames match their internal revision IDs.
+﻿"""Verify migration filenames match their internal revision IDs.
 
 Audit fix 5-8: Mismatched filenames cause operational confusion. The filename
 prefix (e.g. 20260318_0010) must match the revision = "..." value inside.

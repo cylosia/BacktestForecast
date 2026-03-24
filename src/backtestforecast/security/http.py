@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from collections.abc import Callable
@@ -9,7 +9,6 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backtestforecast.observability import REQUEST_ID_HEADER
 from backtestforecast.version import get_public_version
-
 
 
 @dataclass(frozen=True)
@@ -273,9 +272,11 @@ class ApiSecurityHeadersMiddleware:
             if app_env is None:
                 from backtestforecast.config import get_settings
 
-                app_env_resolver = lambda: get_settings().app_env
+                def app_env_resolver():
+                    return get_settings().app_env
             else:
-                app_env_resolver = lambda: app_env
+                def app_env_resolver():
+                    return app_env
         self._app_env_resolver = app_env_resolver
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

@@ -1,4 +1,4 @@
-"""Adapters that bridge the nightly pipeline to existing services.
+﻿"""Adapters that bridge the nightly pipeline to existing services.
 
 The pipeline service is dependency-injected with abstract interfaces.
 These adapters implement those interfaces using the existing
@@ -11,9 +11,9 @@ import json
 import threading
 from collections import OrderedDict
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Any, Self
+from zoneinfo import ZoneInfo
 
 import structlog
 
@@ -236,8 +236,20 @@ class PipelineBacktestExecutor:
             )
             bundle = self._get_bundle(request)
             result = self._execution_service.execute_request(request, bundle=bundle)
+            serialized_trades = [
+                {
+                    "entry_date": t.entry_date.isoformat(),
+                    "exit_date": t.exit_date.isoformat(),
+                    "net_pnl": float(t.net_pnl),
+                    "holding_period_days": t.holding_period_days,
+                }
+                for t in result.trades[:50]
+            ]
+            trade_count = result.summary.trade_count
+            serialized_trade_count = len(serialized_trades)
+            downsampled_equity_curve = self._downsample_equity_curve(result.equity_curve)
             return {
-                "trade_count": result.summary.trade_count,
+                "trade_count": trade_count,
                 "win_rate": result.summary.win_rate,
                 "total_roi_pct": result.summary.total_roi_pct,
                 "total_net_pnl": result.summary.total_net_pnl,
@@ -245,18 +257,16 @@ class PipelineBacktestExecutor:
                 "average_holding_period_days": result.summary.average_holding_period_days,
                 "starting_equity": result.summary.starting_equity,
                 "ending_equity": result.summary.ending_equity,
-                "trades": [
-                    {
-                        "entry_date": t.entry_date.isoformat(),
-                        "exit_date": t.exit_date.isoformat(),
-                        "net_pnl": float(t.net_pnl),
-                        "holding_period_days": t.holding_period_days,
-                    }
-                    for t in result.trades[:50]
-                ],
-                "trades_truncated": len(result.trades) > 50,
-                "total_trade_count": len(result.trades),
-                "equity_curve": self._downsample_equity_curve(result.equity_curve),
+                "trades": serialized_trades,
+                "serialized_trade_count": serialized_trade_count,
+                "trade_items_omitted": max(trade_count - serialized_trade_count, 0),
+                "equity_curve": downsampled_equity_curve,
+                "equity_point_count": len(result.equity_curve),
+                "serialized_equity_point_count": len(downsampled_equity_curve),
+                "equity_curve_points_omitted": max(
+                    len(result.equity_curve) - len(downsampled_equity_curve),
+                    0,
+                ),
                 "warnings": list(result.warnings),
             }
         except (DataUnavailableError, ExternalServiceError, AppValidationError):
@@ -310,7 +320,7 @@ class PipelineBacktestExecutor:
                 "drawdown_pct": float(p.drawdown_pct),
             }
             for i, p in enumerate(curve)
-            if i % 5 == 0 or i == max_dd_idx or i == recovery_idx or i == len(curve) - 1
+            if i in (max_dd_idx, recovery_idx) or i % 5 == 0 or i == len(curve) - 1
         ]
 
 

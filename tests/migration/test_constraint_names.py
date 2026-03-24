@@ -1,4 +1,4 @@
-"""Verify CHECK constraint names don't get doubled by the naming convention."""
+﻿"""Verify CHECK constraint names don't get doubled by the naming convention."""
 from __future__ import annotations
 
 from backtestforecast.db.base import Base

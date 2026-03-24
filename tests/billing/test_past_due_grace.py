@@ -1,11 +1,9 @@
-"""Verify past_due subscription status preserves plan tier for grace period."""
+﻿"""Verify past_due subscription status preserves plan tier for grace period."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from backtestforecast.billing.entitlements import normalize_plan_tier, PlanTier, PAID_STATUSES
+from backtestforecast.billing.entitlements import PAID_STATUSES, PlanTier, normalize_plan_tier
 
 
 def test_past_due_not_in_paid_statuses():

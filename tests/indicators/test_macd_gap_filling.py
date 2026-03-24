@@ -1,4 +1,4 @@
-"""Test that MACD signal line handles gaps correctly with carry-forward.
+﻿"""Test that MACD signal line handles gaps correctly with carry-forward.
 
 Regression test for the bug where gaps in the MACD line were compressed
 out before computing the signal EMA, distorting temporal spacing.
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 
-from backtestforecast.indicators.calculations import ema, macd
+from backtestforecast.indicators.calculations import macd
 
 
 def test_macd_no_gaps_signal_matches_direct_ema():
@@ -30,12 +30,12 @@ def test_macd_no_gaps_signal_matches_direct_ema():
 def test_macd_with_gaps_preserves_temporal_spacing():
     """Signal line with gaps should differ from gap-compressed signal."""
     values = list(range(60, 120))
-    macd_line_ref, signal_ref, _ = macd(values, 12, 26, 9)
+    _macd_line_ref, signal_ref, _ = macd(values, 12, 26, 9)
 
     values_with_gap = list(values)
     values_with_gap[30] = values_with_gap[29]
 
-    macd_line_gap, signal_gap, _ = macd(values_with_gap, 12, 26, 9)
+    _macd_line_gap, signal_gap, _ = macd(values_with_gap, 12, 26, 9)
 
     signal_ref_vals = [v for v in signal_ref if v is not None]
     signal_gap_vals = [v for v in signal_gap if v is not None]
@@ -55,7 +55,7 @@ def test_macd_output_lengths_match_input():
 def test_macd_signal_none_at_gap_positions():
     """Signal line should be None where MACD line is None (gaps)."""
     values = [float(100 + i * 0.3) for i in range(60)]
-    ml, sl, hl = macd(values, 12, 26, 9)
+    ml, _sl, hl = macd(values, 12, 26, 9)
 
     for i in range(len(values)):
         if ml[i] is None:

@@ -29,12 +29,10 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const headersList = await headers();
-  // NOTE: The nonce is propagated to ClerkProvider. For full CSP compliance
-  // with Next.js hydration scripts, ensure next.config.ts sets experimental
-  // headers or uses the nonce middleware pattern.
-  // When middleware doesn't run (e.g. static assets, ISR), x-nonce is absent
-  // and nonce resolves to undefined — ClerkProvider safely ignores it.
-  const nonce = headersList.get("x-nonce") ?? undefined;
+  const nonce = headersList.get("x-nonce");
+  if (!nonce) {
+    throw new Error("Missing CSP nonce header. Ensure apps/web/middleware.ts runs for all rendered app routes.");
+  }
 
   return (
     <html lang="en" suppressHydrationWarning className={inter.className}>

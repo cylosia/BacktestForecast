@@ -1,4 +1,4 @@
-"""Verify Prometheus alert rules don't reference non-existent bff_-prefixed metrics."""
+﻿"""Verify Prometheus alert rules don't reference non-existent bff_-prefixed metrics."""
 from __future__ import annotations
 
 import re

@@ -1,4 +1,4 @@
-"""Item 66: Verify model/migration alignment — key indexes and CHECK
+﻿"""Item 66: Verify model/migration alignment - key indexes and CHECK
 constraints exist in both model __table_args__ and migrations.
 
 Introspects model __table_args__ and verifies that every Index and
@@ -23,7 +23,6 @@ def _extract_index_names(model_cls) -> set[str]:
 
 def _collect_migration_index_names() -> set[str]:
     """Walk all Alembic migrations and extract index names from upgrade() ops."""
-    import ast
     from pathlib import Path
 
     versions_dir = Path(__file__).resolve().parents[2] / "alembic" / "versions"
@@ -153,8 +152,9 @@ def _collect_migration_check_constraint_names() -> set[str]:
 def test_migration_check_constraints_exist_in_models():
     """Every CHECK constraint created in a migration must also be declared
     in the corresponding model's __table_args__."""
-    import backtestforecast.models as models_mod
     from sqlalchemy.orm import DeclarativeBase
+
+    import backtestforecast.models as models_mod
 
     model_ck_names: set[str] = set()
     base_cls = getattr(models_mod, "Base", None)

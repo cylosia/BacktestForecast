@@ -1,4 +1,4 @@
-"""End-to-end account deletion test verifying Stripe cleanup flow."""
+﻿"""End-to-end account deletion test verifying Stripe cleanup flow."""
 from __future__ import annotations
 
 import inspect
@@ -15,7 +15,7 @@ class TestAccountDeletionStripeCleanup:
 
         billing = MagicMock()
         client = MagicMock()
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, "sub_live", "cus_live", uuid.uuid4())
 
@@ -31,7 +31,7 @@ class TestAccountDeletionStripeCleanup:
         client = MagicMock()
         client.subscriptions.cancel.side_effect = Exception("Stripe down")
         client.customers.delete.side_effect = Exception("Stripe down")
-        billing._get_stripe_client.return_value = client
+        billing.get_stripe_client.return_value = client
 
         result = _cleanup_stripe(billing, "sub_live", "cus_live", uuid.uuid4())
         assert result == "failed"
@@ -43,7 +43,7 @@ class TestAccountDeletionStripeCleanup:
         billing = MagicMock()
         result = _cleanup_stripe(billing, None, None, uuid.uuid4())
         assert result == "skipped"
-        billing._get_stripe_client.assert_not_called()
+        billing.get_stripe_client.assert_not_called()
 
     def test_audit_event_includes_stripe_ids_and_user_ids(self):
         """The audit event for account deletion should record identifiers for tracing."""

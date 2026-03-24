@@ -1,4 +1,4 @@
-"""Test that AsyncMassiveClient.get_market_holidays returns [] on 404.
+﻿"""Test that AsyncMassiveClient.get_market_holidays returns [] on 404.
 
 Before the fix, the async variant raised ExternalServiceError on 404 while
 the sync variant correctly returned []. After the fix, both behave identically.

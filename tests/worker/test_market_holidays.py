@@ -1,7 +1,8 @@
-"""Verify market holidays task structure."""
+﻿"""Verify market holidays task structure."""
 from __future__ import annotations
 
 import inspect
+
 from apps.worker.app.tasks import refresh_market_holidays
 
 

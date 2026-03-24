@@ -1,13 +1,18 @@
-"""Shared serialization and validation helpers for scan and sweep services."""
+﻿"""Shared serialization and validation helpers for scan and sweep services."""
 from __future__ import annotations
 
 import math
+from contextlib import suppress
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+from pydantic import ValidationError
 
 from backtestforecast.utils import to_decimal
+
+if TYPE_CHECKING:
+    from backtestforecast.schemas.backtests import BacktestSummaryResponse
 
 _validate_logger = structlog.get_logger("services.validation")
 
@@ -17,7 +22,23 @@ _ZEROED_SUMMARY = {
 }
 
 
-def safe_validate_summary(data: dict) -> "BacktestSummaryResponse":
+def _append_integrity_warning(warnings: list[dict[str, Any]] | None, field_name: str) -> None:
+    if warnings is None:
+        return
+    warning = {
+        "code": "stored_payload_invalid",
+        "message": f"Stored {field_name} payload was malformed and has been partially omitted or replaced.",
+    }
+    if warning not in warnings:
+        warnings.append(warning)
+
+
+def safe_validate_summary(
+    data: dict,
+    *,
+    field_name: str = "summary",
+    response_warnings: list[dict[str, Any]] | None = None,
+) -> BacktestSummaryResponse:
     """Parse summary JSON, returning a zeroed summary on corrupt data.
 
     Used by both scan and sweep response builders.
@@ -27,59 +48,187 @@ def safe_validate_summary(data: dict) -> "BacktestSummaryResponse":
     try:
         return BacktestSummaryResponse.model_validate(data)
     except Exception:
-        try:
+        with suppress(Exception):
             from backtestforecast.observability.metrics import SCAN_CORRUPT_SUMMARY_TOTAL
             SCAN_CORRUPT_SUMMARY_TOTAL.inc()
-        except Exception:
-            pass
         _validate_logger.error(
             "malformed_summary_json",
             keys=list(data.keys()) if isinstance(data, dict) else None,
         )
+        _append_integrity_warning(response_warnings, field_name)
         return BacktestSummaryResponse.model_validate(_ZEROED_SUMMARY)
 
 
-def safe_validate_list(model_cls: type, items: list | None, field_name: str) -> list:
+def safe_validate_list(
+    model_cls: type,
+    items: list | None,
+    field_name: str,
+    *,
+    response_warnings: list[dict[str, Any]] | None = None,
+) -> list:
     """Validate a list of JSON dicts against a Pydantic model, skipping malformed entries."""
     if items is None:
         return []
     result = []
+    had_malformed = False
     for item in items:
         try:
             result.append(model_cls.model_validate(item))
         except Exception:
+            had_malformed = True
             _validate_logger.warning(
                 "malformed_json_entry_skipped",
                 field=field_name,
                 item_keys=list(item.keys()) if isinstance(item, dict) else None,
             )
+    if had_malformed:
+        _append_integrity_warning(response_warnings, field_name)
     return result
 
 
-def safe_validate_equity_curve(data: list) -> list:
+def safe_validate_equity_curve(
+    data: list,
+    *,
+    field_name: str = "equity_curve",
+    response_warnings: list[dict[str, Any]] | None = None,
+) -> list:
     """Parse equity curve JSON items, skipping corrupt entries."""
     from backtestforecast.schemas.backtests import EquityCurvePointResponse
 
     results = []
+    had_malformed = False
     for item in data:
         try:
             results.append(EquityCurvePointResponse.model_validate(item))
         except Exception:
+            had_malformed = True
+            _validate_logger.warning(
+                "malformed_equity_curve_entry_skipped",
+                item_keys=list(item.keys()) if isinstance(item, dict) else None,
+            )
             continue
+    if had_malformed:
+        _append_integrity_warning(response_warnings, field_name)
     return results
 
 
-def safe_validate_json(data: Any, label: str, *, default: Any = None) -> Any:
+def safe_validate_json(
+    data: Any,
+    label: str,
+    *,
+    default: Any = None,
+    response_warnings: list[dict[str, Any]] | None = None,
+) -> Any:
     """Return *data* if it's a dict or list, otherwise *default*."""
     if data is None:
         return default
     if isinstance(data, (dict, list)):
         return data
+    _validate_logger.warning("malformed_json_payload_replaced", label=label, got_type=type(data).__name__)
+    _append_integrity_warning(response_warnings, label)
     return default
 
 
+def safe_validate_warning_list(
+    items: list | None,
+    field_name: str = "warnings",
+    *,
+    response_warnings: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Validate warning payloads so malformed stored entries never reach responses."""
+    if items is None:
+        return []
+    result: list[dict[str, Any]] = []
+    had_malformed = False
+    for item in items:
+        if not isinstance(item, dict):
+            had_malformed = True
+            _validate_logger.warning("malformed_warning_entry_skipped", field=field_name, got_type=type(item).__name__)
+            continue
+        message = item.get("message")
+        code = item.get("code")
+        if not isinstance(message, str) or not message.strip():
+            had_malformed = True
+            _validate_logger.warning("malformed_warning_entry_skipped", field=field_name, item_keys=list(item.keys()))
+            continue
+        normalized = dict(item)
+        normalized["message"] = message
+        if code is not None:
+            normalized["code"] = str(code)
+        result.append(normalized)
+    if had_malformed:
+        _append_integrity_warning(response_warnings, field_name)
+    return result
+
+
+def safe_validate_model(
+    model_cls: type,
+    data: Any,
+    field_name: str,
+    *,
+    default: Any = None,
+    response_warnings: list[dict[str, Any]] | None = None,
+    required_keys: set[str] | None = None,
+) -> Any:
+    """Validate a single object against a Pydantic model, falling back safely."""
+    if data is None:
+        return default
+    if required_keys is not None and (not isinstance(data, dict) or not required_keys.issubset(set(data.keys()))):
+        _validate_logger.warning(
+            "malformed_model_payload_missing_required_keys",
+            field=field_name,
+            model=getattr(model_cls, "__name__", str(model_cls)),
+            required_keys=sorted(required_keys),
+            item_keys=list(data.keys()) if isinstance(data, dict) else None,
+            got_type=type(data).__name__,
+        )
+        _append_integrity_warning(response_warnings, field_name)
+        return default
+    try:
+        return model_cls.model_validate(data)
+    except ValidationError:
+        _validate_logger.warning(
+            "malformed_model_payload_replaced",
+            field=field_name,
+            model=getattr(model_cls, "__name__", str(model_cls)),
+            item_keys=list(data.keys()) if isinstance(data, dict) else None,
+            got_type=type(data).__name__,
+        )
+        _append_integrity_warning(response_warnings, field_name)
+        return default
+
+
+def safe_validate_model_list(
+    model_cls: type,
+    items: list | None,
+    field_name: str,
+    *,
+    response_warnings: list[dict[str, Any]] | None = None,
+) -> list:
+    """Validate a list of objects against a Pydantic model, skipping malformed entries."""
+    if items is None:
+        return []
+    result = []
+    had_malformed = False
+    for item in items:
+        try:
+            result.append(model_cls.model_validate(item))
+        except ValidationError:
+            had_malformed = True
+            _validate_logger.warning(
+                "malformed_model_entry_skipped",
+                field=field_name,
+                model=getattr(model_cls, "__name__", str(model_cls)),
+                item_keys=list(item.keys()) if isinstance(item, dict) else None,
+                got_type=type(item).__name__,
+            )
+    if had_malformed:
+        _append_integrity_warning(response_warnings, field_name)
+    return result
+
+
 def _safe_decimal(val: float | Decimal) -> float:
-    """Convert to quantized Decimal then float; NaN/Inf → 0.0."""
+    """Convert to quantized Decimal then float; NaN/Inf -> 0.0."""
     try:
         result = to_decimal(val)
     except (ValueError, ArithmeticError):
@@ -88,7 +237,7 @@ def _safe_decimal(val: float | Decimal) -> float:
 
 
 def _opt_decimal(val: float | None) -> float | None:
-    """Convert to quantized Decimal then float; Inf/NaN → None."""
+    """Convert to quantized Decimal then float; Inf/NaN -> None."""
     if val is None:
         return None
     try:

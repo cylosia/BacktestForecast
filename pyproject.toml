@@ -86,10 +86,25 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"alembic/versions/*" = ["E501", "UP"]
-"tests/**" = ["T20", "S101", "S105", "S106", "S107", "S110", "S311"]
-"scripts/**" = ["T20", "S105", "S106"]
-"src/backtestforecast/config.py" = ["S105", "S106"]
+"alembic/versions/*" = ["E501", "UP", "B007", "RUF002", "T201"]
+"tests/**" = ["T20", "E402", "E741", "S101", "S105", "S106", "S107", "S108", "S110", "S112", "S311", "S603", "S607", "S608", "RUF001", "RUF002", "RUF003", "B017", "SIM102", "SIM115", "SIM117"]
+"scripts/**" = ["T20", "E402", "S101", "S105", "S106", "S603", "S607", "SIM102"]
+"src/backtestforecast/billing/entitlements.py" = ["S110"]
+"src/backtestforecast/config.py" = ["S105", "S106", "S110"]
+"src/backtestforecast/exports/__init__.py" = ["E402", "S311"]
+"src/backtestforecast/exports/storage.py" = ["E402", "S311"]
+"src/backtestforecast/feature_flags.py" = ["S110"]
+"src/backtestforecast/integrations/massive_client.py" = ["S311"]
+"src/backtestforecast/management/backfill_metrics.py" = ["S110"]
+"src/backtestforecast/observability/metrics.py" = ["E402"]
+"src/backtestforecast/pipeline/deep_analysis.py" = ["E402", "S110"]
+"src/backtestforecast/pipeline/service.py" = ["S110"]
+"src/backtestforecast/schemas/json_shapes.py" = ["S110"]
+"src/backtestforecast/security/rate_limits.py" = ["S311"]
+"src/backtestforecast/services/scans.py" = ["E402", "S311"]
+"src/backtestforecast/services/sweeps.py" = ["E402"]
+"src/backtestforecast/sweeps/constraints.py" = ["S311"]
+"src/backtestforecast/sweeps/genetic.py" = ["S311"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["backtestforecast"]
@@ -105,8 +120,10 @@ markers = [
     "smoke: full-stack smoke tests (run with pytest -m smoke)",
     "integration: tests that require a running database",
     "e2e: end-to-end tests",
+    "real_worker: tests that require a live Redis broker and a real Celery worker",
     "slow: long-running tests",
     "asyncio: async tests (registered by pytest-asyncio)",
+    "target_assertion: critical regression tests that must explicitly mark when they reach the business assertion they are intended to protect",
 ]
 filterwarnings = [
     "error",

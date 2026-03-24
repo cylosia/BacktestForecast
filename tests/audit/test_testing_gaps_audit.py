@@ -1,4 +1,4 @@
-"""Tests closing the Testing Gaps identified in the production-grade audit.
+﻿"""Tests closing the Testing Gaps identified in the production-grade audit.
 
 Each test targets a specific gap where the audit found missing coverage.
 Tests are structural (inspect source) or behavioral (exercise real logic)
@@ -9,13 +9,9 @@ from __future__ import annotations
 import inspect
 import re
 import warnings
-from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ============================================================================
 # TG1: DLQ Redis URL consistency between worker and API
@@ -123,7 +119,7 @@ def test_tg3_pipeline_lock_exceeds_soft_time_limit():
 
 
 # ============================================================================
-# TG4: Redis failover — rate limiter fallback behavior
+# TG4: Redis failover - rate limiter fallback behavior
 # ============================================================================
 
 def test_tg4_rate_limiter_degraded_memory_fallback_halves_limit():
@@ -194,7 +190,7 @@ def test_tg6_sse_process_limit_within_redis_pool():
         warnings.simplefilter("ignore", UserWarning)
         settings = get_settings()
 
-    assert SSE_MAX_CONNECTIONS_PROCESS <= settings.sse_redis_max_connections, (
+    assert settings.sse_redis_max_connections >= SSE_MAX_CONNECTIONS_PROCESS, (
         f"SSE_MAX_CONNECTIONS_PROCESS ({SSE_MAX_CONNECTIONS_PROCESS}) must be <= "
         f"sse_redis_max_connections ({settings.sse_redis_max_connections}). "
         f"Each SSE connection holds a Redis Pub/Sub subscription."
@@ -410,7 +406,7 @@ def test_mt3_middleware_tracks_response_bytes():
 
 
 # ============================================================================
-# MT5: Resilience — structural verification of failover paths
+# MT5: Resilience - structural verification of failover paths
 # ============================================================================
 
 def test_mt5_events_fallback_persist_on_redis_failure():

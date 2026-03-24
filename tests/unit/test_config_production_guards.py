@@ -1,8 +1,7 @@
-"""Verify production configuration guards catch common misconfigurations."""
+﻿"""Verify production configuration guards catch common misconfigurations."""
 from __future__ import annotations
 
 import inspect
-import os
 
 
 def test_production_requires_clerk_issuer():

@@ -1,12 +1,11 @@
-"""Tests for Python entry point compilation and config validation."""
+﻿"""Tests for Python entry point compilation and config validation."""
 from __future__ import annotations
 
-import py_compile
 import pathlib
+import py_compile
 
 import pytest
 from pydantic import ValidationError
-
 
 _ENTRYPOINTS = [
     "apps/worker/app/tasks.py",
@@ -87,12 +86,24 @@ def test_to_decimal_rejects_decimal_nan() -> None:
     assert to_decimal(__import__("decimal").Decimal("NaN")) is None
 
 
-def test_db_pool_max_overflow_validated_to_minimum_one() -> None:
+def test_db_pool_max_overflow_allows_zero() -> None:
+    from backtestforecast.config import Settings
+
+    settings = Settings(
+        db_pool_max_overflow=0,
+        clerk_jwt_key="test-key",
+        _env_file=None,
+    )
+
+    assert settings.db_pool_max_overflow == 0
+
+
+def test_db_pool_max_overflow_rejects_negative_values() -> None:
     from backtestforecast.config import Settings
 
     with pytest.raises(ValidationError, match="db_pool_max_overflow"):
         Settings(
-            db_pool_max_overflow=0,
+            db_pool_max_overflow=-1,
             clerk_jwt_key="test-key",
             _env_file=None,
         )
@@ -101,6 +112,7 @@ def test_db_pool_max_overflow_validated_to_minimum_one() -> None:
 def test_daily_picks_endpoint_has_offset_param():
     """Verify get_latest_daily_picks endpoint accepts offset query param."""
     import inspect
+
     from apps.api.app.routers.daily_picks import get_latest_daily_picks
     sig = inspect.signature(get_latest_daily_picks)
     assert "offset" in sig.parameters, "daily_picks endpoint must accept offset parameter"
@@ -109,6 +121,7 @@ def test_daily_picks_endpoint_has_offset_param():
 def test_wheel_resolve_exit_receives_profit_target():
     """Verify wheel backtest loop passes profit_target_pct to _resolve_exit."""
     import inspect
+
     from backtestforecast.backtests.strategies.wheel import WheelStrategyBacktestEngine
     source = inspect.getsource(WheelStrategyBacktestEngine.run)
     assert "profit_target_pct" in source, "Wheel.run must pass profit_target_pct to _resolve_exit"

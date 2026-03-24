@@ -1,4 +1,4 @@
-"""Verification tests for the Dead Code / Confusing Code / Refactor Targets.
+﻿"""Verification tests for the Dead Code / Confusing Code / Refactor Targets.
 
 Each test confirms the cleanup is in place.
 """
@@ -6,9 +6,6 @@ from __future__ import annotations
 
 import inspect
 import warnings
-
-import pytest
-
 
 # ---- DC1: hasattr(run, 'trade_count') removed ----
 
@@ -43,7 +40,7 @@ def test_dc3_engine_uses_leg_multiplier():
 
 
 def test_dc3_leg_multiplier_returns_default():
-    from backtestforecast.backtests.engine import _leg_multiplier, CONTRACT_MULTIPLIER
+    from backtestforecast.backtests.engine import CONTRACT_MULTIPLIER, _leg_multiplier
 
     class FakeLeg:
         pass

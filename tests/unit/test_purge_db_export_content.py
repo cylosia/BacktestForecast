@@ -1,4 +1,4 @@
-"""Tests for purge_db_export_content management command."""
+﻿"""Tests for purge_db_export_content management command."""
 from __future__ import annotations
 
 import uuid

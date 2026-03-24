@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -63,7 +63,7 @@ def make_quote(trade_date: date, mid: float) -> OptionQuoteRecord:
 
 
 def make_spread_quote(trade_date: date, bid: float, ask: float) -> OptionQuoteRecord:
-    """Quote with explicit bid/ask spread — mid_price = (bid + ask) / 2."""
+    """Quote with explicit bid/ask spread - mid_price = (bid + ask) / 2."""
     return OptionQuoteRecord(trade_date=trade_date, bid_price=bid, ask_price=ask, participant_timestamp=None)
 
 
@@ -433,12 +433,12 @@ def test_wheel_records_assignment_callaway_and_stock_exit() -> None:
     assert result.trades[1].exit_reason == "call_assignment"
     assert result.trades[2].exit_reason == "called_away"
     assert result.trades[2].exit_mid == 100.0, "shares called away at strike, not close"
-    # CSP premium: 2×100×2=$400, CC premium: 1×100×qty, stock sold at strike=bought at strike → $0
+    # CSP premium: 2x100x2=$400, CC premium: 1x100xqty, stock sold at strike=bought at strike -> $0
     assert round(result.summary.total_net_pnl, 2) == 600.0
 
 
 # ---------------------------------------------------------------------------
-# Financial correctness tests — verifiable P&L against hand-calculated values
+# Financial correctness tests - verifiable P&L against hand-calculated values
 # ---------------------------------------------------------------------------
 
 
@@ -501,9 +501,9 @@ class TestBullCallSpreadCorrectness:
 
     Setup:
         Long C100 (mid 4.00) / Short C105 (mid 1.50)
-        Debit per unit = 2.50 × 100 = $250
+        Debit per unit = 2.50 x 100 = $250
         Width = $500, max_profit = $250, max_loss = $250
-        Account $10,000 @ 5% risk → 2 units
+        Account $10,000 @ 5% risk -> 2 units
         Commission $0.65/contract
     """
 
@@ -552,15 +552,15 @@ class TestBullCallSpreadCorrectness:
         assert result.summary.trade_count == 1
         trade = result.trades[0]
 
-        # risk_budget = $500, max_loss_per_unit = $250 → by_risk = 2
+        # risk_budget = $500, max_loss_per_unit = $250 -> by_risk = 2
         assert trade.quantity == 2
 
         # At expiration: C100 intrinsic = 8.00, C105 intrinsic = 3.00
-        # exit_value_per_unit = (8 − 3) × 100 = 500
-        # gross = (500 − 250) × 2 = 500
+        # exit_value_per_unit = (8 - 3) x 100 = 500
+        # gross = (500 - 250) x 2 = 500
         assert round(trade.gross_pnl, 2) == 500.0
 
-        # 2 legs × 2 units × $0.65, charged at entry and exit
+        # 2 legs x 2 units x $0.65, charged at entry and exit
         expected_comm = commission * 2 * 2 * 2  # 5.20
         assert round(trade.total_commissions, 2) == round(expected_comm, 2)
 
@@ -574,9 +574,9 @@ class TestIronCondorCorrectness:
 
     Setup (shared):
         Short C100 (3.00) / Long C105 (1.00) / Short P100 (3.00) / Long P95 (1.00)
-        Net credit per unit = (3+3−1−1) × 100 = $400
+        Net credit per unit = (3+3-1-1) x 100 = $400
         Wing width = $500, max_loss_per_unit = $100
-        Account $10,000 @ 2% risk → 2 units
+        Account $10,000 @ 2% risk -> 2 units
         Commission $0.65/contract
     """
 
@@ -636,33 +636,33 @@ class TestIronCondorCorrectness:
         )
 
     def test_profit_when_range_bound(self) -> None:
-        """Underlying stays at 100 — all legs expire worthless, full credit kept."""
+        """Underlying stays at 100 - all legs expire worthless, full credit kept."""
         commission = 0.65
         result = self._run(exit_underlying=100, commission=commission)
 
         assert result.summary.trade_count == 1
         trade = result.trades[0]
 
-        # risk_budget = $200, max_loss_per_unit = $100 → 2 units
+        # risk_budget = $200, max_loss_per_unit = $100 -> 2 units
         assert trade.quantity == 2
 
         # All intrinsics = 0 at expiration with underlying = 100
-        # gross = (0 − (−400)) × 2 = 800
+        # gross = (0 - (-400)) x 2 = 800
         assert round(trade.gross_pnl, 2) == 800.0
 
-        # 4 legs × 2 units × $0.65 × 2 (entry + exit) = $10.40
+        # 4 legs x 2 units x $0.65 x 2 (entry + exit) = $10.40
         expected_comm = commission * 4 * 2 * 2
         assert round(trade.total_commissions, 2) == round(expected_comm, 2)
 
         assert round(trade.net_pnl, 2) == round(800.0 - expected_comm, 2)
         assert trade.net_pnl > 0
 
-        # Gross profit does not exceed wing_width × quantity
+        # Gross profit does not exceed wing_width x quantity
         wing_width = 500
         assert abs(trade.gross_pnl) <= wing_width * trade.quantity
 
     def test_max_loss_when_market_breaks_out(self) -> None:
-        """Underlying surges to 110 — call side fully breached, max loss realised."""
+        """Underlying surges to 110 - call side fully breached, max loss realised."""
         commission = 0.65
         result = self._run(exit_underlying=110, commission=commission)
 
@@ -671,15 +671,15 @@ class TestIronCondorCorrectness:
         assert trade.quantity == 2
 
         # At 110: C100 intrinsic = 10, C105 = 5, puts = 0
-        # exit_value_per_unit = (−10 + 5) × 100 = −500
-        # gross = (−500 − (−400)) × 2 = −200
+        # exit_value_per_unit = (-10 + 5) x 100 = -500
+        # gross = (-500 - (-400)) x 2 = -200
         assert round(trade.gross_pnl, 2) == -200.0
         assert trade.net_pnl < 0
 
-        # Max loss per unit ($100) × 2 units — gross loss exactly equals maximum
+        # Max loss per unit ($100) x 2 units - gross loss exactly equals maximum
         assert abs(trade.gross_pnl) == trade.detail_json["max_loss_total"]
 
-        # Gross loss bounded by wing width × quantity
+        # Gross loss bounded by wing width x quantity
         wing_width_per_unit = 500
         assert abs(trade.gross_pnl) <= wing_width_per_unit * trade.quantity
 
@@ -693,8 +693,8 @@ class TestCashSecuredPutCorrectness:
 
     Setup:
         Short P100 (mid 2.00), underlying at 105 on entry
-        Credit = $200, cash required = strike × 100 = $10,000
-        Account $100,000 @ 10% risk → 1 unit
+        Credit = $200, cash required = strike x 100 = $10,000
+        Account $100,000 @ 10% risk -> 1 unit
         Commission $0.65/contract
     """
 
@@ -733,7 +733,7 @@ class TestCashSecuredPutCorrectness:
         )
 
     def test_otm_collects_full_premium(self) -> None:
-        """Underlying stays at 105 — put expires worthless, full premium is profit."""
+        """Underlying stays at 105 - put expires worthless, full premium is profit."""
         bars = [
             make_bar(date(2025, 6, 1), 105),
             make_bar(self.ENTRY_DATE, 105),
@@ -748,20 +748,20 @@ class TestCashSecuredPutCorrectness:
         trade = result.trades[0]
         assert trade.quantity == 1
 
-        # cash_required = strike × 100 × quantity
+        # cash_required = strike x 100 x quantity
         assert trade.detail_json["capital_required_total"] == self.STRIKE * 100 * trade.quantity
 
-        # Full premium: gross = 2.00 × 100 = $200
+        # Full premium: gross = 2.00 x 100 = $200
         premium_collected = self.PREMIUM * 100
         assert round(trade.gross_pnl, 2) == premium_collected
 
-        # 1 leg × 1 unit × $0.65 × 2 (entry + exit) = $1.30
+        # 1 leg x 1 unit x $0.65 x 2 (entry + exit) = $1.30
         expected_comm = self.COMMISSION * 1 * 1 * 2
         assert round(trade.total_commissions, 2) == round(expected_comm, 2)
         assert round(trade.net_pnl, 2) == round(premium_collected - expected_comm, 2)
 
     def test_itm_realizes_assignment_loss(self) -> None:
-        """Underlying drops to 90 — put ITM, loss = (strike − spot) × 100 − premium."""
+        """Underlying drops to 90 - put ITM, loss = (strike - spot) x 100 - premium."""
         bars = [
             make_bar(date(2025, 6, 1), 105),
             make_bar(self.ENTRY_DATE, 105),
@@ -776,8 +776,8 @@ class TestCashSecuredPutCorrectness:
         trade = result.trades[0]
         assert trade.quantity == 1
 
-        # intrinsic = (100 − 90) × 100 = $1,000 loss on short put
-        # offset by premium = $200 → gross = −$800
+        # intrinsic = (100 - 90) x 100 = $1,000 loss on short put
+        # offset by premium = $200 -> gross = -$800
         intrinsic_loss = (self.STRIKE - 90) * 100
         expected_gross = -(intrinsic_loss - self.PREMIUM * 100)  # -800
         assert round(trade.gross_pnl, 2) == expected_gross
@@ -863,8 +863,8 @@ class TestCalendarNetCreditPositionSizing:
     position sizer from allocating unlimited contracts."""
 
     def test_net_credit_max_loss_equals_margin(self) -> None:
-        from backtestforecast.backtests.strategies.calendar import CalendarSpreadStrategy
         from backtestforecast.backtests.margin import naked_call_margin
+        from backtestforecast.backtests.strategies.calendar import CalendarSpreadStrategy
 
         underlying_close = 100.0
         strike = 100.0

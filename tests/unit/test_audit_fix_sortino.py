@@ -1,8 +1,10 @@
-"""Verify Sortino ratio uses sample standard deviation (N-1 denominator)."""
+﻿"""Verify Sortino ratio uses sample standard deviation (N-1 denominator)."""
 from __future__ import annotations
+
 import math
 from datetime import date, timedelta
-from backtestforecast.backtests.summary import build_summary, _compute_sharpe_sortino
+
+from backtestforecast.backtests.summary import _compute_sharpe_sortino
 from backtestforecast.backtests.types import EquityPointResult, TradeResult
 
 
@@ -77,7 +79,7 @@ class TestSortinoDenominator:
         variance = sum((x - mean_excess) ** 2 for x in excess) / (n - 1)
         expected_sharpe = (mean_excess / math.sqrt(variance)) * math.sqrt(252.0) if variance > 0 else None
 
-        # Sortino: sample downside deviation (N-1) — THIS IS THE FIX
+        # Sortino: sample downside deviation (N-1) - THIS IS THE FIX
         downside_sq = sum(x ** 2 for x in excess if x < 0)
         expected_sortino = (mean_excess / math.sqrt(downside_sq / (n - 1))) * math.sqrt(252.0)
 

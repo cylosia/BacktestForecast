@@ -1,11 +1,7 @@
-"""Tests for audit round 11 — critical runtime crash fixes."""
+﻿"""Tests for audit round 11 - critical runtime crash fixes."""
 from __future__ import annotations
 
 import inspect
-from unittest.mock import MagicMock
-from uuid import uuid4
-
-import pytest
 
 
 class TestNormalizeOriginExists:

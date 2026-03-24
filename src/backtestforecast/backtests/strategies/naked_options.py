@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -99,7 +99,7 @@ class NakedOptionStrategy(StrategyDefinition):
                 ],
                 "assumptions": [
                     "Naked option sold at mid-price.",
-                    "Margin per Reg T: max(20% underlying − OTM amount + premium, 10% × underlying/strike + premium).",
+                    "Margin per Reg T: max(20% underlying - OTM amount + premium, 10% x underlying/strike + premium).",
                     "Theoretically unlimited loss on calls; loss to zero on puts.",
                 ],
                 "warnings": [

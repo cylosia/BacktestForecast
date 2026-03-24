@@ -1,4 +1,4 @@
-"""Fix 21: Sortino ratio denominator must be consistent with Sharpe.
+﻿"""Fix 21: Sortino ratio denominator must be consistent with Sharpe.
 
 Both Sharpe and Sortino should use (N-1) as the denominator for their
 standard deviation calculations (sample statistic). If they used different
@@ -15,8 +15,6 @@ from __future__ import annotations
 import math
 from datetime import date, timedelta
 from decimal import Decimal
-
-import pytest
 
 from backtestforecast.backtests.summary import _compute_sharpe_sortino
 from backtestforecast.backtests.types import EquityPointResult
@@ -101,7 +99,7 @@ class TestSortinoDenominatorConsistency:
         assert len(curve) >= 20
         assert (curve[-1].trade_date - curve[0].trade_date).days >= 30
 
-        sharpe, sortino = _compute_sharpe_sortino(curve, risk_free_rate=0.045, trade_count=10)
+        _sharpe, sortino = _compute_sharpe_sortino(curve, risk_free_rate=0.045, trade_count=10)
         assert sortino is not None
 
         equities = [float(p.equity) for p in curve]
@@ -123,14 +121,14 @@ class TestSortinoDenominatorConsistency:
         )
 
     def test_all_positive_returns_no_sortino(self):
-        """When all excess returns are positive, downside deviation is zero → Sortino is None."""
+        """When all excess returns are positive, downside deviation is zero -> Sortino is None."""
         daily_returns = [0.01] * 70
         curve = _make_equity_curve(daily_returns, start_date=date(2023, 1, 2))
 
         sharpe, sortino = _compute_sharpe_sortino(curve, risk_free_rate=0.0, trade_count=10)
 
         assert sharpe is not None
-        assert sortino is None, "No negative excess returns → downside deviation is 0 → Sortino should be None"
+        assert sortino is None, "No negative excess returns -> downside deviation is 0 -> Sortino should be None"
 
     def test_all_negative_returns_both_computed(self):
         """When all excess returns are negative, both Sharpe and Sortino should be computable."""

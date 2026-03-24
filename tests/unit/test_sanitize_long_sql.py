@@ -1,9 +1,9 @@
-"""Fix 22: Error sanitization catches SQL even in messages longer than 500 chars.
+﻿"""Fix 22: Error sanitization catches SQL even in messages longer than 500 chars.
 
 Before the fix, ``sanitize_error_message`` truncated the message to 500
 characters *before* running the sensitive-pattern regexes. A SQL statement
 like ``SELECT <498 chars of columns> FROM users WHERE ...`` would be
-truncated to ``SELECT <498 chars>...`` — losing the ``FROM`` and ``WHERE``
+truncated to ``SELECT <498 chars>...`` - losing the ``FROM`` and ``WHERE``
 keywords that the SQL regex needs to match. The truncated message would
 pass through unsanitized, leaking schema details to the client.
 
@@ -11,8 +11,6 @@ After the fix, patterns are checked on the *full* message first, then
 truncation happens only if no pattern matched.
 """
 from __future__ import annotations
-
-import pytest
 
 from backtestforecast.schemas.common import sanitize_error_message
 
@@ -97,19 +95,19 @@ class TestSanitizeLongSQL:
         result = sanitize_error_message(msg)
         assert result == _SANITIZED
 
-    def test_exactly_500_chars_not_truncated(self):
-        """A message of exactly 500 chars should pass through without truncation."""
-        msg = "A" * 500
+    def test_exactly_300_chars_not_truncated(self):
+        """A message of exactly 300 chars should pass through without truncation."""
+        msg = "A" * 300
         result = sanitize_error_message(msg)
         assert result == msg
         assert not result.endswith("...")
 
-    def test_501_chars_truncated(self):
-        """A message of 501 chars should be truncated."""
-        msg = "B" * 501
+    def test_301_chars_truncated(self):
+        """A message of 301 chars should be truncated."""
+        msg = "B" * 301
         result = sanitize_error_message(msg)
         assert result is not None
-        assert len(result) == 503
+        assert len(result) == 303
         assert result.endswith("...")
 
     def test_none_input(self):

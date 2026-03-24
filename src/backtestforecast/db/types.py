@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import uuid
 from typing import Any
@@ -66,7 +66,7 @@ JSON_VARIANT = JSON().with_variant(JSONB, "postgresql")
 
 __all__ = [
     "GUID",
-    "JSON_VARIANT",
-    "JSON_DEFAULT_EMPTY_OBJECT",
     "JSON_DEFAULT_EMPTY_ARRAY",
+    "JSON_DEFAULT_EMPTY_OBJECT",
+    "JSON_VARIANT",
 ]

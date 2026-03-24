@@ -1,4 +1,4 @@
-"""Item 76: Test/documentation for beat healthcheck correctness.
+﻿"""Item 76: Test/documentation for beat healthcheck correctness.
 
 The Celery Beat healthcheck was changed from `celery inspect ping` (which
 contacts workers, not beat) to a PID-file-based check:

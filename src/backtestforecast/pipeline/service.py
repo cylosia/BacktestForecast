@@ -1,8 +1,8 @@
-"""Nightly scan pipeline service.
+﻿"""Nightly scan pipeline service.
 
 Orchestrates the five-stage funnel:
   Stage 1: Universe screening (indicators only, all symbols)
-  Stage 2: Strategy-symbol matching (regime → strategy lookup)
+  Stage 2: Strategy-symbol matching (regime -> strategy lookup)
   Stage 3: Quick backtest sampling (180-day, 3-5 configs per pair)
   Stage 4: Full backtest refinement (top candidates, full lookback)
   Stage 5: Forecast overlay and final ranking
@@ -23,10 +23,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES
-from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
-from backtestforecast.pipeline.regime import RegimeSnapshot, classify_regime
 from backtestforecast.config import get_settings
+from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from backtestforecast.observability.metrics import DUPLICATE_NIGHTLY_RUNS_TOTAL
+from backtestforecast.pipeline.regime import RegimeSnapshot, classify_regime
+from backtestforecast.pipeline.scoring import compute_backtest_score
 from backtestforecast.pipeline.strategy_map import (
     DEFAULT_PARAM_GRID,
     strategies_for_regime,
@@ -446,25 +447,8 @@ class NightlyPipelineService:
                     return None
 
                 roi = summary.get("total_roi_pct", 0.0)
-                raw_win_rate = summary.get("win_rate", 0.0)
-                win_rate = raw_win_rate / 100.0
-                win_rate = max(0.0, min(win_rate, 1.0))
                 drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
-                trade_count = summary.get("trade_count", 1)
-                sample_factor = min(trade_count / 10.0, 1.0)
-                sharpe = summary.get("sharpe_ratio") or 0.0
-                # Additive weighted score balances ROI against consistency
-                # and risk. Previous multiplicative formula (roi * win_rate *
-                # (1-dd/100)) heavily favoured high-ROI/low-win-rate
-                # strategies that are typically riskier.
-                score = (
-                    roi * 0.30
-                    + win_rate * 100.0 * 0.25
-                    + sharpe * 20.0 * 0.25
-                    - drawdown * 0.20
-                ) * sample_factor
-                if drawdown >= 100.0:
-                    score = min(score, 0.0)
+                score = compute_backtest_score(summary)
 
                 return QuickBacktestResult(
                     symbol=pair.symbol,
@@ -550,16 +534,7 @@ class NightlyPipelineService:
                 if full is None or full.get("trade_count", 0) == 0:
                     return None
 
-                roi = full.get("total_roi_pct", 0.0)
-                raw_win_rate = full.get("win_rate", 0.0)
-                win_rate = raw_win_rate / 100.0
-                win_rate = max(0.0, min(win_rate, 1.0))
-                drawdown = min(full.get("max_drawdown_pct", 50.0), 100.0)
-                trade_count = full.get("trade_count", 1)
-                sample_factor = min(trade_count / 10.0, 1.0)
-                score = roi * win_rate * (1.0 - drawdown / 100.0) * sample_factor
-                if drawdown >= 100.0:
-                    score = min(score, 0.0)
+                score = compute_backtest_score(full)
 
                 return FullBacktestResult(
                     symbol=candidate.symbol,

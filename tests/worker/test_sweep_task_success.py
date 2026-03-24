@@ -1,4 +1,4 @@
-"""Tests for the run_sweep task happy path and error paths."""
+﻿"""Tests for the run_sweep task happy path and error paths."""
 from __future__ import annotations
 
 from types import SimpleNamespace

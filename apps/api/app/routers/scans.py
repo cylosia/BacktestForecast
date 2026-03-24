@@ -14,7 +14,7 @@ from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import FeatureLockedError
 from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
-from backtestforecast.schemas.common import sanitize_error_message
+from backtestforecast.schemas.common import RemediationActionsResponse, sanitize_error_message
 from backtestforecast.schemas.scans import (
     CreateScannerJobRequest,
     ScannerJobListResponse,
@@ -24,6 +24,7 @@ from backtestforecast.schemas.scans import (
 )
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
+from backtestforecast.services.remediation_actions import build_job_remediation_actions
 from backtestforecast.services.scans import ScanService
 
 logger = structlog.get_logger("api.scans")
@@ -147,6 +148,46 @@ def delete_scan(
     )
     with ScanService(db) as service:
         service.delete_for_user(job_id, user.id)
+
+
+@router.post("/{job_id}/cancel", response_model=ScannerJobStatusResponse)
+def cancel_scan(
+    job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ScannerJobStatusResponse:
+    get_rate_limiter().check(
+        bucket="scans:delete",
+        actor_key=str(user.id),
+        limit=settings.delete_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with ScanService(db) as service:
+        return service.cancel_for_user(job_id, user.id)
+
+
+@router.get("/{job_id}/remediation-actions", response_model=RemediationActionsResponse)
+def get_scan_remediation_actions(
+    job_id: UUID,
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
+    settings: Settings = Depends(get_settings),
+) -> RemediationActionsResponse:
+    get_rate_limiter().check(
+        bucket="scans:read",
+        actor_key=str(user.id),
+        limit=settings.scan_read_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with ScanService(db) as service:
+        job = service.get_job(user, job_id)
+    return build_job_remediation_actions(
+        resource_type="scan",
+        resource_id=str(job_id),
+        status=job.status,
+        base_path=f"/v1/scans/{job_id}",
+    )
 
 
 @router.get("/{job_id}/recommendations", response_model=ScannerRecommendationListResponse)

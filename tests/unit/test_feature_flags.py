@@ -1,10 +1,8 @@
-"""Test the feature flag percentage rollout system."""
+﻿"""Test the feature flag percentage rollout system."""
 from __future__ import annotations
 
 import uuid
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from backtestforecast.feature_flags import _deterministic_bucket, is_feature_enabled
 

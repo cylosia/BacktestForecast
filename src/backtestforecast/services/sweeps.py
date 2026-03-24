@@ -1,66 +1,85 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import contextlib
 import time as _time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 import structlog
-from pydantic import ValidationError as _PydanticValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError
-from backtestforecast.schemas.json_shapes import _SUMMARY_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.market_data.prefetch import OptionDataPrefetcher
-from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import SweepJob, SweepResult, User
-from backtestforecast.repositories.sweep_jobs import SweepJobRepository
-
-UTC = timezone.utc
-from backtestforecast.schemas.backtests import (
-    BacktestSummaryResponse,
-    CreateBacktestRunRequest,
-    EquityCurvePointResponse,
-    SpreadWidthConfig,
-    SpreadWidthMode,
-    StrikeSelection,
-    StrikeSelectionMode,
-    StrategyOverrides,
-)
-from backtestforecast.schemas.sweeps import (
-    CreateSweepRequest,
-    SweepJobListResponse,
-    SweepJobResponse,
-    SweepResultListResponse,
-    SweepResultResponse,
-)
 from backtestforecast.observability.metrics import (
     SWEEP_CANDIDATE_FAILURES_TOTAL,
     SWEEP_EXECUTION_DURATION_SECONDS,
 )
+from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
+from backtestforecast.repositories.sweep_jobs import SweepJobRepository
+from backtestforecast.schemas.backtests import (
+    CreateBacktestRunRequest,
+    SpreadWidthConfig,
+    SpreadWidthMode,
+    StrategyOverrides,
+    StrikeSelection,
+    StrikeSelectionMode,
+    TradeJsonResponse,
+)
+from backtestforecast.schemas.json_shapes import _SUMMARY_REQUIRED_KEYS, validate_json_shape
+from backtestforecast.schemas.sweeps import (
+    CreateSweepRequest,
+    SweepJobListResponse,
+    SweepJobResponse,
+    SweepJobStatusResponse,
+    SweepResultListResponse,
+    SweepResultResponse,
+)
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
-from backtestforecast.services.dispatch_recovery import observe_job_create_to_running_latency
-from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
-from backtestforecast.utils import to_decimal
+from backtestforecast.services.dispatch_recovery import (
+    observe_job_create_to_running_latency,
+    redispatch_if_stale_queued,
+)
+from backtestforecast.services.job_cancellation import (
+    mark_job_cancelled,
+    publish_cancellation_event,
+    revoke_celery_task,
+)
+from backtestforecast.services.job_transitions import (
+    cancellation_blocked_message,
+    deletion_blocked_message,
+    fail_job,
+    fail_job_if_active,
+    running_transition_values,
+)
 from backtestforecast.services.serialization import (
     downsample_equity_curve,
     serialize_equity_point,
     serialize_summary,
     serialize_trade,
 )
-
-logger = structlog.get_logger("services.sweeps")
-
-
 from backtestforecast.services.serialization import (
     safe_validate_equity_curve as _safe_validate_equity_curve,
+)
+from backtestforecast.services.serialization import (
+    safe_validate_json as _safe_validate_json,
+)
+from backtestforecast.services.serialization import (
+    safe_validate_list as _safe_validate_list,
+)
+from backtestforecast.services.serialization import (
     safe_validate_summary as _safe_validate_summary,
 )
+from backtestforecast.services.serialization import (
+    safe_validate_warning_list as _safe_validate_warning_list,
+)
 
+logger = structlog.get_logger("services.sweeps")
 
 _CANDIDATE_TIMEOUT_SECONDS = 120
 _MAX_EQUITY_POINTS = 500
@@ -102,10 +121,8 @@ def _update_heartbeat(session: Session, job_id: UUID) -> None:
     except Exception:
         _heartbeat_failures += 1
         if nested is not None:
-            try:
+            with contextlib.suppress(Exception):
                 nested.rollback()
-            except Exception:
-                pass
         if _heartbeat_failures >= 3:
             logger.error(
                 "sweep.heartbeat_consecutive_failures",
@@ -136,7 +153,7 @@ class SweepService:
         if self._execution_service is not None:
             self._execution_service.close()
 
-    def __enter__(self) -> "SweepService":
+    def __enter__(self) -> SweepService:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -201,7 +218,8 @@ class SweepService:
             )
 
         snapshot = payload.model_dump(mode="json")
-        import hashlib, json
+        import hashlib
+        import json
         request_hash = hashlib.sha256(
             json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -276,10 +294,7 @@ class SweepService:
 
         user = self.session.get(User, job.user_id)
         if user is None:
-            job.status = "failed"
-            job.error_code = "user_not_found"
-            job.error_message = "User account not found."
-            job.completed_at = datetime.now(UTC)
+            fail_job(job, error_code="user_not_found", error_message="User account not found.")
             self.session.commit()
             return job
 
@@ -290,10 +305,7 @@ class SweepService:
                 user.subscription_current_period_end,
             )
         except AppError:
-            job.status = "failed"
-            job.error_code = "entitlement_revoked"
-            job.error_message = "Subscription no longer active."
-            job.completed_at = datetime.now(UTC)
+            fail_job(job, error_code="entitlement_revoked", error_message="Subscription no longer active.")
             self.session.commit()
             return job
 
@@ -302,7 +314,7 @@ class SweepService:
         cas_result = self.session.execute(
             update(SweepJob)
             .where(SweepJob.id == job_id, SweepJob.status == "queued")
-            .values(status="running", started_at=now, updated_at=now)
+            .values(**running_transition_values(now=now))
         )
         self.session.commit()
         if cas_result.rowcount == 0:
@@ -347,11 +359,13 @@ class SweepService:
             self.session.rollback()
             try:
                 job = self.repository.get(job_id, for_update=True)
-                if job is not None and job.status == "running":
-                    job.status = "failed"
-                    job.error_code = "sweep_execution_error"
-                    job.error_message = "The sweep failed with an unexpected error."
-                    job.completed_at = datetime.now(UTC)
+                if job is not None:
+                    fail_job_if_active(
+                        job,
+                        error_code="sweep_execution_error",
+                        error_message="The sweep failed with an unexpected error.",
+                        active_statuses=frozenset({"running"}),
+                    )
                     self.session.commit()
             except Exception:
                 logger.exception("sweep.run_job_failed.recovery_failed", job_id=str(job_id))
@@ -367,30 +381,18 @@ class SweepService:
         offset: int = 0,
         cursor: str | None = None,
     ) -> SweepJobListResponse:
-        from backtestforecast.utils import decode_cursor, encode_cursor
-
         effective_limit = min(limit, 200)
-        cursor_before = None
-        if cursor:
-            cursor_before = decode_cursor(cursor)
-            if cursor_before is None:
-                from backtestforecast.errors import ValidationError
-                raise ValidationError("Invalid pagination cursor.")
-            offset = 0
-        jobs = self.repository.list_for_user(
+        cursor_before, offset = parse_cursor_param(cursor) if cursor else (None, offset)
+        jobs, total = self.repository.list_for_user_with_count(
             user.id, limit=effective_limit + 1, offset=offset, cursor_before=cursor_before,
         )
-        has_next = len(jobs) > effective_limit
-        if has_next:
-            jobs = jobs[:effective_limit]
-        total = self.repository.count_for_user(user.id)
-        next_cursor = encode_cursor(jobs[-1].created_at, jobs[-1].id) if has_next and jobs else None
+        page = finalize_cursor_page(jobs, total=total, offset=offset, limit=effective_limit)
         return SweepJobListResponse(
-            items=[self._to_job_response(j) for j in jobs],
-            total=total,
-            offset=offset,
-            limit=effective_limit,
-            next_cursor=next_cursor,
+            items=[self._to_job_response(j) for j in page.items],
+            total=page.total,
+            offset=page.offset,
+            limit=page.limit,
+            next_cursor=page.next_cursor,
         )
 
     def get_job(self, user: User, job_id: UUID) -> SweepJobResponse:
@@ -404,9 +406,7 @@ class SweepService:
         if job is None:
             raise NotFoundError("Sweep job not found.")
         if job.status in ("queued", "running"):
-            raise ConflictError(
-                "Cannot delete a job that is currently queued or running. Cancel it first."
-            )
+            raise ConflictError(deletion_blocked_message("sweep job"))
         self.audit.record(
             event_type="sweep.deleted",
             subject_type="sweep_job",
@@ -420,6 +420,37 @@ class SweepService:
         except Exception:
             self.session.rollback()
             raise
+
+    def cancel_for_user(self, job_id: UUID, user_id: UUID) -> SweepJobStatusResponse:
+        job = self.repository.get_for_user(job_id, user_id)
+        if job is None:
+            raise NotFoundError("Sweep job not found.")
+        if job.status not in ("queued", "running"):
+            raise ConflictError(cancellation_blocked_message("sweep job"))
+        task_id = mark_job_cancelled(job)
+        self.audit.record_always(
+            event_type="sweep.cancelled",
+            subject_type="sweep_job",
+            subject_id=job.id,
+            user_id=user_id,
+            metadata={"symbol": job.symbol, "mode": job.mode, "reason": "user_cancelled"},
+        )
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        revoke_celery_task(task_id, job_type="sweep", job_id=job.id)
+        publish_cancellation_event(job_type="sweep", job_id=job.id)
+        return SweepJobStatusResponse(
+            id=job.id,
+            status=job.status,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+            error_code=job.error_code,
+            error_message=job.error_message,
+        )
 
     def get_results(
         self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0,
@@ -437,9 +468,10 @@ class SweepService:
         )
 
     def _enforce_sweep_quota(self, user: User) -> None:
+        from sqlalchemy import func, select
+
         from backtestforecast.billing.entitlements import resolve_feature_policy
         from backtestforecast.errors import QuotaExceededError
-        from sqlalchemy import select, func
 
         locked_user = self.session.execute(
             select(User).where(User.id == user.id).with_for_update()
@@ -605,10 +637,8 @@ class SweepService:
                                         nested_progress.commit()
                                     except Exception:
                                         if nested_progress is not None:
-                                            try:
+                                            with contextlib.suppress(Exception):
                                                 nested_progress.rollback()
-                                            except Exception:
-                                                pass
                                         logger.warning(
                                             "sweep.progress_commit_failed",
                                             evaluated=local_evaluated_count,
@@ -675,7 +705,8 @@ class SweepService:
         with self.session.no_autoflush:
             for idx, candidate in enumerate(selected, 1):
                 params = dict(candidate["parameters"])
-                params["trades_truncated"] = candidate.get("trades_truncated", False)
+                params["trade_count"] = candidate.get("trade_count", len(candidate.get("trades", [])))
+                params["serialized_trade_count"] = candidate.get("serialized_trade_count", len(candidate.get("trades", [])))
                 validate_json_shape(
                     candidate["summary"],
                     f"SweepResult[{idx}].summary_json",
@@ -715,10 +746,12 @@ class SweepService:
         from backtestforecast.schemas.backtests import (
             CUSTOM_LEG_COUNT,
             CustomLegDefinition,
-            StrategyType,
         )
-        from backtestforecast.sweeps.constraints import Individual
-        from backtestforecast.sweeps.genetic import GAResult, GeneticConfig, GeneticOptimizer, SerializableFitnessEvaluator
+        from backtestforecast.sweeps.genetic import (
+            GeneticConfig,
+            GeneticOptimizer,
+            SerializableFitnessEvaluator,
+        )
 
         gc = payload.genetic_config
         if gc is None:
@@ -809,6 +842,9 @@ class SweepService:
             })
 
         job.evaluated_candidate_count = ga_result.total_evaluations
+        entry_rules = payload.entry_rule_sets[0].entry_rules if payload.entry_rule_sets else []
+        exit_set = payload.exit_rule_sets[0] if payload.exit_rule_sets else None
+        exec_service = self.execution_service
 
         max_results = min(payload.max_results, len(ga_result.top_individuals))
         actual_rank = 0
@@ -850,8 +886,11 @@ class SweepService:
             actual_rank += 1
             summary = self._serialize_summary(result.summary)
             trades = [self._serialize_trade(t) for t in result.trades[:50]]
-            trades_truncated = len(result.trades) > 50
+            serialized_trade_count = len(trades)
+            full_trade_count = max(int(summary.get("trade_count") or 0), serialized_trade_count)
             equity_curve = self._downsample_equity_curve(result.equity_curve)
+            serialized_equity_point_count = len(equity_curve)
+            full_equity_point_count = len(result.equity_curve)
 
             parameters: dict[str, Any] = {
                 "strategy_type": strategy_type.value,
@@ -861,7 +900,10 @@ class SweepService:
                 "total_evaluations": ga_result.total_evaluations,
                 "custom_legs": [leg.model_dump(mode="json") for leg in legs],
                 "entry_rule_set_name": payload.entry_rule_sets[0].name if payload.entry_rule_sets else None,
-                "trades_truncated": trades_truncated,
+                "trade_count": full_trade_count,
+                "serialized_trade_count": serialized_trade_count,
+                "equity_point_count": full_equity_point_count,
+                "serialized_equity_point_count": serialized_equity_point_count,
             }
             if exit_set is not None:
                 parameters["exit_rule_set_name"] = exit_set.name
@@ -985,6 +1027,11 @@ class SweepService:
         trades = [self._serialize_trade(t) for t in result.trades[:50]]
         equity_curve = self._downsample_equity_curve(result.equity_curve)
 
+        serialized_trade_count = len(trades)
+        full_trade_count = max(int(summary.get("trade_count") or 0), serialized_trade_count)
+        serialized_equity_point_count = len(equity_curve)
+        full_equity_point_count = len(result.equity_curve)
+
         return {
             "score": score,
             "strategy_type": strategy_type,
@@ -992,8 +1039,11 @@ class SweepService:
             "summary": summary,
             "warnings": result.warnings or [],
             "trades": trades,
-            "trades_truncated": len(result.trades) > 50,
+            "trade_count": full_trade_count,
+            "serialized_trade_count": serialized_trade_count,
             "equity_curve": equity_curve,
+            "equity_point_count": full_equity_point_count,
+            "serialized_equity_point_count": serialized_equity_point_count,
         }
 
     @staticmethod
@@ -1024,7 +1074,7 @@ class SweepService:
         ========== ========== ========= ===========
         Win rate   0.25       0.25      ~21%
         ROI        0.35       0.35      ~29%
-        Sharpe     0.20×2.0   0.40      ~33%
+        Sharpe     0.20x2.0   0.40      ~33%
         Drawdown   0.20       0.20      ~17%
         ========== ========== ========= ===========
 
@@ -1055,10 +1105,7 @@ class SweepService:
 
         effective_sharpe_w = sharpe_w * sharpe_m
         total_effective = win_rate_w + roi_w + effective_sharpe_w + drawdown_w
-        if total_effective > 0:
-            norm = (win_rate_w + roi_w + sharpe_w + drawdown_w) / total_effective
-        else:
-            norm = Decimal("1")
+        norm = (win_rate_w + roi_w + sharpe_w + drawdown_w) / total_effective if total_effective > 0 else Decimal("1")
 
         score = (
             win_rate * win_rate_w
@@ -1078,6 +1125,7 @@ class SweepService:
 
     @staticmethod
     def _to_job_response(job: SweepJob) -> SweepJobResponse:
+        warnings = _safe_validate_warning_list(job.warnings_json)
         return SweepJobResponse(
             id=job.id,
             status=job.status,
@@ -1087,9 +1135,19 @@ class SweepService:
             candidate_count=job.candidate_count,
             evaluated_candidate_count=job.evaluated_candidate_count,
             result_count=job.result_count,
-            prefetch_summary=job.prefetch_summary_json,
-            warnings=job.warnings_json,
-            request_snapshot=job.request_snapshot_json,
+            prefetch_summary=_safe_validate_json(
+                job.prefetch_summary_json,
+                "prefetch_summary_json",
+                default=None,
+                response_warnings=warnings,
+            ),
+            warnings=warnings,
+            request_snapshot=_safe_validate_json(
+                job.request_snapshot_json,
+                "request_snapshot_json",
+                default={},
+                response_warnings=warnings,
+            ),
             error_code=job.error_code,
             error_message=job.error_message,
             created_at=job.created_at,
@@ -1100,8 +1158,41 @@ class SweepService:
     @staticmethod
     def _to_result_response(result: SweepResult) -> SweepResultResponse:
         params = result.parameter_snapshot_json or {}
-        stored_truncated = params.get("trades_truncated")
-        trades_truncated = stored_truncated if stored_truncated is not None else len(result.trades_json or []) >= 50
+        warnings = _safe_validate_warning_list(result.warnings_json)
+        params = _safe_validate_json(
+            params,
+            "parameter_snapshot_json",
+            default={},
+            response_warnings=warnings,
+        )
+        persisted_trade_count = max(
+            int(params.get("trade_count") or 0),
+            int((result.summary_json or {}).get("trade_count") or 0),
+            len(result.trades_json or []),
+        )
+        serialized_trade_count = max(
+            int(params.get("serialized_trade_count") or 0),
+            len(result.trades_json or []),
+        )
+        persisted_equity_point_count = max(
+            int(params.get("equity_point_count") or 0),
+            len(result.equity_curve_json or []),
+        )
+        serialized_equity_point_count = max(
+            int(params.get("serialized_equity_point_count") or 0),
+            len(result.equity_curve_json or []),
+        )
+        trades = _safe_validate_list(
+            TradeJsonResponse,
+            result.trades_json,
+            "trades_json",
+            response_warnings=warnings,
+        )
+        equity_curve = _safe_validate_equity_curve(
+            result.equity_curve_json,
+            field_name="equity_curve_json",
+            response_warnings=warnings,
+        )
         return SweepResultResponse(
             id=result.id,
             rank=result.rank,
@@ -1115,9 +1206,18 @@ class SweepService:
             profit_target_pct=params.get("profit_target_pct"),
             stop_loss_pct=params.get("stop_loss_pct"),
             parameter_snapshot_json=params,
-            summary=_safe_validate_summary(result.summary_json),
-            warnings=result.warnings_json,
-            trades_json=result.trades_json,
-            equity_curve=_safe_validate_equity_curve(result.equity_curve_json),
-            trades_truncated=trades_truncated,
+            summary=_safe_validate_summary(
+                result.summary_json,
+                field_name="summary_json",
+                response_warnings=warnings,
+            ),
+            warnings=warnings,
+            trades_json=trades,
+            equity_curve=equity_curve,
+            trades_truncated=persisted_trade_count > serialized_trade_count,
+            trade_items_omitted=max(persisted_trade_count - serialized_trade_count, 0),
+            equity_curve_points_omitted=max(
+                persisted_equity_point_count - serialized_equity_point_count,
+                0,
+            ),
         )

@@ -1,7 +1,8 @@
-"""Verify pipeline respects Redis symbol override."""
+﻿"""Verify pipeline respects Redis symbol override."""
 from __future__ import annotations
 
 import inspect
+
 from apps.worker.app.tasks import nightly_scan_pipeline
 
 

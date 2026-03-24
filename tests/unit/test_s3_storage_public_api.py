@@ -1,9 +1,7 @@
-"""Tests for S3Storage public API methods (audit item C-4 / items 20-23)."""
+﻿"""Tests for S3Storage public API methods (audit item C-4 / items 20-23)."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
-
-import pytest
 
 from backtestforecast.exports.storage import S3Storage
 

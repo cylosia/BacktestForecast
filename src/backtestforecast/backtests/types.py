@@ -1,9 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any, Protocol, Sequence
+from typing import Any, Protocol
 
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
 from backtestforecast.schemas.backtests import CustomLegDefinition, EntryRule, StrategyOverrides
@@ -21,10 +22,11 @@ _HISTORICAL_RISK_FREE_RATES: dict[int, float] = {
 
 
 def estimate_risk_free_rate(start_date: date, end_date: date) -> float:
-    """Estimate annualized risk-free rate for a backtest period.
+    """Estimate an annualized risk-free rate for a historical date range.
 
-    Uses average 3-month T-bill yields by year. Falls back to 4.5% for
-    years outside the lookup table.
+    This legacy lookup is no longer the primary backtest runtime path now
+    that default resolution comes from Massive Treasury yields. It remains as
+    a coarse utility fallback for code paths that still need a local estimate.
     """
     if start_date.year == end_date.year:
         return _HISTORICAL_RISK_FREE_RATES.get(start_date.year, 0.045)
@@ -55,7 +57,7 @@ class OptionDataGateway(Protocol):
     def get_ex_dividend_dates(self, start_date: date, end_date: date) -> set[date]: ...
 
 
-class MultiUnderlyingGateway:  # noqa: vulture — planned extension point
+class MultiUnderlyingGateway:
     """Gateway wrapper for strategies that trade options on multiple underlyings.
 
     **STATUS: Not yet used by any strategy.** This is the extension point for
@@ -142,7 +144,7 @@ class TradeResult:
     holding_period_days: int  # Calendar days between entry_date and exit_date
     entry_underlying_close: Decimal
     exit_underlying_close: Decimal
-    entry_mid: Decimal  # Per-unit value / 100 (e.g., $2.50 mid → 0.025). NOT the raw option mid-price.
+    entry_mid: Decimal  # Per-unit value / 100 (e.g., $2.50 mid -> 0.025). NOT the raw option mid-price.
     exit_mid: Decimal  # Per-unit value / 100 at exit. Same convention as entry_mid.
     gross_pnl: Decimal
     net_pnl: Decimal

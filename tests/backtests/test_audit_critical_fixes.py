@@ -1,4 +1,4 @@
-"""Tests for critical audit findings.
+﻿"""Tests for critical audit findings.
 
 These tests verify fixes for:
 - NaN bypass in forecast feature extraction
@@ -11,9 +11,6 @@ from __future__ import annotations
 
 import math
 from datetime import date
-from unittest.mock import MagicMock
-
-import pytest
 
 from backtestforecast.backtests.rules import implied_volatility_from_price
 from backtestforecast.backtests.summary import _compute_sharpe_sortino

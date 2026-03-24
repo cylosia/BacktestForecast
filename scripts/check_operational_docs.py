@@ -1,4 +1,4 @@
-"""Validate operational docs against current runtime configuration.
+﻿"""Validate operational docs against current runtime configuration.
 
 This script is designed for direct use in CI. It verifies that current docs:
 - designate the authoritative operational assumptions page,

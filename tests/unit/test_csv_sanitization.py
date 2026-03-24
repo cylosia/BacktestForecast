@@ -1,4 +1,4 @@
-"""Verify CSV cell sanitization blocks formula injection."""
+﻿"""Verify CSV cell sanitization blocks formula injection."""
 from backtestforecast.services.exports import ExportService
 
 

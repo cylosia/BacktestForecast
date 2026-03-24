@@ -1,4 +1,4 @@
-"""Tests for security finding fixes.
+﻿"""Tests for security finding fixes.
 
 Covers:
 - #4: StripeEventRepository.list_recent has user_id filter

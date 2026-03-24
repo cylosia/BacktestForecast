@@ -1,4 +1,4 @@
-"""Verification tests for the Workflow Trace Findings.
+﻿"""Verification tests for the Workflow Trace Findings.
 
 Covers all 8 workflow findings: auth, create, export, billing, retry,
 delete, reaper, and download flows.
@@ -8,10 +8,7 @@ from __future__ import annotations
 import inspect
 import warnings
 
-import pytest
-
-
-# ---- W1: Auth flow — dev mode documented, production guarded ----
+# ---- W1: Auth flow - dev mode documented, production guarded ----
 
 def test_w1_auth_production_guard():
     from backtestforecast.auth.verification import ClerkTokenVerifier
@@ -25,7 +22,7 @@ def test_w1_auth_dev_warning():
     assert "audience verification is disabled" in source
 
 
-# ---- W2: Create (backtest) flow — _commit_then_publish defined ----
+# ---- W2: Create (backtest) flow - _commit_then_publish defined ----
 
 def test_w2_commit_then_publish_defined():
     with warnings.catch_warnings():
@@ -34,7 +31,7 @@ def test_w2_commit_then_publish_defined():
     assert callable(_commit_then_publish)
 
 
-# ---- W3: Export flow — _commit_then_publish used correctly ----
+# ---- W3: Export flow - _commit_then_publish used correctly ----
 
 def test_w3_export_task_uses_commit_then_publish():
     with warnings.catch_warnings():
@@ -44,16 +41,16 @@ def test_w3_export_task_uses_commit_then_publish():
     assert "_commit_then_publish" in source
 
 
-# ---- W4: Billing/webhook — programming errors caught separately ----
+# ---- W4: Billing/webhook - programming errors caught separately ----
 
 def test_w4_webhook_separates_error_types():
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.handle_webhook)
+    source = inspect.getsource(BillingService._handle_webhook_impl)
     assert "KeyError" in source
     assert "likely_programming_error" in source
 
 
-# ---- W5: Error/retry — scan retries on ExternalServiceError ----
+# ---- W5: Error/retry - scan retries on ExternalServiceError ----
 
 def test_w5_scan_retries_external_errors():
     with warnings.catch_warnings():
@@ -64,7 +61,7 @@ def test_w5_scan_retries_external_errors():
     assert "self.retry" in source
 
 
-# ---- W6: Delete flow — S3 storage cleaned before cascade ----
+# ---- W6: Delete flow - S3 storage cleaned before cascade ----
 
 def test_w6_account_delete_cleans_export_storage():
     from apps.api.app.routers.account import _cleanup_export_storage
@@ -91,7 +88,7 @@ def test_w6_export_delete_for_user_cleans_storage():
     assert "storage.delete" in source or "_storage.delete" in source
 
 
-# ---- W7: Reaper — CAS prevents double-dispatch ----
+# ---- W7: Reaper - CAS prevents double-dispatch ----
 
 def test_w7_reaper_uses_cas():
     with warnings.catch_warnings():
@@ -111,7 +108,7 @@ def test_w7_reaper_resets_on_send_failure():
     assert "celery_task_id=None" in source or "celery_task_id == task_id" in source
 
 
-# ---- W8: Export download — audit comment documents tradeoff ----
+# ---- W8: Export download - audit comment documents tradeoff ----
 
 def test_w8_download_audit_is_documented():
     from backtestforecast.services.exports import ExportService

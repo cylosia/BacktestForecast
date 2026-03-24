@@ -1,18 +1,19 @@
-"""Genetic optimizer for custom N-leg option strategy configurations.
+﻿"""Genetic optimizer for custom N-leg option strategy configurations.
 
 Uses tournament selection, single-point crossover, per-gene mutation,
 and constraint repair to search the combinatorial space of leg
-definitions efficiently.  Fitness evaluation is parallelized via
-``ThreadPoolExecutor``.
+definitions efficiently. Fitness evaluation runs in a thread pool for
+plain callables and a process pool for serializable evaluators.
 """
 from __future__ import annotations
 
+import importlib
 import random
-from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, Callable
-import importlib
+from typing import Any
 
 import structlog
 

@@ -1,11 +1,5 @@
-"""Verify that entry_rules enforcement works correctly.
-
-The schema allows empty entry_rules (needed by sweep/scan services internally).
-The API router enforces at least one rule for user-facing backtest creation.
-"""
+﻿"""Verify the boundary between internal and external entry_rules validation."""
 from __future__ import annotations
-
-import pytest
 
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 
@@ -65,3 +59,6 @@ def test_router_rejects_empty_entry_rules(client, auth_headers):
         headers=auth_headers,
     )
     assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "validation_error"
+    assert "At least one entry rule is required" in body["error"]["message"]

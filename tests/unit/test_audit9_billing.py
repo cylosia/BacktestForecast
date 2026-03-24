@@ -1,8 +1,8 @@
-"""Billing-specific tests for audit round 9 fixes."""
+﻿"""Billing-specific tests for audit round 9 fixes."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -37,34 +37,26 @@ class TestPlanTierSnapshot:
 class TestBillingWebhookIdempotency:
     """Fix #53: Webhook events are idempotent."""
 
-    def test_duplicate_event_returns_duplicate(self):
+    def test_handle_webhook_delegates_to_webhook_handler(self):
         from backtestforecast.services.billing import BillingService
 
         service = BillingService.__new__(BillingService)
-        service.session = MagicMock()
-        service.settings = MagicMock()
-        service.settings.stripe_webhook_secret = "whsec_test"
-        service.stripe_events = MagicMock()
-        service.stripe_events.claim.return_value = None  # duplicate
-        service._stripe_client = MagicMock()
-        service._pending_cancellation_events = []
+        service.webhook_handler = MagicMock()
+        service.webhook_handler.handle_webhook.return_value = {"status": "duplicate"}
 
-        event = {
-            "type": "customer.subscription.updated",
-            "id": "evt_123",
-            "livemode": False,
-            "data": {"object": {}},
-        }
-        service._stripe_client.construct_event.return_value = event
+        result = service.handle_webhook(
+            b"payload",
+            "sig_header",
+            request_id="req_1",
+            ip_address="1.2.3.4",
+        )
 
-        with patch.object(service, "_get_stripe_client", return_value=service._stripe_client):
-            with patch("backtestforecast.observability.hash_ip", return_value="hashed"):
-                result = service.handle_webhook(
-                    b"payload",
-                    "sig_header",
-                    request_id="req_1",
-                    ip_address="1.2.3.4",
-                )
+        service.webhook_handler.handle_webhook.assert_called_once_with(
+            b"payload",
+            "sig_header",
+            request_id="req_1",
+            ip_address="1.2.3.4",
+        )
         assert result["status"] == "duplicate"
 
 

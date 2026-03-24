@@ -1,4 +1,4 @@
-"""Test that the sweep worker task handles SoftTimeLimitExceeded correctly."""
+﻿"""Test that the sweep worker task handles SoftTimeLimitExceeded correctly."""
 from __future__ import annotations
 
 from types import SimpleNamespace

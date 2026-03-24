@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { reportClientError } from "@/lib/observability/report-client-error";
 
 export default function RootError({
   error,
@@ -10,8 +11,7 @@ export default function RootError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // TODO: Integrate Sentry or similar error tracking for production visibility.
-    console.error("Root error boundary caught:", error);
+    reportClientError(error, { boundary: "RootError", digest: error.digest });
   }, [error]);
 
   return (

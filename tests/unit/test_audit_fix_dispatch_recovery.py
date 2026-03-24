@@ -1,4 +1,4 @@
-"""Verify dispatch failure marking and reaper recovery patterns."""
+﻿"""Verify dispatch failure marking and reaper recovery patterns."""
 from __future__ import annotations
 
 from types import SimpleNamespace

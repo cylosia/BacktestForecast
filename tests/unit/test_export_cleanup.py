@@ -1,4 +1,4 @@
-"""Tests for export cleanup edge cases."""
+﻿"""Tests for export cleanup edge cases."""
 from __future__ import annotations
 
 import uuid
@@ -16,6 +16,14 @@ def _make_export_job(*, storage_key: str | None = "s3://key", status: str = "suc
     job.content_bytes = b"data"
     job.expires_at = datetime.now(UTC) - timedelta(days=1)
     return job
+
+
+def _assert_cleanup_update_applied(mock_session: MagicMock) -> None:
+    statement = mock_session.execute.call_args.args[0]
+    values = statement.compile().params
+    assert values["status"] == "expired"
+    assert values["storage_key"] is None
+    assert values["content_bytes"] is None
 
 
 def test_cleanup_skips_job_when_s3_delete_fails() -> None:
@@ -40,9 +48,7 @@ def test_cleanup_skips_job_when_s3_delete_fails() -> None:
     cleaned = service.cleanup_expired_exports(batch_size=10)
 
     assert cleaned == 1
-    assert job.status == "expired"
-    assert job.storage_key is None, "storage_key cleared in DB before S3 delete (DB-first pattern)"
-    assert job.content_bytes is None
+    _assert_cleanup_update_applied(mock_session)
 
 
 def test_cleanup_marks_expired_when_delete_succeeds() -> None:
@@ -63,9 +69,7 @@ def test_cleanup_marks_expired_when_delete_succeeds() -> None:
     cleaned = service.cleanup_expired_exports(batch_size=10)
 
     assert cleaned == 1
-    assert job.status == "expired"
-    assert job.storage_key is None
-    assert job.content_bytes is None
+    _assert_cleanup_update_applied(mock_session)
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +172,10 @@ def test_cleanup_sets_size_bytes_zero_and_sha256_none() -> None:
     cleaned = service.cleanup_expired_exports(batch_size=10)
 
     assert cleaned == 1
-    assert job.size_bytes == 0, "size_bytes must be set to 0 after cleanup"
-    assert job.sha256_hex is None, "sha256_hex must be set to None after cleanup"
-    assert job.status == "expired"
-    assert job.content_bytes is None
-    assert job.storage_key is None
+    statement = mock_session.execute.call_args.args[0]
+    values = statement.compile().params
+    assert values["size_bytes"] == 0, "size_bytes must be set to 0 after cleanup"
+    assert values["sha256_hex"] is None, "sha256_hex must be set to None after cleanup"
+    assert values["status"] == "expired"
+    assert values["content_bytes"] is None
+    assert values["storage_key"] is None

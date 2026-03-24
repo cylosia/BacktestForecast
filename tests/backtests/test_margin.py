@@ -1,4 +1,4 @@
-"""Unit tests for Reg T margin calculations.
+﻿"""Unit tests for Reg T margin calculations.
 
 Each function in margin.py is tested with at least one representative case
 plus boundary / edge conditions.  Values are verified by hand against the
@@ -27,7 +27,6 @@ from backtestforecast.backtests.margin import (
     short_straddle_strangle_margin,
 )
 
-
 # ---------------------------------------------------------------------------
 # _require_non_negative
 # ---------------------------------------------------------------------------
@@ -51,7 +50,7 @@ def test_naked_call_atm():
     # underlying=100, strike=100, premium=3
     # OTM_amount = max(100-100,0) = 0
     # A = 0.25*100 - 0 + 3 = 28   B = 0.10*100 + 3 = 13
-    # per_share = 28 → ×100 = 2800
+    # per_share = 28 -> x100 = 2800
     assert naked_call_margin(100.0, 100.0, 3.0) == pytest.approx(2800.0)
 
 
@@ -59,7 +58,7 @@ def test_naked_call_otm():
     # underlying=100, strike=120, premium=1
     # OTM = max(120-100,0) = 20
     # A = 25 - 20 + 1 = 6   B = 10 + 1 = 11
-    # per_share = max(6,11) = 11 → 1100
+    # per_share = max(6,11) = 11 -> 1100
     assert naked_call_margin(100.0, 120.0, 1.0) == pytest.approx(1100.0)
 
 
@@ -67,7 +66,7 @@ def test_naked_call_itm():
     # underlying=100, strike=90, premium=12
     # OTM = max(90-100,0) = 0
     # A = 25 - 0 + 12 = 37   B = 10 + 12 = 22
-    # per_share = 37 → 3700
+    # per_share = 37 -> 3700
     assert naked_call_margin(100.0, 90.0, 12.0) == pytest.approx(3700.0)
 
 
@@ -85,7 +84,7 @@ def test_naked_put_atm():
     # underlying=100, strike=100, premium=3
     # OTM = max(100-100,0) = 0
     # A = 0.25*100 - 0 + 3 = 28   B = 0.10*100 + 3 = 13
-    # per_share = 28 → 2800
+    # per_share = 28 -> 2800
     assert naked_put_margin(100.0, 100.0, 3.0) == pytest.approx(2800.0)
 
 
@@ -93,7 +92,7 @@ def test_naked_put_otm():
     # underlying=100, strike=80, premium=1
     # OTM = max(100-80,0) = 20
     # A = 25 - 20 + 1 = 6   B = 0.10*80 + 1 = 9
-    # per_share = max(6,9) = 9 → 900
+    # per_share = max(6,9) = 9 -> 900
     assert naked_put_margin(100.0, 80.0, 1.0) == pytest.approx(900.0)
 
 
@@ -101,7 +100,7 @@ def test_naked_put_itm():
     # underlying=100, strike=110, premium=12
     # OTM = max(100-110,0) = 0
     # A = 25 - 0 + 12 = 37   B = 0.10*110 + 12 = 23
-    # per_share = 37 → 3700
+    # per_share = 37 -> 3700
     assert naked_put_margin(100.0, 110.0, 12.0) == pytest.approx(3700.0)
 
 
@@ -130,16 +129,16 @@ def test_naked_option_margin_dispatches_put():
 
 def test_short_straddle_margin():
     # underlying=100, call_strike=100, put_strike=100, call_prem=3, put_prem=3
-    # call_naked = 2800, put_naked = 2800 → call >= put
+    # call_naked = 2800, put_naked = 2800 -> call >= put
     # margin = call_naked + put_prem*100 = 2800 + 300 = 3100
     assert short_straddle_strangle_margin(100.0, 100.0, 100.0, 3.0, 3.0) == pytest.approx(3100.0)
 
 
 def test_short_strangle_put_side_higher():
     # underlying=100, call_strike=120, put_strike=90
-    # call: OTM=20, A=25-20+2=7, B=10+2=12 → 1200
-    # put: OTM=10, A=25-10+4=19, B=9+4=13 → 1900
-    # put_naked > call_naked → margin = 1900 + call_prem*100 = 1900 + 200 = 2100
+    # call: OTM=20, A=25-20+2=7, B=10+2=12 -> 1200
+    # put: OTM=10, A=25-10+4=19, B=9+4=13 -> 1900
+    # put_naked > call_naked -> margin = 1900 + call_prem*100 = 1900 + 200 = 2100
     assert short_straddle_strangle_margin(100.0, 120.0, 90.0, 2.0, 4.0) == pytest.approx(2100.0)
 
 
@@ -206,7 +205,7 @@ def test_cash_secured_put_rejects_negative():
 def test_covered_strangle_margin():
     # stock_cost = 100*100 = 10_000
     # put_margin: underlying=100, strike=90, premium=2
-    #   OTM=10, A=25-10+2=17, B=9+2=11, per_share=17 → 1700
+    #   OTM=10, A=25-10+2=17, B=9+2=11, per_share=17 -> 1700
     # total = 10_000 + 1700 = 11_700
     assert covered_strangle_margin(100.0, 90.0, 2.0) == pytest.approx(11700.0)
 
@@ -232,9 +231,9 @@ def test_collar_rejects_negative():
 
 def test_jade_lizard_credit_exceeds_call_spread():
     # put_naked: underlying=100, strike=90, premium=3
-    #   OTM=10, A=25-10+3=18, B=9+3=12 → per_share=18 → 1800
+    #   OTM=10, A=25-10+3=18, B=9+3=12 -> per_share=18 -> 1800
     # call_spread = 5*100 = 500
-    # total_credit = 6*100 = 600 >= 500 → margin = put_naked = 1800
+    # total_credit = 6*100 = 600 >= 500 -> margin = put_naked = 1800
     assert jade_lizard_margin(100.0, 90.0, 3.0, 5.0, 6.0) == pytest.approx(1800.0)
 
 
@@ -288,35 +287,35 @@ class TestCalendarSpreadMarginCalculation:
         # ATM: underlying=150, strike=150, premium=4
         # OTM = max(150-150,0) = 0
         # A = 0.25*150 - 0 + 4 = 41.5   B = 0.10*150 + 4 = 19
-        # per_share = 41.5 → 4150
+        # per_share = 41.5 -> 4150
         assert naked_call_margin(150.0, 150.0, 4.0) == pytest.approx(4150.0)
 
     def test_otm_calendar_margin(self):
         # OTM: underlying=150, strike=170, premium=1.5
         # OTM = max(170-150,0) = 20
         # A = 37.5 - 20 + 1.5 = 19   B = 15 + 1.5 = 16.5
-        # per_share = max(19,16.5) = 19 → 1900
+        # per_share = max(19,16.5) = 19 -> 1900
         assert naked_call_margin(150.0, 170.0, 1.5) == pytest.approx(1900.0)
 
     def test_deep_itm_calendar_margin(self):
         # Deep ITM: underlying=200, strike=160, premium=42
         # OTM = max(160-200,0) = 0
         # A = 50 - 0 + 42 = 92   B = 20 + 42 = 62
-        # per_share = 92 → 9200
+        # per_share = 92 -> 9200
         assert naked_call_margin(200.0, 160.0, 42.0) == pytest.approx(9200.0)
 
     def test_low_price_stock_calendar(self):
         # Low priced: underlying=10, strike=10, premium=0.5
         # OTM = 0
         # A = 2.5 - 0 + 0.5 = 3   B = 1 + 0.5 = 1.5
-        # per_share = 3 → 300
+        # per_share = 3 -> 300
         assert naked_call_margin(10.0, 10.0, 0.5) == pytest.approx(300.0)
 
     def test_high_price_stock_calendar(self):
         # High priced: underlying=500, strike=520, premium=8
         # OTM = max(520-500,0) = 20
         # A = 125 - 20 + 8 = 113   B = 50 + 8 = 58
-        # per_share = 113 → 11300
+        # per_share = 113 -> 11300
         assert naked_call_margin(500.0, 520.0, 8.0) == pytest.approx(11300.0)
 
 
@@ -425,7 +424,7 @@ class TestCoveredStrangleMaxLossFormula:
             f"not margin = {margin}"
         )
         assert position.max_loss_per_unit != pytest.approx(margin), (
-            "max_loss must differ from margin — it represents actual worst-case loss"
+            "max_loss must differ from margin - it represents actual worst-case loss"
         )
 
 
@@ -440,13 +439,14 @@ class TestCalendarSpreadCapitalFloor:
     ``max(entry_value_per_unit, 1.0)`` when the entry is a net debit."""
 
     def test_half_dollar_debit_capital_is_one(self):
+        from datetime import date
+
         from backtestforecast.backtests.strategies.calendar import CalendarSpreadStrategy
         from backtestforecast.market_data.types import (
             DailyBar,
             OptionContractRecord,
             OptionQuoteRecord,
         )
-        from datetime import date
 
         underlying_close = 100.0
         strike = 100.0
@@ -507,13 +507,14 @@ class TestCalendarSpreadCapitalFloor:
 
     def test_tiny_debit_uses_one_dollar_floor(self):
         """A $0.50 debit calendar spread uses $1 capital (the floor), not $50."""
+        from datetime import date
+
         from backtestforecast.backtests.strategies.calendar import CalendarSpreadStrategy
         from backtestforecast.market_data.types import (
             DailyBar,
             OptionContractRecord,
             OptionQuoteRecord,
         )
-        from datetime import date
 
         underlying_close = 100.0
         strike = 100.0
@@ -578,7 +579,7 @@ class TestCalendarSpreadCapitalFloor:
 
 class TestJadeLizardMarginFormula:
     """Verify jade lizard margin follows the documented formula:
-    margin = max(naked_put_margin, call_spread_width × 100)
+    margin = max(naked_put_margin, call_spread_width x 100)
     when total credit < call spread width, otherwise just naked_put_margin."""
 
     def test_credit_below_spread_returns_greater_of_two_sides(self):
@@ -785,8 +786,6 @@ class TestReverseConversionMaxLoss:
     profitable (net credit exceeds any risk)."""
 
     def test_profitable_reverse_conversion_max_loss_is_zero(self):
-        from backtestforecast.backtests.strategies.common import offset_strike
-        from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
 
         underlying_close = 100.0
         strike = 100.0

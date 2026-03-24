@@ -1,4 +1,4 @@
-"""Tests for the reconcile_s3_orphans maintenance task."""
+﻿"""Tests for the reconcile_s3_orphans maintenance task."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch

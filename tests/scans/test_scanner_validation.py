@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
@@ -61,7 +61,7 @@ def test_scanner_request_accepts_unique_symbols_after_normalization() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Item 78: Scan date validation — timezone edge cases
+# Item 78: Scan date validation - timezone edge cases
 # ---------------------------------------------------------------------------
 
 

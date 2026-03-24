@@ -1,12 +1,10 @@
-"""Test that butterfly credit spreads compute max_loss_per_unit correctly.
+﻿"""Test that butterfly credit spreads compute max_loss_per_unit correctly.
 
 A symmetric credit butterfly (opened for a net credit) should have
 max_loss = wider_wing - credit, NOT zero.  This test constructs the
 scenario directly from the payoff math in ButterflyStrategy.build_position.
 """
 from __future__ import annotations
-
-import pytest
 
 
 def test_symmetric_credit_butterfly_max_loss() -> None:

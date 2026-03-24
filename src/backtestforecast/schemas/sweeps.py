@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
@@ -18,12 +18,20 @@ from backtestforecast.schemas.backtests import (
     TradeJsonResponse,
     validate_spread_width,
 )
-from backtestforecast.schemas.common import PlanTier, RunJobStatus, sanitize_error_message
+from backtestforecast.schemas.common import (
+    CursorPaginatedResponse,
+    OffsetPaginatedResponse,
+    PlanTier,
+    RunJobStatus,
+    WarningResponse,
+    sanitize_error_message,
+)
 from backtestforecast.schemas.scans import RuleSetDefinition
+from backtestforecast.strategy_catalog.capabilities import unsupported_grid_sweep_strategies
 from backtestforecast.version import DEFAULT_ENGINE_VERSION, ENGINE_VERSION_CHOICES
 
 
-class SweepMode(str, Enum):
+class SweepMode(StrEnum):
     GRID = "grid"
     GENETIC = "genetic"
 
@@ -39,7 +47,7 @@ class WidthGridItem(BaseModel):
     value: Decimal = Field(gt=0)
 
     @model_validator(mode="after")
-    def validate_width(self) -> "WidthGridItem":
+    def validate_width(self) -> WidthGridItem:
         validate_spread_width(self.mode, self.value)
         return self
 
@@ -64,7 +72,7 @@ class GeneticSweepConfig(BaseModel):
     max_stale_generations: int = Field(default=8, ge=2, le=50)
 
     @model_validator(mode="after")
-    def validate_config(self) -> "GeneticSweepConfig":
+    def validate_config(self) -> GeneticSweepConfig:
         if self.elitism_count >= self.population_size:
             raise ValueError("elitism_count must be less than population_size")
         return self
@@ -107,7 +115,7 @@ class CreateSweepRequest(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_request(self) -> "CreateSweepRequest":
+    def validate_request(self) -> CreateSweepRequest:
         from backtestforecast.utils.dates import market_date_today
 
         if self.end_date > market_date_today():
@@ -127,6 +135,13 @@ class CreateSweepRequest(BaseModel):
             )
         if len({s.value for s in self.strategy_types}) != len(self.strategy_types):
             raise ValueError("strategy_types must not contain duplicates")
+        if self.mode == SweepMode.GRID:
+            unsupported_strategies = unsupported_grid_sweep_strategies([strategy.value for strategy in self.strategy_types])
+            if unsupported_strategies:
+                joined = ", ".join(sorted(unsupported_strategies))
+                raise ValueError(
+                    f"Grid sweeps do not support strategies that require user-defined structure or multi-cycle execution: {joined}"
+                )
         rule_names = [rs.name.lower() for rs in self.entry_rule_sets]
         if len(set(rule_names)) != len(rule_names):
             raise ValueError("entry_rule_sets must not contain duplicate names")
@@ -142,7 +157,7 @@ class CreateSweepRequest(BaseModel):
 SweepJobStatus = RunJobStatus
 
 
-# Built manually in SweepService._build_result_response — NOT directly from
+# Built manually in SweepService._build_result_response - NOT directly from
 # ORM attributes.  Fields like delta, width_mode, entry_rule_set_name are
 # extracted from parameter_snapshot_json in the service layer.
 class SweepResultResponse(BaseModel):
@@ -159,17 +174,17 @@ class SweepResultResponse(BaseModel):
     stop_loss_pct: Decimal | None = None
     parameter_snapshot_json: dict[str, Any] = Field(default_factory=dict)
     summary: BacktestSummaryResponse
-    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[WarningResponse] = Field(default_factory=list)
     trades_json: list[TradeJsonResponse] = Field(default_factory=list, max_length=10000)
     equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list, max_length=10000)
     trades_truncated: bool = False
+    trade_items_omitted: int = Field(default=0, ge=0)
+    equity_curve_points_omitted: int = Field(default=0, ge=0)
     created_at: datetime | None = None
 
 
-class SweepResultListResponse(BaseModel):
+class SweepResultListResponse(OffsetPaginatedResponse):
     items: list[SweepResultResponse]
-    total: int = Field(default=0, ge=0)
-    offset: int = Field(default=0, ge=0)
     limit: int = Field(default=100, ge=1, le=200)
 
 
@@ -184,7 +199,7 @@ class SweepJobResponse(BaseModel):
     evaluated_candidate_count: int
     result_count: int
     prefetch_summary: dict[str, Any] | None = Field(default=None, validation_alias="prefetch_summary_json")
-    warnings: list[dict[str, Any]] = Field(default_factory=list, validation_alias="warnings_json")
+    warnings: list[WarningResponse] = Field(default_factory=list, validation_alias="warnings_json")
     request_snapshot: dict[str, Any] = Field(default_factory=dict, validation_alias="request_snapshot_json")
     error_code: str | None = None
     error_message: str | None = None
@@ -211,9 +226,5 @@ class SweepJobStatusResponse(BaseModel):
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 
 
-class SweepJobListResponse(BaseModel):
+class SweepJobListResponse(CursorPaginatedResponse):
     items: list[SweepJobResponse]
-    total: int = 0
-    offset: int = 0
-    limit: int = 50
-    next_cursor: str | None = None

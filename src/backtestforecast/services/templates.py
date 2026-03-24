@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
@@ -8,10 +8,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import PlanTier, normalize_plan_tier
-from backtestforecast.errors import AppValidationError, ConfigurationError, ConflictError, NotFoundError, QuotaExceededError
+from backtestforecast.errors import (
+    AppValidationError,
+    ConfigurationError,
+    ConflictError,
+    NotFoundError,
+    QuotaExceededError,
+)
 from backtestforecast.models import BacktestTemplate, User
 from backtestforecast.repositories.templates import BacktestTemplateRepository
-from backtestforecast.services.audit import AuditService
 from backtestforecast.schemas.templates import (
     TEMPLATE_SCHEMA_VERSION,
     UNSET,
@@ -20,9 +25,9 @@ from backtestforecast.schemas.templates import (
     TemplateResponse,
     UpdateTemplateRequest,
 )
+from backtestforecast.services.audit import AuditService
 
 logger = structlog.get_logger("services.templates")
-UTC = timezone.utc
 
 TEMPLATE_LIMITS: dict[PlanTier, int | None] = {
     PlanTier.FREE: 3,
@@ -77,7 +82,7 @@ class BacktestTemplateService:
             self.session.rollback()
             exc_str = str(exc).lower()
             if "unique" in exc_str or "duplicate" in exc_str:
-                raise AppValidationError(f"A template named '{request.name}' already exists.")
+                raise AppValidationError(f"A template named '{request.name}' already exists.") from exc
             raise
 
         template_limit = _resolve_template_limit(
@@ -136,11 +141,10 @@ class BacktestTemplateService:
         if request.expected_updated_at is not None:
             expected = request.expected_updated_at
             actual = template.updated_at
-            from datetime import timezone
             if expected.tzinfo is None:
-                expected = expected.replace(tzinfo=timezone.utc)
+                expected = expected.replace(tzinfo=UTC)
             if actual is not None and actual.tzinfo is None:
-                actual = actual.replace(tzinfo=timezone.utc)
+                actual = actual.replace(tzinfo=UTC)
             if actual is not None and abs((actual - expected).total_seconds()) > 0.1:
                 raise ConflictError(
                     "Template was modified by another request. Please refresh and try again."
@@ -175,7 +179,7 @@ class BacktestTemplateService:
             self.session.rollback()
             exc_str = str(exc.orig).lower() if exc.orig else ""
             if "unique" in exc_str or "duplicate" in exc_str or "uq_" in exc_str:
-                raise AppValidationError(f"A template named '{request.name or template.name}' already exists.")
+                raise AppValidationError(f"A template named '{request.name or template.name}' already exists.") from exc
             raise
         self.session.refresh(template)
         return self._to_response(template)

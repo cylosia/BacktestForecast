@@ -1,4 +1,4 @@
-"""Verify daily picks returns gracefully when no pipeline runs exist."""
+﻿"""Verify daily picks returns gracefully when no pipeline runs exist."""
 from __future__ import annotations
 
 from backtestforecast.services.daily_picks import DailyPicksService

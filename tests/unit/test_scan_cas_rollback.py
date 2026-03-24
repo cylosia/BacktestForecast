@@ -1,4 +1,4 @@
-"""Fix 19: Scan CAS rollback prevents orphaned recommendations.
+﻿"""Fix 19: Scan CAS rollback prevents orphaned recommendations.
 
 When a scan job is concurrently cancelled/failed by the reaper while the
 scan service is writing recommendations, the CAS UPDATE on the job status
@@ -22,8 +22,6 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
 from backtestforecast.models import ScannerJob, ScannerRecommendation, User
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
@@ -65,8 +63,23 @@ def _create_scan_job(session: Session, user: User, *, status: str = "running") -
     return job
 
 
+def _recommendation_payload(**overrides):
+    payload = dict(
+        request_snapshot_json={"symbol": "AAPL"},
+        summary_json={"trade_count": 1},
+        warnings_json=[],
+        trades_json=[],
+        equity_curve_json=[],
+        historical_performance_json={"sample_count": 0},
+        forecast_json={"summary": "n/a"},
+        ranking_features_json={"final_score": 0.9},
+    )
+    payload.update(overrides)
+    return payload
+
+
 class TestScanCASRollback:
-    """Verify that when the CAS UPDATE on ScannerJob succeeds→running
+    """Verify that when the CAS UPDATE on ScannerJob succeeds->running
     returns rowcount==0 (because the reaper already set it to failed),
     the pending ScannerRecommendation objects are rolled back."""
 
@@ -99,6 +112,7 @@ class TestScanCASRollback:
             strategy_type="covered_call",
             rule_set_name="default",
             rule_set_hash="abc123",
+            **_recommendation_payload(),
         )
         db_session.add(rec)
 
@@ -117,19 +131,19 @@ class TestScanCASRollback:
         else:
             db_session.commit()
 
-        assert success_rows.rowcount == 0, "CAS should not match — job is 'failed'"
+        assert success_rows.rowcount == 0, "CAS should not match - job is 'failed'"
 
         db_session.expire_all()
         refreshed_job = db_session.get(ScannerJob, job.id)
         assert refreshed_job.status == "failed"
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         rec_count = db_session.scalar(
             select(func.count()).select_from(ScannerRecommendation)
             .where(ScannerRecommendation.scanner_job_id == job.id)
         )
         assert rec_count == 0, (
-            "Recommendations must be rolled back when CAS fails — "
+            "Recommendations must be rolled back when CAS fails - "
             "they should NOT be attached to a failed/cancelled job"
         )
 
@@ -146,6 +160,7 @@ class TestScanCASRollback:
             strategy_type="long_call",
             rule_set_name="default",
             rule_set_hash="def456",
+            **_recommendation_payload(request_snapshot_json={"symbol": "MSFT"}),
         )
         db_session.add(rec)
 
@@ -170,7 +185,7 @@ class TestScanCASRollback:
         refreshed_job = db_session.get(ScannerJob, job.id)
         assert refreshed_job.status == "succeeded"
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         rec_count = db_session.scalar(
             select(func.count()).select_from(ScannerRecommendation)
             .where(ScannerRecommendation.scanner_job_id == job.id)
@@ -190,6 +205,7 @@ class TestScanCASRollback:
             strategy_type="cash_secured_put",
             rule_set_name="default",
             rule_set_hash="ghi789",
+            **_recommendation_payload(request_snapshot_json={"symbol": "TSLA"}),
         )
         db_session.add(rec)
 
@@ -208,7 +224,7 @@ class TestScanCASRollback:
         db_session.expire_all()
         assert db_session.get(ScannerJob, job.id).status == "cancelled"
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         rec_count = db_session.scalar(
             select(func.count()).select_from(ScannerRecommendation)
             .where(ScannerRecommendation.scanner_job_id == job.id)

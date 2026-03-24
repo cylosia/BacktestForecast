@@ -1,8 +1,7 @@
-"""Verify that all terminal status transitions set completed_at."""
+﻿"""Verify that all terminal status transitions set completed_at."""
 from __future__ import annotations
 
 from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis
-
 
 _TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "expired"}
 _MODELS_WITH_COMPLETED_AT = [BacktestRun, ScannerJob, ExportJob, SymbolAnalysis, SweepJob]

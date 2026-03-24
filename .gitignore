@@ -19,6 +19,8 @@ __pycache__
 .pytest_cache
 .mypy_cache
 .ruff_cache
+openapi.snapshot.json.new
+pytest-cache-files-*
 
 # Env files
 .env

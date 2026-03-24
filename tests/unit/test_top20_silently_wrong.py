@@ -1,4 +1,4 @@
-"""Verification tests for the Top 20 Things That Look Correct But May Be Silently Wrong.
+﻿"""Verification tests for the Top 20 Things That Look Correct But May Be Silently Wrong.
 
 Tests cover all 20 items: confirmed issues have fix-verification tests,
 false alarms have investigative assertions proving the code is correct.
@@ -13,8 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-
-# ---- S1: onupdate vs trigger timezone — FALSE ALARM ----
+# ---- S1: onupdate vs trigger timezone - FALSE ALARM ----
 
 def test_s1_updated_at_has_timezone():
     from backtestforecast.models import User
@@ -22,7 +21,7 @@ def test_s1_updated_at_has_timezone():
     assert col.type.timezone is True
 
 
-# ---- S2: lazy='raise' — DESIGN CHOICE ----
+# ---- S2: lazy='raise' - DESIGN CHOICE ----
 
 def test_s2_all_relationships_lazy_raise():
     from backtestforecast.models import User
@@ -33,7 +32,7 @@ def test_s2_all_relationships_lazy_raise():
 # ---- S3: _VALID_TARGET_STATUSES correctly excludes expired for non-exports ----
 
 def test_s3_export_valid_statuses_include_expired():
-    from backtestforecast.events import _VALID_TARGET_STATUSES, _EXPORT_VALID_TARGET_STATUSES
+    from backtestforecast.events import _EXPORT_VALID_TARGET_STATUSES, _VALID_TARGET_STATUSES
     assert "expired" not in _VALID_TARGET_STATUSES
     assert "expired" in _EXPORT_VALID_TARGET_STATUSES
 
@@ -104,7 +103,7 @@ def test_s6_coerce_stripe_id_none():
     assert BillingService._coerce_stripe_id(None) is None
 
 
-# ---- S7: _LOOKS_NUMERIC — FIXED (prior round) ----
+# ---- S7: _LOOKS_NUMERIC - FIXED (prior round) ----
 
 def test_s7_looks_numeric_rejects_leading_zeros():
     from backtestforecast.services.exports import _LOOKS_NUMERIC
@@ -157,7 +156,7 @@ def test_s9_cagr_cap_warning_emitted():
     assert "cagr_capped" in codes
 
 
-# ---- S10: _D cache — FIXED (prior round) ----
+# ---- S10: _D cache - FIXED (prior round) ----
 
 def test_s10_d_cache_exists():
     from backtestforecast.backtests.engine import _D_CACHE
@@ -165,7 +164,7 @@ def test_s10_d_cache_exists():
     assert -1 in _D_CACHE
 
 
-# ---- S11: 1MB body limit — FALSE ALARM ----
+# ---- S11: 1MB body limit - FALSE ALARM ----
 
 def test_s11_body_limit_adequate_for_custom_legs():
     import json
@@ -185,14 +184,14 @@ def test_s12_jwt_leeway_at_least_10():
     assert default >= 10
 
 
-# ---- S13: forecast_max_analogs configurable — FALSE ALARM ----
+# ---- S13: forecast_max_analogs configurable - FALSE ALARM ----
 
 def test_s13_forecast_max_analogs_configurable():
     from backtestforecast.config import Settings
     assert "forecast_max_analogs" in Settings.model_fields
 
 
-# ---- S14: Worker uses 300s timeout — FALSE ALARM ----
+# ---- S14: Worker uses 300s timeout - FALSE ALARM ----
 
 def test_s14_worker_timeout_300s():
     from backtestforecast.config import Settings
@@ -208,11 +207,15 @@ def test_s15_fail_closed_rejects_immediately():
     assert "fail_closed_redis_error" in source
 
 
-# ---- S16: SSE connections separately managed — FALSE ALARM ----
+# ---- S16: SSE connections separately managed - FALSE ALARM ----
 
 def test_s16_sse_has_process_limit():
     from apps.api.app.routers.events import SSE_MAX_CONNECTIONS_PROCESS
-    assert SSE_MAX_CONNECTIONS_PROCESS >= 100
+    from backtestforecast.config import get_settings
+
+    settings = get_settings()
+    assert SSE_MAX_CONNECTIONS_PROCESS > 0
+    assert settings.sse_redis_max_connections > SSE_MAX_CONNECTIONS_PROCESS
 
 
 # ---- S17: Outbox max retries increased to 30 ----
@@ -225,7 +228,7 @@ def test_s17_outbox_max_retries_increased():
     assert "_OUTBOX_MAX_RETRIES = 30" in source
 
 
-# ---- S18: result_expires handles timedelta — FALSE ALARM ----
+# ---- S18: result_expires handles timedelta - FALSE ALARM ----
 
 def test_s18_result_expires_handles_timedelta():
     with warnings.catch_warnings():
@@ -240,7 +243,7 @@ def test_s18_result_expires_handles_timedelta():
 def test_s19_orphan_batch_chunked():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        from apps.worker.app.tasks import _process_orphan_batch, _ORPHAN_IN_CHUNK_SIZE
+        from apps.worker.app.tasks import _ORPHAN_IN_CHUNK_SIZE, _process_orphan_batch
     assert _ORPHAN_IN_CHUNK_SIZE <= 200
     source = inspect.getsource(_process_orphan_batch)
     assert "_ORPHAN_IN_CHUNK_SIZE" in source

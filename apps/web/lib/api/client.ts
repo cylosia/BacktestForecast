@@ -1,4 +1,18 @@
 import { apiDownload, apiRequest, validatedApiRequest } from "@/lib/api/shared";
+import {
+  validateAnalysisDetailResponse,
+  validateBacktestRunDetailResponse,
+  validateBacktestRunStatusResponse,
+  validateCheckoutSessionResponse,
+  validateCompareBacktestsResponse,
+  validateExportJobResponse,
+  validateForecastEnvelopeResponse,
+  validatePortalSessionResponse,
+  validateScannerJobResponse,
+  validateScannerRecommendationListResponse,
+  validateSymbolAnalysisSummary,
+  validateSweepJobResponse,
+} from "@/lib/api/contracts";
 import { validateTemplateResponse } from "@/lib/templates/contracts";
 import type {
   BacktestRunDetailResponse,
@@ -30,7 +44,7 @@ export async function createBacktestRun(
   payload: CreateBacktestRunRequest,
   signal?: AbortSignal,
 ): Promise<BacktestRunDetailResponse> {
-  return apiRequest<BacktestRunDetailResponse>("/v1/backtests", token, {
+  return validatedApiRequest<BacktestRunDetailResponse>("/v1/backtests", token, validateBacktestRunDetailResponse, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
@@ -42,7 +56,12 @@ export async function fetchBacktestRunStatus(
   runId: string,
   signal?: AbortSignal,
 ): Promise<BacktestRunStatusResponse> {
-  return apiRequest<BacktestRunStatusResponse>(`/v1/backtests/${encodeURIComponent(runId)}/status`, token, signal ? { signal } : undefined);
+  return validatedApiRequest<BacktestRunStatusResponse>(
+    `/v1/backtests/${encodeURIComponent(runId)}/status`,
+    token,
+    validateBacktestRunStatusResponse,
+    signal ? { signal } : undefined,
+  );
 }
 
 export async function compareBacktests(
@@ -56,7 +75,7 @@ export async function compareBacktests(
   if (new Set(runIds).size !== runIds.length) {
     throw new Error("compareBacktests requires unique run IDs.");
   }
-  return apiRequest<CompareBacktestsResponse>("/v1/backtests/compare", token, {
+  return validatedApiRequest<CompareBacktestsResponse>("/v1/backtests/compare", token, validateCompareBacktestsResponse, {
     method: "POST",
     body: JSON.stringify({ run_ids: runIds }),
     signal,
@@ -67,7 +86,7 @@ export async function createCheckoutSession(
   token: string,
   payload: CreateCheckoutSessionRequest,
 ): Promise<CheckoutSessionResponse> {
-  return apiRequest<CheckoutSessionResponse>("/v1/billing/checkout-session", token, {
+  return validatedApiRequest<CheckoutSessionResponse>("/v1/billing/checkout-session", token, validateCheckoutSessionResponse, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -81,7 +100,7 @@ export async function createPortalSession(
   if (payload?.return_path != null) {
     body.return_path = payload.return_path;
   }
-  return apiRequest<PortalSessionResponse>("/v1/billing/portal-session", token, {
+  return validatedApiRequest<PortalSessionResponse>("/v1/billing/portal-session", token, validatePortalSessionResponse, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -92,7 +111,7 @@ export async function createExport(
   payload: CreateExportRequest,
   signal?: AbortSignal,
 ): Promise<ExportJobResponse> {
-  return apiRequest<ExportJobResponse>("/v1/exports", token, {
+  return validatedApiRequest<ExportJobResponse>("/v1/exports", token, validateExportJobResponse, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
@@ -111,7 +130,12 @@ export async function fetchExportStatus(
   exportJobId: string,
   signal?: AbortSignal,
 ): Promise<ExportJobResponse> {
-  return apiRequest<ExportJobResponse>(`/v1/exports/${encodeURIComponent(exportJobId)}/status`, token, signal ? { signal } : undefined);
+  return validatedApiRequest<ExportJobResponse>(
+    `/v1/exports/${encodeURIComponent(exportJobId)}/status`,
+    token,
+    validateExportJobResponse,
+    signal ? { signal } : undefined,
+  );
 }
 
 export async function createTemplate(
@@ -156,7 +180,7 @@ export async function createScannerJob(
   payload: CreateScannerJobRequest,
   signal?: AbortSignal,
 ): Promise<ScannerJobResponse> {
-  return apiRequest<ScannerJobResponse>("/v1/scans", token, {
+  return validatedApiRequest<ScannerJobResponse>("/v1/scans", token, validateScannerJobResponse, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
@@ -168,7 +192,12 @@ export async function fetchScannerJob(
   jobId: string,
   signal?: AbortSignal,
 ): Promise<ScannerJobResponse> {
-  return apiRequest<ScannerJobResponse>(`/v1/scans/${encodeURIComponent(jobId)}`, token, signal ? { signal } : undefined);
+  return validatedApiRequest<ScannerJobResponse>(
+    `/v1/scans/${encodeURIComponent(jobId)}`,
+    token,
+    validateScannerJobResponse,
+    signal ? { signal } : undefined,
+  );
 }
 
 export async function fetchScannerRecommendations(
@@ -176,7 +205,12 @@ export async function fetchScannerRecommendations(
   jobId: string,
   signal?: AbortSignal,
 ): Promise<ScannerRecommendationListResponse> {
-  return apiRequest<ScannerRecommendationListResponse>(`/v1/scans/${encodeURIComponent(jobId)}/recommendations`, token, signal ? { signal } : undefined);
+  return validatedApiRequest<ScannerRecommendationListResponse>(
+    `/v1/scans/${encodeURIComponent(jobId)}/recommendations`,
+    token,
+    validateScannerRecommendationListResponse,
+    signal ? { signal } : undefined,
+  );
 }
 
 export async function createSweepJob(
@@ -184,7 +218,7 @@ export async function createSweepJob(
   payload: CreateSweepRequest,
   signal?: AbortSignal,
 ): Promise<SweepJobResponse> {
-  return apiRequest<SweepJobResponse>("/v1/sweeps", token, {
+  return validatedApiRequest<SweepJobResponse>("/v1/sweeps", token, validateSweepJobResponse, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
@@ -196,7 +230,12 @@ export async function fetchSweepJob(
   jobId: string,
   signal?: AbortSignal,
 ): Promise<SweepJobResponse> {
-  return apiRequest<SweepJobResponse>(`/v1/sweeps/${encodeURIComponent(jobId)}`, token, signal ? { signal } : undefined);
+  return validatedApiRequest<SweepJobResponse>(
+    `/v1/sweeps/${encodeURIComponent(jobId)}`,
+    token,
+    validateSweepJobResponse,
+    signal ? { signal } : undefined,
+  );
 }
 
 export async function fetchForecast(
@@ -208,9 +247,10 @@ export async function fetchForecast(
   if (options?.strategyType != null) params.set("strategy_type", options.strategyType);
   if (options?.horizonDays != null) params.set("horizon_days", String(options.horizonDays));
   const qs = params.toString();
-  return apiRequest<ForecastEnvelopeResponse>(
+  return validatedApiRequest<ForecastEnvelopeResponse>(
     `/v1/forecasts/${encodeURIComponent(ticker)}${qs ? `?${qs}` : ""}`,
     token,
+    validateForecastEnvelopeResponse,
     options?.signal ? { signal: options.signal } : undefined,
   );
 }
@@ -221,7 +261,7 @@ export async function createSymbolAnalysis(
   idempotencyKey?: string,
   signal?: AbortSignal,
 ): Promise<SymbolAnalysisSummary> {
-  return apiRequest<SymbolAnalysisSummary>("/v1/analysis", token, {
+  return validatedApiRequest<SymbolAnalysisSummary>("/v1/analysis", token, validateSymbolAnalysisSummary, {
     method: "POST",
     body: JSON.stringify({ symbol, idempotency_key: idempotencyKey }),
     signal,
@@ -233,7 +273,12 @@ export async function fetchAnalysisStatus(
   analysisId: string,
   signal?: AbortSignal,
 ): Promise<SymbolAnalysisSummary> {
-  return apiRequest<SymbolAnalysisSummary>(`/v1/analysis/${encodeURIComponent(analysisId)}/status`, token, signal ? { signal } : undefined);
+  return validatedApiRequest<SymbolAnalysisSummary>(
+    `/v1/analysis/${encodeURIComponent(analysisId)}/status`,
+    token,
+    validateSymbolAnalysisSummary,
+    signal ? { signal } : undefined,
+  );
 }
 
 export async function fetchAnalysisFull(
@@ -241,7 +286,12 @@ export async function fetchAnalysisFull(
   analysisId: string,
   signal?: AbortSignal,
 ): Promise<SymbolAnalysisFullResponse> {
-  return apiRequest<SymbolAnalysisFullResponse>(`/v1/analysis/${encodeURIComponent(analysisId)}`, token, signal ? { signal } : undefined);
+  return validatedApiRequest<SymbolAnalysisFullResponse>(
+    `/v1/analysis/${encodeURIComponent(analysisId)}`,
+    token,
+    validateAnalysisDetailResponse,
+    signal ? { signal } : undefined,
+  );
 }
 
 export async function deleteAccount(

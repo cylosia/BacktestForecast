@@ -1,4 +1,4 @@
-"""Test boundary validation for list endpoint parameters.
+﻿"""Test boundary validation for list endpoint parameters.
 
 Covers the risk that negative limit or offset values produce incorrect SQL
 queries or unexpected behavior.
@@ -6,7 +6,6 @@ queries or unexpected behavior.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -63,8 +62,7 @@ class TestListRunsValidation:
         user = _make_user()
 
         repo_mock = MagicMock()
-        repo_mock.list_for_user.return_value = []
-        repo_mock.count_for_user.return_value = 0
+        repo_mock.list_for_user_with_count.return_value = ([], 0)
         service.run_repository = repo_mock
 
         result = service.list_runs(user, limit=10, offset=0)

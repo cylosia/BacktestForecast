@@ -1,4 +1,4 @@
-"""Tests for audit round 9 fixes.
+﻿"""Tests for audit round 9 fixes.
 
 Covers: billing upgrade race, quota off-by-one, CSV injection,
 sweep progress tracking, dispatch timezone, circuit breaker interval,
@@ -14,9 +14,9 @@ import pytest
 
 
 class TestDispatchTimezone:
-    """Fix #1: dispatch.py uses datetime.now(UTC) not datetime.now()."""
+    """Fix #1: dispatch.py uses timezone-aware timestamps."""
 
-    def test_dispatch_failure_sets_utc_completed_at(self):
+    def test_dispatch_failure_sets_utc_dispatch_started_at(self):
         from backtestforecast.schemas.common import RunJobStatus
 
         job = MagicMock()
@@ -28,25 +28,23 @@ class TestDispatchTimezone:
         mock_settings.log_level = "INFO"
         with patch("backtestforecast.config.get_settings", return_value=mock_settings):
             with patch("apps.worker.app.celery_app.configure_logging"):
-                with patch("apps.api.app.dispatch.celery_app") as mock_celery:
+                with patch("apps.worker.app.celery_app.celery_app") as mock_celery:
                     mock_celery.send_task.side_effect = Exception("broker down")
-                    with patch("apps.api.app.dispatch.time") as mock_time:
-                        mock_time.sleep = MagicMock()
-                        from apps.api.app.dispatch import dispatch_celery_task
+                    from apps.api.app.dispatch import dispatch_celery_task
 
-                        result = dispatch_celery_task(
-                            db=db,
-                            job=job,
-                            task_name="test.task",
-                            task_kwargs={"id": "123"},
-                            queue="test",
-                            log_event="test",
-                            logger=MagicMock(),
-                        )
+                    result = dispatch_celery_task(
+                        db=db,
+                        job=job,
+                        task_name="test.task",
+                        task_kwargs={"id": "123"},
+                        queue="test",
+                        log_event="test",
+                        logger=MagicMock(),
+                    )
 
         assert result.value == "enqueue_failed"
-        assert job.completed_at is not None
-        assert job.completed_at.tzinfo is not None
+        assert job.dispatch_started_at is not None
+        assert job.dispatch_started_at.tzinfo is not None
 
 
 class TestQuotaOffByOne:
@@ -182,7 +180,7 @@ class TestSweepProgressTracking:
     def test_evaluated_count_correct_after_rollback(self):
         """After a progress commit rollback, the count should still be accurate."""
         count = 0
-        for i in range(120):
+        for _i in range(120):
             count += 1
         assert count == 120
 
@@ -226,9 +224,8 @@ class TestIPHashSaltStaging:
             "CLERK_AUTHORIZED_PARTIES": "https://app.example.com",
             "LOG_JSON": "true",
         }
-        with patch.dict(os.environ, env, clear=False):
-            with pytest.raises(ValueError, match="IP_HASH_SALT"):
-                Settings()
+        with patch.dict(os.environ, env, clear=False), pytest.raises(ValueError, match="IP_HASH_SALT"):
+            Settings()
 
 
 class TestCircuitBreakerInterval:

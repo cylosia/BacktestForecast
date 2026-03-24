@@ -7,7 +7,7 @@
 - The strategy catalog is served from an in-process Python module; a more dynamic catalog with user-configurable parameters may follow.
 - `slippage_pct` is now configurable via the backtest request payload; historical runs created before that rollout still reflect zero slippage.
 - Naked option positions (naked calls/puts) are still collateral-sized by margin requirement, not by worst-case stress loss. API payloads now emit explicit `naked_option_margin_only` warnings, but users should still treat those runs as economically aggressive and apply separate stress-loss sizing limits outside the current model.
-- Sharpe/Sortino payloads now surface an explicit `configured_static_risk_free_rate` warning whenever the request relies on the server-configured risk-free rate. The configured rate is mechanically consistent inside a run, but it is still not a Treasury series dynamically matched to the historical window.
+- Sharpe/Sortino payloads now surface either a `historical_treasury_risk_free_rate` warning when Massive Treasury data is used or a `configured_fallback_risk_free_rate` warning when the service has to fall back to the configured server rate. Legacy runs that predate persisted risk-free-rate storage may still rely on best-effort reconstruction when rendered.
 - `market_date_today()` still relies on a hybrid holiday set: static fallback dates plus dynamically refreshed upstream holidays.
 - Sortino ratio uses a sample-corrected denominator (N-1), so some external tools may differ slightly.
 

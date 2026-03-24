@@ -1,12 +1,10 @@
-"""Tests for billing checkout and portal session creation.
+﻿"""Tests for billing checkout and portal session creation.
 
 Verifies correct Stripe price ID lookup, metadata, and return URL validation.
 """
 from __future__ import annotations
 
 import inspect
-
-import pytest
 
 
 class TestCheckoutPriceLookup:

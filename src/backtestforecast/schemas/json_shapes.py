@@ -1,4 +1,4 @@
-"""Lightweight shape validators for JSONB blobs that flow to the frontend.
+﻿"""Lightweight shape validators for JSONB blobs that flow to the frontend.
 
 These use TypedDict for documentation + a log-only validator so that malformed
 data is surfaced early without crashing persisted rows.

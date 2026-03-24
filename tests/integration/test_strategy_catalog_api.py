@@ -1,4 +1,4 @@
-"""Integration tests for GET /v1/strategy-catalog."""
+﻿"""Integration tests for GET /v1/strategy-catalog."""
 from __future__ import annotations
 
 

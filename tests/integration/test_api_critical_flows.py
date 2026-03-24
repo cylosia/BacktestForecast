@@ -1,11 +1,11 @@
-"""De facto E2E integration suite: full lifecycle tests via the HTTP API.
+﻿"""De facto E2E integration suite: full lifecycle tests via the HTTP API.
 
 Covers the synchronous path end-to-end:
-  create backtest → execute inline → GET detail → list runs → compare runs
-  create scan → execute inline → GET recommendations
-  create export → execute inline → download file
-  create template → CRUD lifecycle
-  Stripe webhook → plan upgrade/downgrade
+  create backtest -> execute inline -> GET detail -> list runs -> compare runs
+  create scan -> execute inline -> GET recommendations
+  create export -> execute inline -> download file
+  create template -> CRUD lifecycle
+  Stripe webhook -> plan upgrade/downgrade
   cross-user data isolation
 
 A Celery-inclusive E2E test is not feasible here because it requires a live
@@ -32,8 +32,9 @@ from backtestforecast.backtests.types import (
     TradeResult,
 )
 from backtestforecast.market_data.types import DailyBar
-from backtestforecast.models import User
+from backtestforecast.models import BacktestEquityPoint, BacktestRun, User
 from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
+from backtestforecast.services.backtests import EQUITY_CURVE_LIMIT
 from backtestforecast.services.scans import ScanService
 
 # ---------------------------------------------------------------------------
@@ -279,6 +280,61 @@ def test_async_backtest_full_lifecycle(client, auth_headers, immediate_backtest_
     assert len(history["items"]) == 1
 
 
+def test_backtest_detail_signals_equity_curve_truncation(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    user = db_session.query(User).filter(User.clerk_user_id == "clerk_test_user").one()
+
+    run = BacktestRun(
+        user_id=user.id,
+        status="succeeded",
+        symbol="AAPL",
+        strategy_type="long_call",
+        date_from=datetime(2024, 1, 2, tzinfo=UTC).date(),
+        date_to=datetime(2024, 3, 29, tzinfo=UTC).date(),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        risk_free_rate=Decimal("0.0125"),
+        input_snapshot_json={"risk_free_rate": 0.0125},
+        trade_count=0,
+        win_rate=Decimal("0"),
+        total_roi_pct=Decimal("0"),
+        average_win_amount=Decimal("0"),
+        average_loss_amount=Decimal("0"),
+        average_holding_period_days=Decimal("0"),
+        average_dte_at_open=Decimal("0"),
+        max_drawdown_pct=Decimal("0"),
+        total_commissions=Decimal("0"),
+        total_net_pnl=Decimal("0"),
+        starting_equity=Decimal("10000"),
+        ending_equity=Decimal("10000"),
+    )
+    db_session.add(run)
+    db_session.flush()
+
+    for idx in range(EQUITY_CURVE_LIMIT + 1):
+        db_session.add(
+            BacktestEquityPoint(
+                run_id=run.id,
+                trade_date=datetime(2024, 1, 2, tzinfo=UTC).date() + timedelta(days=idx),
+                equity=Decimal("10000"),
+                cash=Decimal("10000"),
+                position_value=Decimal("0"),
+                drawdown_pct=Decimal("0"),
+            )
+        )
+    db_session.commit()
+
+    detail = client.get(f"/v1/backtests/{run.id}", headers=auth_headers)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["equity_curve_truncated"] is True
+    assert len(body["equity_curve"]) == EQUITY_CURVE_LIMIT
+
+
 def test_backtest_fails_on_enqueue_error(client, auth_headers, stub_execution, _fake_celery):
     def _boom(name: str, kwargs: dict[str, str]) -> None:
         raise ConnectionError("no redis")
@@ -446,6 +502,39 @@ def test_compare_three_runs_premium(client, auth_headers, db_session, immediate_
     assert resp.json()["comparison_limit"] == 8
 
 
+@pytest.mark.parametrize(
+    ("tier", "subscription_status", "symbols", "expected_status", "expected_limit"),
+    [
+        ("free", None, ["AAPL", "MSFT"], 403, None),
+        ("pro", "active", ["AAPL", "MSFT"], 200, 3),
+        ("premium", "active", ["AAPL", "MSFT", "NVDA"], 200, 8),
+    ],
+)
+def test_compare_endpoint_respects_entitlement_tiers(
+    client,
+    auth_headers,
+    db_session,
+    immediate_backtest_execution,
+    tier,
+    subscription_status,
+    symbols,
+    expected_status,
+    expected_limit,
+):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier=tier, subscription_status=subscription_status)
+
+    ids = [_create_backtest(client, auth_headers, symbol=symbol)["id"] for symbol in symbols]
+    response = client.post("/v1/backtests/compare", json={"run_ids": ids}, headers=auth_headers)
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        body = response.json()
+        assert body["comparison_limit"] == expected_limit
+        assert len(body["items"]) == len(symbols)
+    else:
+        assert response.json()["error"]["code"] == "feature_locked"
+
+
 # ===========================================================================
 # 6. Async exports
 # ===========================================================================
@@ -471,6 +560,66 @@ def test_export_csv_async(client, auth_headers, db_session, immediate_backtest_e
     body = download.content.decode("utf-8")
     assert "'=SUM(1,1)" in body
     assert "'@profit-target" in body
+
+
+def test_create_backtest_rejects_empty_entry_rules_at_public_boundary(client, auth_headers, stub_execution, _fake_celery):
+    response = client.post(
+        "/v1/backtests",
+        json=_backtest_payload(entry_rules=[]),
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert "entry rule" in response.json()["error"]["message"].lower()
+
+
+def test_backtest_cancel_then_delete_path(client, auth_headers, stub_execution, _fake_celery):
+    created = _create_backtest(client, auth_headers)
+    assert created["status"] == "queued"
+
+    delete_while_queued = client.delete(f"/v1/backtests/{created['id']}", headers=auth_headers)
+    assert delete_while_queued.status_code == 409
+
+    cancel = client.post(f"/v1/backtests/{created['id']}/cancel", headers=auth_headers)
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "cancelled"
+
+    delete_after_cancel = client.delete(f"/v1/backtests/{created['id']}", headers=auth_headers)
+    assert delete_after_cancel.status_code == 204
+
+    detail = client.get(f"/v1/backtests/{created['id']}", headers=auth_headers)
+    assert detail.status_code == 404
+
+
+def test_export_cancel_then_delete_path(
+    client,
+    auth_headers,
+    db_session,
+    stub_execution,
+    immediate_backtest_execution,
+    _fake_celery,
+):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    run_id = _create_backtest(client, auth_headers)["id"]
+    export = client.post("/v1/exports", json={"run_id": run_id, "format": "csv"}, headers=auth_headers)
+    assert export.status_code == 202
+    export_id = export.json()["id"]
+    assert export.json()["status"] == "queued"
+
+    delete_while_queued = client.delete(f"/v1/exports/{export_id}", headers=auth_headers)
+    assert delete_while_queued.status_code == 409
+
+    cancel = client.post(f"/v1/exports/{export_id}/cancel", headers=auth_headers)
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "cancelled"
+
+    delete_after_cancel = client.delete(f"/v1/exports/{export_id}", headers=auth_headers)
+    assert delete_after_cancel.status_code == 204
+
+    status_response = client.get(f"/v1/exports/{export_id}/status", headers=auth_headers)
+    assert status_response.status_code == 404
 
 
 def test_export_blocked_free_tier(client, auth_headers, immediate_backtest_execution):
@@ -1138,7 +1287,7 @@ def test_ticker_with_digits_accepted_by_forecast_endpoint(
     client.get("/v1/me", headers=auth_headers)
     _set_user_plan(db_session, tier="pro", subscription_status="active")
     resp = client.get("/v1/forecasts/SPY3", headers=auth_headers)
-    # 500 is never acceptable — it means an unhandled server error
+    # 500 is never acceptable - it means an unhandled server error
     assert resp.status_code in (200, 422), (
         f"SPY3 should not return 500; got {resp.status_code}"
     )

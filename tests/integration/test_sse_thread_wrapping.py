@@ -1,4 +1,4 @@
-"""Item 67: Test SSE endpoint handlers use asyncio.to_thread for blocking calls.
+﻿"""Item 67: Test SSE endpoint handlers use asyncio.to_thread for blocking calls.
 
 Verifies that _check_sse_rate and _verify_ownership are called via
 asyncio.to_thread in the SSE endpoint handlers rather than blocking the

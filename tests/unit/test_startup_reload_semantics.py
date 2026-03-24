@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 
 def test_startup_logs_reloadable_and_restart_required_config_surfaces() -> None:

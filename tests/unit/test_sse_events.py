@@ -1,4 +1,4 @@
-"""Unit tests for SSE event publishing and format.
+﻿"""Unit tests for SSE event publishing and format.
 
 Verifies event structure matches what the frontend expects.
 """
@@ -8,8 +8,6 @@ import inspect
 import json
 import uuid
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 class TestPublishJobStatus:

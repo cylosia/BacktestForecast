@@ -1,5 +1,5 @@
-"""Contract test: verify critical enum values are consistent."""
-from backtestforecast.schemas.common import PlanTier, JobStatus
+﻿"""Contract test: verify critical enum values are consistent."""
+from backtestforecast.schemas.common import JobStatus, PlanTier
 
 
 def test_plan_tier_values():

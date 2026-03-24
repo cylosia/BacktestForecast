@@ -1,4 +1,4 @@
-"""Tests covering the 10 testing gaps identified in the production audit.
+﻿"""Tests covering the 10 testing gaps identified in the production audit.
 
 Each test validates a specific fix that was applied during the audit.
 """
@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -256,15 +256,17 @@ class TestExportExpirationLifecycle:
 # ---------------------------------------------------------------------------
 
 class TestScanMemoryCap:
-    def test_candidate_cap_is_bounded(self):
+    def test_candidate_heap_is_bounded(self):
         from backtestforecast.services.scans import ScanService
 
-        assert ScanService._MAX_CANDIDATES_IN_MEMORY <= 2000, (
-            "Candidate cap must be bounded to prevent OOM"
+        assert ScanService._MIN_TOP_CANDIDATE_BUFFER <= 2000, (
+            "Top-candidate buffer must be bounded to prevent OOM"
         )
-        assert ScanService._MAX_CANDIDATES_IN_MEMORY >= 100, (
-            "Candidate cap must be large enough for meaningful scans"
+        assert ScanService._MIN_TOP_CANDIDATE_BUFFER >= 10, (
+            "Top-candidate buffer must be large enough for meaningful scans"
         )
+        source = inspect.getsource(ScanService._execute_scan)
+        assert "keep_limit = max(payload.max_recommendations * 3, self._MIN_TOP_CANDIDATE_BUFFER)" in source
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +309,7 @@ class TestDecimalConversionPrecision:
     def test_cache_bounded(self):
         from backtestforecast.backtests.engine import _D, _D_CACHE, _D_CACHE_MAX
 
-        initial_size = len(_D_CACHE)
+        len(_D_CACHE)
         for i in range(10):
             _D(float(i) + 0.123456789)
         assert len(_D_CACHE) <= _D_CACHE_MAX
@@ -340,6 +342,7 @@ class TestSettingsInvalidationSafety:
 
     def test_invalidation_does_not_deadlock(self):
         import warnings as _warnings
+
         from backtestforecast.config import (
             get_settings,
             invalidate_settings,

@@ -1,4 +1,4 @@
-"""Test that CreateBacktestRunRequest accepts an optional risk_free_rate override.
+﻿"""Test that CreateBacktestRunRequest accepts an optional risk_free_rate override.
 
 Users need to specify a custom risk-free rate for historical backtests
 where the default 4.5% is inappropriate (e.g., ZIRP era 2009-2021).

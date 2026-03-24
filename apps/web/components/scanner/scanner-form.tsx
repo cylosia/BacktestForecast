@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
@@ -231,16 +231,18 @@ export function ScannerForm({
     new Set(["long_call", "long_put"]),
   );
 
-  const allowedStrategySet = new Set(
-    (
-      form.mode === "advanced"
-        ? (advancedAllowedStrategyTypes.length > 0
-          ? advancedAllowedStrategyTypes
-          : ADVANCED_STRATEGIES.map((strategy) => strategy.value))
-        : (basicAllowedStrategyTypes.length > 0
-          ? basicAllowedStrategyTypes
-          : BASIC_STRATEGIES.map((strategy) => strategy.value))
-    ),
+  const allowedStrategySet = useMemo(
+    () =>
+      new Set(
+        form.mode === "advanced"
+          ? (advancedAllowedStrategyTypes.length > 0
+            ? advancedAllowedStrategyTypes
+            : ADVANCED_STRATEGIES.map((strategy) => strategy.value))
+          : (basicAllowedStrategyTypes.length > 0
+            ? basicAllowedStrategyTypes
+            : BASIC_STRATEGIES.map((strategy) => strategy.value)),
+      ),
+    [advancedAllowedStrategyTypes, basicAllowedStrategyTypes, form.mode],
   );
   const strategyGroups = (catalogGroups.length > 0 ? catalogGroups : buildFallbackStrategyGroups(form.mode))
     .map((group) => ({

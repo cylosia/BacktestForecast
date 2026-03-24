@@ -6,11 +6,7 @@
 
 `docs/current-operational-assumptions.md` is the authoritative current-state reference for operational assumptions. Use the runbook for response steps, but prefer that page and `docs/workflow-trace.md` when validating what the runtime is supposed to do today.
 
-<<<<<<< codex/count-implementable-issues-in-a-session-i61zks
 See `docs/README.md` for the split between current operational docs and historical audit archives.
-
-=======
->>>>>>> main
 
 ### `/v1/meta` during auth-adjacent outages
 
@@ -52,6 +48,7 @@ If the Stripe cancellation or customer deletion fails (logged as `account.stripe
 1. The user account is still deleted (Stripe failure does not block deletion)
 2. Look up the orphan Stripe customer/subscription in the Stripe dashboard using the IDs from the audit event metadata
 3. Cancel the subscription manually and delete or archive the customer
+4. Follow `docs/support-orphaned-billing-cleanup.md` for the support workflow and escalation path
 
 ### How to find orphan Stripe customers
 
@@ -77,6 +74,7 @@ Query the `audit_events` table for `event_type = 'account.deleted'` and cross-re
 2. Check Redis connectivity
 3. Check for queue backlog: `celery -A apps.worker.app.celery_app.celery_app inspect active`
 4. Review worker logs for OOM or task timeouts
+5. Follow `docs/support-stuck-jobs.md` for the user-facing remediation order and escalation path
 
 ### HighTaskFailureRate
 **Cause:** External API outage (Massive, Stripe), DB connection pool exhaustion, or code bug.

@@ -1,4 +1,4 @@
-"""Backfill financial metrics for historic BacktestRun rows.
+﻿"""Backfill financial metrics for historic BacktestRun rows.
 
 Reads all succeeded runs where ``profit_factor IS NULL`` (pre-migration-0012
 rows), recomputes the summary from persisted trades + equity curve, and writes

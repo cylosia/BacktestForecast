@@ -1,14 +1,15 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, noload, selectinload
 
 from backtestforecast.models import SweepJob, SweepResult
+from backtestforecast.repositories.pagination import apply_cursor_window, list_with_total
 
 _MAX_PAGE_SIZE = 200
 
@@ -34,25 +35,42 @@ class SweepJobRepository:
         offset: int = 0,
         cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[SweepJob]:
-        if offset > 0 and cursor_before is not None:
-            raise ValueError("Cannot combine offset and cursor_before pagination.")
-        limit = max(limit, 1)
-        offset = max(offset, 0)
         stmt = (
             select(SweepJob)
             .where(SweepJob.user_id == user_id)
             .options(noload(SweepJob.results))
         )
-        if cursor_before is not None:
-            cursor_dt, cursor_id = cursor_before
-            stmt = stmt.where(
-                or_(
-                    SweepJob.created_at < cursor_dt,
-                    and_(SweepJob.created_at == cursor_dt, SweepJob.id < cursor_id),
-                )
-            )
-        stmt = stmt.order_by(desc(SweepJob.created_at), desc(SweepJob.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+        stmt = apply_cursor_window(
+            stmt,
+            model=SweepJob,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
         return list(self.session.scalars(stmt))
+
+    def list_for_user_with_count(
+        self,
+        user_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+        cursor_before: tuple[datetime, UUID] | None = None,
+    ) -> tuple[list[SweepJob], int]:
+        return list_with_total(
+            self.session,
+            base_stmt=(
+                select(SweepJob)
+                .where(SweepJob.user_id == user_id)
+                .options(noload(SweepJob.results))
+            ),
+            count_stmt=select(func.count(SweepJob.id)).where(SweepJob.user_id == user_id),
+            model=SweepJob,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
 
     def count_for_user(self, user_id: UUID) -> int:
         stmt = select(func.count(SweepJob.id)).where(SweepJob.user_id == user_id)
@@ -182,7 +200,8 @@ class SweepJobRepository:
         Worker code may omit *user_id* because the task already validated
         ownership at dispatch time.
         """
-        from sqlalchemy import delete as sa_delete, exists as sa_exists
+        from sqlalchemy import delete as sa_delete
+        from sqlalchemy import exists as sa_exists
 
         if user_id is not None:
             owns = self.session.scalar(

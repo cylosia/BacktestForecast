@@ -1,4 +1,4 @@
-"""Test the transactional outbox pattern: inline send failure leaves job queued.
+﻿"""Test the transactional outbox pattern: inline send failure leaves job queued.
 
 When dispatch_celery_task commits the job + OutboxMessage but the inline
 Celery send_task fails, the job must remain in "queued" status (not "failed")
@@ -6,9 +6,8 @@ so that poll_outbox can recover delivery.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -88,6 +87,7 @@ class TestOutboxDispatchRecovery:
         committed, the job must stay in 'queued' (not 'failed') so
         poll_outbox can recover it."""
         import structlog
+
         from apps.api.app.dispatch import DispatchResult, dispatch_celery_task
 
         user = _create_user(db_session)
@@ -120,6 +120,7 @@ class TestOutboxDispatchRecovery:
         """The OutboxMessage created by dispatch must stay 'pending' so
         poll_outbox picks it up."""
         import structlog
+
         from apps.api.app.dispatch import dispatch_celery_task
 
         user = _create_user(db_session)
@@ -147,7 +148,9 @@ class TestOutboxDispatchRecovery:
     def test_outbox_marked_sent_on_success(self, db_session, _mock_celery_module):
         """When inline send_task succeeds, the OutboxMessage should be 'sent'."""
         import types as _types
+
         import structlog
+
         from apps.api.app.dispatch import DispatchResult, dispatch_celery_task
 
         user = _create_user(db_session)
@@ -176,7 +179,9 @@ class TestOutboxDispatchRecovery:
     def test_idempotent_dispatch_skips_already_dispatched(self, db_session, _mock_celery_module):
         """Calling dispatch twice on the same job should skip the second call."""
         import types as _types
+
         import structlog
+
         from apps.api.app.dispatch import DispatchResult, dispatch_celery_task
 
         user = _create_user(db_session)

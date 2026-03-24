@@ -1,4 +1,4 @@
-"""Verify dispatch retry constants are reasonable."""
+﻿"""Verify dispatch retry constants are reasonable."""
 from apps.api.app.dispatch import _SEND_MAX_ATTEMPTS, _SEND_RETRY_DELAY
 
 

@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CompareEquityCurves } from "@/components/backtests/compare-equity-curves";
+import { getComparePartialDataMessages } from "@/lib/jobs/ui-state";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -116,7 +117,7 @@ export default async function ComparePage({
   const allIds = idsParam.split(",").map((s) => s.trim()).filter(Boolean);
   const validIds = allIds.filter((id) => UUID_RE.test(id));
   const invalidCount = allIds.length - validIds.length;
-  const MAX_COMPARE_IDS = 10;
+  const MAX_COMPARE_IDS = 8;
   const runIds = validIds.slice(0, MAX_COMPARE_IDS);
   const truncated = validIds.length > MAX_COMPARE_IDS;
 
@@ -144,6 +145,7 @@ export default async function ComparePage({
   try {
     const data = await compareBacktests(runIds);
     const runs = data.items;
+    const partialDataMessages = getComparePartialDataMessages(data);
 
     if (runs.length < 2) {
       return (
@@ -191,19 +193,14 @@ export default async function ComparePage({
             ) : null}
             {truncated ? (
               <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
-                Only the first 10 run IDs were used. Extra IDs were ignored.
+                Only the first 8 run IDs were used. Extra IDs were ignored.
               </p>
             ) : null}
-            {data.trades_truncated ? (
-              <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
-                Trade lists were truncated by the API for at least one run in this comparison. Metrics still reflect the full stored runs.
+            {partialDataMessages.map((message, index) => (
+              <p key={`partial-${index}`} className="mt-1 text-sm text-amber-600 dark:text-amber-400">
+                {message}
               </p>
-            ) : null}
-            {runs.some((run) => run.equity_curve_truncated) ? (
-              <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
-                One or more equity curves were truncated by the API, so the overlaid chart is only a partial visual sample.
-              </p>
-            ) : null}
+            ))}
           </div>
         </div>
 
@@ -240,6 +237,9 @@ export default async function ComparePage({
             <CardTitle>Metrics comparison</CardTitle>
             <CardDescription>
               Bold values highlight the best performer per metric across all compared runs.
+              {partialDataMessages.length > 0
+                ? " These values come from persisted full-run aggregates, not the partial raw payloads shown below."
+                : ""}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -303,7 +303,7 @@ export default async function ComparePage({
                     </span>
                     <p className="font-medium">{runLabel(run)}</p>
                   </div>
-                  <p className="mt-2 text-2xl font-semibold tracking-tight">{run.trades.length} trades</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-tight">{safeNum(run.summary?.trade_count)} trades</p>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {formatPercent(run.summary?.win_rate)} win rate · Max DD {formatPercent(run.summary?.max_drawdown_pct)}
                   </p>

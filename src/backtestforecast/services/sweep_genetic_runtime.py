@@ -1,7 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import time as _time
-from decimal import Decimal
 from typing import Any
 
 import structlog

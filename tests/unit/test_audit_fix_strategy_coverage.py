@@ -1,13 +1,16 @@
-"""Verify entitlement strategy sets cover all entries in the strategy registry."""
+﻿"""Verify entitlement strategy sets cover all entries in the strategy registry."""
 from __future__ import annotations
 
 
 class TestStrategyCoverage:
     def test_all_registry_strategies_in_entitlements(self):
         from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
-        from backtestforecast.billing.entitlements import BASIC_STRATEGIES, ADVANCED_STRATEGIES
+        from backtestforecast.billing.entitlements import (
+            ADVANCED_SCANNER_STRATEGIES,
+            BASIC_SCANNER_STRATEGIES,
+        )
 
-        all_entitled = BASIC_STRATEGIES | ADVANCED_STRATEGIES
+        all_entitled = BASIC_SCANNER_STRATEGIES | ADVANCED_SCANNER_STRATEGIES
         registry_keys = set(STRATEGY_REGISTRY.keys())
 
         # Exclude wheel (special engine) and custom leg strategies

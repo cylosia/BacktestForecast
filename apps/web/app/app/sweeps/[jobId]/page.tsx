@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { SweepJobPoller } from "@/components/sweeps/sweep-job-poller";
 import { SweepResultList } from "@/components/sweeps/sweep-result-list";
 import { statusBadgeVariant } from "@/lib/ui/status-badge";
+import { getCancellationMessage } from "@/lib/jobs/ui-state";
 
 export const dynamic = "force-dynamic";
 
@@ -137,6 +138,18 @@ export default async function SweepDetailPage({
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">{job.error_message}</p>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {job.status === "cancelled" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Sweep cancelled</CardTitle>
+              <CardDescription>This sweep stopped before all candidate configurations were evaluated.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">{getCancellationMessage("sweep", job.error_code)}</p>
             </CardContent>
           </Card>
         ) : null}

@@ -1,9 +1,10 @@
-"""Verify CAGR edge cases produce None instead of misleading values."""
+﻿"""Verify CAGR edge cases produce None instead of misleading values."""
 from __future__ import annotations
+
+from datetime import date
 
 from backtestforecast.backtests.summary import _compute_cagr
 from backtestforecast.backtests.types import EquityPointResult
-from datetime import date
 
 
 def _make_curve(start: date, end: date, start_eq: float, end_eq: float) -> list[EquityPointResult]:

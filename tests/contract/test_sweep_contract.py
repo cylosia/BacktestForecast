@@ -1,4 +1,4 @@
-"""Contract test: verify sweep TypeScript types include all backend schema fields."""
+﻿"""Contract test: verify sweep TypeScript types include all backend schema fields."""
 from __future__ import annotations
 
 from pathlib import Path

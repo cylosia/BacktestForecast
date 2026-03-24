@@ -1,8 +1,7 @@
-"""Tests for CircuitBreaker trip and recovery behaviour."""
+﻿"""Tests for CircuitBreaker trip and recovery behaviour."""
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
 
 import pytest
 

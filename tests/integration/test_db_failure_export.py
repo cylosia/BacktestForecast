@@ -1,4 +1,4 @@
-"""Integration tests: export behavior when DB fails during execution.
+﻿"""Integration tests: export behavior when DB fails during execution.
 
 Verifies proper rollback and job status update when DB operations fail.
 """
@@ -20,7 +20,6 @@ def test_export_marks_job_failed_and_rolls_back_on_db_failure(
     """When DB fails during export execution, session rolls back and job is marked failed."""
     from datetime import UTC, datetime, timedelta
     from decimal import Decimal
-    from uuid import uuid4
 
     from backtestforecast.models import BacktestRun, User
 
@@ -82,9 +81,8 @@ def test_export_marks_job_failed_and_rolls_back_on_db_failure(
             service.backtest_service,
             "get_run_for_owner",
             side_effect=SQLAlchemyError("connection lost"),
-        ):
-            with pytest.raises(SQLAlchemyError):
-                service.execute_export_by_id(export_id)
+        ), pytest.raises(SQLAlchemyError):
+            service.execute_export_by_id(export_id)
 
     # Verify job was marked failed (rollback + re-commit of failure status)
     with session_factory() as session:

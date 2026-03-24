@@ -1,4 +1,4 @@
-"""Test: webhook error handling distinguishes deterministic vs transient errors.
+﻿"""Test: webhook error handling distinguishes deterministic vs transient errors.
 
 Deterministic AppErrors should return 200 (acknowledged, don't retry).
 Transient exceptions should return 500 (Stripe should retry).
@@ -8,11 +8,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
-from backtestforecast.errors import AppError, AppValidationError, ExternalServiceError
-
+from backtestforecast.errors import AppValidationError, ExternalServiceError
 
 _WEBHOOK_BODY = b'{"type": "test"}'
 _WEBHOOK_HEADERS = {"Stripe-Signature": "t=1,v1=abc"}
@@ -66,7 +64,7 @@ def test_webhook_type_error_returns_500(client: TestClient):
             headers=_WEBHOOK_HEADERS,
         )
         assert response.status_code == 500, (
-            "TypeError must produce 500 so Stripe retries — "
+            "TypeError must produce 500 so Stripe retries - "
             "returning 200 would permanently lose the webhook event"
         )
 

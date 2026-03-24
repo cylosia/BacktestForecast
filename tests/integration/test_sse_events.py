@@ -1,4 +1,4 @@
-"""SSE event endpoint integration tests.
+﻿"""SSE event endpoint integration tests.
 
 Tests verify ownership checks, stream initiation, and the publish/subscribe
 contract.  Redis is patched with an in-process async channel so these tests
@@ -195,7 +195,6 @@ async def test_sse_slot_ttl_refreshed_on_every_acquire():
 async def test_sse_reconnection_invalidates_pool():
     """Verify that on reconnection, the old Redis pool is invalidated before
     a fresh pool is obtained."""
-    from apps.api.app.routers.events import _get_async_redis
 
     pool1 = MagicMock()
     pool2 = MagicMock()

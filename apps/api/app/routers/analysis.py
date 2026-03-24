@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Annotated, Any, Generator
+from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
@@ -15,17 +17,22 @@ from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
+from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import (
     AnalysisDetailResponse,
     AnalysisListResponse,
     AnalysisSummaryResponse,
+    AnalysisTopResult,
     CreateAnalysisRequest,
+    LandscapeCell,
+    RegimeDetail,
 )
 from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS
-from backtestforecast.schemas.common import sanitize_error_message
+from backtestforecast.schemas.common import RemediationActionsResponse, sanitize_error_message
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
+from backtestforecast.services.remediation_actions import build_job_remediation_actions
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 logger = structlog.get_logger("api.analysis")
@@ -103,11 +110,23 @@ def get_analysis(
         summary = _to_summary(analysis)
         detail_kwargs = summary.model_dump()
         if analysis.status == "succeeded":
+            integrity_warnings: list[str] = []
             detail_kwargs.update(
-                regime=analysis.regime_json,
-                landscape=analysis.landscape_json,
-                top_results=analysis.top_results_json,
-                forecast=analysis.forecast_json,
+                regime=_validate_analysis_regime(analysis.regime_json, integrity_warnings),
+                landscape=_validate_analysis_list(
+                    LandscapeCell,
+                    analysis.landscape_json,
+                    field_name="landscape_json",
+                    warnings=integrity_warnings,
+                ),
+                top_results=_validate_analysis_list(
+                    AnalysisTopResult,
+                    analysis.top_results_json,
+                    field_name="top_results_json",
+                    warnings=integrity_warnings,
+                ),
+                forecast=_validate_analysis_forecast(analysis.forecast_json, integrity_warnings),
+                integrity_warnings=integrity_warnings,
             )
         return AnalysisDetailResponse(**detail_kwargs)
 
@@ -134,7 +153,7 @@ def get_analysis_status(
 @router.delete("/{analysis_id}", status_code=204)
 def delete_analysis(
     analysis_id: UUID,
-    user: User = Depends(get_current_user_readonly),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> None:
@@ -147,6 +166,46 @@ def delete_analysis(
     )
     with _analysis_service(db) as service:
         service.delete_for_user(analysis_id, user.id)
+
+
+@router.post("/{analysis_id}/cancel", response_model=AnalysisSummaryResponse)
+def cancel_analysis(
+    analysis_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> AnalysisSummaryResponse:
+    get_rate_limiter().check(
+        bucket="analysis:delete",
+        actor_key=str(user.id),
+        limit=settings.delete_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with _analysis_service(db) as service:
+        return _to_summary(service.cancel_for_user(analysis_id, user.id))
+
+
+@router.get("/{analysis_id}/remediation-actions", response_model=RemediationActionsResponse)
+def get_analysis_remediation_actions(
+    analysis_id: UUID,
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
+    settings: Settings = Depends(get_settings),
+) -> RemediationActionsResponse:
+    get_rate_limiter().check(
+        bucket="analysis:read",
+        actor_key=str(user.id),
+        limit=settings.analysis_read_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with _analysis_service(db) as service:
+        analysis = service.get_analysis(user, analysis_id)
+    return build_job_remediation_actions(
+        resource_type="analysis",
+        resource_id=str(analysis_id),
+        status=analysis.status,
+        base_path=f"/v1/analysis/{analysis_id}",
+    )
 
 
 @router.get("", response_model=AnalysisListResponse)
@@ -165,33 +224,21 @@ def list_analyses(
         limit=settings.analysis_read_rate_limit,
         window_seconds=settings.rate_limit_window_seconds,
     )
-    from backtestforecast.utils import decode_cursor, encode_cursor
-
-    cursor_before = None
-    if cursor:
-        cursor_before = decode_cursor(cursor)
-        if cursor_before is None:
-            from backtestforecast.errors import ValidationError
-            raise ValidationError("Invalid pagination cursor.")
-        offset = 0
+    cursor_before, offset = parse_cursor_param(cursor) if cursor else (None, offset)
 
     effective_limit = min(limit, 50)
     with _analysis_service(db) as service:
-        analyses = service.list_for_user(
+        analyses, total = service.list_for_user(
             user, limit=effective_limit + 1, offset=offset,
             cursor_before=cursor_before,
         )
-        has_next = len(analyses) > effective_limit
-        if has_next:
-            analyses = analyses[:effective_limit]
-        total = service.count_for_user(user)
-        next_cursor = encode_cursor(analyses[-1].created_at, analyses[-1].id) if has_next and analyses else None
+        page = finalize_cursor_page(analyses, total=total, offset=offset, limit=effective_limit)
         return AnalysisListResponse(
-            items=[_to_summary(a) for a in analyses],
-            total=total,
-            offset=offset,
-            limit=effective_limit,
-            next_cursor=next_cursor,
+            items=[_to_summary(a) for a in page.items],
+            total=page.total,
+            offset=page.offset,
+            limit=page.limit,
+            next_cursor=page.next_cursor,
         )
 
 
@@ -202,3 +249,51 @@ def _to_summary(analysis: Any) -> AnalysisSummaryResponse:
         summary.error_code = diagnostic[0]
         summary.error_message = diagnostic[1]
     return summary
+
+
+def _validate_analysis_regime(regime_json: Any, warnings: list[str]) -> RegimeDetail | None:
+    if regime_json is None:
+        return None
+    try:
+        return RegimeDetail.model_validate(regime_json)
+    except ValidationError:
+        logger.warning("analysis.invalid_regime_json", got_type=type(regime_json).__name__, exc_info=True)
+        warnings.append("Stored regime data was corrupted and could not be shown.")
+        return None
+
+
+def _validate_analysis_forecast(forecast_json: Any, warnings: list[str]) -> dict[str, Any] | None:
+    if forecast_json is None:
+        return None
+    if isinstance(forecast_json, dict):
+        return forecast_json
+    logger.warning("analysis.invalid_forecast_json", got_type=type(forecast_json).__name__)
+    warnings.append("Stored forecast data was corrupted and could not be shown.")
+    return None
+
+
+def _validate_analysis_list(model_cls: type, payload: Any, *, field_name: str, warnings: list[str]) -> list[Any]:
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        logger.warning("analysis.invalid_json_collection", field=field_name, got_type=type(payload).__name__)
+        warnings.append(f"Stored {field_name.removesuffix('_json').replace('_', ' ')} data was corrupted and could not be shown.")
+        return []
+    validated: list[Any] = []
+    dropped_items = 0
+    for item in payload:
+        try:
+            validated.append(model_cls.model_validate(item))
+        except ValidationError:
+            dropped_items += 1
+            logger.warning(
+                "analysis.invalid_json_item_skipped",
+                field=field_name,
+                model=getattr(model_cls, "__name__", str(model_cls)),
+                got_type=type(item).__name__,
+                item_keys=list(item.keys()) if isinstance(item, dict) else None,
+            )
+    if dropped_items:
+        label = field_name.removesuffix("_json").replace("_", " ")
+        warnings.append(f"{dropped_items} stored {label} item(s) were corrupted and were omitted.")
+    return validated

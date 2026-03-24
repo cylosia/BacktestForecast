@@ -1,17 +1,14 @@
-"""Verify pipeline lock timeout exceeds task hard time limit."""
+﻿"""Verify pipeline lock timeout exceeds task hard time limit."""
 from __future__ import annotations
 
 import inspect
 
-import pytest
-
 from apps.worker.app.tasks import nightly_scan_pipeline
-
 
 # Values from pipeline.nightly_scan task definition
 PIPELINE_SOFT_TIME_LIMIT = 1800
 PIPELINE_HARD_TIME_LIMIT = 1860
-PIPELINE_LOCK_TIMEOUT = 1920
+PIPELINE_LOCK_TIMEOUT = 2100
 
 
 def test_pipeline_lock_timeout_exceeds_hard_time_limit():
@@ -30,4 +27,4 @@ def test_pipeline_lock_timeout_exceeds_soft_time_limit():
 def test_pipeline_uses_expected_lock_timeout():
     """Verify the source uses the expected lock timeout value."""
     source = inspect.getsource(nightly_scan_pipeline)
-    assert f"timeout={PIPELINE_LOCK_TIMEOUT}" in source or "timeout=1920" in source
+    assert f"timeout={PIPELINE_LOCK_TIMEOUT}" in source

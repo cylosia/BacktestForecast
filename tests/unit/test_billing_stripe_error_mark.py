@@ -1,13 +1,13 @@
-"""Tests for BillingService._mark_stripe_event_error after rollback.
+﻿"""Tests for BillingService._mark_stripe_event_error after rollback.
 
 NOTE: Uses ``BillingService.__new__()`` to bypass ``__init__`` and test the
 method in isolation with mock dependencies.  If ``__init__`` gains new
 required attributes, these tests will still pass but won't catch init
-regressions — integration tests cover that path.
+regressions - integration tests cover that path.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 
 def test_mark_stripe_event_error_handles_rollback():

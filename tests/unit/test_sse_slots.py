@@ -1,4 +1,4 @@
-"""Basic SSE slot structure test."""
+﻿"""Basic SSE slot structure test."""
 from apps.api.app.routers.events import SSE_MAX_CONNECTIONS_PER_USER, SSE_MAX_CONNECTIONS_PROCESS
 
 

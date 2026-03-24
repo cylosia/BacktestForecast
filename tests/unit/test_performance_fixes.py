@@ -1,4 +1,4 @@
-"""Tests for performance fixes.
+﻿"""Tests for performance fixes.
 
 Covers:
 - #2: Sweep candidate periodic trimming

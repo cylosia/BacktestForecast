@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 from uuid import UUID
@@ -13,21 +13,20 @@ from sqlalchemy.pool import StaticPool
 from backtestforecast.billing.entitlements import ExportFormat
 from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, OutboxMessage, ScannerJob, User
+from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import CreateAnalysisRequest
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.schemas.exports import CreateExportRequest
 from backtestforecast.schemas.scans import CreateScannerJobRequest
 from backtestforecast.schemas.sweeps import CreateSweepRequest
-from backtestforecast.services.dispatch_recovery import repair_stranded_jobs
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.dispatch_recovery import repair_stranded_jobs
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
-from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
-UTC = timezone.utc
+UTC = UTC
 
 
 @pytest.fixture(autouse=True)

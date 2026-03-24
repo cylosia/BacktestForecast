@@ -1,7 +1,7 @@
-"""Tests verifying critical audit fixes 21-30 remain in place."""
+﻿"""Tests verifying critical audit fixes 21-30 remain in place."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +13,7 @@ class TestPipelineForecasterCacheKeyIncludesHorizon:
 
     def test_cache_key_differs_by_horizon_days(self):
         import inspect
+
         from backtestforecast.pipeline.adapters import PipelineForecaster
         source = inspect.getsource(PipelineForecaster.get_forecast)
         assert "(symbol, end_date, horizon_days)" in source, (
@@ -52,6 +53,7 @@ class TestEngineRejectsEntryWhenCashGoesNegative:
 
     def test_negative_cash_entry_is_rejected(self):
         import inspect
+
         from backtestforecast.backtests.engine import OptionsBacktestEngine
 
         source = inspect.getsource(OptionsBacktestEngine.run)
@@ -69,6 +71,7 @@ class TestDailyPicksHistoryChecksFeatureFlag:
 
     def test_history_endpoint_checks_feature_flag(self):
         import inspect
+
         from apps.api.app.routers.daily_picks import get_pipeline_history
 
         source = inspect.getsource(get_pipeline_history)
@@ -86,6 +89,7 @@ class TestPoolShutdownUsesWait:
 
     def test_deep_analysis_pool_shutdown_uses_wait_true(self):
         import inspect
+
         from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 
         source = inspect.getsource(SymbolDeepAnalysisService)

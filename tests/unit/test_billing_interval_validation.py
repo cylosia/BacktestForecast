@@ -1,12 +1,14 @@
-"""Test that billing interval fields use enum/pattern validation.
+﻿"""Test that billing interval fields use enum/pattern validation.
 
 Regression test for the contract mismatch where subscription_billing_interval
 accepted any string without validation, despite the DB CHECK constraint.
 """
 from __future__ import annotations
 
-from pydantic import ValidationError
 import pytest
+from pydantic import ValidationError
+
+from backtestforecast.billing.entitlements import BillingInterval
 
 
 class TestCheckoutSessionResponse:
@@ -18,7 +20,7 @@ class TestCheckoutSessionResponse:
             tier="pro",
             billing_interval="monthly",
         )
-        assert str(r.billing_interval) == "monthly"
+        assert r.billing_interval == BillingInterval.MONTHLY
 
     def test_valid_billing_interval_yearly(self):
         from backtestforecast.schemas.billing import CheckoutSessionResponse
@@ -28,7 +30,7 @@ class TestCheckoutSessionResponse:
             tier="premium",
             billing_interval="yearly",
         )
-        assert str(r.billing_interval) == "yearly"
+        assert r.billing_interval == BillingInterval.YEARLY
 
     def test_invalid_billing_interval_rejected(self):
         from backtestforecast.schemas.billing import CheckoutSessionResponse
@@ -56,7 +58,7 @@ class TestBillingStateResponse:
     def test_valid_billing_interval(self):
         from backtestforecast.schemas.billing import BillingStateResponse
         r = BillingStateResponse(plan_tier="pro", subscription_billing_interval="monthly")
-        assert str(r.subscription_billing_interval) == "monthly"
+        assert r.subscription_billing_interval == BillingInterval.MONTHLY
 
     def test_none_billing_interval(self):
         from backtestforecast.schemas.billing import BillingStateResponse

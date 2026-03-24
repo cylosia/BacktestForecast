@@ -1,4 +1,4 @@
-"""Tests for daily_picks date validation using market_date_today()."""
+﻿"""Tests for daily_picks date validation using market_date_today()."""
 from __future__ import annotations
 
 from datetime import timedelta

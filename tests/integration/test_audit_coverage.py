@@ -1,4 +1,4 @@
-"""Integration tests covering gaps identified in the production audit.
+﻿"""Integration tests covering gaps identified in the production audit.
 
 Each test class addresses a specific gap:
 - DELETE endpoints for every resource type
@@ -11,12 +11,11 @@ Each test class addresses a specific gap:
 from __future__ import annotations
 
 import contextlib
-from typing import Generator
+from collections.abc import Generator
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session, sessionmaker
 
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 

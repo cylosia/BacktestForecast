@@ -1,13 +1,28 @@
-"""Tests that rate limiting infrastructure is active and reachable."""
+﻿"""Tests that rate limiting infrastructure is active and reachable."""
 from __future__ import annotations
 
-from backtestforecast.security.rate_limits import get_rate_limiter
+import inspect
+from types import SimpleNamespace
+
+from backtestforecast.security.rate_limits import RateLimiter
+
+
+def _memory_only_limiter() -> RateLimiter:
+    settings = SimpleNamespace(
+        rate_limit_fail_closed=False,
+        rate_limit_prefix="test-rate-limit",
+        rate_limit_memory_max_keys=1000,
+        redis_cache_url="redis://localhost:6379/0",
+        rate_limit_degraded_memory_fallback=False,
+    )
+    return RateLimiter(settings=settings)
 
 
 def test_rate_limiter_initialization():
     """Rate limiter should be initialized and callable."""
-    limiter = get_rate_limiter()
+    limiter = _memory_only_limiter()
     assert limiter is not None
+    limiter._redis_retry_after = float("inf")
     limiter.check(bucket="test:bucket", actor_key="test-actor", limit=100, window_seconds=60)
 
 
@@ -15,8 +30,9 @@ def test_rate_limiter_blocks_when_exceeded():
     """Rate limiter should block after limit is exceeded."""
     from backtestforecast.errors import RateLimitError
 
-    limiter = get_rate_limiter()
+    limiter = _memory_only_limiter()
     limiter.reset()
+    limiter._redis_retry_after = float("inf")
 
     blocked = False
     try:
@@ -34,20 +50,9 @@ def test_rate_limiter_blocks_when_exceeded():
 
 
 def test_me_endpoint_calls_rate_limiter_check():
-    """Verify the /v1/me endpoint calls get_rate_limiter().check() for rate limiting."""
-    from unittest.mock import MagicMock, patch
+    """Verify the /v1/me endpoint applies rate limiting."""
+    from apps.api.app.routers.me import get_me
 
-    limiter = get_rate_limiter()
-    original_check = limiter.check
-    check_calls: list[dict] = []
-
-    def tracking_check(**kwargs):
-        check_calls.append(kwargs)
-        return original_check(**kwargs)
-
-    with patch.object(limiter, "check", side_effect=tracking_check):
-        me_calls = [c for c in check_calls if c.get("bucket", "").startswith("me")]
-
-    assert limiter is not None
-    limiter.check(bucket="me:get", actor_key="test-actor", limit=100, window_seconds=60)
-    assert True, "Rate limiter check can be called for /v1/me bucket without error"
+    source = inspect.getsource(get_me)
+    assert 'bucket="me:read"' in source
+    assert "get_rate_limiter().check(" in source

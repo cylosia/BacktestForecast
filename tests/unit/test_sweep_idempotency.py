@@ -1,4 +1,4 @@
-"""Test SweepJobRepository.get_by_idempotency_key behavioral semantics.
+﻿"""Test SweepJobRepository.get_by_idempotency_key behavioral semantics.
 
 Tests verify that the repository correctly filters sweep jobs by status,
 returning None for failed/cancelled jobs and returning active jobs for
@@ -9,8 +9,6 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
-
-import pytest
 
 from backtestforecast.models import SweepJob
 from backtestforecast.repositories.sweep_jobs import SweepJobRepository

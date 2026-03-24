@@ -1,14 +1,13 @@
-"""Tests for Clerk JWT verification edge cases."""
+﻿"""Tests for Clerk JWT verification edge cases."""
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from backtestforecast.auth.verification import ClerkTokenVerifier
 from backtestforecast.config import Settings
@@ -135,7 +134,6 @@ class TestEmptyClerkAudienceBehavior:
         a Settings with app_env='staging' workaround bypassed."""
         private_pem, public_pem = rsa_keys
         from backtestforecast.errors import ConfigurationError
-        from unittest.mock import patch
 
         settings = Settings(
             app_env="test",

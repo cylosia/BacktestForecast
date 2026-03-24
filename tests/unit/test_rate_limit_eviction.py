@@ -1,4 +1,4 @@
-"""Test that the rate limiter in-memory fallback never evicts current-bucket entries.
+﻿"""Test that the rate limiter in-memory fallback never evicts current-bucket entries.
 
 The RateLimiter._check_memory method has a three-tier eviction strategy
 when the number of tracked keys exceeds rate_limit_memory_max_keys:
@@ -87,7 +87,7 @@ class TestEvictionPreservesCurrentBucket:
         limiter._memory_counters = counters
 
         with patch("time.time", return_value=fixed_time):
-            count, bucket = limiter._check_memory("target", window_seconds)
+            count, _bucket = limiter._check_memory("target", window_seconds)
 
         assert count == 11, "Should be 10 + 1 (incremented, not reset)"
         assert limiter._memory_counters[target_key_full] == (current_bucket, 11)
@@ -107,7 +107,7 @@ class TestEvictionPreservesCurrentBucket:
         limiter._memory_counters = counters
 
         with patch("time.time", return_value=fixed_time):
-            count, bucket = limiter._check_memory("fresh", window_seconds)
+            count, _bucket = limiter._check_memory("fresh", window_seconds)
 
         assert count == 1
         for i in range(4):

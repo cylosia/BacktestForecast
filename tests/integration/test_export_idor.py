@@ -1,13 +1,11 @@
-"""Test: IDOR protection on export download endpoint.
+﻿"""Test: IDOR protection on export download endpoint.
 
 Verifies that user A cannot download an export owned by user B.
 """
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,7 +82,6 @@ def test_user_a_cannot_download_user_b_export(
 
     from apps.api.app import dependencies
 
-    original_get_current_user = dependencies.get_current_user
 
     def fake_get_current_user(*args, **kwargs):
         return user_a

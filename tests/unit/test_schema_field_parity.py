@@ -1,4 +1,4 @@
-"""Contract test: verify Pydantic response schemas match the OpenAPI snapshot.
+﻿"""Contract test: verify Pydantic response schemas match the OpenAPI snapshot.
 
 Catches drift between backend schema changes and the generated OpenAPI spec
 that the frontend TypeScript client is built from.  If a field is added to
@@ -23,7 +23,7 @@ OPENAPI_SNAPSHOT = PROJECT_ROOT / "openapi.snapshot.json"
 def openapi_schemas() -> dict[str, dict]:
     """Load the component schemas from the OpenAPI snapshot."""
     if not OPENAPI_SNAPSHOT.exists():
-        pytest.skip("openapi.snapshot.json not found — run scripts/export_openapi.py first")
+        pytest.skip("openapi.snapshot.json not found - run scripts/export_openapi.py first")
     data = json.loads(OPENAPI_SNAPSHOT.read_text(encoding="utf-8"))
     return data.get("components", {}).get("schemas", {})
 
@@ -105,7 +105,7 @@ class TestSweepSchemas:
     def test_sweep_job_response_fields_present_in_typescript(self):
         from backtestforecast.schemas.sweeps import SweepJobResponse
 
-        ts_path = PROJECT_ROOT / "packages" / "api-client" / "src" / "index.ts"
+        ts_path = PROJECT_ROOT / "packages" / "api-client" / "src" / "schema.d.ts"
         if not ts_path.exists():
             pytest.skip("TypeScript api-client not found")
 
@@ -123,7 +123,7 @@ class TestSweepSchemas:
     def test_sweep_result_response_fields_present_in_typescript(self):
         from backtestforecast.schemas.sweeps import SweepResultResponse
 
-        ts_path = PROJECT_ROOT / "packages" / "api-client" / "src" / "index.ts"
+        ts_path = PROJECT_ROOT / "packages" / "api-client" / "src" / "schema.d.ts"
         if not ts_path.exists():
             pytest.skip("TypeScript api-client not found")
 

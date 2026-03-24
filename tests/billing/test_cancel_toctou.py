@@ -1,4 +1,4 @@
-"""Verify cancel_in_flight_jobs uses RETURNING to avoid TOCTOU race."""
+﻿"""Verify cancel_in_flight_jobs uses RETURNING to avoid TOCTOU race."""
 from __future__ import annotations
 
 import inspect

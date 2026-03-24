@@ -1,12 +1,11 @@
-"""Tests for S3 upload failure during export execution.
+﻿"""Tests for S3 upload failure during export execution.
 
 Verifies that when storage.put raises an exception, the export job is
 marked as failed and never left in a "succeeded" state.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -93,7 +92,7 @@ class TestExportS3Failure:
         with pytest.raises(Exception, match="S3 upload failed"):
             svc.execute_export_by_id(export_job.id)
 
-        fail_calls = [
+        [
             c for c in session.execute.call_args_list
             if len(c.args) > 0 and hasattr(c.args[0], 'compile')
         ]
@@ -146,7 +145,6 @@ class TestExportS3Failure:
         svc._build_csv = MagicMock(return_value=b"col1,col2\nval1,val2\n")
 
         committed_statuses: list[str] = []
-        original_execute = session.execute
 
         def _track_execute(stmt, *args, **kwargs):
             if hasattr(stmt, 'compile'):

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Fail if app pages that consume API payloads introduce TypeScript `any`.
 
 Scope is intentionally narrow: only Next.js app `page.tsx` files that import

@@ -1,7 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -20,7 +20,7 @@ from backtestforecast.schemas.templates import (
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.templates import BacktestTemplateService
 
-# Templates are always available regardless of feature flags — they store
+# Templates are always available regardless of feature flags - they store
 # user configuration presets and don't consume compute or data resources.
 router = APIRouter(prefix="/templates", tags=["templates"])
 

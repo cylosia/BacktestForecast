@@ -14,7 +14,7 @@ from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.errors import FeatureLockedError
 from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
-from backtestforecast.schemas.common import sanitize_error_message
+from backtestforecast.schemas.common import RemediationActionsResponse, sanitize_error_message
 from backtestforecast.schemas.sweeps import (
     CreateSweepRequest,
     SweepJobListResponse,
@@ -24,6 +24,7 @@ from backtestforecast.schemas.sweeps import (
 )
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.dispatch_recovery import get_dispatch_diagnostic
+from backtestforecast.services.remediation_actions import build_job_remediation_actions
 from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("api.sweeps")
@@ -150,6 +151,46 @@ def delete_sweep(
     )
     with SweepService(db) as service:
         service.delete_for_user(job_id, user.id)
+
+
+@router.post("/{job_id}/cancel", response_model=SweepJobStatusResponse)
+def cancel_sweep(
+    job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> SweepJobStatusResponse:
+    get_rate_limiter().check(
+        bucket="sweeps:delete",
+        actor_key=str(user.id),
+        limit=settings.delete_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with SweepService(db) as service:
+        return service.cancel_for_user(job_id, user.id)
+
+
+@router.get("/{job_id}/remediation-actions", response_model=RemediationActionsResponse)
+def get_sweep_remediation_actions(
+    job_id: UUID,
+    user: User = Depends(get_current_user_readonly),
+    db: Session = Depends(get_readonly_db),
+    settings: Settings = Depends(get_settings),
+) -> RemediationActionsResponse:
+    get_rate_limiter().check(
+        bucket="sweeps:read",
+        actor_key=str(user.id),
+        limit=settings.sweep_read_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with SweepService(db) as service:
+        job = service.get_job(user, job_id)
+    return build_job_remediation_actions(
+        resource_type="sweep",
+        resource_id=str(job_id),
+        status=job.status,
+        base_path=f"/v1/sweeps/{job_id}",
+    )
 
 
 @router.get("/{job_id}/results", response_model=SweepResultListResponse)

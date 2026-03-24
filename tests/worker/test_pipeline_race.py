@@ -1,4 +1,4 @@
-"""Test: pipeline duplicate-run race condition.
+﻿"""Test: pipeline duplicate-run race condition.
 
 Verifies that the nightly pipeline rejects concurrent runs for the same
 trade_date, preventing duplicate work.
@@ -6,17 +6,15 @@ trade_date, preventing duplicate work.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
-from backtestforecast.models import NightlyPipelineRun, User
+from backtestforecast.models import NightlyPipelineRun
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 

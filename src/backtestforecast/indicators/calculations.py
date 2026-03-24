@@ -1,10 +1,10 @@
-"""Technical indicator calculations (SMA, EMA, RSI, MACD, Bollinger Bands, etc.).
+﻿"""Technical indicator calculations (SMA, EMA, RSI, MACD, Bollinger Bands, etc.).
 
 Callers should validate indicator outputs for finiteness before using them
 in downstream computations. Indicator functions may produce non-finite values
 (NaN, inf) when fed degenerate input (e.g. zero-valued price series).  The
 functions intentionally do not clamp or filter outputs to avoid masking data
-quality issues — that responsibility belongs to the caller.
+quality issues - that responsibility belongs to the caller.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Test that circuit breaker Redis I/O runs outside the lock.
+﻿"""Test that circuit breaker Redis I/O runs outside the lock.
 
 The record_success and reset methods must not hold self._lock while
 performing Redis operations, to avoid blocking all threads when Redis
@@ -6,11 +6,8 @@ is slow or unreachable.
 """
 from __future__ import annotations
 
-import threading
 import time
 from unittest.mock import MagicMock
-
-import pytest
 
 from backtestforecast.resilience.circuit_breaker import CircuitBreaker, CircuitState
 

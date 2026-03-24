@@ -1,5 +1,4 @@
-"""Test that Docker healthchecks are configured."""
-import pytest
+﻿"""Test that Docker healthchecks are configured."""
 
 
 def test_worker_healthcheck_in_compose():

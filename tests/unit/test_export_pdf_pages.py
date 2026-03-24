@@ -1,4 +1,4 @@
-"""Verify PDF export page numbering is implemented."""
+﻿"""Verify PDF export page numbering is implemented."""
 from __future__ import annotations
 
 import inspect

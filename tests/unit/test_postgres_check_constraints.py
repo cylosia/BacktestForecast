@@ -1,4 +1,4 @@
-"""Verify that SQLAlchemy models have CHECK constraints matching expectations.
+﻿"""Verify that SQLAlchemy models have CHECK constraints matching expectations.
 
 These tests verify the constraint definitions at the ORM level, without
 requiring a live Postgres connection. They catch cases where a developer
@@ -6,8 +6,6 @@ adds a column default that violates an existing CHECK constraint, or adds
 a new status value without updating the constraint.
 """
 from __future__ import annotations
-
-import pytest
 
 from backtestforecast.models import (
     BacktestRun,

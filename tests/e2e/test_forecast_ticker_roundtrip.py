@@ -1,4 +1,4 @@
-"""Item 72: E2E test for forecast ticker validation round-trip.
+﻿"""Item 72: E2E test for forecast ticker validation round-trip.
 
 Verifies that ticker validation is consistent between frontend and backend regex.
 """

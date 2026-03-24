@@ -1,7 +1,5 @@
-"""Integration tests for GET /v1/daily-picks/history."""
+﻿"""Integration tests for GET /v1/daily-picks/history."""
 from __future__ import annotations
-
-import pytest
 
 from backtestforecast.models import User
 

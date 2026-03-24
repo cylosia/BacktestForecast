@@ -1,16 +1,12 @@
-"""Test wheel strategy edge cases in _open_short_put, _resolve_exit, and the run loop."""
+﻿"""Test wheel strategy edge cases in _open_short_put, _resolve_exit, and the run loop."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any, Sequence
-from unittest.mock import MagicMock
-
-import pytest
+from typing import Any
 
 from backtestforecast.backtests.strategies.wheel import (
-    HeldShares,
     OpenShortOptionPhase,
     WheelStrategyBacktestEngine,
 )

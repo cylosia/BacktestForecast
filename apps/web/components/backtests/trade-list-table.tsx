@@ -17,21 +17,37 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 const PAGE_SIZE = 100;
 
-export function TradeListTable({ trades }: { trades: BacktestTradeResponse[] }) {
+export function TradeListTable({
+  trades,
+  totalTrades,
+  truncated = false,
+}: {
+  trades: BacktestTradeResponse[];
+  totalTrades?: number;
+  truncated?: boolean;
+}) {
   const [currentPage, setCurrentPage] = useState(1);
   useEffect(() => { setCurrentPage(1); }, [trades]);
   const totalPages = Math.max(1, Math.ceil(trades.length / PAGE_SIZE));
   const startIdx = (currentPage - 1) * PAGE_SIZE;
   const endIdx = Math.min(startIdx + PAGE_SIZE, trades.length);
   const visibleTrades = trades.slice(startIdx, endIdx);
+  const tradeCountLabel = truncated && typeof totalTrades === "number"
+    ? `Showing ${trades.length} of ${totalTrades} trade(s) returned by the API.`
+    : `${trades.length} trade(s) recorded for this run.`;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Trade list</CardTitle>
-        <CardDescription>{trades.length} trade(s) recorded for this run.</CardDescription>
+        <CardDescription>{tradeCountLabel}</CardDescription>
       </CardHeader>
       <CardContent>
+        {truncated && typeof totalTrades === "number" ? (
+          <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-muted-foreground">
+            Summary metrics still reflect the full stored run, even though only a partial trade list was returned here.
+          </div>
+        ) : null}
         {trades.length === 0 ? (
           <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
             No trades were produced for this backtest.

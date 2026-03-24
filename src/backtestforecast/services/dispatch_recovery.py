@@ -1,10 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
-from uuid import UUID
 
 from sqlalchemy import Select, exists, func, select, update
 from sqlalchemy.orm import Session
@@ -15,13 +14,13 @@ from backtestforecast.observability.metrics import (
     IDEMPOTENT_DUPLICATE_RETURNS_TOTAL,
     JOB_CREATE_TO_RUNNING_LATENCY_SECONDS,
     ORPHAN_DETECTIONS_TOTAL,
-    STALE_QUEUED_DUPLICATE_RETURNS_TOTAL,
     QUEUED_JOBS_PAST_DISPATCH_SLA,
     QUEUED_JOBS_WITHOUT_OUTBOX,
+    STALE_QUEUED_DUPLICATE_RETURNS_TOTAL,
 )
 from backtestforecast.services.audit import AuditService
 
-UTC = timezone.utc
+UTC = UTC
 _STALE_QUEUED_REUSE_AFTER = timedelta(minutes=15)
 DISPATCH_SLA = timedelta(minutes=5)
 
@@ -242,7 +241,7 @@ def repair_stranded_jobs(
             db=session,
             job=job,
             task_name=target.task_name,
-            task_kwargs={target.task_kwarg_key: str(getattr(job, "id"))},
+            task_kwargs={target.task_kwarg_key: str(job.id)},
             queue=target.queue,
             log_event=target.log_event,
             logger=logger,

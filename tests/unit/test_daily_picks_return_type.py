@@ -1,4 +1,4 @@
-"""Test that DailyPicksService returns DailyPicksResponse consistently.
+﻿"""Test that DailyPicksService returns DailyPicksResponse consistently.
 
 Regression test for the inconsistency where get_latest_picks returned
 a raw dict for the "no data" case but a DailyPicksResponse for the
@@ -7,6 +7,7 @@ a raw dict for the "no data" case but a DailyPicksResponse for the
 from __future__ import annotations
 
 import inspect
+from typing import get_type_hints
 
 from backtestforecast.schemas.analysis import DailyPicksResponse
 
@@ -14,7 +15,7 @@ from backtestforecast.schemas.analysis import DailyPicksResponse
 def test_return_type_annotation_is_consistent():
     """get_latest_picks must declare DailyPicksResponse as its return type."""
     from backtestforecast.services.daily_picks import DailyPicksService
-    hints = DailyPicksService.get_latest_picks.__annotations__
+    hints = get_type_hints(DailyPicksService.get_latest_picks)
     assert hints.get("return") is DailyPicksResponse, (
         f"get_latest_picks return type should be DailyPicksResponse, got {hints.get('return')}"
     )

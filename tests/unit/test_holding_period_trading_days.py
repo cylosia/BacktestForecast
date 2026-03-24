@@ -1,4 +1,4 @@
-"""Test that holding_period_trading_days is included in the trade bulk INSERT.
+﻿"""Test that holding_period_trading_days is included in the trade bulk INSERT.
 
 Regression test for the bug where the engine computed trading days held
 but the service layer omitted the field during persistence, causing it

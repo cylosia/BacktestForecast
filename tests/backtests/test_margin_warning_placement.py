@@ -1,5 +1,6 @@
-"""Verify margin warning only fires when entry is accepted."""
+﻿"""Verify margin warning only fires when entry is accepted."""
 import inspect
+
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 
 

@@ -1,4 +1,4 @@
-"""Test 61: Multi-leg slippage with quantity_per_unit.
+﻿"""Test 61: Multi-leg slippage with quantity_per_unit.
 
 Verifies that slippage calculations in OptionsBacktestEngine correctly
 multiply by leg.quantity_per_unit, so a ratio spread (1 short put + 2 long
@@ -6,7 +6,6 @@ puts) produces the correct gross notional.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
 from datetime import date
 
 from backtestforecast.backtests.types import OpenMultiLegPosition, OpenOptionLeg

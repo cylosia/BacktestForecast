@@ -1,4 +1,4 @@
-"""Lightweight feature gate with percentage-based rollouts.
+﻿"""Lightweight feature gate with percentage-based rollouts.
 
 Resolves FIXME(#100) from config.py.  Supports:
 
@@ -58,7 +58,7 @@ def _deterministic_bucket(user_id: UUID, feature_name: str) -> int:
     features can roll out to different user cohorts independently.
     """
     import binascii
-    key = f"{user_id}:{feature_name}".encode("utf-8")
+    key = f"{user_id}:{feature_name}".encode()
     return binascii.crc32(key) % 100
 
 
@@ -71,9 +71,9 @@ def is_feature_enabled(
     """Check whether a feature is enabled for a specific user.
 
     Evaluation order (short-circuits on first decisive result):
-    1. Boolean kill-switch (``feature_{name}_enabled``): if False → disabled
-    2. Allow-list (``feature_{name}_allow_user_ids``): if user_id matches → enabled
-    3. Tier targeting (``feature_{name}_tiers``): if set and tier doesn't match → disabled
+    1. Boolean kill-switch (``feature_{name}_enabled``): if False -> disabled
+    2. Allow-list (``feature_{name}_allow_user_ids``): if user_id matches -> enabled
+    3. Tier targeting (``feature_{name}_tiers``): if set and tier doesn't match -> disabled
     4. Percentage rollout (``feature_{name}_rollout_pct``): if < 100, hash user_id
     5. Default: enabled
     """
@@ -102,12 +102,11 @@ def is_feature_enabled(
             pass
         return False
 
-    if user_id is not None:
-        if isinstance(allow_raw, str) and allow_raw.strip():
-            allow_ids = {uid.strip() for uid in allow_raw.split(",") if uid.strip()}
-            if str(user_id) in allow_ids:
-                logger.debug("feature_flags.allow_list_match", feature=feature_name, user_id=str(user_id))
-                return True
+    if user_id is not None and isinstance(allow_raw, str) and allow_raw.strip():
+        allow_ids = {uid.strip() for uid in allow_raw.split(",") if uid.strip()}
+        if str(user_id) in allow_ids:
+            logger.debug("feature_flags.allow_list_match", feature=feature_name, user_id=str(user_id))
+            return True
 
     if isinstance(tiers_raw, str) and tiers_raw.strip():
         allowed_tiers = {t.strip().lower() for t in tiers_raw.split(",") if t.strip()}

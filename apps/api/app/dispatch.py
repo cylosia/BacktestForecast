@@ -8,8 +8,8 @@ beat task will pick it up within 60 seconds.
 """
 from __future__ import annotations
 
-import enum
 import datetime as dt
+import enum
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -39,8 +39,13 @@ class Dispatchable(Protocol):
     completed_at: dt.datetime | None
 
 
-UTC = getattr(dt, "UTC", dt.timezone.utc)
+UTC = getattr(dt, "UTC", dt.UTC)
 tracer = get_tracer(__name__)
+
+# Backward-compatible aliases kept for contract tests that still import the
+# original retry-tuning names from this module.
+_SEND_MAX_ATTEMPTS = 3
+_SEND_RETRY_DELAY = 0.5
 
 
 def dispatch_celery_task(

@@ -1,4 +1,4 @@
-"""Item 96: Verify that pipeline score adjustment doesn't compound.
+﻿"""Item 96: Verify that pipeline score adjustment doesn't compound.
 
 The stage-5 forecast overlay adjusts ``candidate.score`` by multiplying by
 fixed factors (e.g. 1.2 for directional alignment, 1.0 + (rate - 60)/200
@@ -7,22 +7,20 @@ called twice on the same candidate, the score would compound, producing a
 different result.
 
 This test verifies that the adjustment logic produces the same final score
-regardless of whether it's "applied once" or if we reset and reapply — i.e.
+regardless of whether it's "applied once" or if we reset and reapply - i.e.
 the function is not mutating shared state in a way that compounds.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
 
 
 def test_score_adjustment_does_not_compound() -> None:
     """Calling _stage5_forecast_and_rank twice on the same candidates
     should not produce different scores if the candidates are fresh copies."""
+    from backtestforecast.pipeline.regime import Regime, RegimeSnapshot
     from backtestforecast.pipeline.service import FullBacktestResult
-    from backtestforecast.pipeline.regime import RegimeSnapshot, Regime
 
     regime = RegimeSnapshot(
         symbol="TEST",
@@ -59,6 +57,7 @@ def test_score_adjustment_does_not_compound() -> None:
 
     from concurrent.futures import ThreadPoolExecutor
     from unittest.mock import MagicMock
+
     from backtestforecast.pipeline.service import NightlyPipelineService
 
     session = MagicMock()

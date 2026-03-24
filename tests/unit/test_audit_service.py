@@ -1,4 +1,4 @@
-"""Tests for AuditService record and record_always.
+﻿"""Tests for AuditService record and record_always.
 
 Imports are deferred inside test methods to avoid Prometheus metric
 re-registration conflicts when running all unit tests together.

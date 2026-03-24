@@ -1,14 +1,15 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
 import structlog
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, defer, noload, selectinload
 
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade
+from backtestforecast.repositories.pagination import apply_cursor_window, list_with_total
 
 logger = structlog.get_logger("repositories.backtest_runs")
 
@@ -23,6 +24,13 @@ class BacktestRunTradeBatch:
     @property
     def exceeded_limit(self) -> bool:
         return self.total_count > len(self.trades)
+
+
+@dataclass(slots=True)
+class BacktestRunPayloadCounts:
+    trade_count: int = 0
+    decided_trade_count: int = 0
+    equity_point_count: int = 0
 
 
 class BacktestRunRepository:
@@ -41,7 +49,7 @@ class BacktestRunRepository:
         for_update: bool = False,
         load_relationships: bool = False,
     ) -> BacktestRun | None:
-        """Fetch by PK without ownership filter. WORKER-ONLY — never call from API routes.
+        """Fetch by PK without ownership filter. WORKER-ONLY - never call from API routes.
 
         Set *load_relationships* to ``True`` to eagerly load trades and
         equity points. Default is ``False`` to avoid pulling thousands of
@@ -78,10 +86,6 @@ class BacktestRunRepository:
         created_since: datetime | None = None,
         cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[BacktestRun]:
-        if offset > 0 and cursor_before is not None:
-            raise ValueError("Cannot combine offset and cursor_before pagination; use one or the other.")
-        limit = max(limit, 1)
-        offset = max(offset, 0)
         stmt = (
             select(BacktestRun)
             .where(BacktestRun.user_id == user_id)
@@ -93,15 +97,14 @@ class BacktestRunRepository:
         )
         if created_since is not None:
             stmt = stmt.where(BacktestRun.created_at >= created_since)
-        if cursor_before is not None:
-            cursor_dt, cursor_id = cursor_before
-            stmt = stmt.where(
-                or_(
-                    BacktestRun.created_at < cursor_dt,
-                    and_(BacktestRun.created_at == cursor_dt, BacktestRun.id < cursor_id),
-                )
-            )
-        stmt = stmt.order_by(desc(BacktestRun.created_at), desc(BacktestRun.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+        stmt = apply_cursor_window(
+            stmt,
+            model=BacktestRun,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
         return list(self.session.scalars(stmt))
 
     def count_for_user(
@@ -124,48 +127,29 @@ class BacktestRunRepository:
         created_since: datetime | None = None,
         cursor_before: tuple[datetime, UUID] | None = None,
     ) -> tuple[list[BacktestRun], int]:
-        """Return (runs, total_count) in a single DB round-trip using a window function."""
-        if offset > 0 and cursor_before is not None:
-            raise ValueError("Cannot combine offset and cursor_before pagination.")
-        limit = max(limit, 1)
-        offset = max(offset, 0)
-
-        count_filter = [BacktestRun.user_id == user_id]
+        """Return (runs, total_count) where total_count ignores cursor pagination."""
+        base_filter = [BacktestRun.user_id == user_id]
         if created_since is not None:
-            count_filter.append(BacktestRun.created_at >= created_since)
-
-        total_count_col = func.count(BacktestRun.id).over().label("_total_count")
+            base_filter.append(BacktestRun.created_at >= created_since)
         stmt = (
-            select(BacktestRun, total_count_col)
-            .where(*count_filter)
+            select(BacktestRun)
+            .where(*base_filter)
             .options(
                 noload(BacktestRun.trades),
                 noload(BacktestRun.equity_points),
                 defer(BacktestRun.input_snapshot_json),
             )
         )
-        if cursor_before is not None:
-            cursor_dt, cursor_id = cursor_before
-            stmt = stmt.where(
-                or_(
-                    BacktestRun.created_at < cursor_dt,
-                    and_(BacktestRun.created_at == cursor_dt, BacktestRun.id < cursor_id),
-                )
-            )
-        stmt = stmt.order_by(desc(BacktestRun.created_at), desc(BacktestRun.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
-
-        rows = self.session.execute(stmt).all()
-        if not rows:
-            if count_filter:
-                total = int(self.session.scalar(
-                    select(func.count(BacktestRun.id)).where(*count_filter)
-                ) or 0)
-            else:
-                total = 0
-            return [], total
-        runs = [row[0] for row in rows]
-        total = int(rows[0][1])
-        return runs, total
+        return list_with_total(
+            self.session,
+            base_stmt=stmt,
+            count_stmt=select(func.count(BacktestRun.id)).where(*base_filter),
+            model=BacktestRun,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
 
     def count_for_user_created_between(
         self,
@@ -246,6 +230,58 @@ class BacktestRunRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def count_trades_for_run(self, run_id: UUID, *, user_id: UUID) -> int:
+        stmt = (
+            select(func.count(BacktestTrade.id))
+            .join(BacktestRun, BacktestTrade.run_id == BacktestRun.id)
+            .where(BacktestTrade.run_id == run_id, BacktestRun.user_id == user_id)
+        )
+        return int(self.session.scalar(stmt) or 0)
+
+    def count_equity_points_for_run(self, run_id: UUID, *, user_id: UUID) -> int:
+        stmt = (
+            select(func.count(BacktestEquityPoint.id))
+            .join(BacktestRun, BacktestEquityPoint.run_id == BacktestRun.id)
+            .where(BacktestEquityPoint.run_id == run_id, BacktestRun.user_id == user_id)
+        )
+        return int(self.session.scalar(stmt) or 0)
+
+    def count_decided_trades_for_run(self, run_id: UUID, *, user_id: UUID) -> int:
+        stmt = (
+            select(func.count(BacktestTrade.id))
+            .join(BacktestRun, BacktestTrade.run_id == BacktestRun.id)
+            .where(
+                BacktestTrade.run_id == run_id,
+                BacktestRun.user_id == user_id,
+                BacktestTrade.net_pnl != 0,
+            )
+        )
+        return int(self.session.scalar(stmt) or 0)
+
+    def get_payload_counts_for_run(self, run_id: UUID, *, user_id: UUID) -> BacktestRunPayloadCounts:
+        return self.get_payload_counts_for_runs([run_id], user_id=user_id).get(
+            run_id,
+            BacktestRunPayloadCounts(),
+        )
+
+    def count_trades_for_runs(self, run_ids: list[UUID], *, user_id: UUID) -> dict[UUID, int]:
+        if not run_ids:
+            return {}
+        run_ids = run_ids[:50]
+        stmt = (
+            select(BacktestTrade.run_id, func.count(BacktestTrade.id))
+            .join(BacktestRun, BacktestTrade.run_id == BacktestRun.id)
+            .where(
+                BacktestTrade.run_id.in_(run_ids),
+                BacktestRun.user_id == user_id,
+            )
+            .group_by(BacktestTrade.run_id)
+        )
+        counts = {rid: 0 for rid in run_ids}
+        for run_id, count in self.session.execute(stmt):
+            counts[run_id] = int(count or 0)
+        return counts
+
     def get_trades_for_runs(
         self, run_ids: list[UUID], *, limit_per_run: int = 10_000, user_id: UUID,
     ) -> dict[UUID, BacktestRunTradeBatch]:
@@ -257,28 +293,25 @@ class BacktestRunRepository:
             partition_by=BacktestTrade.run_id,
             order_by=BacktestTrade.entry_date,
         ).label("rn")
-        total_count = sa_func.count(BacktestTrade.id).over(
-            partition_by=BacktestTrade.run_id,
-        ).label("total_count")
         sub = (
-            select(BacktestTrade.id, BacktestTrade.run_id, row_num, total_count)
+            select(BacktestTrade.id, BacktestTrade.run_id, row_num)
             .join(BacktestRun, BacktestTrade.run_id == BacktestRun.id)
             .where(BacktestTrade.run_id.in_(run_ids), BacktestRun.user_id == user_id)
             .subquery()
         )
         stmt = (
-            select(BacktestTrade, sub.c.total_count)
+            select(BacktestTrade)
             .join(sub, BacktestTrade.id == sub.c.id)
             .where(sub.c.rn <= limit_per_run)
             .order_by(BacktestTrade.run_id, BacktestTrade.entry_date)
         )
+        total_counts = self.count_trades_for_runs(run_ids, user_id=user_id)
         result: dict[UUID, BacktestRunTradeBatch] = {
-            rid: BacktestRunTradeBatch(trades=[], total_count=0) for rid in run_ids
+            rid: BacktestRunTradeBatch(trades=[], total_count=total_counts.get(rid, 0)) for rid in run_ids
         }
-        for trade, total_count in self.session.execute(stmt):
+        for trade in self.session.scalars(stmt):
             batch = result[trade.run_id]
             batch.trades.append(trade)
-            batch.total_count = int(total_count or 0)
         return result
 
     def get_equity_points_for_runs(
@@ -308,3 +341,96 @@ class BacktestRunRepository:
         for pt in self.session.scalars(stmt):
             result[pt.run_id].append(pt)
         return result
+
+    def count_equity_points_for_runs(self, run_ids: list[UUID], *, user_id: UUID) -> dict[UUID, int]:
+        if not run_ids:
+            return {}
+        run_ids = run_ids[:50]
+        stmt = (
+            select(BacktestEquityPoint.run_id, func.count(BacktestEquityPoint.id))
+            .join(BacktestRun, BacktestEquityPoint.run_id == BacktestRun.id)
+            .where(
+                BacktestEquityPoint.run_id.in_(run_ids),
+                BacktestRun.user_id == user_id,
+            )
+            .group_by(BacktestEquityPoint.run_id)
+        )
+        counts = {rid: 0 for rid in run_ids}
+        for run_id, count in self.session.execute(stmt):
+            counts[run_id] = int(count or 0)
+        return counts
+
+    def get_decided_trade_counts_for_runs(
+        self, run_ids: list[UUID], *, user_id: UUID,
+    ) -> dict[UUID, int]:
+        if not run_ids:
+            return {}
+        run_ids = run_ids[:50]
+        stmt = (
+            select(BacktestTrade.run_id, func.count(BacktestTrade.id))
+            .join(BacktestRun, BacktestTrade.run_id == BacktestRun.id)
+            .where(
+                BacktestTrade.run_id.in_(run_ids),
+                BacktestRun.user_id == user_id,
+                BacktestTrade.net_pnl != 0,
+            )
+            .group_by(BacktestTrade.run_id)
+        )
+        counts = {rid: 0 for rid in run_ids}
+        for run_id, count in self.session.execute(stmt):
+            counts[run_id] = int(count or 0)
+        return counts
+
+    def get_payload_counts_for_runs(
+        self,
+        run_ids: list[UUID],
+        *,
+        user_id: UUID,
+    ) -> dict[UUID, BacktestRunPayloadCounts]:
+        if not run_ids:
+            return {}
+        run_ids = run_ids[:50]
+        trade_counts = (
+            select(
+                BacktestTrade.run_id.label("run_id"),
+                func.count(BacktestTrade.id).label("trade_count"),
+                func.sum(
+                    case(
+                        (BacktestTrade.net_pnl != 0, 1),
+                        else_=0,
+                    )
+                ).label("decided_trade_count"),
+            )
+            .group_by(BacktestTrade.run_id)
+            .subquery()
+        )
+        equity_counts = (
+            select(
+                BacktestEquityPoint.run_id.label("run_id"),
+                func.count(BacktestEquityPoint.id).label("equity_point_count"),
+            )
+            .group_by(BacktestEquityPoint.run_id)
+            .subquery()
+        )
+        stmt = (
+            select(
+                BacktestRun.id,
+                func.coalesce(trade_counts.c.trade_count, 0),
+                func.coalesce(trade_counts.c.decided_trade_count, 0),
+                func.coalesce(equity_counts.c.equity_point_count, 0),
+            )
+            .outerjoin(trade_counts, trade_counts.c.run_id == BacktestRun.id)
+            .outerjoin(equity_counts, equity_counts.c.run_id == BacktestRun.id)
+            .where(
+                BacktestRun.id.in_(run_ids),
+                BacktestRun.user_id == user_id,
+            )
+        )
+        counts = {rid: BacktestRunPayloadCounts() for rid in run_ids}
+        for run_id, trade_count, decided_trade_count, equity_point_count in self.session.execute(stmt):
+            counts[run_id] = BacktestRunPayloadCounts(
+                trade_count=int(trade_count or 0),
+                decided_trade_count=int(decided_trade_count or 0),
+                equity_point_count=int(equity_point_count or 0),
+            )
+        return counts

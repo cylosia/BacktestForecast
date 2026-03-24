@@ -1,4 +1,4 @@
-# TODO: Implement cross-strategy caching for scan workloads. During scans,
+﻿# TODO: Implement cross-strategy caching for scan workloads. During scans,
 # the same symbol's market data (daily bars, option contracts, quotes) is
 # re-fetched for each strategy combination. A shared per-symbol cache keyed
 # by (symbol, date_range, dte_params) would deduplicate these calls, cutting
@@ -15,7 +15,7 @@ from datetime import date
 
 import structlog
 
-from backtestforecast.market_data.types import DailyBar, OptionContractRecord
+from backtestforecast.market_data.types import DailyBar
 
 logger = structlog.get_logger("market_data.prefetch")
 

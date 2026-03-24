@@ -1,4 +1,4 @@
-"""Verification tests for the Top 20 Likely Production Incidents.
+﻿"""Verification tests for the Top 20 Likely Production Incidents.
 
 Each test confirms the fix is in place by inspecting code structure or
 running behavioral assertions.
@@ -8,10 +8,6 @@ from __future__ import annotations
 import inspect
 import warnings
 from decimal import Decimal
-from unittest.mock import MagicMock
-
-import pytest
-
 
 # ---- P1: Worker NameError on entitlement enforcement ----
 
@@ -75,7 +71,7 @@ def test_p6_metrics_uses_get_settings():
 
 def test_p7_reconcile_uses_for_update():
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.reconcile_subscriptions)
+    source = inspect.getsource(BillingService._reconcile_subscriptions_impl)
     assert "with_for_update" in source
     assert "skip_locked" in source
 
@@ -145,7 +141,7 @@ def test_p13_pdf_line_returns_bool():
 
 def test_p14_webhook_separates_programming_errors():
     from backtestforecast.services.billing import BillingService
-    source = inspect.getsource(BillingService.handle_webhook)
+    source = inspect.getsource(BillingService._handle_webhook_impl)
     assert "KeyError" in source
     assert "likely_programming_error" in source
 
@@ -212,9 +208,10 @@ def test_p20_decided_trades_in_schema():
 
 def test_p20_high_break_even_fires_warning():
     """When >= 20% of trades are break-even, a warning must appear."""
+    from datetime import date
+
     from backtestforecast.backtests.summary import build_summary
     from backtestforecast.backtests.types import EquityPointResult, TradeResult
-    from datetime import date
 
     trades = []
     for i in range(10):

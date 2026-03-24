@@ -1,12 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, defer
 
 from backtestforecast.models import ExportJob
+from backtestforecast.repositories.pagination import apply_cursor_window, list_with_total
 
 _MAX_PAGE_SIZE = 200
 
@@ -21,7 +22,7 @@ class ExportJobRepository:
         return job
 
     def get(self, export_job_id: UUID, *, for_update: bool = False) -> ExportJob | None:
-        """Fetch by ID without ownership check. WORKER-ONLY — never call from API routes."""
+        """Fetch by ID without ownership check. WORKER-ONLY - never call from API routes."""
         stmt = select(ExportJob).where(ExportJob.id == export_job_id).options(defer(ExportJob.content_bytes))
         if for_update:
             stmt = stmt.with_for_update()
@@ -55,24 +56,19 @@ class ExportJobRepository:
         offset: int = 0,
         cursor_before: tuple[datetime, UUID] | None = None,
     ) -> list[ExportJob]:
-        if offset > 0 and cursor_before is not None:
-            raise ValueError("Cannot combine offset and cursor_before pagination.")
-        limit = max(limit, 1)
-        offset = max(offset, 0)
         stmt = (
             select(ExportJob)
             .where(ExportJob.user_id == user_id)
             .options(defer(ExportJob.content_bytes))
         )
-        if cursor_before is not None:
-            cursor_dt, cursor_id = cursor_before
-            stmt = stmt.where(
-                or_(
-                    ExportJob.created_at < cursor_dt,
-                    and_(ExportJob.created_at == cursor_dt, ExportJob.id < cursor_id),
-                )
-            )
-        stmt = stmt.order_by(desc(ExportJob.created_at), desc(ExportJob.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
+        stmt = apply_cursor_window(
+            stmt,
+            model=ExportJob,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
         return list(self.session.scalars(stmt))
 
     def count_for_user(self, user_id: UUID) -> int:
@@ -86,33 +82,22 @@ class ExportJobRepository:
         offset: int = 0,
         cursor_before: tuple[datetime, UUID] | None = None,
     ) -> tuple[list[ExportJob], int]:
-        """Return (items, total) in a single DB round-trip using a window function."""
-        if offset > 0 and cursor_before is not None:
-            raise ValueError("Cannot combine offset and cursor_before pagination.")
-        total_col = func.count(ExportJob.id).over().label("_total")
+        """Return (items, total) where total ignores cursor pagination."""
         stmt = (
-            select(ExportJob, total_col)
+            select(ExportJob)
             .where(ExportJob.user_id == user_id)
             .options(defer(ExportJob.content_bytes))
         )
-        if cursor_before is not None:
-            cursor_dt, cursor_id = cursor_before
-            stmt = stmt.where(
-                or_(
-                    ExportJob.created_at < cursor_dt,
-                    and_(ExportJob.created_at == cursor_dt, ExportJob.id < cursor_id),
-                )
-            )
-        stmt = stmt.order_by(desc(ExportJob.created_at), desc(ExportJob.id)).offset(offset).limit(min(limit, _MAX_PAGE_SIZE))
-        rows = list(self.session.execute(stmt))
-        if not rows:
-            total = int(self.session.scalar(
-                select(func.count(ExportJob.id)).where(ExportJob.user_id == user_id)
-            ) or 0)
-            return [], total
-        items = [row[0] for row in rows]
-        total = int(rows[0][1])
-        return items, total
+        return list_with_total(
+            self.session,
+            base_stmt=stmt,
+            count_stmt=select(func.count(ExportJob.id)).where(ExportJob.user_id == user_id),
+            model=ExportJob,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
 
     def list_expired_for_cleanup(self, before: datetime, limit: int) -> list[ExportJob]:
         from sqlalchemy import asc

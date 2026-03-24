@@ -1,4 +1,4 @@
-"""Tests for BillingService._get_or_create_customer race condition handling.
+﻿"""Tests for BillingService._get_or_create_customer race condition handling.
 
 Covers the advisory-lock + CAS-UPDATE pattern that prevents duplicate Stripe
 customers when concurrent requests hit the billing service.
@@ -6,7 +6,7 @@ customers when concurrent requests hit the billing service.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -24,8 +24,8 @@ def _make_user(*, stripe_customer_id: str | None = None):
 
 
 def _make_billing_service(session: MagicMock, stripe_client: MagicMock):
-    from backtestforecast.services.billing import BillingService
     from backtestforecast.config import Settings
+    from backtestforecast.services.billing import BillingService
 
     settings = Settings(
         stripe_secret_key="sk_test_fake",
@@ -100,7 +100,7 @@ class TestGetOrCreateCustomerRace:
         cas_result.rowcount = 0
         session.execute.side_effect = [
             MagicMock(),   # pg_advisory_xact_lock
-            cas_result,    # CAS UPDATE — lost race
+            cas_result,    # CAS UPDATE - lost race
         ]
 
         user = _make_user(stripe_customer_id=None)
@@ -111,7 +111,7 @@ class TestGetOrCreateCustomerRace:
             nonlocal refresh_call_count
             refresh_call_count += 1
             if refresh_call_count == 1:
-                pass  # after advisory lock — still None
+                pass  # after advisory lock - still None
             else:
                 u.stripe_customer_id = winner_id
 
@@ -138,7 +138,7 @@ class TestGetOrCreateCustomerRace:
         cas_result.rowcount = 0
         session.execute.side_effect = [
             MagicMock(),   # pg_advisory_xact_lock
-            cas_result,    # CAS UPDATE — lost race
+            cas_result,    # CAS UPDATE - lost race
         ]
 
         user = _make_user(stripe_customer_id=None)

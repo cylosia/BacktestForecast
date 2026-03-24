@@ -1,11 +1,9 @@
-"""Fix 74: Boundary inputs must return exact status codes, not ranges.
+﻿"""Fix 74: Boundary inputs must return exact status codes, not ranges.
 
 Validates that the compare endpoint returns precisely 422 for invalid
 run_ids lists (empty or single-element).
 """
 from __future__ import annotations
-
-import inspect
 
 from backtestforecast.schemas.backtests import CompareBacktestsRequest
 

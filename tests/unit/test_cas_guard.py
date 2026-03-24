@@ -1,6 +1,6 @@
-"""Fix 61: CAS guard prevents resurrecting a reaped backtest run.
+﻿"""Fix 61: CAS guard prevents resurrecting a reaped backtest run.
 
-When the reaper sets a run's status to "failed" between the queued→running
+When the reaper sets a run's status to "failed" between the queued->running
 transition and the success CAS, execute_run_by_id must honour the reaper's
 decision and NOT overwrite the status to "succeeded".
 
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine
@@ -22,8 +21,6 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, User
-
-
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 

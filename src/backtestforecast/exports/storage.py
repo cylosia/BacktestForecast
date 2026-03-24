@@ -1,9 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import random
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator, Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 import structlog
@@ -97,7 +98,7 @@ _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024  # 50 MB safety cap
 
 def _retry(fn, max_attempts=3, base_delay=0.5):
     try:
-        from botocore.exceptions import ClientError, EndpointConnectionError, ConnectionClosedError
+        from botocore.exceptions import ClientError, ConnectionClosedError, EndpointConnectionError
     except ImportError as exc:
         raise ConfigurationError(
             "boto3/botocore is required for S3 storage. "

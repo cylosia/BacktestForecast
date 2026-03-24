@@ -1,7 +1,5 @@
-"""Unit tests for _resolve_position_size."""
+﻿"""Unit tests for _resolve_position_size."""
 from __future__ import annotations
-
-import pytest
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 
@@ -99,7 +97,7 @@ class TestCoveredStranglePositionSizingWithMaxLoss:
         put_premium = 2.0
         call_premium = 3.0
 
-        capital = covered_strangle_margin(spot, put_strike, put_premium)
+        covered_strangle_margin(spot, put_strike, put_premium)
         credit = (call_premium + put_premium) * 100.0
         naked_put_req = naked_put_margin(spot, put_strike, put_premium)
         max_loss = naked_put_req + spot * 100.0 - credit
