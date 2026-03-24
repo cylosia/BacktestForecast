@@ -10,7 +10,7 @@ These tests verify fixes for:
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, timedelta
 
 from backtestforecast.backtests.rules import implied_volatility_from_price
 from backtestforecast.backtests.summary import _compute_sharpe_sortino
@@ -142,8 +142,14 @@ class TestSharpeSortinoConsistency:
     @staticmethod
     def _make_equity_curve(values: list[float]) -> list[EquityPointResult]:
         return [
-            EquityPointResult(trade_date=date(2025, 1, 1), equity=v, cash=v, position_value=0.0, drawdown_pct=0.0)
-            for v in values
+            EquityPointResult(
+                trade_date=date(2025, 1, 1) + timedelta(days=i),
+                equity=v,
+                cash=v,
+                position_value=0.0,
+                drawdown_pct=0.0,
+            )
+            for i, v in enumerate(values)
         ]
 
     def test_both_use_sample_variance(self):

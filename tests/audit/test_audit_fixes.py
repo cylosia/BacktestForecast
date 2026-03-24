@@ -9,15 +9,15 @@ import pytest
 class TestToDecimalInfiniteHandling:
     """Verify to_decimal handles infinite values gracefully."""
 
-    def test_infinite_with_allow_infinite_returns_none(self):
+    def test_infinite_with_allow_infinite_returns_decimal_infinity(self):
         from backtestforecast.services.backtests import to_decimal
         result = to_decimal(float("inf"), allow_infinite=True)
-        assert result is None
+        assert result == Decimal("Infinity")
 
-    def test_negative_infinite_with_allow_infinite_returns_none(self):
+    def test_negative_infinite_with_allow_infinite_returns_decimal_infinity(self):
         from backtestforecast.services.backtests import to_decimal
         result = to_decimal(float("-inf"), allow_infinite=True)
-        assert result is None
+        assert result == Decimal("-Infinity")
 
     def test_infinite_without_allow_infinite_raises(self):
         from backtestforecast.services.backtests import to_decimal
@@ -29,10 +29,10 @@ class TestToDecimalInfiniteHandling:
         result = to_decimal(float("nan"), allow_infinite=True)
         assert result is None
 
-    def test_decimal_infinite_with_allow_returns_none(self):
+    def test_decimal_infinite_with_allow_returns_decimal_infinity(self):
         from backtestforecast.services.backtests import to_decimal
         result = to_decimal(Decimal("Infinity"), allow_infinite=True)
-        assert result is None
+        assert result == Decimal("Infinity")
 
 
 class TestRedisUrlSanitization:

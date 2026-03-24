@@ -597,32 +597,42 @@ def test_nightly_scan_pipeline_success(mock_session_local):
 # ---------------------------------------------------------------------------
 
 
-@patch("apps.worker.app.tasks.SessionLocal")
-def test_refresh_prioritized_scans_dispatches(mock_session_local):
+def test_refresh_prioritized_scans_dispatches():
     from apps.worker.app.tasks import refresh_prioritized_scans
 
-    job1 = SimpleNamespace(id=uuid4())
-    job2 = SimpleNamespace(id=uuid4())
-
     mock_service = MagicMock()
-    mock_service.create_scheduled_refresh_jobs.return_value = [job1, job2]
+    mock_service.create_and_dispatch_scheduled_refresh_jobs.return_value = (2, 0)
     mock_service.close = MagicMock()
+
+    class _FakeLock:
+        def acquire(self, blocking=False):
+            return True
+
+        def release(self):
+            return None
+
+    class _FakeRedis:
+        def lock(self, *_args, **_kwargs):
+            return _FakeLock()
+
+        def close(self):
+            return None
 
     session = MagicMock()
     session_ctx = MagicMock()
     session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
-    mock_session_local.return_value = session_ctx
 
     with (
         patch("apps.worker.app.tasks.ScanService", return_value=mock_service),
-        patch("apps.worker.app.tasks.celery_app") as mock_celery,
+        patch("apps.worker.app.tasks.create_worker_session", return_value=session_ctx),
+        patch("backtestforecast.utils.create_cache_redis", return_value=_FakeRedis()),
     ):
-        mock_celery.send_task.return_value = SimpleNamespace(id="celery-task-1")
-        result = refresh_prioritized_scans()
+        result = refresh_prioritized_scans.run()
 
     assert result["scheduled_jobs"] == 2
-    assert mock_celery.send_task.call_count == 2
+    assert result["pending_recovery"] == 0
+    mock_service.create_and_dispatch_scheduled_refresh_jobs.assert_called_once()
     mock_service.close.assert_called_once()
 
 
@@ -1091,10 +1101,8 @@ def test_run_backtest_quota_rejects_6th_when_limit_is_5(mock_session_local, mock
 # ---------------------------------------------------------------------------
 
 
-def test_validate_task_ownership_redelivery_claims_non_terminal(db_session, db_session_factory):
-    """When a task is re-delivered with a new celery_task_id and the old one
-    is in a non-terminal status (e.g. 'running'), the new delivery should
-    successfully claim ownership."""
+def test_validate_task_ownership_redelivery_rejects_superseded_non_terminal(db_session, db_session_factory):
+    """A mismatched redelivery must not steal ownership from a newer claim."""
     import apps.worker.app.tasks as tasks_module
 
     user = _create_user(db_session)
@@ -1123,11 +1131,11 @@ def test_validate_task_ownership_redelivery_claims_non_terminal(db_session, db_s
     claimed = tasks_module._validate_task_ownership(
         db_session, BacktestRun, run_id, "new-task-id"
     )
-    assert claimed is True
+    assert claimed is False
 
     db_session.expire_all()
     refreshed = db_session.get(BacktestRun, run_id)
-    assert refreshed.celery_task_id == "new-task-id"
+    assert refreshed.celery_task_id == "old-task-id"
 
 
 def test_validate_task_ownership_redelivery_rejected_for_terminal(db_session, db_session_factory):

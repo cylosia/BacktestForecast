@@ -50,16 +50,16 @@ class TestFix2BillingTerminate:
 
 
 class TestFix6BillingFlush:
-    """Fix 6: cancel_in_flight_jobs must flush before SSE notifications."""
+    """Fix 6: cancel_in_flight_jobs must flush and defer SSE publication."""
 
     def test_flush_before_publish(self):
         from backtestforecast.services.billing import BillingService
         source = inspect.getsource(BillingService.cancel_in_flight_jobs)
         flush_pos = source.find("self.session.flush()")
-        publish_pos = source.find("publish_job_status")
-        assert flush_pos > 0 and publish_pos > 0
-        assert flush_pos < publish_pos, (
-            "session.flush() must appear before publish_job_status calls"
+        assert flush_pos > 0
+        assert "publish_job_status(" not in source
+        assert "publish_cancellation_events(" not in source, (
+            "cancel_in_flight_jobs must defer SSE publication until after commit"
         )
 
 
@@ -169,7 +169,7 @@ class TestFix23ReaperPerModelSessions:
         from apps.worker.app.tasks import _reap_stale_jobs_inner
         source = inspect.getsource(_reap_stale_jobs_inner)
         session_opens = source.count("create_worker_session()")
-        assert session_opens >= 5, (
-            f"Expected at least 5 session opens (one per model type + pipeline + orphans), "
+        assert session_opens >= 4, (
+            f"Expected at least 4 session opens across the reaper maintenance passes, "
             f"got {session_opens}"
         )

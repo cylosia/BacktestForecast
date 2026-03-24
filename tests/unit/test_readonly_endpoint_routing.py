@@ -1,4 +1,4 @@
-﻿"""Verify read-heavy endpoints use the read-only DB dependency."""
+"""Verify lag-sensitive endpoints use the primary DB dependency."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,61 +8,69 @@ def _router_source(path: str) -> str:
     return Path(path).read_text()
 
 
-def test_backtests_router_uses_readonly_db_for_read_heavy_endpoints() -> None:
+def test_backtests_router_uses_primary_for_customer_visible_reads() -> None:
     source = _router_source("apps/api/app/routers/backtests.py")
-    assert "get_readonly_db" in source
-    assert source.count("db: Session = Depends(get_readonly_db)") >= 2
+    assert "def list_backtests(" in source
+    assert source.count("db: Session = Depends(get_readonly_db)") == 0
+    assert source.count("db: Session = Depends(get_db)") >= 6
 
 
-def test_scans_router_uses_readonly_db_for_list_and_recommendations() -> None:
+def test_scans_router_uses_primary_for_list_and_recommendations() -> None:
     source = _router_source("apps/api/app/routers/scans.py")
-    assert "get_readonly_db" in source
-    assert source.count("db: Session = Depends(get_readonly_db)") >= 2
+    assert source.count("db: Session = Depends(get_readonly_db)") == 0
+    assert source.count("db: Session = Depends(get_db)") >= 6
 
 
-def test_sweeps_router_uses_readonly_db_for_list_and_results() -> None:
+def test_sweeps_router_uses_primary_for_list_and_results() -> None:
     source = _router_source("apps/api/app/routers/sweeps.py")
-    assert "get_readonly_db" in source
-    assert source.count("db: Session = Depends(get_readonly_db)") >= 2
+    assert source.count("db: Session = Depends(get_readonly_db)") == 0
+    assert source.count("db: Session = Depends(get_db)") >= 6
 
 
-def test_daily_picks_router_uses_readonly_db_for_reads() -> None:
+def test_daily_picks_router_uses_primary_db_for_reads() -> None:
     source = _router_source("apps/api/app/routers/daily_picks.py")
-    assert "get_readonly_db" in source
-    assert source.count("db: Session = Depends(get_readonly_db)") >= 2
+    assert "get_readonly_db" not in source
+    assert source.count("db: Session = Depends(get_readonly_db)") == 0
+    assert source.count("db: Session = Depends(get_db)") >= 2
 
 
-def test_exports_router_uses_readonly_db_for_list_and_status() -> None:
+def test_exports_router_uses_primary_for_list_status_and_download() -> None:
     source = _router_source("apps/api/app/routers/exports.py")
-    assert "get_readonly_db" in source
-    assert source.count("db: Session = Depends(get_readonly_db)") >= 2
+    assert source.count("db: Session = Depends(get_readonly_db)") == 0
+    assert source.count("db: Session = Depends(get_db)") >= 7
 
 
-def test_templates_router_uses_readonly_db_for_list_and_get() -> None:
+def test_templates_router_uses_primary_db_for_list_and_get() -> None:
     source = _router_source("apps/api/app/routers/templates.py")
-    assert "get_readonly_db" in source
-    assert source.count("db: Session = Depends(get_readonly_db)") >= 2
+    assert "get_readonly_db" not in source
+    assert source.count("db: Session = Depends(get_db)") >= 4
 
 
-def test_me_router_bootstraps_user_via_primary_auth_dependency() -> None:
+def test_me_router_uses_primary_db_for_quota_reads() -> None:
     source = _router_source("apps/api/app/routers/me.py")
-    assert "get_readonly_db" in source
+    assert "get_readonly_db" not in source
     assert "get_current_user" in source
     assert "get_current_user_readonly" not in source
-    assert "db: Session = Depends(get_readonly_db)" in source
+    assert "db: Session = Depends(get_db)" in source
 
 
-def test_meta_router_uses_readonly_db() -> None:
+def test_meta_router_uses_primary_db() -> None:
     source = _router_source("apps/api/app/routers/meta.py")
-    assert "get_readonly_db" in source
-    assert "db: Session = Depends(get_readonly_db)" in source
+    assert "get_readonly_db" not in source
+    assert "db: Session = Depends(get_db)" in source
+
+
+def test_forecasts_router_uses_primary_db() -> None:
+    source = _router_source("apps/api/app/routers/forecasts.py")
+    assert "get_readonly_db" not in source
+    assert "db: Session = Depends(get_db)" in source
 
 
 def test_account_export_uses_readonly_db() -> None:
     source = _router_source("apps/api/app/routers/account.py")
-    assert "get_readonly_db" in source
+    assert "get_readonly_db" not in source
     assert "get_current_user_readonly" in source
-    assert "db: Session = Depends(get_readonly_db)" in source
+    assert "db: Session = Depends(get_db)" in source
 
 
 def test_account_delete_uses_primary_auth_dependency() -> None:
@@ -111,7 +119,14 @@ def test_readonly_auth_dependency_does_not_enable_write_fallback() -> None:
 def test_events_router_uses_readonly_auth_for_sse() -> None:
     source = _router_source("apps/api/app/routers/events.py")
     assert source.count("Depends(get_current_user_readonly)") >= 5
-    assert "create_readonly_session" in source
+    assert "create_session" in source
+    assert "create_readonly_session" not in source
+
+
+def test_analysis_router_uses_primary_for_list_and_hot_reads() -> None:
+    source = _router_source("apps/api/app/routers/analysis.py")
+    assert "get_readonly_db" not in source
+    assert source.count("db: Session = Depends(get_db)") >= 6
 
 
 def test_create_endpoints_bootstrap_user_records() -> None:

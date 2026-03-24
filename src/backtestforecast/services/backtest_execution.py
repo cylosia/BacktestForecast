@@ -9,7 +9,10 @@ from backtestforecast.domain.execution_parameters import ResolvedExecutionParame
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
-from backtestforecast.services.risk_free_rate import resolve_backtest_risk_free_rate
+from backtestforecast.services.risk_free_rate import (
+    build_backtest_risk_free_rate_curve,
+    resolve_backtest_risk_free_rate,
+)
 
 _logger = structlog.get_logger("services.backtest_execution")
 
@@ -64,6 +67,11 @@ class BacktestExecutionService:
                 request,
                 resolved_risk_free_rate,
             )
+        resolved_risk_free_rate_curve = build_backtest_risk_free_rate_curve(
+            request,
+            default_rate=parameters.risk_free_rate or 0.0,
+            client=self.market_data_service.client,
+        )
         config = BacktestConfig(
             symbol=request.symbol,
             strategy_type=request.strategy_type.value,
@@ -77,6 +85,7 @@ class BacktestExecutionService:
             commission_per_contract=request.commission_per_contract,
             entry_rules=request.entry_rules,
             risk_free_rate=parameters.risk_free_rate or 0.0,
+            risk_free_rate_curve=resolved_risk_free_rate_curve,
             dividend_yield=parameters.dividend_yield,
             slippage_pct=request.slippage_pct,
             strategy_overrides=request.strategy_overrides,

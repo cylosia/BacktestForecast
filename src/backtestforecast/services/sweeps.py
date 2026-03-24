@@ -80,6 +80,7 @@ from backtestforecast.services.serialization import (
 )
 
 logger = structlog.get_logger("services.sweeps")
+_SWEEP_QUEUE = "sweeps"
 
 _CANDIDATE_TIMEOUT_SECONDS = 120
 _MAX_EQUITY_POINTS = 500
@@ -183,7 +184,7 @@ class SweepService:
                     model_name="SweepJob",
                     task_name="sweeps.run",
                     task_kwargs={"job_id": str(existing.id)},
-                    queue="research",
+                    queue=_SWEEP_QUEUE,
                     log_event="sweep",
                     logger=logger,
                 )
@@ -201,7 +202,7 @@ class SweepService:
                 model_name="SweepJob",
                 task_name="sweeps.run",
                 task_kwargs={"job_id": str(recent.id)},
-                queue="research",
+                queue=_SWEEP_QUEUE,
                 log_event="sweep",
                 logger=logger,
             )
@@ -275,7 +276,7 @@ class SweepService:
             job=job,
             task_name="sweeps.run",
             task_kwargs={"job_id": str(job.id)},
-            queue="research",
+            queue=_SWEEP_QUEUE,
             log_event="sweep",
             logger=dispatch_logger or logger,
             request_id=request_id,
@@ -1088,13 +1089,14 @@ class SweepService:
         drawdown = max(Decimal(str(summary.get("max_drawdown_pct", 0))), Decimal("0"))
         sharpe = Decimal(str(summary.get("sharpe_ratio") or 0))
         trade_count = int(summary.get("trade_count", 0))
+        decided_trades = int(summary.get("decided_trades", trade_count) or 0)
 
         import math
-        if any(math.isnan(float(v)) for v in [win_rate, roi, drawdown, sharpe]):
+        if not all(math.isfinite(float(v)) for v in [win_rate, roi, drawdown, sharpe]):
             return 0.0
 
         min_trades = int(cfg["min_trades"])
-        if trade_count < min_trades:
+        if decided_trades < min_trades:
             return 0.0
 
         win_rate_w = Decimal(str(round(cfg["win_rate_weight"], 10)))

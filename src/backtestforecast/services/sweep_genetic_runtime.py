@@ -60,6 +60,8 @@ def init_sweep_genetic_runtime(context: dict[str, Any]) -> None:
 
 
 def evaluate_sweep_individual(individual: list[dict[str, Any]]) -> float:
+    from backtestforecast.services.sweeps import SweepService
+
     payload: CreateSweepRequest = _RUNTIME["payload"]
     strategy_type = _RUNTIME["strategy_type"]
     execution_service: BacktestExecutionService = _RUNTIME["execution_service"]
@@ -90,19 +92,13 @@ def evaluate_sweep_individual(individual: list[dict[str, Any]]) -> float:
         result = execution_service.execute_request(request, bundle=bundle)
         summary = {
             "trade_count": result.summary.trade_count,
+            "decided_trades": getattr(result.summary, "decided_trades", result.summary.trade_count),
             "win_rate": result.summary.win_rate,
             "total_roi_pct": result.summary.total_roi_pct,
             "sharpe_ratio": result.summary.sharpe_ratio,
             "max_drawdown_pct": result.summary.max_drawdown_pct,
         }
-        win_rate = float(summary.get("win_rate") or 0.0)
-        roi = float(summary.get("total_roi_pct") or 0.0)
-        sharpe = float(summary.get("sharpe_ratio") or 0.0)
-        drawdown = float(summary.get("max_drawdown_pct") or 0.0)
-        trades = int(summary.get("trade_count") or 0)
-        if trades <= 0:
-            return 0.0
-        return win_rate + roi + (sharpe * 10.0) - drawdown
+        return SweepService._score_candidate_from_summary(summary)
     except (AppError, AppValidationError, _PydanticValidationError):
         return 0.0
     except Exception:

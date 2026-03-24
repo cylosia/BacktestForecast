@@ -93,8 +93,9 @@ class TestPoolShutdownUsesWait:
         from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 
         source = inspect.getsource(SymbolDeepAnalysisService)
-        assert "pool.shutdown(wait=True" in source, (
-            "SymbolDeepAnalysisService must call pool.shutdown(wait=True)"
+        assert "with ThreadPoolExecutor" in source, (
+            "SymbolDeepAnalysisService must manage ThreadPoolExecutor with a context manager "
+            "or explicit wait=True shutdown"
         )
 
 

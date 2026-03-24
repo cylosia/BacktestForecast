@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from redis import Redis
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
@@ -511,9 +512,10 @@ def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 
 @app.exception_handler(RequestValidationError)
 def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    sanitized = [
-        {k: v for k, v in err.items() if k != "input"} for err in exc.errors()
-    ]
+    sanitized = jsonable_encoder(
+        [{k: v for k, v in err.items() if k != "input"} for err in exc.errors()],
+        custom_encoder={Exception: lambda value: str(value)},
+    )
     logger.warning("api.request_validation_error", errors=sanitized)
     response = JSONResponse(
         status_code=422,
@@ -858,7 +860,7 @@ def root() -> dict[str, str]:
     payload: dict[str, str] = {
         "service": "backtestforecast-api",
         "status": "ok",
-        "health": "/health/ready",
+        "health": "/health/live",
     }
     if get_settings().app_env in ("development", "test"):
         payload["docs"] = "/docs"

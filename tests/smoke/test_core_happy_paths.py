@@ -41,8 +41,16 @@ def _ensure_user(db_session: Session, *, plan_tier: str = "pro") -> User:
 
 class _StubExecutionService:
     """Minimal execution service that returns valid results."""
-
     class market_data_service:
+        class client:
+            @staticmethod
+            def get_average_treasury_yield(*args, **kwargs):
+                return 0.02
+
+            @staticmethod
+            def close() -> None:
+                return None
+
         @staticmethod
         def prepare_backtest(request):
             from backtestforecast.market_data.types import DailyBar
@@ -63,7 +71,7 @@ class _StubExecutionService:
     def close(self) -> None:
         pass
 
-    def execute_request(self, request, bundle=None) -> BacktestExecutionResult:
+    def execute_request(self, request, bundle=None, resolved_parameters=None) -> BacktestExecutionResult:
         entry_date = request.start_date + timedelta(days=5)
         exit_date = entry_date + timedelta(days=7)
         expiration_date = exit_date + timedelta(days=23)

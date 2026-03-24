@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import inspect
 import math
 from datetime import date, timedelta
 from decimal import Decimal
@@ -112,7 +113,14 @@ class OptionsBacktestEngine:
         sorted_bars = [b for b in sorted_bars if b.close_price > 0]
         if not sorted_bars:
             return BacktestExecutionResult(
-                summary=build_summary(float(config.account_size), float(config.account_size), [], [], risk_free_rate=config.risk_free_rate),
+                summary=build_summary(
+                    float(config.account_size),
+                    float(config.account_size),
+                    [],
+                    [],
+                    risk_free_rate=config.risk_free_rate,
+                    risk_free_rate_curve=config.risk_free_rate_curve,
+                ),
                 trades=[], equity_curve=[]
             )
         ex_dividend_dates = set(ex_dividend_dates or ())
@@ -184,7 +192,7 @@ class OptionsBacktestEngine:
                     max_holding_days=config.max_holding_days,
                     backtest_end_date=config.end_date,
                     last_bar_date=sorted_bars[-1].trade_date,
-                    position_value=float(snapshot.position_value),
+                    position_value=float(position_value),
                     entry_cost=float(entry_cost),
                     capital_at_risk=capital_at_risk,
                     profit_target_pct=config.profit_target_pct,
@@ -197,7 +205,7 @@ class OptionsBacktestEngine:
                     exit_reason = snapshot.assignment_exit_reason
                 if should_exit:
                     trade, cash_delta = self._close_position(
-                        position, config, snapshot.position_value, bar.trade_date, bar.close_price,
+                        position, config, position_value, bar.trade_date, bar.close_price,
                         exit_prices, exit_reason, warnings, warning_codes,
                         current_bar_index=index,
                         assignment_detail=assignment_detail,
@@ -238,9 +246,10 @@ class OptionsBacktestEngine:
             if entry_allowed:
                 try:
                     build_kwargs: dict = {}
-                    if config.custom_legs is not None:
+                    build_position_params = inspect.signature(strategy.build_position).parameters
+                    if config.custom_legs is not None and "custom_legs" in build_position_params:
                         build_kwargs["custom_legs"] = list(config.custom_legs)
-                    if realized_vol is not None:
+                    if realized_vol is not None and "realized_vol" in build_position_params:
                         build_kwargs["realized_vol"] = realized_vol
                     candidate = strategy.build_position(
                         config,
@@ -348,11 +357,20 @@ class OptionsBacktestEngine:
             snapshot = self._mark_position(
                 position, sorted_bars[-1], option_gateway, warnings, warning_codes, ex_dividend_dates,
             )
+            final_position_value = snapshot.position_value
+            if not final_position_value.is_finite():
+                logger.warning(
+                    "engine.nan_position_value_force_close_guard",
+                    bar_date=str(sorted_bars[-1].trade_date),
+                )
+                final_position_value = self._entry_value_per_unit(position) * _D(position.quantity)
+                if not final_position_value.is_finite():
+                    final_position_value = _D0
             exit_prices_fc = {leg.ticker: leg.last_mid for leg in position.option_legs}
             for stock_leg in position.stock_legs:
                 exit_prices_fc[stock_leg.symbol] = stock_leg.last_price
             trade, cash_delta = self._close_position(
-                position, config, snapshot.position_value, sorted_bars[-1].trade_date,
+                position, config, final_position_value, sorted_bars[-1].trade_date,
                 sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
                 warnings, warning_codes,
                 current_bar_index=len(sorted_bars) - 1,
@@ -386,7 +404,12 @@ class OptionsBacktestEngine:
 
         ending_equity_f = float(equity_curve[-1].equity) if equity_curve else float(config.account_size)
         summary = build_summary(
-            float(config.account_size), ending_equity_f, trades, equity_curve, risk_free_rate=config.risk_free_rate,
+            float(config.account_size),
+            ending_equity_f,
+            trades,
+            equity_curve,
+            risk_free_rate=config.risk_free_rate,
+            risk_free_rate_curve=config.risk_free_rate_curve,
             warnings=warnings,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
@@ -550,7 +573,18 @@ class OptionsBacktestEngine:
                 ))
             missing_quote_tickers.append(leg.ticker)
             return leg.last_mid
-        if quote.mid_price is None or not math.isfinite(quote.mid_price) or quote.mid_price <= 0:
+        if quote.mid_price is None or not math.isfinite(quote.mid_price):
+            if bar.trade_date >= leg.expiration_date:
+                return float(self._intrinsic_value(
+                    leg.contract_type, leg.strike_price, bar.close_price,
+                ))
+            missing_quote_tickers.append(leg.ticker)
+            return leg.last_mid
+        if quote.mid_price <= 0:
+            if bar.trade_date >= leg.expiration_date:
+                return float(self._intrinsic_value(
+                    leg.contract_type, leg.strike_price, bar.close_price,
+                ))
             missing_quote_tickers.append(leg.ticker)
             return leg.last_mid
         return quote.mid_price
@@ -612,7 +646,7 @@ class OptionsBacktestEngine:
         self,
         position: OpenMultiLegPosition,
         config: BacktestConfig,
-        exit_value: Decimal,
+        exit_value: Decimal | float | int,
         exit_date: date,
         exit_underlying_close: float,
         exit_prices: dict[str, float],
@@ -624,6 +658,7 @@ class OptionsBacktestEngine:
         trade_warnings: tuple[str, ...] = (),
     ) -> tuple[TradeResult, Decimal]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
+        exit_value_d = exit_value if isinstance(exit_value, Decimal) else _D(exit_value)
         exit_commission = self._option_commission_total(position, config.commission_per_contract)
         option_exit_notional: Decimal = sum(
             (abs(_D(leg.last_mid) * _D(_leg_multiplier(leg)))
@@ -651,14 +686,19 @@ class OptionsBacktestEngine:
         )
         entry_gross_notional = option_entry_notional + stock_entry_notional
         entry_slippage = entry_gross_notional * slippage_pct_d
-        cash_delta = exit_value - exit_commission - exit_slippage
-        exit_value_per_unit = exit_value / _D(position.quantity) if position.quantity else _D0
+        cash_delta = exit_value_d - exit_commission - exit_slippage
+        exit_value_per_unit = exit_value_d / _D(position.quantity) if position.quantity else _D0
         gross_pnl = (exit_value_per_unit - entry_value_per_unit) * _D(position.quantity)
         dividends_received = self._estimate_dividends_received(position, config, exit_date)
         if dividends_received:
             gross_pnl += dividends_received
             cash_delta += dividends_received
-        total_commissions = position.entry_commission_total + exit_commission
+        entry_commission_total = (
+            position.entry_commission_total
+            if isinstance(position.entry_commission_total, Decimal)
+            else _D(position.entry_commission_total)
+        )
+        total_commissions = entry_commission_total + exit_commission
         total_slippage = entry_slippage + exit_slippage
         net_pnl = gross_pnl - total_commissions - total_slippage
 
@@ -792,9 +832,17 @@ class OptionsBacktestEngine:
         return 0.0
 
     @staticmethod
-    def _option_commission_total(position: OpenMultiLegPosition, commission_per_contract: Decimal) -> Decimal:
+    def _option_commission_total(
+        position: OpenMultiLegPosition,
+        commission_per_contract: Decimal | float | int,
+    ) -> Decimal:
         contracts_per_unit = sum(leg.quantity_per_unit for leg in position.option_legs)
-        return commission_per_contract * _D(contracts_per_unit) * _D(position.quantity)
+        commission = (
+            commission_per_contract
+            if isinstance(commission_per_contract, Decimal)
+            else _D(commission_per_contract)
+        )
+        return commission * _D(contracts_per_unit) * _D(position.quantity)
 
     @staticmethod
     def _build_trade_detail_json(

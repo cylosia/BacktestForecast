@@ -3,7 +3,7 @@
 import math
 from statistics import fmean
 
-from backtestforecast.backtests.types import BacktestSummary, EquityPointResult, TradeResult
+from backtestforecast.backtests.types import BacktestSummary, EquityPointResult, RiskFreeRateCurve, TradeResult
 
 
 def build_summary(
@@ -13,6 +13,7 @@ def build_summary(
     equity_curve: list[EquityPointResult],
     *,
     risk_free_rate: float = 0.045,
+    risk_free_rate_curve: RiskFreeRateCurve | None = None,
     warnings: list[dict[str, str]] | None = None,
 ) -> BacktestSummary:
     """Build a summary of backtest results from trade and equity data.
@@ -57,20 +58,37 @@ def build_summary(
     trade_count = len(trades)
     decided = len(win_pnls) + len(loss_pnls)
     win_rate = (len(win_pnls) / decided * 100.0) if decided else 0.0
-    max_drawdown_pct = max((float(point.drawdown_pct) for point in equity_curve), default=0.0)
+    finite_drawdowns = [
+        drawdown
+        for drawdown in (float(point.drawdown_pct) for point in equity_curve)
+        if math.isfinite(drawdown)
+    ]
+    max_drawdown_pct = max(finite_drawdowns, default=0.0)
     avg_win = fmean(win_pnls) if win_pnls else 0.0
     avg_loss = fmean(loss_pnls) if loss_pnls else 0.0
 
     gross_wins = sum(win_pnls)
     gross_losses = abs(sum(loss_pnls))
-    profit_factor = (gross_wins / gross_losses) if gross_losses > 0 else None
-    payoff_ratio = (abs(avg_win / avg_loss)) if (win_pnls and loss_pnls and avg_loss != 0) else None
+    profit_factor = (gross_wins / gross_losses) if gross_losses > 0 else (math.inf if gross_wins > 0 else None)
+    payoff_ratio = (
+        abs(avg_win / avg_loss)
+        if (win_pnls and loss_pnls and avg_loss != 0)
+        else (math.inf if win_pnls and not loss_pnls else None)
+    )
     expectancy = (total_net_pnl / trade_count) if trade_count else 0.0
 
     break_even_count = trade_count - decided
-    if break_even_count > 0 and decided > 0 and warnings is not None:
-        be_pct = break_even_count / trade_count * 100
-        if be_pct >= 20:
+    if break_even_count > 0 and warnings is not None:
+        be_pct = (break_even_count / trade_count * 100) if trade_count else 0.0
+        if decided == 0:
+            warnings.append({
+                "code": "all_trades_break_even",
+                "message": (
+                    f"All {trade_count} trades broke even (net P&L = $0). "
+                    "Win rate is shown as 0.0% because there were no winning or losing trades."
+                ),
+            })
+        elif be_pct >= 20:
             warnings.append({
                 "code": "high_break_even_rate",
                 "message": (
@@ -80,12 +98,17 @@ def build_summary(
                 ),
             })
 
-    sharpe_ratio, sortino_ratio = _compute_sharpe_sortino(equity_curve, risk_free_rate, trade_count)
-    if sharpe_ratio is None and warnings is not None and trade_count > 0:
-        if trade_count < _MIN_TRADES_FOR_RATIOS:
+    sharpe_ratio, sortino_ratio = _compute_sharpe_sortino(
+        equity_curve,
+        risk_free_rate,
+        trade_count,
+        risk_free_rate_curve=risk_free_rate_curve,
+    )
+    if sharpe_ratio is None and warnings is not None and (trade_count > 0 or equity_curve):
+        if equity_curve and any(float(point.equity) <= 0 for point in equity_curve):
             warnings.append({
-                "code": "ratios_insufficient_trades",
-                "message": f"Sharpe and Sortino ratios are not reported because the backtest has only {trade_count} trades (minimum {_MIN_TRADES_FOR_RATIOS} required).",
+                "code": "ratios_non_positive_equity",
+                "message": "Sharpe and Sortino ratios are not reported because the equity curve reached zero or negative equity during the run.",
             })
         elif len(equity_curve) < _MIN_EQUITY_POINTS_FOR_RATIOS:
             warnings.append({
@@ -159,7 +182,6 @@ def build_summary(
     )
 
 
-_MIN_TRADES_FOR_RATIOS = 5
 _MIN_TRADING_DAYS_FOR_CAGR = 10
 _MIN_EQUITY_POINTS_FOR_RATIOS = 20
 _MIN_CALENDAR_DAYS_FOR_RATIOS = 30
@@ -169,6 +191,8 @@ def _compute_sharpe_sortino(
     equity_curve: list[EquityPointResult],
     risk_free_rate: float,
     trade_count: int,
+    *,
+    risk_free_rate_curve: RiskFreeRateCurve | None = None,
 ) -> tuple[float | None, float | None]:
     """Compute annualised Sharpe and Sortino ratios.
 
@@ -194,7 +218,7 @@ def _compute_sharpe_sortino(
     Values may differ from other platforms that use population statistics
     or alternative downside deviation formulas.
     """
-    if trade_count < _MIN_TRADES_FOR_RATIOS or len(equity_curve) < 2:
+    if len(equity_curve) < 2:
         return None, None
 
     if len(equity_curve) < _MIN_EQUITY_POINTS_FOR_RATIOS:
@@ -204,22 +228,13 @@ def _compute_sharpe_sortino(
         return None, None
 
     equities = [float(point.equity) for point in equity_curve]
-    first_nonpositive = next((idx for idx, eq in enumerate(equities) if eq <= 0), None)
-    if first_nonpositive is not None:
-        if first_nonpositive < 2:
-            return None, None
-        equity_curve = equity_curve[:first_nonpositive]
-        equities = equities[:first_nonpositive]
-        if len(equity_curve) < _MIN_EQUITY_POINTS_FOR_RATIOS:
-            return None, None
-        calendar_days = (equity_curve[-1].trade_date - equity_curve[0].trade_date).days
-        if calendar_days < _MIN_CALENDAR_DAYS_FOR_RATIOS:
-            return None, None
-    daily_rf = risk_free_rate / 252.0
+    if any(eq <= 0 for eq in equities):
+        return None, None
     excess: list[float] = []
     for i in range(1, len(equities)):
         daily_return = (equities[i] - equities[i - 1]) / equities[i - 1]
-        excess.append(daily_return - daily_rf)
+        annual_rf = risk_free_rate_curve.rate_for(equity_curve[i].trade_date) if risk_free_rate_curve is not None else risk_free_rate
+        excess.append(daily_return - (annual_rf / 252.0))
 
     if len(excess) < 2:
         return None, None

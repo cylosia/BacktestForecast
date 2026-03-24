@@ -2,11 +2,13 @@
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import ExportFormat
+from backtestforecast.schemas.backtests import RiskFreeRatePointResponse
 from backtestforecast.schemas.common import CursorPaginatedResponse, JobStatus, sanitize_error_message
 
 
@@ -46,6 +48,8 @@ class ExportJobResponse(BaseModel):
     expires_at: datetime | None = None
     risk_free_rate: Decimal | None = None
     risk_free_rate_source: str | None = None
+    risk_free_rate_model: Literal["scalar", "curve_default", "unknown"] | None = None
+    risk_free_rate_curve_points: list[RiskFreeRatePointResponse] = Field(default_factory=list)
 
     _sanitize = field_validator("error_message", mode="before")(sanitize_error_message)
 

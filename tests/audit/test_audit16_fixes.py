@@ -39,7 +39,7 @@ class TestSSEPublishAfterCommit:
     def test_handle_webhook_publishes_after_commit(self):
         """handle_webhook must publish cancellation events after session.commit()."""
         from backtestforecast.services.billing import BillingService
-        source = inspect.getsource(BillingService.handle_webhook)
+        source = inspect.getsource(BillingService._handle_webhook_impl)
         commit_pos = source.find("self.session.commit()")
         publish_pos = source.find("publish_cancellation_events")
         assert commit_pos > 0, "handle_webhook must call session.commit()"
@@ -66,11 +66,10 @@ class TestStaleSubscriptionGuardWarning:
     def test_stale_guard_logs_warning_not_info(self):
         from backtestforecast.services.billing import BillingService
         source = inspect.getsource(BillingService._apply_subscription_to_user)
-        assert "stale_event_skipped_may_need_reconciliation" in source, (
-            "Stale subscription guard must use a descriptive event name "
-            "that flags the need for reconciliation"
+        assert "billing.subscription.stale_event_skipped" in source, (
+            "Stale subscription guard must emit the stale subscription warning event"
         )
-        stale_idx = source.find("stale_event_skipped_may_need_reconciliation")
+        stale_idx = source.find("billing.subscription.stale_event_skipped")
         preceding = source[max(0, stale_idx - 100):stale_idx]
         assert "logger.warning" in preceding, (
             "Stale subscription guard must log at WARNING level, not INFO"
@@ -110,9 +109,8 @@ class TestApiClientSweepTypes:
     def test_manual_types_comment_updated(self):
         api_client_path = Path(__file__).resolve().parents[2] / "packages" / "api-client" / "src" / "index.ts"
         content = api_client_path.read_text(encoding="utf-8")
-        assert "now included in the OpenAPI snapshot" in content, (
-            "The api-client comment must indicate sweep types are now in the OpenAPI snapshot"
+        assert "Sweep types (derived from generated OpenAPI schema)" in content, (
+            "The api-client comment must indicate sweep types come from the generated OpenAPI schema"
         )
-        assert "does not yet include" not in content, (
-            "The stale comment about sweeps not being in the OpenAPI snapshot must be removed"
-        )
+        assert 'export type SweepJobResponse = components["schemas"]["SweepJobResponse"];' in content
+        assert 'export type SweepResultResponse = components["schemas"]["SweepResultResponse"];' in content

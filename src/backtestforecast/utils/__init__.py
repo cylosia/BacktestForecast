@@ -13,9 +13,9 @@ def to_decimal(value: float | Decimal | None, *, allow_infinite: bool = False) -
     """Convert a float or Decimal to a quantized Decimal.
 
     NaN returns ``None`` so that scan/sweep serialization does not crash
-    on unexpected NaN values from the backtest engine.  Infinite values
-    return ``None`` when *allow_infinite* is True (appropriate for
-    metrics like profit_factor where infinity is a valid result meaning
+    on unexpected NaN values from the backtest engine. Infinite values
+    are preserved when *allow_infinite* is True (appropriate for metrics
+    like profit_factor where infinity is a valid result meaning
     "no losses"), or raise ``ValueError`` when False (the default, for
     fields that must be finite).
     """
@@ -26,7 +26,7 @@ def to_decimal(value: float | Decimal | None, *, allow_infinite: bool = False) -
             return None
         if value.is_infinite():
             if allow_infinite:
-                return None
+                return value
             raise ValueError(f"Non-finite Decimal value: {value}")
         return value.quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
     try:
@@ -37,7 +37,7 @@ def to_decimal(value: float | Decimal | None, *, allow_infinite: bool = False) -
         return None
     if math.isinf(fval):
         if allow_infinite:
-            return None
+            return Decimal("Infinity") if fval > 0 else Decimal("-Infinity")
         raise ValueError(f"Non-finite value: {value}")
     return Decimal(str(fval)).quantize(DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 

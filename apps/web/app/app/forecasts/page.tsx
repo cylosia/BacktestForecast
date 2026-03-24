@@ -1,6 +1,6 @@
-import { getCurrentUser } from "@/lib/api/server";
-import { ForecastLookup } from "@/components/forecasts/forecast-lookup";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
+import { ForecastLookup } from "@/components/forecasts/forecast-lookup";
+import { getCurrentUser } from "@/lib/api/server";
 
 export const dynamic = "force-dynamic";
 
@@ -41,9 +41,9 @@ export default async function ForecastsPage() {
           chosen horizon for each matched analog and produces a low/median/high expected range.
         </p>
         <p>
-          The positive outcome rate shows what percentage of historical analogs resulted in a
-          positive return over the horizon period. The analog count indicates how many matches
-          were found — higher counts mean more statistical confidence.
+          The favorable outcome rate shows what percentage of historical analogs favored the
+          selected strategy direction over the horizon period. The analog count indicates how
+          many matches were found — higher counts mean more statistical confidence.
         </p>
         <p className="text-xs">
           This is research software. Forecasts are probabilistic ranges derived from historical

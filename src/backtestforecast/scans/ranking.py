@@ -24,13 +24,13 @@ from backtestforecast.schemas.scans import (
     RankingBreakdownResponse,
 )
 
-# Current-backtest scoring weights - how much each metric contributes to the
-# composite score.  Must sum to 1.0 (sign on drawdown is applied in code).
-CURRENT_ROI_WEIGHT = 0.35
-CURRENT_WIN_RATE_WEIGHT = 0.15
-CURRENT_NET_PNL_WEIGHT = 0.20
-CURRENT_TRADE_COUNT_WEIGHT = 0.10
-CURRENT_DRAWDOWN_WEIGHT = 0.20
+# Current-backtest scoring weights. Net P&L is intentionally omitted because,
+# for a fixed account size, it is just ROI in dollar form and would double-
+# count the same return signal.
+CURRENT_ROI_WEIGHT = 0.40
+CURRENT_WIN_RATE_WEIGHT = 0.20
+CURRENT_TRADE_COUNT_WEIGHT = 0.15
+CURRENT_DRAWDOWN_WEIGHT = 0.25
 
 # Scaling denominators - normalise each metric into roughly [-1, 1] before
 # weighting.  Chosen empirically so that "typical" backtest values map to the
@@ -47,8 +47,8 @@ class HistoricalObservation:
     completed_at: datetime
     win_rate: float
     total_roi_pct: float
-    total_net_pnl: float
     max_drawdown_pct: float
+    total_net_pnl: float = 0.0
 
 
 def hash_payload(payload: dict[str, Any]) -> str:
@@ -96,31 +96,42 @@ def aggregate_historical_performance(
     weighted_total = 0.0
     weighted_win_rate = 0.0
     weighted_roi = 0.0
-    weighted_net_pnl = 0.0
     weighted_drawdown = 0.0
     sample_count = 0
     last_observed_at: datetime | None = None
 
     for observation in observations:
+        if not all(
+            math.isfinite(value)
+            for value in (
+                observation.win_rate,
+                observation.total_roi_pct,
+                observation.max_drawdown_pct,
+            )
+        ):
+            continue
         age_days = max((reference_time - observation.completed_at).total_seconds() / 86400.0, 0.0)
         weight = math.exp((-math.log(2.0) * age_days) / recency_half_life_days)
         weighted_total += weight
         weighted_win_rate += observation.win_rate * weight
         weighted_roi += observation.total_roi_pct * weight
-        weighted_net_pnl += observation.total_net_pnl * weight
         weighted_drawdown += observation.max_drawdown_pct * weight
         sample_count += 1
         if last_observed_at is None or observation.completed_at > last_observed_at:
             last_observed_at = observation.completed_at
 
     if weighted_total <= 0:
-        return HistoricalPerformanceResponse(sample_count=0, recency_half_life_days=recency_half_life_days)
+        return HistoricalPerformanceResponse(
+            sample_count=0,
+            effective_sample_size=Decimal("0"),
+            recency_half_life_days=recency_half_life_days,
+        )
 
     return HistoricalPerformanceResponse(
         sample_count=sample_count,
+        effective_sample_size=_to_decimal(weighted_total),
         weighted_win_rate=_to_decimal(weighted_win_rate / weighted_total),
         weighted_total_roi_pct=_to_decimal(weighted_roi / weighted_total),
-        weighted_total_net_pnl=_to_decimal(weighted_net_pnl / weighted_total),
         weighted_max_drawdown_pct=_to_decimal(weighted_drawdown / weighted_total),
         recency_half_life_days=recency_half_life_days,
         last_observed_at=last_observed_at,
@@ -141,25 +152,23 @@ def build_ranking_breakdown(
     current_score = (
         (_clamp(summary.total_roi_pct / CURRENT_ROI_SCALE, -1.0, 1.0) * CURRENT_ROI_WEIGHT)
         + (_clamp((summary.win_rate - 50.0) / CURRENT_WIN_RATE_SCALE, -1.0, 1.0) * CURRENT_WIN_RATE_WEIGHT)
-        + (_clamp((summary.total_net_pnl / max(account_size, 1.0)) / CURRENT_NET_PNL_SCALE, -1.0, 1.0) * CURRENT_NET_PNL_WEIGHT)
-        + (_clamp(summary.trade_count / CURRENT_TRADE_COUNT_SCALE, 0.0, 1.0) * CURRENT_TRADE_COUNT_WEIGHT)
+        + (_clamp(summary.decided_trades / CURRENT_TRADE_COUNT_SCALE, 0.0, 1.0) * CURRENT_TRADE_COUNT_WEIGHT)
         - (_clamp(summary.max_drawdown_pct / CURRENT_DRAWDOWN_SCALE, 0.0, 1.0) * CURRENT_DRAWDOWN_WEIGHT)
     )
-    if summary.trade_count >= 3:
-        reasons.append("Current backtest generated multiple trades rather than a single isolated outcome.")
+    if summary.decided_trades >= 3:
+        reasons.append("Current backtest generated multiple decided trades rather than a single isolated outcome.")
     if summary.max_drawdown_pct <= 15:
         reasons.append("Current backtest stayed within a moderate drawdown band.")
 
     hist_score = 0.0
     if historical_performance.sample_count > 0:
-        confidence = min(1.0, historical_performance.sample_count / 12.0)
+        effective_sample_size = float(historical_performance.effective_sample_size)
+        if effective_sample_size <= 0:
+            effective_sample_size = float(historical_performance.sample_count)
+        confidence = min(1.0, effective_sample_size / 12.0)
         hist_score = confidence * (
             (_clamp(float(historical_performance.weighted_total_roi_pct) / 25.0, -1.0, 1.0) * 0.40)
             + (_clamp((float(historical_performance.weighted_win_rate) - 50.0) / 50.0, -1.0, 1.0) * 0.25)
-            + (
-                _clamp(float(historical_performance.weighted_total_net_pnl) / max(account_size * 0.15, 1.0), -1.0, 1.0)
-                * 0.15
-            )
             - (_clamp(float(historical_performance.weighted_max_drawdown_pct) / 30.0, 0.0, 1.0) * 0.20)
         )
         reasons.append(
@@ -189,12 +198,16 @@ def _forecast_alignment_score(
     forecast: HistoricalAnalogForecastResponse,
     reasons: list[str],
 ) -> float:
-    if forecast.analog_count == 0 or forecast.positive_outcome_rate_pct is None:
+    if forecast.analog_count == 0:
         reasons.append("No analog forecast data available; forecast alignment excluded from scoring.")
         return 0.0
 
     median_return = float(forecast.expected_return_median_pct)
-    positive_rate = float(forecast.positive_outcome_rate_pct)
+    positive_rate = (
+        float(forecast.positive_outcome_rate_pct)
+        if forecast.positive_outcome_rate_pct is not None
+        else None
+    )
     dispersion = abs(float(forecast.expected_return_high_pct) - float(forecast.expected_return_low_pct))
 
     if strategy_type in BULLISH_STRATEGIES:
@@ -211,9 +224,8 @@ def _forecast_alignment_score(
         alignment = (neutral_bonus * 0.8) - (dispersion_penalty * 0.4)
         reasons.append("Neutral/volatility structure score favored contained median direction and bounded dispersion.")
 
-    if strategy_type in BEARISH_STRATEGIES:
-        probability_bonus = _clamp(((100.0 - positive_rate) - 50.0) / 50.0, -1.0, 1.0)
-    else:
+    probability_bonus = 0.0
+    if positive_rate is not None and strategy_type not in NEUTRAL_STRATEGIES:
         probability_bonus = _clamp((positive_rate - 50.0) / 50.0, -1.0, 1.0)
     return (alignment * 0.7) + (probability_bonus * 0.3)
 

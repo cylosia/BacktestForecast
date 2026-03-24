@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import bisect
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -19,6 +20,21 @@ _HISTORICAL_RISK_FREE_RATES: dict[int, float] = {
     2021: 0.001, 2022: 0.020, 2023: 0.052, 2024: 0.053,
     2025: 0.045, 2026: 0.045,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class RiskFreeRateCurve:
+    default_rate: float
+    dates: tuple[date, ...] = ()
+    rates: tuple[float, ...] = ()
+
+    def rate_for(self, as_of_date: date) -> float:
+        if not self.dates or not self.rates:
+            return self.default_rate
+        index = bisect.bisect_right(self.dates, as_of_date) - 1
+        if index < 0:
+            return self.default_rate
+        return self.rates[index]
 
 
 def estimate_risk_free_rate(start_date: date, end_date: date) -> float:
@@ -123,12 +139,18 @@ class BacktestConfig:
     commission_per_contract: Decimal
     entry_rules: Sequence[EntryRule]
     risk_free_rate: float = 0.045
+    risk_free_rate_curve: RiskFreeRateCurve | None = None
     dividend_yield: float = 0.0
     slippage_pct: float = 0.0
     strategy_overrides: StrategyOverrides | None = None
     custom_legs: Sequence[CustomLegDefinition] | None = None
     profit_target_pct: float | None = None
     stop_loss_pct: float | None = None
+
+    def resolve_risk_free_rate(self, as_of_date: date | None = None) -> float:
+        if as_of_date is None or self.risk_free_rate_curve is None:
+            return self.risk_free_rate
+        return self.risk_free_rate_curve.rate_for(as_of_date)
 
 
 @dataclass(frozen=True, slots=True)

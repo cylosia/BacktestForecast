@@ -1,7 +1,6 @@
 ﻿"""Shared serialization and validation helpers for scan and sweep services."""
 from __future__ import annotations
 
-import math
 from contextlib import suppress
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -236,16 +235,16 @@ def _safe_decimal(val: float | Decimal) -> float:
     return float(result) if result is not None else 0.0
 
 
-def _opt_decimal(val: float | None) -> float | None:
-    """Convert to quantized Decimal then float; Inf/NaN -> None."""
+def _opt_decimal(val: float | None) -> float | str | None:
+    """Convert to quantized Decimal then JSON-safe scalar; NaN -> None, Inf -> explicit string."""
     if val is None:
         return None
     try:
         result = to_decimal(val, allow_infinite=True)
     except (ValueError, ArithmeticError):
         return None
-    if result is not None and math.isinf(float(result)):
-        return None
+    if result is not None and result.is_infinite():
+        return "Infinity" if result > 0 else "-Infinity"
     return float(result) if result is not None else None
 
 
@@ -253,6 +252,7 @@ def serialize_summary(summary: Any) -> dict[str, Any]:
     """Convert a backtest summary object to a JSON-safe dict."""
     return {
         "trade_count": summary.trade_count,
+        "decided_trades": summary.decided_trades,
         "win_rate": _safe_decimal(summary.win_rate),
         "total_roi_pct": _safe_decimal(summary.total_roi_pct),
         "average_win_amount": _safe_decimal(summary.average_win_amount),

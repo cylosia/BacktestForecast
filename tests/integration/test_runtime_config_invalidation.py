@@ -28,6 +28,7 @@ def test_runtime_config_invalidation_updates_health_version_visibility(monkeypat
     original_feature_sweeps_enabled = settings.feature_sweeps_enabled
     original_feature_analysis_enabled = settings.feature_analysis_enabled
     original_feature_billing_enabled = settings.feature_billing_enabled
+    original_rate_limit_fail_closed = settings.rate_limit_fail_closed
     try:
         monkeypatch.setenv("APP_ENV", "development")
         invalidate_settings()
@@ -58,6 +59,7 @@ def test_runtime_config_invalidation_updates_health_version_visibility(monkeypat
         monkeypatch.setenv("FEATURE_SWEEPS_ENABLED", "false")
         monkeypatch.setenv("FEATURE_ANALYSIS_ENABLED", "false")
         monkeypatch.setenv("FEATURE_BILLING_ENABLED", "false")
+        monkeypatch.setenv("RATE_LIMIT_FAIL_CLOSED", "true")
         invalidate_settings()
         with TestClient(app, base_url="http://localhost") as client:
             prod_resp = client.get("/health/live")
@@ -104,4 +106,5 @@ def test_runtime_config_invalidation_updates_health_version_visibility(monkeypat
         monkeypatch.setenv("FEATURE_SWEEPS_ENABLED", "true" if original_feature_sweeps_enabled else "false")
         monkeypatch.setenv("FEATURE_ANALYSIS_ENABLED", "true" if original_feature_analysis_enabled else "false")
         monkeypatch.setenv("FEATURE_BILLING_ENABLED", "true" if original_feature_billing_enabled else "false")
+        monkeypatch.setenv("RATE_LIMIT_FAIL_CLOSED", "true" if original_rate_limit_fail_closed else "false")
         invalidate_settings()

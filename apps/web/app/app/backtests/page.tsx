@@ -77,6 +77,9 @@ export default async function BacktestsPage({
 
         <Card>
           <CardContent className="pt-6">
+            <div className="mb-4 rounded-xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+              Risk-free-rate audit details live on each run detail page and in exports. If a long-run Treasury curve was only partially reconstructed, that warning is shown there with the persisted curve points.
+            </div>
             <SelectableHistoryList
               items={history.items}
               comparisonLimit={user.features?.side_by_side_comparison_limit}

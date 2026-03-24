@@ -28,10 +28,10 @@ def test_readonly_auth_returns_existing_user_without_write_fallback(monkeypatch:
     user = SimpleNamespace(id="user-1", clerk_user_id="clerk-user")
     repo = MagicMock()
     repo.get_by_clerk_user_id.return_value = user
-    repo.sync_email_if_needed.return_value = True
 
     monkeypatch.setattr(deps, "get_token_verifier", lambda: SimpleNamespace(verify_bearer_token=lambda _token: SimpleNamespace(clerk_user_id="clerk-user", email="new@example.com")))
     monkeypatch.setattr(deps, "UserRepository", lambda _db: repo)
+    monkeypatch.setattr(deps, "get_settings", lambda: SimpleNamespace(database_read_replica_url=None))
 
     create_session_called = False
 
@@ -46,6 +46,7 @@ def test_readonly_auth_returns_existing_user_without_write_fallback(monkeypatch:
 
     assert resolved is user
     assert create_session_called is False
+    repo.sync_email_if_needed.assert_not_called()
 
 
 def test_readonly_auth_rejects_missing_user_without_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,7 +55,44 @@ def test_readonly_auth_rejects_missing_user_without_side_effects(monkeypatch: py
 
     monkeypatch.setattr(deps, "get_token_verifier", lambda: SimpleNamespace(verify_bearer_token=lambda _token: SimpleNamespace(clerk_user_id="missing", email="missing@example.com")))
     monkeypatch.setattr(deps, "UserRepository", lambda _db: repo)
+    monkeypatch.setattr(deps, "get_settings", lambda: SimpleNamespace(database_read_replica_url=None))
     monkeypatch.setattr(deps, "create_session", lambda: (_ for _ in ()).throw(AssertionError("should not create session")))
 
     with pytest.raises(AuthenticationError, match="User account not initialized"):
         deps.get_current_user_readonly(request=_request(), authorization="Bearer test-token", db=MagicMock())
+
+
+def test_readonly_auth_uses_primary_truth_when_replica_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    replica_repo = MagicMock()
+    replica_repo.get_by_clerk_user_id.return_value = None
+    primary_user = SimpleNamespace(id="user-primary", clerk_user_id="clerk-user", plan_tier="premium")
+    primary_repo = MagicMock()
+    primary_repo.get_by_clerk_user_id.return_value = primary_user
+
+    replica_db = object()
+    primary_db = MagicMock()
+
+    def _repo_factory(db: object) -> MagicMock:
+        return replica_repo if db is replica_db else primary_repo
+
+    class _SessionContext:
+        def __enter__(self) -> object:
+            return primary_db
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(
+        deps,
+        "get_token_verifier",
+        lambda: SimpleNamespace(verify_bearer_token=lambda _token: SimpleNamespace(clerk_user_id="clerk-user", email="user@example.com")),
+    )
+    monkeypatch.setattr(deps, "UserRepository", _repo_factory)
+    monkeypatch.setattr(deps, "get_settings", lambda: SimpleNamespace(database_read_replica_url="postgresql://replica"))
+    monkeypatch.setattr(deps, "create_session", lambda: _SessionContext())
+
+    resolved = deps.get_current_user_readonly(request=_request(), authorization="Bearer test-token", db=replica_db)
+
+    assert resolved is primary_user
+    primary_db.expunge.assert_called_once_with(primary_user)
+    replica_repo.sync_email_if_needed.assert_not_called()

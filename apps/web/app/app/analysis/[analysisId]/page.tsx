@@ -17,6 +17,17 @@ function asMetricRecord(value: unknown): Record<string, number | string | null |
   return {};
 }
 
+function decidedTradeContext(summary: Record<string, number | string | null | undefined>): string | null {
+  const totalRaw = summary.trade_count;
+  const decidedRaw = summary.decided_trades;
+  const total = typeof totalRaw === "number" ? totalRaw : Number(totalRaw);
+  const decided = typeof decidedRaw === "number" ? decidedRaw : Number(decidedRaw);
+  if (Number.isNaN(total) || Number.isNaN(decided) || total <= 0 || decided === total) return null;
+  const breakEven = total - decided;
+  if (breakEven <= 0) return null;
+  return `Based on ${formatNumber(decided)} of ${formatNumber(total)} trades (${formatNumber(breakEven)} break-even excluded)`;
+}
+
 export default async function AnalysisDetailPage({
   params,
 }: {
@@ -91,6 +102,7 @@ export default async function AnalysisDetailPage({
           <CardContent className="space-y-4">
             {analysis.top_results.map((result) => {
               const summary = asMetricRecord(result.summary);
+              const winRateContext = decidedTradeContext(summary);
               return (
               <div key={`${result.rank}-${result.strategy_type}`} className="rounded-xl border border-border/70 p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -108,6 +120,7 @@ export default async function AnalysisDetailPage({
                   <div>
                     <p className="text-muted-foreground">Win rate</p>
                     <p>{summary.win_rate != null ? formatPercent(summary.win_rate) : "—"}</p>
+                    {winRateContext ? <p className="text-xs text-muted-foreground">{winRateContext}</p> : null}
                   </div>
                   <div>
                     <p className="text-muted-foreground">Trades</p>

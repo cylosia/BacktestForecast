@@ -207,6 +207,23 @@ def test_summary_response_uses_persisted_run_metrics_not_transport_slice(db_sess
     assert summary.win_rate == Decimal("55.5")
 
 
+def test_summary_response_preserves_infinite_ratio_metrics(db_session):
+    user = _create_user(db_session)
+    run = _create_run(db_session, user, "succeeded")
+    run.profit_factor = Decimal("Infinity")
+    run.payoff_ratio = Decimal("-Infinity")
+    run.recovery_factor = Decimal("Infinity")
+    db_session.commit()
+
+    service = BacktestService(db_session)
+    summary = service._summary_response(run, decided_trades=1)
+
+    dumped = summary.model_dump(mode="json")
+    assert dumped["profit_factor"] == "Infinity"
+    assert dumped["payoff_ratio"] == "-Infinity"
+    assert dumped["recovery_factor"] == "Infinity"
+
+
 @pytest.mark.target_assertion
 def test_get_run_for_owner_marks_equity_curve_truncated_when_db_has_extra_point(db_session, target_assertion):
     user = _create_user(db_session)

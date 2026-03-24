@@ -27,16 +27,36 @@ function regimeColor(regime: string): string {
   }
 }
 
-function asNumericRecord(value: unknown): Record<string, number | string | null | undefined> {
+function asLooseRecord(value: unknown): Record<string, number | string | null | undefined> {
   if (value != null && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, number | string | null | undefined>;
   }
   return {};
 }
 
-function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number }) {
-  const summary = asNumericRecord(pick.summary);
-  const forecast = asNumericRecord(pick.forecast);
+function decidedTradeContext(summary: Record<string, number | string | null | undefined>): string | null {
+  const total = toNumber(summary.trade_count ?? null);
+  const decided = toNumber(summary.decided_trades ?? null);
+  if (Number.isNaN(total) || Number.isNaN(decided) || total <= 0 || decided === total) return null;
+  const breakEven = total - decided;
+  if (breakEven <= 0) return null;
+  return `Based on ${formatNumber(decided)} of ${formatNumber(total)} trades (${formatNumber(breakEven)} break-even excluded)`;
+}
+
+function normalizedScoreValue(score: number, rawMin: number, rawMax: number): number {
+  if (!Number.isFinite(score)) return 0;
+  if (rawMax <= 0) {
+    if (rawMax === rawMin) return 1;
+    return Math.max(score - rawMin, 0);
+  }
+  return Math.max(score, 0);
+}
+
+function PickCard({ pick, rawMin, rawMax, scoreMax }: { pick: DailyPickItem; rawMin: number; rawMax: number; scoreMax: number }) {
+  const summary = asLooseRecord(pick.summary);
+  const forecast = asLooseRecord(pick.forecast);
+  const winRateContext = decidedTradeContext(summary);
+  const barScore = normalizedScoreValue(toNumber(pick.score), rawMin, rawMax);
 
   return (
     <Card>
@@ -63,7 +83,7 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
         </div>
 
         <div className="mt-3">
-          <ScoreBar score={Math.max(0, toNumber(pick.score))} max={maxScore} />
+          <ScoreBar score={barScore} max={scoreMax} />
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
@@ -74,6 +94,7 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
           <div>
             <span className="text-xs text-muted-foreground">Win rate</span>
             <p className="font-medium">{summary.win_rate != null ? formatPercent(summary.win_rate) : "—"}</p>
+            {winRateContext ? <p className="text-xs text-muted-foreground">{winRateContext}</p> : null}
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Trades</span>
@@ -88,13 +109,23 @@ function PickCard({ pick, maxScore }: { pick: DailyPickItem; maxScore: number })
         {forecast.expected_return_median_pct != null ? (
           <div className="mt-3 rounded-lg border border-border/60 bg-muted/30 p-2 text-xs">
             <span className="text-muted-foreground">Forecast: </span>
+            {forecast.expected_return_low_pct != null && forecast.expected_return_high_pct != null ? (
+              <span className="font-medium">
+                {formatPercent(forecast.expected_return_low_pct)} to {formatPercent(forecast.expected_return_high_pct)} range
+              </span>
+            ) : null}
+            {forecast.expected_return_low_pct != null && forecast.expected_return_high_pct != null ? (
+              <span className="text-muted-foreground"> · </span>
+            ) : null}
             <span className="font-medium">
               {formatPercent(forecast.expected_return_median_pct)} median
             </span>
             <span className="text-muted-foreground">
-              {" "}({forecast.positive_outcome_rate_pct != null ? formatPercent(forecast.positive_outcome_rate_pct) : "—"} positive rate,{" "}
+              {" "}({forecast.positive_outcome_rate_pct != null ? formatPercent(forecast.positive_outcome_rate_pct) : "—"} favorable rate,{" "}
               {forecast.analog_count ?? "—"} analogs)
             </span>
+            {forecast.summary ? <p className="mt-1 text-muted-foreground">{forecast.summary}</p> : null}
+            {forecast.disclaimer ? <p className="mt-1 text-muted-foreground">{forecast.disclaimer}</p> : null}
           </div>
         ) : null}
 
@@ -173,7 +204,10 @@ export default async function DailyPicksPage({
   const history: PipelineHistoryResponse | null = historyResult.status === "fulfilled" ? historyResult.value : null;
 
   const items = data.items ?? [];
-  const maxScore = items.length > 0 ? Math.max(1, ...items.map((i) => toNumber(i.score)).filter((score) => Number.isFinite(score))) : 1;
+  const scores = items.map((i) => toNumber(i.score)).filter((score) => Number.isFinite(score));
+  const rawMax = scores.length > 0 ? Math.max(...scores) : 0;
+  const rawMin = scores.length > 0 ? Math.min(...scores) : 0;
+  const scoreMax = rawMax <= 0 ? (rawMax === rawMin ? 1 : Math.max(rawMax - rawMin, 1)) : Math.max(rawMax, 1);
 
   return (
     <div className="space-y-6">
@@ -218,10 +252,24 @@ export default async function DailyPicksPage({
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {items.map((pick) => (
-            <PickCard key={`${pick.symbol}-${pick.strategy_type}-${pick.rank}`} pick={pick} maxScore={maxScore} />
+            <PickCard key={`${pick.symbol}-${pick.strategy_type}-${pick.rank}`} pick={pick} rawMin={rawMin} rawMax={rawMax} scoreMax={scoreMax} />
           ))}
         </div>
       )}
+
+      {data.integrity_warnings && data.integrity_warnings.length > 0 ? (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardHeader>
+            <CardTitle>Data integrity warnings</CardTitle>
+            <CardDescription>Some stored recommendation data was omitted because persisted math payloads failed validation.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            {data.integrity_warnings.map((warning, index) => (
+              <p key={`${index}-${warning}`}>{warning}</p>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground space-y-2">
         <p className="font-medium text-foreground">How the pipeline works</p>

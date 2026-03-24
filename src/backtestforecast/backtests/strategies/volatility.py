@@ -70,7 +70,11 @@ class VolatilityExpansionStrategy(StrategyDefinition):
                 "call",
                 overrides.long_call_strike,
                 dte,
-                contracts=call_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
+                contracts=call_contracts,
+                option_gateway=option_gateway,
+                trade_date=bar.trade_date,
+                iv_cache=_iv_cache,
+                risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
             )
             put_strike = resolve_strike(
                 [c.strike_price for c in put_contracts],
@@ -78,7 +82,11 @@ class VolatilityExpansionStrategy(StrategyDefinition):
                 "put",
                 overrides.long_put_strike,
                 dte,
-                contracts=put_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
+                contracts=put_contracts,
+                option_gateway=option_gateway,
+                trade_date=bar.trade_date,
+                iv_cache=_iv_cache,
+                risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
             )
             call_contract = require_contract_for_strike(call_contracts, call_strike)
             put_contract = require_contract_for_strike(put_contracts, put_strike)

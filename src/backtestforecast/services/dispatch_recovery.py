@@ -36,11 +36,11 @@ class DispatchTarget:
 
 
 DISPATCH_TARGETS: tuple[DispatchTarget, ...] = (
-    DispatchTarget(BacktestRun, "BacktestRun", "backtests.run", "run_id", "research", "backtest"),
-    DispatchTarget(ScannerJob, "ScannerJob", "scans.run_job", "job_id", "research", "scan"),
-    DispatchTarget(SweepJob, "SweepJob", "sweeps.run", "job_id", "research", "sweep"),
+    DispatchTarget(BacktestRun, "BacktestRun", "backtests.run", "run_id", "backtests", "backtest"),
+    DispatchTarget(ScannerJob, "ScannerJob", "scans.run_job", "job_id", "scans", "scan"),
+    DispatchTarget(SweepJob, "SweepJob", "sweeps.run", "job_id", "sweeps", "sweep"),
     DispatchTarget(ExportJob, "ExportJob", "exports.generate", "export_job_id", "exports", "export"),
-    DispatchTarget(SymbolAnalysis, "SymbolAnalysis", "analysis.deep_symbol", "analysis_id", "research", "analysis"),
+    DispatchTarget(SymbolAnalysis, "SymbolAnalysis", "analysis.deep_symbol", "analysis_id", "analysis", "analysis"),
 )
 
 
@@ -109,7 +109,10 @@ def get_queue_diagnostics(
         model = target.model
         correlated_outbox = (
             select(OutboxMessage.id)
-            .where(OutboxMessage.correlation_id == model.id)
+            .where(
+                OutboxMessage.correlation_id == model.id,
+                OutboxMessage.task_name == target.task_name,
+            )
             .correlate(model)
         )
         stale_queued = session.scalar(
@@ -164,7 +167,10 @@ def _stranded_job_stmt(target: DispatchTarget, *, cutoff: datetime) -> Select[tu
     model = target.model
     correlated_outbox = (
         select(OutboxMessage.id)
-        .where(OutboxMessage.correlation_id == model.id)
+        .where(
+            OutboxMessage.correlation_id == model.id,
+            OutboxMessage.task_name == target.task_name,
+        )
         .correlate(model)
     )
     return (
@@ -317,6 +323,7 @@ def redispatch_if_stale_queued(
         update(OutboxMessage)
         .where(
             OutboxMessage.correlation_id == job.id,
+            OutboxMessage.task_name == task_name,
             OutboxMessage.status == "pending",
         )
         .values(

@@ -263,7 +263,7 @@ class TestShortStraddleStrangleMargin:
     def test_zero_premiums(self):
         """Zero premiums on both sides."""
         result = short_straddle_strangle_margin(100.0, 100.0, 100.0, 0.0, 0.0)
-        assert result == 2700.0  # naked only, no premium add
+        assert result == 2500.0  # naked only, no premium add
 
     def test_always_positive(self):
         """Result must always be positive."""

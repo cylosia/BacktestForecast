@@ -5,15 +5,18 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from backtestforecast.schemas.backtests import (
     SYMBOL_ALLOWED_CHARS,
     BacktestSummaryResponse,
     EquityCurvePointResponse,
+    InfiniteMetricString,
     TradeJsonResponse,
+    _normalize_ratio_metric,
 )
 from backtestforecast.schemas.common import CursorPaginatedResponse, RunJobStatus, sanitize_error_message
+from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
 
 DailyPicksStatus = Literal["ok", "no_data"]
 
@@ -63,10 +66,16 @@ class LandscapeCell(BaseModel):
     target_dte: int = 0
     config: dict[str, Any] = Field(default_factory=dict)
     trade_count: int = 0
+    decided_trades: int = 0
     win_rate: float = 0.0
     total_roi_pct: float = 0.0
     max_drawdown_pct: float = 0.0
     score: float = 0.0
+
+
+class AnalysisForecast(HistoricalAnalogForecastResponse):
+    model_config = ConfigDict(extra="ignore")
+    no_results_message: str | None = None
 
 
 class AnalysisTopResult(BaseModel):
@@ -75,12 +84,27 @@ class AnalysisTopResult(BaseModel):
     strategy_type: str = ""
     strategy_label: str = ""
     target_dte: int = 0
+    max_holding_days: int = 0
     config: dict[str, Any] | None = None
     summary: BacktestSummaryResponse | None = None
     trades: list[TradeJsonResponse] = Field(default_factory=list, max_length=10000)
     equity_curve: list[EquityCurvePointResponse] = Field(default_factory=list, max_length=10000)
-    forecast: dict[str, Any] | None = None
+    forecast: AnalysisForecast | None = None
     score: float = 0.0
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def normalize_summary(cls, value: Any) -> BacktestSummaryResponse | None:
+        if value is None:
+            return None
+        return BacktestSummaryResponse.model_validate(value)
+
+    @field_validator("forecast", mode="before")
+    @classmethod
+    def normalize_forecast(cls, value: Any) -> AnalysisForecast | None:
+        if value is None:
+            return None
+        return AnalysisForecast.model_validate(value)
 
 
 class AnalysisDetailResponse(AnalysisSummaryResponse):
@@ -89,8 +113,15 @@ class AnalysisDetailResponse(AnalysisSummaryResponse):
     regime: RegimeDetail | None = Field(default=None, validation_alias="regime_json")
     landscape: list[LandscapeCell] | None = Field(default=None, validation_alias="landscape_json")
     top_results: list[AnalysisTopResult] | None = Field(default=None, validation_alias="top_results_json")
-    forecast: dict[str, Any] | None = Field(default=None, validation_alias="forecast_json")
+    forecast: AnalysisForecast | None = Field(default=None, validation_alias="forecast_json")
     integrity_warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("forecast", mode="before")
+    @classmethod
+    def normalize_detail_forecast(cls, value: Any) -> AnalysisForecast | None:
+        if value is None:
+            return None
+        return AnalysisForecast.model_validate(value)
 
 
 class CreateAnalysisRequest(BaseModel):
@@ -139,21 +170,28 @@ class DailyPickSummary(BaseModel):
     """Known keys produced by the backtest engine for daily pick summaries."""
     model_config = ConfigDict(extra="ignore")
     trade_count: int = 0
+    decided_trades: int = 0
     win_rate: float = 0.0
     total_roi_pct: float = 0.0
     max_drawdown_pct: float = 0.0
     total_net_pnl: float = 0.0
-    profit_factor: float | None = None
-    sharpe_ratio: float | None = None
+    profit_factor: InfiniteMetricString | float | None = None
+    sharpe_ratio: InfiniteMetricString | float | None = None
     expectancy: float = 0.0
 
+    @field_validator("profit_factor", "sharpe_ratio", mode="before")
+    @classmethod
+    def normalize_ratio_metrics(cls, value: Any) -> Any:
+        return _normalize_ratio_metric(value)
 
-class DailyPickForecast(BaseModel):
+    @field_serializer("profit_factor", "sharpe_ratio", when_used="json")
+    def serialize_ratio_metrics(self, value: InfiniteMetricString | float | None) -> float | str | None:
+        return _normalize_ratio_metric(value)
+
+
+class DailyPickForecast(HistoricalAnalogForecastResponse):
     """Known keys produced by the forecaster for daily pick forecasts."""
     model_config = ConfigDict(extra="ignore")
-    expected_return_median_pct: float | None = None
-    positive_outcome_rate_pct: float | None = None
-    analog_count: int | None = None
 
 
 class DailyPickItemResponse(BaseModel):
@@ -182,6 +220,7 @@ class DailyPicksResponse(BaseModel):
     status: DailyPicksStatus
     items: list[DailyPickItemResponse] = Field(default_factory=list)
     pipeline_stats: PipelineStatsResponse | None = None
+    integrity_warnings: list[str] = Field(default_factory=list)
 
 
 class PipelineHistoryItemResponse(BaseModel):

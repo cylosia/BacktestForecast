@@ -157,12 +157,14 @@ def _assert_stale_job_redispatched(session: Session, job_id: UUID, *, task_name:
     statuses = list(
         session.scalars(
             select(OutboxMessage.status)
-            .where(OutboxMessage.correlation_id == job_id)
+            .where(
+                OutboxMessage.correlation_id == job_id,
+                OutboxMessage.task_name == task_name,
+            )
             .order_by(OutboxMessage.created_at)
         )
     )
-    assert "failed" in statuses
-    assert "sent" in statuses
+    assert statuses == ["sent"]
 
 
 def test_backtest_create_and_dispatch_preserves_pending_outbox_on_send_failure(

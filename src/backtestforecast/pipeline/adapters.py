@@ -21,8 +21,10 @@ from backtestforecast.errors import AppValidationError, DataUnavailableError, Ex
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.market_data.types import DailyBar
+from backtestforecast.pipeline.scoring import finite_drawdown_pct, finite_metric_value
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.serialization import serialize_trade
 
 logger = structlog.get_logger("pipeline.adapters")
 
@@ -203,13 +205,16 @@ class PipelineBacktestExecutor:
             )
             bundle = self._get_bundle(request)
             result = self._execution_service.execute_request(request, bundle=bundle)
+            trade_count = result.summary.trade_count
             return {
-                "trade_count": result.summary.trade_count,
-                "win_rate": result.summary.win_rate,
-                "total_roi_pct": result.summary.total_roi_pct,
-                "total_net_pnl": result.summary.total_net_pnl,
-                "max_drawdown_pct": result.summary.max_drawdown_pct,
-                "average_holding_period_days": result.summary.average_holding_period_days,
+                "trade_count": trade_count,
+                "decided_trades": getattr(result.summary, "decided_trades", trade_count),
+                "win_rate": finite_metric_value(result.summary.win_rate),
+                "total_roi_pct": finite_metric_value(result.summary.total_roi_pct),
+                "total_net_pnl": finite_metric_value(result.summary.total_net_pnl),
+                "max_drawdown_pct": finite_drawdown_pct(result.summary.max_drawdown_pct, default=50.0),
+                "sharpe_ratio": finite_metric_value(result.summary.sharpe_ratio),
+                "average_holding_period_days": finite_metric_value(result.summary.average_holding_period_days),
             }
         except (DataUnavailableError, ExternalServiceError, AppValidationError):
             logger.warning("pipeline.quick_backtest_failed", symbol=symbol, strategy_type=strategy_type, exc_info=True)
@@ -236,27 +241,21 @@ class PipelineBacktestExecutor:
             )
             bundle = self._get_bundle(request)
             result = self._execution_service.execute_request(request, bundle=bundle)
-            serialized_trades = [
-                {
-                    "entry_date": t.entry_date.isoformat(),
-                    "exit_date": t.exit_date.isoformat(),
-                    "net_pnl": float(t.net_pnl),
-                    "holding_period_days": t.holding_period_days,
-                }
-                for t in result.trades[:50]
-            ]
+            serialized_trades = [serialize_trade(t) for t in result.trades[:50]]
             trade_count = result.summary.trade_count
             serialized_trade_count = len(serialized_trades)
             downsampled_equity_curve = self._downsample_equity_curve(result.equity_curve)
             return {
                 "trade_count": trade_count,
-                "win_rate": result.summary.win_rate,
-                "total_roi_pct": result.summary.total_roi_pct,
-                "total_net_pnl": result.summary.total_net_pnl,
-                "max_drawdown_pct": result.summary.max_drawdown_pct,
-                "average_holding_period_days": result.summary.average_holding_period_days,
-                "starting_equity": result.summary.starting_equity,
-                "ending_equity": result.summary.ending_equity,
+                "decided_trades": getattr(result.summary, "decided_trades", trade_count),
+                "win_rate": finite_metric_value(result.summary.win_rate),
+                "total_roi_pct": finite_metric_value(result.summary.total_roi_pct),
+                "total_net_pnl": finite_metric_value(result.summary.total_net_pnl),
+                "max_drawdown_pct": finite_drawdown_pct(result.summary.max_drawdown_pct, default=50.0),
+                "sharpe_ratio": finite_metric_value(result.summary.sharpe_ratio),
+                "average_holding_period_days": finite_metric_value(result.summary.average_holding_period_days),
+                "starting_equity": finite_metric_value(result.summary.starting_equity),
+                "ending_equity": finite_metric_value(result.summary.ending_equity),
                 "trades": serialized_trades,
                 "serialized_trade_count": serialized_trade_count,
                 "trade_items_omitted": max(trade_count - serialized_trade_count, 0),

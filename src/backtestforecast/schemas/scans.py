@@ -154,9 +154,9 @@ class CreateScannerJobRequest(BaseModel):
 
 class HistoricalPerformanceResponse(BaseModel):
     sample_count: int = 0
+    effective_sample_size: Decimal = Decimal("0")
     weighted_win_rate: Decimal = Decimal("0")
     weighted_total_roi_pct: Decimal = Decimal("0")
-    weighted_total_net_pnl: Decimal = Decimal("0")
     weighted_max_drawdown_pct: Decimal = Decimal("0")
     recency_half_life_days: int = 180
     last_observed_at: datetime | None = None

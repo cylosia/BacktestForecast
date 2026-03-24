@@ -39,8 +39,8 @@ USER app
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD celery -A apps.worker.app.celery_app.celery_app inspect ping --timeout 5 || exit 1
+  CMD sh -c "celery -A apps.worker.app.celery_app.celery_app inspect ping --destination=celery@$$HOSTNAME --timeout 5 | grep -q 'OK'" || exit 1
 
 EXPOSE 9090
 
-CMD ["sh", "-c", "exec celery -A apps.worker.app.celery_app.celery_app worker --loglevel=INFO --queues=research,exports,maintenance,pipeline --concurrency=${CELERY_CONCURRENCY:-4}"]
+CMD ["sh", "-c", "exec celery -A apps.worker.app.celery_app.celery_app worker --loglevel=INFO --queues=backtests,scans,sweeps,analysis,exports,maintenance,recovery,research --concurrency=${CELERY_CONCURRENCY:-4}"]

@@ -93,7 +93,7 @@ class TemplateResponse(BaseModel):
     name: str
     description: str | None
     strategy_type: str
-    config: TemplateConfig = Field(validation_alias="config_json")
+    config: TemplateConfig = Field(validation_alias="config_json", serialization_alias="config_json")
     created_at: datetime
     updated_at: datetime
 
@@ -102,6 +102,9 @@ class TemplateResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def coerce_config(cls, data: Any) -> Any:
+        def _public_config(raw: dict[str, Any]) -> dict[str, Any]:
+            return {key: value for key, value in raw.items() if key != "_schema_version"}
+
         if hasattr(data, "__tablename__"):
             raw = getattr(data, "config_json", None)
             if isinstance(raw, dict) and raw:
@@ -110,14 +113,14 @@ class TemplateResponse(BaseModel):
                     for k in cls.model_fields
                     if k != "config" and hasattr(data, k)
                 }
-                attrs["config_json"] = TemplateConfig(**raw)
+                attrs["config_json"] = TemplateConfig(**_public_config(raw))
                 return attrs
             if isinstance(raw, dict) and not raw:
                 raise ValueError("Template has empty config_json; cannot be serialized.")
         elif isinstance(data, dict):
             raw = data.get("config_json") or data.get("config")
             if isinstance(raw, dict) and raw:
-                data = {**data, "config_json": TemplateConfig(**raw)}
+                data = {**data, "config_json": TemplateConfig(**_public_config(raw))}
         return data
 
 

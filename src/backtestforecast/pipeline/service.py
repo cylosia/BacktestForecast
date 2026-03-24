@@ -22,12 +22,17 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES
+from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES, NEUTRAL_STRATEGIES
 from backtestforecast.config import get_settings
 from backtestforecast.models import DailyRecommendation, NightlyPipelineRun
 from backtestforecast.observability.metrics import DUPLICATE_NIGHTLY_RUNS_TOTAL
 from backtestforecast.pipeline.regime import RegimeSnapshot, classify_regime
-from backtestforecast.pipeline.scoring import compute_backtest_score
+from backtestforecast.pipeline.scoring import (
+    apply_support_multiplier,
+    compute_backtest_score,
+    finite_drawdown_pct,
+    finite_metric_value,
+)
 from backtestforecast.pipeline.strategy_map import (
     DEFAULT_PARAM_GRID,
     strategies_for_regime,
@@ -56,6 +61,7 @@ class QuickBacktestResult:
     regime: RegimeSnapshot
     close_price: float
     target_dte: int
+    max_holding_days: int
     config_snapshot: dict[str, Any]
     trade_count: int
     win_rate: float
@@ -72,6 +78,7 @@ class FullBacktestResult:
     regime: RegimeSnapshot
     close_price: float
     target_dte: int
+    max_holding_days: int
     config_snapshot: dict[str, Any]
     summary: dict[str, Any]
     trades_json: list[dict[str, Any]]
@@ -206,28 +213,18 @@ class NightlyPipelineService:
             quick_results = self._stage3_quick_backtest(pairs, trade_date, executor=pool)
             run.quick_backtests_run = len(quick_results)
 
-            positive_results = [r for r in quick_results if r.score > 0]
-            negative_count = len(quick_results) - len(positive_results)
+            ranked_results = list(quick_results)
+            negative_count = len([r for r in ranked_results if r.score <= 0])
             if negative_count > 0:
                 logger.info(
-                    "pipeline.stage3_negative_scores_filtered",
+                    "pipeline.stage3_negative_scores_retained",
                     run_id=str(run.id),
                     total=len(quick_results),
-                    positive=len(positive_results),
-                    filtered=negative_count,
+                    positive=len(quick_results) - negative_count,
+                    retained_non_positive=negative_count,
                 )
-
-            if not positive_results and pairs:
-                logger.warning(
-                    "pipeline.survivorship_bias_all_filtered",
-                    run_id=str(run.id),
-                    pairs_evaluated=len(pairs),
-                    msg="All quick-backtest candidates scored <= 0 and were filtered. "
-                        "Results may reflect survivorship bias.",
-                )
-
-            positive_results.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))
-            top_candidates = positive_results[:max_full_candidates]
+            ranked_results.sort(key=lambda r: (-r.score, r.symbol, r.strategy_type))
+            top_candidates = ranked_results[:max_full_candidates]
             logger.info(
                 "pipeline.stage3_complete",
                 run_id=str(run.id),
@@ -432,6 +429,7 @@ class NightlyPipelineService:
             pair, param_config = item
             try:
                 target_dte = param_config.get("target_dte", 30)
+                max_holding_days = min(param_config.get("max_holding_days", target_dte), target_dte)
                 overrides = param_config.get("strategy_overrides")
 
                 summary = self.executor.run_quick_backtest(
@@ -446,8 +444,9 @@ class NightlyPipelineService:
                 if summary is None or summary.get("trade_count", 0) == 0:
                     return None
 
-                roi = summary.get("total_roi_pct", 0.0)
-                drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
+                roi = finite_metric_value(summary.get("total_roi_pct", 0.0))
+                win_rate = finite_metric_value(summary.get("win_rate", 0.0))
+                drawdown = finite_drawdown_pct(summary.get("max_drawdown_pct", 50.0))
                 score = compute_backtest_score(summary)
 
                 return QuickBacktestResult(
@@ -456,14 +455,16 @@ class NightlyPipelineService:
                     regime=pair.regime,
                     close_price=pair.close_price,
                     target_dte=target_dte,
+                    max_holding_days=max_holding_days,
                     config_snapshot={
                         "target_dte": target_dte,
+                        "max_holding_days": max_holding_days,
                         "strategy_overrides": overrides,
                     },
                     trade_count=summary["trade_count"],
-                    win_rate=summary["win_rate"],
+                    win_rate=win_rate,
                     total_roi_pct=roi,
-                    net_pnl=summary.get("total_net_pnl", 0.0),
+                    net_pnl=finite_metric_value(summary.get("total_net_pnl", 0.0)),
                     max_drawdown_pct=drawdown,
                     score=score,
                 )
@@ -542,6 +543,7 @@ class NightlyPipelineService:
                     regime=candidate.regime,
                     close_price=candidate.close_price,
                     target_dte=candidate.target_dte,
+                    max_holding_days=candidate.max_holding_days,
                     config_snapshot=candidate.config_snapshot,
                     summary=full,
                     trades_json=full.get("trades", []),
@@ -605,7 +607,7 @@ class NightlyPipelineService:
                     forecast = self.forecaster.get_forecast(
                         symbol=candidate.symbol,
                         strategy_type=candidate.strategy_type,
-                        horizon_days=candidate.target_dte,
+                        horizon_days=min(candidate.max_holding_days, candidate.target_dte),
                         as_of_date=trade_date,
                     )
                     return candidate, forecast
@@ -623,19 +625,22 @@ class NightlyPipelineService:
             def _apply_forecast(candidate: FullBacktestResult, forecast: dict[str, Any]) -> None:
                 candidate.forecast_json = forecast
                 median_return = forecast.get("expected_return_median_pct", 0)
-                positive_rate = forecast.get("positive_outcome_rate_pct", 50)
-                backtest_roi = candidate.summary.get("total_roi_pct", 0)
-                forecast_supports = float(median_return) > 0
+                positive_rate = forecast.get("positive_outcome_rate_pct")
+                forecast_supports = False
                 if candidate.strategy_type in BEARISH_STRATEGIES:
                     forecast_supports = float(median_return) < 0
+                elif candidate.strategy_type not in NEUTRAL_STRATEGIES:
+                    forecast_supports = float(median_return) > 0
                 adjusted_score = candidate.score
-                if backtest_roi > 0 and float(median_return) != 0 and forecast_supports:
-                    adjusted_score *= 1.2
-                effective_rate = float(positive_rate)
-                if candidate.strategy_type in BEARISH_STRATEGIES:
-                    effective_rate = 100.0 - effective_rate
-                if effective_rate > 60:
-                    adjusted_score *= 1.0 + (effective_rate - 60) / 200.0
+                if float(median_return) != 0 and forecast_supports:
+                    adjusted_score = apply_support_multiplier(adjusted_score, 1.2)
+                if positive_rate is not None and candidate.strategy_type not in NEUTRAL_STRATEGIES:
+                    effective_rate = float(positive_rate)
+                    if effective_rate > 60:
+                        adjusted_score = apply_support_multiplier(
+                            adjusted_score,
+                            1.0 + (effective_rate - 60) / 200.0,
+                        )
                 candidate.score = adjusted_score
 
             try:

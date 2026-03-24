@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
 from apps.api.app.dependencies import get_current_user_readonly
-from backtestforecast.config import get_settings
+from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.errors import NotFoundError
 from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis, User
 from backtestforecast.observability.metrics import ACTIVE_SSE_CONNECTIONS
@@ -40,7 +40,7 @@ SSE_MAX_CONNECTIONS_PER_USER = 10
 SSE_MAX_CONNECTIONS_PROCESS = 45
 
 _SSE_CONN_KEY_PREFIX = "sse:connections:"
-_SSE_CONN_TTL = 600
+_SSE_CONN_TTL = 45
 
 _sse_process_connections = 0
 _sse_process_async_lock = asyncio.Lock()
@@ -137,9 +137,29 @@ async def _invalidate_async_redis() -> None:
     await _close_async_redis(suppress_errors=True)
 
 
+def _invalidate_async_redis_sync() -> None:
+    global _async_redis_pool, _async_redis_last_ping
+    pool = _async_redis_pool
+    _async_redis_pool = None
+    _async_redis_last_ping = 0.0
+    if pool is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        with suppress(Exception):
+            asyncio.run(pool.aclose())
+        return
+    with suppress(Exception):
+        loop.create_task(pool.aclose())
+
+
 async def shutdown_async_redis() -> None:
     """Close the shared async Redis pool. Called from app lifespan shutdown."""
     await _close_async_redis(suppress_errors=False)
+
+
+register_invalidation_callback(_invalidate_async_redis_sync)
 
 
 def _check_sse_rate(user_id: UUID) -> None:
@@ -160,9 +180,9 @@ def _verify_ownership(model: type, resource_id: UUID, user_id: UUID) -> bool:
     during the HTTP request phase, not inside the async generator. Uses the
     shared session factory to benefit from connection pooling.
     """
-    from backtestforecast.db.session import create_readonly_session
+    from backtestforecast.db.session import create_session
 
-    with create_readonly_session() as db:
+    with create_session() as db:
         stmt = select(model.id).where(model.id == resource_id, model.user_id == user_id)
         if db.execute(stmt).first() is None:
             raise NotFoundError("Resource not found.")
@@ -265,6 +285,14 @@ end
 return count
 """
 
+_SSE_SLOT_REFRESH_LUA = """
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+    return 1
+end
+return 0
+"""
+
 
 async def _acquire_sse_slot_in_process(user_id: UUID) -> bool:
     """Fallback: acquire a per-user slot using an in-process dict when Redis is unavailable."""
@@ -291,11 +319,19 @@ async def _release_sse_slot_in_process(user_id: UUID) -> None:
 async def _acquire_sse_slot(user_id: UUID) -> tuple[bool, bool]:
     """Try to acquire a per-user SSE connection slot atomically via Lua.
 
-    Returns (acquired, used_redis). When Redis fails, falls back to an
-    in-process dict so per-user limits are still enforced within this worker.
+    Returns (acquired, used_redis). In production/staging this fails closed
+    when Redis coordination is unavailable; only dev/test use the in-process
+    fallback path.
     """
     try:
         pool = await _get_async_redis()
+        if pool is None:
+            settings = get_settings()
+            if settings.app_env in ("production", "staging"):
+                logger.error("sse.acquire_slot_fail_closed", user_id=str(user_id))
+                return False, False
+            acquired = await _acquire_sse_slot_in_process(user_id)
+            return acquired, False
         key = f"{_SSE_CONN_KEY_PREFIX}{user_id}"
         result = await pool.eval(
             _SSE_SLOT_ACQUIRE_LUA, 1, key, _SSE_CONN_TTL, SSE_MAX_CONNECTIONS_PER_USER,
@@ -303,6 +339,9 @@ async def _acquire_sse_slot(user_id: UUID) -> tuple[bool, bool]:
         return int(result) == 1, True
     except Exception:
         logger.warning("sse.acquire_slot_redis_error", user_id=str(user_id), exc_info=True)
+        settings = get_settings()
+        if settings.app_env in ("production", "staging"):
+            return False, False
         acquired = await _acquire_sse_slot_in_process(user_id)
         return acquired, False
 
@@ -324,6 +363,17 @@ async def _release_sse_slot(user_id: UUID) -> None:
         REDIS_CONNECTION_ERRORS_TOTAL.labels(operation="sse_slot_release").inc()
         logger.error("sse.release_slot_redis_error", user_id=str(user_id), exc_info=True)
         await _release_sse_slot_in_process(user_id)
+
+
+async def _refresh_sse_slot(user_id: UUID) -> None:
+    try:
+        pool = await _get_async_redis()
+        if pool is None:
+            return
+        key = f"{_SSE_CONN_KEY_PREFIX}{user_id}"
+        await pool.eval(_SSE_SLOT_REFRESH_LUA, 1, key, _SSE_CONN_TTL)
+    except Exception:
+        logger.warning("sse.refresh_slot_redis_error", user_id=str(user_id), exc_info=True)
 
 
 async def _event_stream(
@@ -365,6 +415,7 @@ async def _event_stream(
             async for data in _subscribe_redis(channel):
                 if await request.is_disconnected():
                     break
+                await _refresh_sse_slot(user_id)
                 if asyncio.get_running_loop().time() > deadline:
                     yield {"event": "timeout", "data": "Connection timed out"}
                     break

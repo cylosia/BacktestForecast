@@ -63,13 +63,13 @@ def test_different_sub_id_skipped_when_active(db_session: Session) -> None:
             "data": [
                 {
                     "price": {
-                        "id": "price_premium_monthly",
+                        "id": "price_pro_monthly",
                         "recurring": {"interval": "month"},
                     }
                 }
             ]
         },
-        "metadata": {"user_id": str(user.id), "requested_tier": "premium"},
+        "metadata": {"user_id": str(user.id), "requested_tier": "pro"},
     }
 
     service._apply_subscription_to_user(user, stale_sub)

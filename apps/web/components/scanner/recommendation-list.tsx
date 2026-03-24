@@ -10,6 +10,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 const PAGE_SIZE = 25;
 
+function normalizedScoreValue(score: number, rawMin: number, rawMax: number): number {
+  if (!Number.isFinite(score)) return 0;
+  if (rawMax <= 0) {
+    if (rawMax === rawMin) return 1;
+    return Math.max(score - rawMin, 0);
+  }
+  return Math.max(score, 0);
+}
+
+function decidedTradeContext(summary: ScannerRecommendationResponse["summary"]): string | null {
+  const total = summary.trade_count;
+  const decided = summary.decided_trades;
+  if (total == null || decided == null || total <= 0 || decided === total) return null;
+  const breakEven = total - decided;
+  if (breakEven <= 0) return null;
+  return `Based on ${formatNumber(decided)} of ${formatNumber(total)} trades (${formatNumber(breakEven)} break-even excluded)`;
+}
+
 export function RecommendationList({
   items,
 }: {
@@ -31,8 +49,7 @@ export function RecommendationList({
   const scores = items.map((r) => toNumber(r.score)).filter(Number.isFinite);
   const rawMax = scores.length === 0 ? 0 : Math.max(...scores);
   const rawMin = scores.length === 0 ? 0 : Math.min(...scores);
-  const allNegative = rawMax <= 0;
-  const scoreRange = allNegative ? Math.abs(rawMin) || 1 : Math.max(rawMax, 1);
+  const scoreRange = rawMax <= 0 ? (rawMax === rawMin ? 1 : Math.max(rawMax - rawMin, 1)) : Math.max(rawMax, 1);
 
   const totalPages = Math.ceil(items.length / PAGE_SIZE);
   const pageItems = items.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
@@ -71,7 +88,7 @@ export function RecommendationList({
                 </p>
                 <p className="text-xs text-muted-foreground">Composite score</p>
                 <div className="mt-1 w-24">
-                  <ScoreBar score={allNegative ? Math.abs(toNumber(rec.score)) : Math.max(toNumber(rec.score), 0)} max={scoreRange} />
+                  <ScoreBar score={normalizedScoreValue(toNumber(rec.score), rawMin, rawMax)} max={scoreRange} />
                 </div>
               </div>
             </div>
@@ -84,6 +101,7 @@ export function RecommendationList({
               <div className="rounded-lg border border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">Win rate</p>
                 <p className="mt-1 font-semibold">{rec.summary.win_rate != null ? formatPercent(rec.summary.win_rate) : "—"}</p>
+                {decidedTradeContext(rec.summary) ? <p className="mt-1 text-xs text-muted-foreground">{decidedTradeContext(rec.summary)}</p> : null}
               </div>
               <div className="rounded-lg border border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">ROI</p>
@@ -112,8 +130,9 @@ export function RecommendationList({
                 </p>
                 <p className="text-sm">
                   Median: {rec.forecast?.expected_return_median_pct != null ? formatPercent(rec.forecast.expected_return_median_pct) : "—"} ·{" "}
-                  Positive outcome: {rec.forecast?.positive_outcome_rate_pct != null ? formatPercent(rec.forecast.positive_outcome_rate_pct) : "—"}
+                  Favorable outcome: {rec.forecast?.positive_outcome_rate_pct != null ? formatPercent(rec.forecast.positive_outcome_rate_pct) : "—"}
                 </p>
+                {rec.forecast?.summary ? <p className="text-xs text-muted-foreground">{rec.forecast.summary}</p> : null}
                 <p className="text-xs text-muted-foreground">{rec.forecast?.disclaimer}</p>
               </div>
 

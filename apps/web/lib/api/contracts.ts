@@ -83,6 +83,17 @@ function assertOptionalNumber(value: unknown, label: string): void {
   }
 }
 
+function assertNumericLike(value: unknown, label: string): void {
+  if (typeof value === "number" && !Number.isNaN(value)) return;
+  if (typeof value === "string" && value.trim().length > 0) return;
+  throw new Error(`${label} must be a number or numeric string`);
+}
+
+function assertOptionalNumericLike(value: unknown, label: string): void {
+  if (value == null) return;
+  assertNumericLike(value, label);
+}
+
 function assertOptionalBoolean(value: unknown, label: string): void {
   if (!(value == null || typeof value === "boolean")) {
     throw new Error(`${label} must be null or a boolean`);
@@ -111,9 +122,28 @@ function assertPaginatedCollection(value: unknown, label: string): asserts value
 function validateSummary(summary: unknown, label: string): void {
   if (!isRecord(summary)) throw new Error(`${label} must be an object`);
   assertNumber(summary.trade_count, `${label}.trade_count`);
-  assertNumber(summary.win_rate, `${label}.win_rate`);
-  assertNumber(summary.total_roi_pct, `${label}.total_roi_pct`);
-  assertNumber(summary.max_drawdown_pct, `${label}.max_drawdown_pct`);
+  assertOptionalNumber(summary.decided_trades, `${label}.decided_trades`);
+  assertNumericLike(summary.win_rate, `${label}.win_rate`);
+  assertNumericLike(summary.total_roi_pct, `${label}.total_roi_pct`);
+  assertNumericLike(summary.average_win_amount, `${label}.average_win_amount`);
+  assertNumericLike(summary.average_loss_amount, `${label}.average_loss_amount`);
+  assertNumericLike(summary.average_holding_period_days, `${label}.average_holding_period_days`);
+  assertNumericLike(summary.average_dte_at_open, `${label}.average_dte_at_open`);
+  assertNumericLike(summary.max_drawdown_pct, `${label}.max_drawdown_pct`);
+  assertNumericLike(summary.total_commissions, `${label}.total_commissions`);
+  assertNumericLike(summary.total_net_pnl, `${label}.total_net_pnl`);
+  assertNumericLike(summary.starting_equity, `${label}.starting_equity`);
+  assertNumericLike(summary.ending_equity, `${label}.ending_equity`);
+  assertOptionalNumericLike(summary.profit_factor, `${label}.profit_factor`);
+  assertOptionalNumericLike(summary.payoff_ratio, `${label}.payoff_ratio`);
+  assertNumericLike(summary.expectancy, `${label}.expectancy`);
+  assertOptionalNumericLike(summary.sharpe_ratio, `${label}.sharpe_ratio`);
+  assertOptionalNumericLike(summary.sortino_ratio, `${label}.sortino_ratio`);
+  assertOptionalNumericLike(summary.cagr_pct, `${label}.cagr_pct`);
+  assertOptionalNumericLike(summary.calmar_ratio, `${label}.calmar_ratio`);
+  assertNumber(summary.max_consecutive_wins, `${label}.max_consecutive_wins`);
+  assertNumber(summary.max_consecutive_losses, `${label}.max_consecutive_losses`);
+  assertOptionalNumericLike(summary.recovery_factor, `${label}.recovery_factor`);
 }
 
 function validateOptionalSummary(summary: unknown, label: string): void {
@@ -185,9 +215,124 @@ function validatePipelineStats(value: unknown, label: string): void {
 
 function validateDailyPickForecast(value: unknown, label: string): void {
   if (!isRecord(value)) throw new Error(`${label} must be an object`);
-  assertOptionalNumber(value.expected_return_median_pct, `${label}.expected_return_median_pct`);
-  assertOptionalNumber(value.positive_outcome_rate_pct, `${label}.positive_outcome_rate_pct`);
-  assertOptionalNumber(value.analog_count, `${label}.analog_count`);
+  assertString(value.symbol, `${label}.symbol`);
+  assertString(value.strategy_type, `${label}.strategy_type`);
+  assertString(value.as_of_date, `${label}.as_of_date`);
+  assertNumber(value.horizon_days, `${label}.horizon_days`);
+  assertOptionalNumber(value.trading_days_used, `${label}.trading_days_used`);
+  assertNumericLike(value.expected_return_low_pct, `${label}.expected_return_low_pct`);
+  assertNumericLike(value.expected_return_median_pct, `${label}.expected_return_median_pct`);
+  assertNumericLike(value.expected_return_high_pct, `${label}.expected_return_high_pct`);
+  assertNumericLike(value.positive_outcome_rate_pct, `${label}.positive_outcome_rate_pct`);
+  assertNumber(value.analog_count, `${label}.analog_count`);
+  assertOptionalNumber(value.analogs_used, `${label}.analogs_used`);
+  assertString(value.summary, `${label}.summary`);
+  assertString(value.disclaimer, `${label}.disclaimer`);
+  if (value.analog_dates != null) {
+    assertStringArray(value.analog_dates, `${label}.analog_dates`);
+  }
+  assertOptionalNumber(value.analog_dates_shown, `${label}.analog_dates_shown`);
+  assertOptionalNumber(value.analog_dates_total, `${label}.analog_dates_total`);
+}
+
+function validateForecastPayload(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  assertString(value.symbol, `${label}.symbol`);
+  assertString(value.strategy_type, `${label}.strategy_type`);
+  assertString(value.as_of_date, `${label}.as_of_date`);
+  assertNumber(value.horizon_days, `${label}.horizon_days`);
+  assertOptionalNumber(value.trading_days_used, `${label}.trading_days_used`);
+  assertNumber(value.analog_count, `${label}.analog_count`);
+  assertOptionalNumber(value.analogs_used, `${label}.analogs_used`);
+  assertNumericLike(value.expected_return_low_pct, `${label}.expected_return_low_pct`);
+  assertNumericLike(value.expected_return_median_pct, `${label}.expected_return_median_pct`);
+  assertNumericLike(value.expected_return_high_pct, `${label}.expected_return_high_pct`);
+  assertNumericLike(value.positive_outcome_rate_pct, `${label}.positive_outcome_rate_pct`);
+  assertString(value.summary, `${label}.summary`);
+  assertString(value.disclaimer, `${label}.disclaimer`);
+  if (value.analog_dates != null) {
+    assertStringArray(value.analog_dates, `${label}.analog_dates`);
+  }
+  assertOptionalNumber(value.analog_dates_shown, `${label}.analog_dates_shown`);
+  assertOptionalNumber(value.analog_dates_total, `${label}.analog_dates_total`);
+}
+
+function validateAnalysisForecast(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  if (value.no_results_message != null) {
+    assertString(value.no_results_message, `${label}.no_results_message`);
+    return;
+  }
+  assertString(value.symbol, `${label}.symbol`);
+  assertString(value.strategy_type, `${label}.strategy_type`);
+  assertString(value.as_of_date, `${label}.as_of_date`);
+  assertNumber(value.horizon_days, `${label}.horizon_days`);
+  assertOptionalNumber(value.trading_days_used, `${label}.trading_days_used`);
+  assertNumber(value.analog_count, `${label}.analog_count`);
+  assertOptionalNumber(value.analogs_used, `${label}.analogs_used`);
+  assertNumericLike(value.expected_return_low_pct, `${label}.expected_return_low_pct`);
+  assertNumericLike(value.expected_return_median_pct, `${label}.expected_return_median_pct`);
+  assertNumericLike(value.expected_return_high_pct, `${label}.expected_return_high_pct`);
+  assertNumericLike(value.positive_outcome_rate_pct, `${label}.positive_outcome_rate_pct`);
+  assertString(value.summary, `${label}.summary`);
+  assertString(value.disclaimer, `${label}.disclaimer`);
+  if (value.analog_dates != null) {
+    assertStringArray(value.analog_dates, `${label}.analog_dates`);
+  }
+  assertOptionalNumber(value.analog_dates_shown, `${label}.analog_dates_shown`);
+  assertOptionalNumber(value.analog_dates_total, `${label}.analog_dates_total`);
+}
+
+function validateRegimeDetail(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  if (value.regimes != null) {
+    assertStringArray(value.regimes, `${label}.regimes`);
+  }
+  assertOptionalNumber(value.rsi_14, `${label}.rsi_14`);
+  assertOptionalNumber(value.ema_8, `${label}.ema_8`);
+  assertOptionalNumber(value.ema_21, `${label}.ema_21`);
+  assertOptionalNumber(value.sma_50, `${label}.sma_50`);
+  assertOptionalNumber(value.sma_200, `${label}.sma_200`);
+  assertOptionalNumber(value.realized_vol_20, `${label}.realized_vol_20`);
+  assertOptionalNumber(value.iv_rank_proxy, `${label}.iv_rank_proxy`);
+  assertOptionalNumber(value.volume_ratio, `${label}.volume_ratio`);
+  assertOptionalNumber(value.close_price, `${label}.close_price`);
+}
+
+function validateLandscapeCell(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  assertString(value.strategy_type, `${label}.strategy_type`);
+  assertString(value.strategy_label, `${label}.strategy_label`);
+  assertNumber(value.target_dte, `${label}.target_dte`);
+  if (!(value.config == null || isRecord(value.config))) {
+    throw new Error(`${label}.config must be null or an object`);
+  }
+  assertNumber(value.trade_count, `${label}.trade_count`);
+  assertNumber(value.decided_trades, `${label}.decided_trades`);
+  assertNumber(value.win_rate, `${label}.win_rate`);
+  assertNumber(value.total_roi_pct, `${label}.total_roi_pct`);
+  assertNumber(value.max_drawdown_pct, `${label}.max_drawdown_pct`);
+  assertNumber(value.score, `${label}.score`);
+}
+
+function validateHistoricalPerformance(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  assertNumber(value.sample_count, `${label}.sample_count`);
+  assertNumericLike(value.effective_sample_size, `${label}.effective_sample_size`);
+  assertNumericLike(value.weighted_win_rate, `${label}.weighted_win_rate`);
+  assertNumericLike(value.weighted_total_roi_pct, `${label}.weighted_total_roi_pct`);
+  assertNumericLike(value.weighted_max_drawdown_pct, `${label}.weighted_max_drawdown_pct`);
+  assertNumber(value.recency_half_life_days, `${label}.recency_half_life_days`);
+  assertOptionalString(value.last_observed_at, `${label}.last_observed_at`);
+}
+
+function validateRankingBreakdown(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  assertNumericLike(value.current_performance_score, `${label}.current_performance_score`);
+  assertNumericLike(value.historical_performance_score, `${label}.historical_performance_score`);
+  assertNumericLike(value.forecast_alignment_score, `${label}.forecast_alignment_score`);
+  assertNumericLike(value.final_score, `${label}.final_score`);
+  assertStringArray(value.reasoning, `${label}.reasoning`);
 }
 
 function validateDailyPickItem(value: unknown, label: string): void {
@@ -280,6 +425,15 @@ function validateBacktestRunLike(run: unknown, label: string): void {
   assertString(run.summary_provenance, `${label}.summary_provenance`);
 }
 
+function validateRiskFreeRateCurvePoints(value: unknown, label: string): void {
+  assertArray(value, label);
+  for (const [index, item] of value.entries()) {
+    if (!isRecord(item)) throw new Error(`${label}[${index}] must be an object`);
+    assertString(item.trade_date, `${label}[${index}].trade_date`);
+    assertNumericLike(item.rate, `${label}[${index}].rate`);
+  }
+}
+
 function validateAnalysisSummaryLike(item: unknown, label: string): void {
   if (!isRecord(item)) throw new Error(`${label} must be an object`);
   assertString(item.id, `${label}.id`);
@@ -317,6 +471,11 @@ export function validateBacktestRunDetailResponse(data: unknown): BacktestRunDet
   assertBoolean(data.equity_curve_truncated, "backtest.equity_curve_truncated");
   assertNumber(data.trade_items_omitted, "backtest.trade_items_omitted");
   assertNumber(data.equity_curve_points_omitted, "backtest.equity_curve_points_omitted");
+  assertOptionalNumericLike(data.risk_free_rate, "backtest.risk_free_rate");
+  assertOptionalString(data.risk_free_rate_model, "backtest.risk_free_rate_model");
+  if (data.risk_free_rate_curve_points != null) {
+    validateRiskFreeRateCurvePoints(data.risk_free_rate_curve_points, "backtest.risk_free_rate_curve_points");
+  }
   return data as BacktestRunDetailResponse;
 }
 
@@ -327,11 +486,20 @@ export function validateCompareBacktestsResponse(data: unknown): CompareBacktest
   for (const [index, item] of data.items.entries()) {
     validateBacktestRunLike(item, `compare.items[${index}]`);
     if (!isRecord(item)) throw new Error(`compare.items[${index}] must be an object`);
+    validateWarningList(item.warnings, `compare.items[${index}].warnings`);
     assertArray(item.trades, `compare.items[${index}].trades`);
     assertArray(item.equity_curve, `compare.items[${index}].equity_curve`);
     assertBoolean(item.equity_curve_truncated, `compare.items[${index}].equity_curve_truncated`);
     assertNumber(item.trade_items_omitted, `compare.items[${index}].trade_items_omitted`);
     assertNumber(item.equity_curve_points_omitted, `compare.items[${index}].equity_curve_points_omitted`);
+    assertOptionalNumericLike(item.risk_free_rate, `compare.items[${index}].risk_free_rate`);
+    assertOptionalString(item.risk_free_rate_model, `compare.items[${index}].risk_free_rate_model`);
+    if (item.risk_free_rate_curve_points != null) {
+      validateRiskFreeRateCurvePoints(
+        item.risk_free_rate_curve_points,
+        `compare.items[${index}].risk_free_rate_curve_points`,
+      );
+    }
   }
   return data as CompareBacktestsResponse;
 }
@@ -354,12 +522,26 @@ export function validateAnalysisDetailResponse(data: unknown): AnalysisDetailRes
   if (!(data.forecast == null || isRecord(data.forecast))) {
     throw new Error("analysis.forecast must be null or an object");
   }
+  if (data.forecast != null) {
+    validateAnalysisForecast(data.forecast, "analysis.forecast");
+  }
+  if (data.regime != null) {
+    validateRegimeDetail(data.regime, "analysis.regime");
+  }
+  if (Array.isArray(data.landscape)) {
+    for (const [index, item] of data.landscape.entries()) {
+      validateLandscapeCell(item, `analysis.landscape[${index}]`);
+    }
+  }
   if (Array.isArray(data.top_results)) {
     for (const [index, item] of data.top_results.entries()) {
-    if (!isRecord(item)) throw new Error(`analysis.top_results[${index}] must be an object`);
+      if (!isRecord(item)) throw new Error(`analysis.top_results[${index}] must be an object`);
       validateOptionalSummary(item.summary, `analysis.top_results[${index}].summary`);
       assertArray(item.trades, `analysis.top_results[${index}].trades`);
       assertArray(item.equity_curve, `analysis.top_results[${index}].equity_curve`);
+      if (item.forecast != null) {
+        validateAnalysisForecast(item.forecast, `analysis.top_results[${index}].forecast`);
+      }
     }
   }
   return data as AnalysisDetailResponse;
@@ -397,13 +579,19 @@ export function validateExportJobResponse(data: unknown): ExportJobResponse {
   assertString(data.mime_type, "export_job.mime_type");
   assertNumber(data.size_bytes, "export_job.size_bytes");
   assertString(data.created_at, "export_job.created_at");
+  assertOptionalNumericLike(data.risk_free_rate, "export_job.risk_free_rate");
+  assertOptionalString(data.risk_free_rate_source, "export_job.risk_free_rate_source");
+  assertOptionalString(data.risk_free_rate_model, "export_job.risk_free_rate_model");
+  if (data.risk_free_rate_curve_points != null) {
+    validateRiskFreeRateCurvePoints(data.risk_free_rate_curve_points, "export_job.risk_free_rate_curve_points");
+  }
   return data as ExportJobResponse;
 }
 
 export function validateForecastEnvelopeResponse(data: unknown): ForecastEnvelopeResponse {
   if (!isRecord(data)) throw new Error("forecast envelope must be an object");
   assertString(data.expected_move_abs_pct, "forecast.expected_move_abs_pct");
-  if (!isRecord(data.forecast)) throw new Error("forecast.forecast must be an object");
+  validateForecastPayload(data.forecast, "forecast.forecast");
   assertString(data.probabilistic_note, "forecast.probabilistic_note");
   return data as ForecastEnvelopeResponse;
 }
@@ -449,6 +637,9 @@ export function validateDailyPicksResponse(data: unknown): DailyPicksResponse {
   assertString(data.status, "daily_picks.status");
   assertOptionalString(data.trade_date, "daily_picks.trade_date");
   assertOptionalString(data.pipeline_run_id, "daily_picks.pipeline_run_id");
+  if (data.integrity_warnings != null) {
+    assertStringArray(data.integrity_warnings, "daily_picks.integrity_warnings");
+  }
   if (data.pipeline_stats != null) {
     validatePipelineStats(data.pipeline_stats, "daily_picks.pipeline_stats");
   }
@@ -500,6 +691,18 @@ export function validateScannerRecommendationListResponse(data: unknown): Scanne
     assertString(item.strategy_type, `scanner_recommendations.items[${index}].strategy_type`);
     validateSummary(item.summary, `scanner_recommendations.items[${index}].summary`);
     validateWarningList(item.warnings, `scanner_recommendations.items[${index}].warnings`);
+    if (item.historical_performance != null) {
+      validateHistoricalPerformance(
+        item.historical_performance,
+        `scanner_recommendations.items[${index}].historical_performance`,
+      );
+    }
+    if (item.forecast != null) {
+      validateForecastPayload(item.forecast, `scanner_recommendations.items[${index}].forecast`);
+    }
+    if (item.ranking_breakdown != null) {
+      validateRankingBreakdown(item.ranking_breakdown, `scanner_recommendations.items[${index}].ranking_breakdown`);
+    }
     assertArray(item.trades, `scanner_recommendations.items[${index}].trades`);
     assertArray(item.equity_curve, `scanner_recommendations.items[${index}].equity_curve`);
     assertBoolean(item.trades_truncated, `scanner_recommendations.items[${index}].trades_truncated`);

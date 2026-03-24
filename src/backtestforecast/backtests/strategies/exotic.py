@@ -55,12 +55,28 @@ class JadeLizardStrategy(StrategyDefinition):
 
         _iv_cache = getattr(option_gateway, '_iv_cache', None)
         put_strike = resolve_strike(
-            [c.strike_price for c in pc], bar.close_price, "put", overrides.short_put_strike, dte,
-            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
+            [c.strike_price for c in pc],
+            bar.close_price,
+            "put",
+            overrides.short_put_strike,
+            dte,
+            contracts=pc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            iv_cache=_iv_cache,
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
         )
         call_short_strike = resolve_strike(
-            [c.strike_price for c in cc], bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=_iv_cache,
+            [c.strike_price for c in cc],
+            bar.close_price,
+            "call",
+            overrides.short_call_strike,
+            dte,
+            contracts=cc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            iv_cache=_iv_cache,
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
         )
         call_long_strike = resolve_wing_strike(
             [c.strike_price for c in cc],

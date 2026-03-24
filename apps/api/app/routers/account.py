@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
-from backtestforecast.db.session import get_db, get_readonly_db
+from backtestforecast.db.session import get_db
 from backtestforecast.errors import AppValidationError
 from backtestforecast.models import User
 from backtestforecast.observability.logging import short_hash
@@ -443,7 +443,7 @@ def delete_account(
 @router.get("/me/export", response_model=AccountDataExportResponse)
 def export_account_data(
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     limit: int = Query(default=_EXPORT_PAGE_SIZE, ge=1, le=_EXPORT_PAGE_SIZE),
     offset: int = Query(default=0, ge=0, le=100_000, description="Offset for backtests"),
     templates_offset: int = Query(default=0, ge=0, le=100_000),
@@ -678,18 +678,21 @@ def _dispatch_stripe_cleanup_retry(
     task retries with exponential backoff up to 5 times.
     """
     try:
-        from apps.worker.app.celery_app import celery_app
+        from apps.api.app.dispatch import dispatch_outbox_task
+        from backtestforecast.db.session import create_session
 
-        celery_app.send_task(
-            "maintenance.cleanup_stripe_orphan",
-            kwargs={
-                "subscription_id": subscription_id,
-                "customer_id": customer_id,
-                "user_id_str": str(user_id),
-            },
-            queue="maintenance",
-            countdown=30,
-        )
+        with create_session() as db:
+            dispatch_outbox_task(
+                db=db,
+                task_name="maintenance.cleanup_stripe_orphan",
+                task_kwargs={
+                    "subscription_id": subscription_id,
+                    "customer_id": customer_id,
+                    "user_id_str": str(user_id),
+                },
+                queue="recovery",
+                logger=logger,
+            )
         logger.info(
             "account.stripe_cleanup_retry_dispatched",
             user_id=str(user_id),

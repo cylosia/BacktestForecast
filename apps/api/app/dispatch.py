@@ -41,11 +41,49 @@ class Dispatchable(Protocol):
 
 UTC = getattr(dt, "UTC", dt.UTC)
 tracer = get_tracer(__name__)
+_OUTBOX_TASK_ID_KEY = "__dispatch_task_id__"
+_OUTBOX_HEADERS_KEY = "__dispatch_headers__"
 
 # Backward-compatible aliases kept for contract tests that still import the
 # original retry-tuning names from this module.
 _SEND_MAX_ATTEMPTS = 3
 _SEND_RETRY_DELAY = 0.5
+
+
+def _normalize_task_kwargs(task_kwargs: dict[str, object]) -> dict[str, object]:
+    return {
+        key: (value if isinstance(value, str) or value is None or isinstance(value, dict) else str(value))
+        for key, value in task_kwargs.items()
+    }
+
+
+def _encode_outbox_task_kwargs(
+    task_kwargs: dict[str, object],
+    *,
+    task_id: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, object]:
+    encoded = _normalize_task_kwargs(task_kwargs)
+    if task_id:
+        encoded[_OUTBOX_TASK_ID_KEY] = task_id
+    if headers:
+        encoded[_OUTBOX_HEADERS_KEY] = dict(headers)
+    return encoded
+
+
+def decode_outbox_task_kwargs(task_kwargs: dict[str, object]) -> tuple[dict[str, object], str | None, dict[str, str] | None]:
+    public_kwargs = dict(task_kwargs)
+    task_id_raw = public_kwargs.pop(_OUTBOX_TASK_ID_KEY, None)
+    headers_raw = public_kwargs.pop(_OUTBOX_HEADERS_KEY, None)
+    task_id = task_id_raw if isinstance(task_id_raw, str) and task_id_raw else None
+    headers = None
+    if isinstance(headers_raw, dict):
+        headers = {
+            str(key): str(value)
+            for key, value in headers_raw.items()
+            if isinstance(key, str) and isinstance(value, str)
+        } or None
+    return public_kwargs, task_id, headers
 
 
 def dispatch_celery_task(
@@ -119,7 +157,11 @@ def dispatch_celery_task(
             from backtestforecast.models import OutboxMessage
             outbox_msg = OutboxMessage(
                 task_name=task_name,
-                task_kwargs_json=task_kwargs,
+                task_kwargs_json=_encode_outbox_task_kwargs(
+                    task_kwargs,
+                    task_id=task_id,
+                    headers=headers if headers else None,
+                ),
                 queue=queue,
                 status="pending",
                 correlation_id=job_id,
@@ -236,6 +278,63 @@ def dispatch_celery_task(
             celery_task_id=task_id,
             msg="Inline send failed; outbox will retry within 60s.",
             exc_info=last_exc,
+        )
+        DISPATCH_RESULTS_TOTAL.labels(result="outbox_pending", task_name=task_name).inc()
+        return DispatchResult.ENQUEUE_FAILED
+
+
+def dispatch_outbox_task(
+    *,
+    db: Session,
+    task_name: str,
+    task_kwargs: dict[str, str | None],
+    queue: str,
+    logger: structlog.stdlib.BoundLogger,
+) -> DispatchResult:
+    """Persist and dispatch a task that has no backing job row."""
+    from backtestforecast.models import OutboxMessage
+
+    task_id = str(uuid4())
+    normalized_kwargs = _encode_outbox_task_kwargs(task_kwargs, task_id=task_id)
+    try:
+        outbox_msg = OutboxMessage(
+            task_name=task_name,
+            task_kwargs_json=normalized_kwargs,
+            queue=queue,
+            status="pending",
+            correlation_id=None,
+        )
+        db.add(outbox_msg)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("dispatch.generic_outbox_write_failed", task_name=task_name, queue=queue)
+        DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.PRE_COMMIT_FAILED.value, task_name=task_name).inc()
+        return DispatchResult.PRE_COMMIT_FAILED
+
+    from apps.worker.app.celery_app import celery_app
+
+    try:
+        public_kwargs, persisted_task_id, headers = decode_outbox_task_kwargs(normalized_kwargs)
+        celery_app.send_task(
+            task_name,
+            kwargs=public_kwargs,
+            queue=queue,
+            task_id=persisted_task_id,
+            headers=headers,
+        )
+        outbox_msg.status = "sent"
+        outbox_msg.completed_at = dt.datetime.now(UTC)
+        db.commit()
+        DISPATCH_RESULTS_TOTAL.labels(result=DispatchResult.SENT.value, task_name=task_name).inc()
+        return DispatchResult.SENT
+    except Exception as exc:
+        db.rollback()
+        logger.warning(
+            "dispatch.generic_outbox_pending",
+            task_name=task_name,
+            queue=queue,
+            exc_info=exc,
         )
         DISPATCH_RESULTS_TOTAL.labels(result="outbox_pending", task_name=task_name).inc()
         return DispatchResult.ENQUEUE_FAILED

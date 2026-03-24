@@ -22,6 +22,9 @@ from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import EquityPointResult, TradeResult
 from backtestforecast.db.session import create_session
 from backtestforecast.models import BacktestRun
+from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+from backtestforecast.services.risk_free_rate import build_backtest_risk_free_rate_curve
+from backtestforecast.utils import to_decimal
 
 logger = structlog.get_logger("backfill_metrics")
 
@@ -29,9 +32,24 @@ BATCH_SIZE = 100
 
 
 def _to_decimal(v: float | None) -> Decimal | None:
-    if v is None:
-        return None
-    return Decimal(str(round(v, 4)))
+    return to_decimal(v, allow_infinite=True)
+
+
+def _build_risk_free_inputs(run: BacktestRun) -> tuple[float, object | None]:
+    snapshot = run.input_snapshot_json or {}
+    try:
+        request = CreateBacktestRunRequest.model_validate(snapshot)
+    except Exception:
+        logger.warning("backfill.snapshot_request_rebuild_failed", run_id=str(run.id), exc_info=True)
+        return float(run.risk_free_rate) if run.risk_free_rate is not None else 0.045, None
+
+    default_rate = float(run.risk_free_rate) if run.risk_free_rate is not None else 0.045
+    try:
+        curve = build_backtest_risk_free_rate_curve(request, default_rate=default_rate)
+    except Exception:
+        logger.warning("backfill.risk_free_curve_rebuild_failed", run_id=str(run.id), exc_info=True)
+        curve = None
+    return default_rate, curve
 
 
 def backfill() -> int:
@@ -114,16 +132,17 @@ def backfill() -> int:
                         for p in run.equity_points
                     ]
 
+                    risk_free_rate, risk_free_rate_curve = _build_risk_free_inputs(run)
                     summary = build_summary(
                         float(run.starting_equity),
                         float(run.ending_equity),
                         trades,
                         equity_curve,
+                        risk_free_rate=risk_free_rate,
+                        risk_free_rate_curve=risk_free_rate_curve,
                     )
 
                     pf = _to_decimal(summary.profit_factor)
-                    if pf is None:
-                        pf = Decimal("0")
                     run.profit_factor = pf
                     run.payoff_ratio = _to_decimal(summary.payoff_ratio)
                     run.expectancy = _to_decimal(summary.expectancy) or Decimal("0")

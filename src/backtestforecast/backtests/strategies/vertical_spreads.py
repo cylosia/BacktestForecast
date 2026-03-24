@@ -53,7 +53,13 @@ class VerticalSpreadStrategy(StrategyDefinition):
         # Determine short leg placement override based on contract type
         short_override = overrides.short_call_strike if self.contract_type == "call" else overrides.short_put_strike
 
-        _kw = dict(contracts=expiration_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None))
+        _kw = dict(
+            contracts=expiration_contracts,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            iv_cache=getattr(option_gateway, '_iv_cache', None),
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+        )
         if self.contract_type == "call":
             if self.is_debit:
                 base_strike = resolve_strike(strikes, bar.close_price, "call", None, dte, **_kw)

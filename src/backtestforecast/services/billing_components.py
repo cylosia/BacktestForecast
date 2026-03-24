@@ -49,5 +49,5 @@ class ReconciliationService:
     def __init__(self, billing: BillingService) -> None:
         self.billing = billing
 
-    def reconcile_subscriptions(self, *, batch_size: int = 100) -> int:
-        return self.billing._reconcile_subscriptions_impl(batch_size=batch_size)
+    def reconcile_subscriptions(self, *, grace_hours: int = 48, dry_run: bool = False) -> list[dict[str, object]]:
+        return self.billing._reconcile_subscriptions_impl(grace_hours=grace_hours, dry_run=dry_run)

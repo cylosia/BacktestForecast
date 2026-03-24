@@ -121,6 +121,7 @@ class TestEmptyClerkAudienceBehavior:
                 clerk_authorized_parties_raw="http://localhost:3000",
                 clerk_audience="",
                 clerk_issuer="https://clerk.example.com",
+                admin_token="test-admin-token",
                 log_json=True,
                 ip_hash_salt="a-secure-salt-for-testing-1234567890",
                 metrics_token="test-metrics-token",

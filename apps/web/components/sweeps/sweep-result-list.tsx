@@ -1,10 +1,28 @@
 import type { SweepResultResponse, SweepMode } from "@backtestforecast/api-client";
-import { formatCurrency, formatNumber, formatPercent, strategyLabel, toNumber } from "@/lib/backtests/format";
+import { formatCurrency, formatNumber, formatPercent, formatRatio, strategyLabel, toNumber } from "@/lib/backtests/format";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const GENETIC_MODE: SweepMode = "genetic";
+
+function normalizedScoreValue(score: number, rawMin: number, rawMax: number): number {
+  if (!Number.isFinite(score)) return 0;
+  if (rawMax <= 0) {
+    if (rawMax === rawMin) return 1;
+    return Math.max(score - rawMin, 0);
+  }
+  return Math.max(score, 0);
+}
+
+function decidedTradeContext(summary: SweepResultResponse["summary"]): string | null {
+  const total = summary.trade_count;
+  const decided = summary.decided_trades;
+  if (total == null || decided == null || total <= 0 || decided === total) return null;
+  const breakEven = total - decided;
+  if (breakEven <= 0) return null;
+  return `Based on ${formatNumber(decided)} of ${formatNumber(total)} trades (${formatNumber(breakEven)} break-even excluded)`;
+}
 
 interface LegData {
   contract_type?: string;
@@ -62,8 +80,8 @@ export function SweepResultList({ items }: { items: SweepResultResponse[] }) {
 
   const scores = items.map((r) => toNumber(r.score)).filter(Number.isFinite);
   const rawMax = scores.length === 0 ? 0 : Math.max(...scores);
-  const allNegative = rawMax <= 0;
-  const maxScore = allNegative ? Math.max(Math.abs(Math.min(...scores)), 1) : Math.max(rawMax, 1);
+  const rawMin = scores.length === 0 ? 0 : Math.min(...scores);
+  const maxScore = rawMax <= 0 ? (rawMax === rawMin ? 1 : Math.max(rawMax - rawMin, 1)) : Math.max(rawMax, 1);
 
   return (
     <Card>
@@ -101,7 +119,7 @@ export function SweepResultList({ items }: { items: SweepResultResponse[] }) {
                   <p className="text-2xl font-semibold tracking-tight">{formatNumber(toNumber(result.score))}</p>
                   <p className="text-xs text-muted-foreground">Score</p>
                   <div className="mt-1 w-24">
-                    <ScoreBar score={allNegative ? Math.abs(toNumber(result.score)) : Math.max(toNumber(result.score), 0)} max={maxScore} />
+                    <ScoreBar score={normalizedScoreValue(toNumber(result.score), rawMin, rawMax)} max={maxScore} />
                   </div>
                 </div>
               </div>
@@ -121,6 +139,7 @@ export function SweepResultList({ items }: { items: SweepResultResponse[] }) {
                 <div className="rounded-lg border border-border/60 p-3">
                   <p className="text-xs text-muted-foreground">Win rate</p>
                   <p className="mt-1 font-semibold">{result.summary.win_rate != null ? formatPercent(result.summary.win_rate) : "—"}</p>
+                  {decidedTradeContext(result.summary) ? <p className="mt-1 text-xs text-muted-foreground">{decidedTradeContext(result.summary)}</p> : null}
                 </div>
                 <div className="rounded-lg border border-border/60 p-3">
                   <p className="text-xs text-muted-foreground">ROI</p>
@@ -136,7 +155,7 @@ export function SweepResultList({ items }: { items: SweepResultResponse[] }) {
                 </div>
                 <div className="rounded-lg border border-border/60 p-3">
                   <p className="text-xs text-muted-foreground">Sharpe</p>
-                  <p className="mt-1 font-semibold">{result.summary.sharpe_ratio != null ? formatNumber(toNumber(result.summary.sharpe_ratio)) : "—"}</p>
+                  <p className="mt-1 font-semibold">{result.summary.sharpe_ratio != null ? formatRatio(result.summary.sharpe_ratio) : "—"}</p>
                 </div>
               </div>
 

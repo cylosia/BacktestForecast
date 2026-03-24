@@ -216,6 +216,33 @@ def test_positive_outcome_rate_downtrend_in_valid_range() -> None:
     assert 0.0 <= rate <= 100.0
 
 
+def test_bearish_strategy_uses_negative_return_hits_for_positive_outcome_rate() -> None:
+    bars = _make_bars(daily_delta=-0.25, noise_factor=-0.03)
+
+    forecast = HistoricalAnalogForecaster().forecast(
+        symbol="TSLA",
+        bars=bars,
+        horizon_days=15,
+        strategy_type="long_put",
+    )
+
+    assert forecast.positive_outcome_rate_pct is not None
+    assert float(forecast.positive_outcome_rate_pct) > 50.0
+
+
+def test_neutral_strategy_omits_directional_positive_outcome_rate() -> None:
+    bars = _make_bars(n=350)
+
+    forecast = HistoricalAnalogForecaster().forecast(
+        symbol="SPY",
+        bars=bars,
+        horizon_days=15,
+        strategy_type="iron_condor",
+    )
+
+    assert forecast.positive_outcome_rate_pct is None
+
+
 # ---------------------------------------------------------------------------
 # horizon_days < 1 raises
 # ---------------------------------------------------------------------------
@@ -322,3 +349,29 @@ def test_forecast_builder_dte_tolerance_invariant(horizon_days: int) -> None:
         f"horizon_days={horizon_days}: dte_tolerance_days ({dte_tolerance}) "
         f"must be strictly less than target_dte ({target_dte})"
     )
+
+
+def test_short_horizon_uses_reference_date_trading_calendar(monkeypatch) -> None:
+    bars = _make_bars(n=250)
+    captured: dict[str, object] = {}
+
+    def fake_trading_days_in_range(start, end):
+        captured["start"] = start
+        captured["end"] = end
+        return 3
+
+    monkeypatch.setattr(
+        "backtestforecast.utils.dates.trading_days_in_range",
+        fake_trading_days_in_range,
+    )
+
+    forecast = HistoricalAnalogForecaster().forecast(
+        symbol="SPY",
+        bars=bars,
+        horizon_days=5,
+        strategy_type="long_call",
+    )
+
+    assert forecast.trading_days_used == 3
+    assert captured["start"] == bars[-1].trade_date + timedelta(days=1)
+    assert captured["end"] == bars[-1].trade_date + timedelta(days=5)

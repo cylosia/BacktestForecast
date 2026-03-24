@@ -195,3 +195,72 @@ def test_backfill_skips_already_filled(db_session):
         count = backfill()
 
     assert count == 0
+
+
+def test_backfill_preserves_infinite_profit_factor_and_uses_rebuilt_curve_inputs(db_session):
+    user = _seed_user(db_session)
+    run = _seed_run_with_trades(db_session, user.id)
+    run.input_snapshot_json = {
+        "symbol": "AAPL",
+        "strategy_type": "long_call",
+        "start_date": "2023-01-01",
+        "end_date": "2023-06-30",
+        "target_dte": 30,
+        "dte_tolerance_days": 5,
+        "max_holding_days": 30,
+        "account_size": "10000",
+        "risk_per_trade_pct": "5",
+        "commission_per_contract": "1",
+        "entry_rules": [],
+        "slippage_pct": "0",
+    }
+    run.risk_free_rate = Decimal("0.0310")
+    db_session.commit()
+
+    captured: dict[str, object] = {}
+
+    def _fake_curve(request, *, default_rate):
+        captured["default_rate"] = default_rate
+        captured["symbol"] = request.symbol
+        return "curve"
+
+    class _Summary:
+        profit_factor = float("inf")
+        payoff_ratio = float("inf")
+        expectancy = 10.0
+        sharpe_ratio = 1.25
+        sortino_ratio = 1.5
+        cagr_pct = 12.0
+        calmar_ratio = 1.0
+        max_consecutive_wins = 2
+        max_consecutive_losses = 1
+        recovery_factor = float("inf")
+
+    def _fake_build_summary(starting_equity, ending_equity, trades, equity_curve, **kwargs):
+        captured["risk_free_rate"] = kwargs.get("risk_free_rate")
+        captured["risk_free_rate_curve"] = kwargs.get("risk_free_rate_curve")
+        return _Summary()
+
+    with patch(
+        "backtestforecast.management.backfill_metrics.create_session",
+        _fake_create_session(db_session),
+    ), patch(
+        "backtestforecast.management.backfill_metrics.build_backtest_risk_free_rate_curve",
+        side_effect=_fake_curve,
+    ), patch(
+        "backtestforecast.management.backfill_metrics.build_summary",
+        side_effect=_fake_build_summary,
+    ):
+        from backtestforecast.management.backfill_metrics import backfill
+
+        count = backfill()
+
+    assert count >= 1
+    db_session.refresh(run)
+    assert captured["symbol"] == "AAPL"
+    assert captured["default_rate"] == 0.031
+    assert captured["risk_free_rate"] == 0.031
+    assert captured["risk_free_rate_curve"] == "curve"
+    assert run.profit_factor == Decimal("Infinity")
+    assert run.payoff_ratio == Decimal("Infinity")
+    assert run.recovery_factor == Decimal("Infinity")

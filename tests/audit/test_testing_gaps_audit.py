@@ -46,10 +46,10 @@ def test_tg1_dlq_queue_depth_metric_reads_cache_redis():
     """DLQ depth metric must be read from redis_cache_url, not broker."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        from apps.worker.app.tasks import reap_stale_jobs
-    source = inspect.getsource(reap_stale_jobs)
+        from apps.worker.app.tasks import _reap_stale_jobs_inner
+    source = inspect.getsource(_reap_stale_jobs_inner)
     cache_idx = source.find("_cache_r")
-    dlq_idx = source.find("dead_letter_queue")
+    dlq_idx = source.find("bff:dead_letter_queue")
     assert cache_idx != -1 and dlq_idx != -1, (
         "reap_stale_jobs must read DLQ depth from a separate cache Redis client"
     )
@@ -108,7 +108,8 @@ def test_tg3_pipeline_lock_exceeds_soft_time_limit():
         warnings.simplefilter("ignore", UserWarning)
         from apps.worker.app.tasks import nightly_scan_pipeline
 
-    lock_match = re.search(r"timeout=(\d+)", inspect.getsource(nightly_scan_pipeline))
+    source = inspect.getsource(nightly_scan_pipeline)
+    lock_match = re.search(r"redis_client\.lock\([^)]*timeout=(\d+)", source, re.DOTALL)
     assert lock_match is not None, "Could not find lock timeout in pipeline task"
     lock_timeout = int(lock_match.group(1))
     soft_limit = nightly_scan_pipeline.soft_time_limit or 1800
@@ -233,10 +234,12 @@ def test_tg8_sweep_job_response_fields_present():
     """Every SweepJobResponse field must appear in the TypeScript type definitions."""
     from backtestforecast.schemas.sweeps import SweepJobResponse
 
-    ts_path = Path(__file__).resolve().parents[2] / "packages" / "api-client" / "src" / "index.ts"
+    ts_path = Path(__file__).resolve().parents[2] / "packages" / "api-client" / "src" / "schema.d.ts"
     if not ts_path.exists():
         pytest.skip(f"TypeScript file not found: {ts_path}")
     ts_content = ts_path.read_text(encoding="utf-8")
+
+    assert "SweepJobResponse: {" in ts_content, "SweepJobResponse schema missing from generated TypeScript definitions"
 
     for field_name, field_info in SweepJobResponse.model_fields.items():
         ts_name = field_info.alias if field_info.alias else field_name
@@ -250,10 +253,12 @@ def test_tg8_sweep_result_response_fields_present():
     """Every SweepResultResponse field must appear in TypeScript type definitions."""
     from backtestforecast.schemas.sweeps import SweepResultResponse
 
-    ts_path = Path(__file__).resolve().parents[2] / "packages" / "api-client" / "src" / "index.ts"
+    ts_path = Path(__file__).resolve().parents[2] / "packages" / "api-client" / "src" / "schema.d.ts"
     if not ts_path.exists():
         pytest.skip(f"TypeScript file not found: {ts_path}")
     ts_content = ts_path.read_text(encoding="utf-8")
+
+    assert "SweepResultResponse: {" in ts_content, "SweepResultResponse schema missing from generated TypeScript definitions"
 
     for field_name, field_info in SweepResultResponse.model_fields.items():
         ts_name = field_info.alias if field_info.alias else field_name
@@ -267,10 +272,12 @@ def test_tg8_create_sweep_request_fields_present():
     """Every CreateSweepRequest field must appear in TypeScript type definitions."""
     from backtestforecast.schemas.sweeps import CreateSweepRequest
 
-    ts_path = Path(__file__).resolve().parents[2] / "packages" / "api-client" / "src" / "index.ts"
+    ts_path = Path(__file__).resolve().parents[2] / "packages" / "api-client" / "src" / "schema.d.ts"
     if not ts_path.exists():
         pytest.skip(f"TypeScript file not found: {ts_path}")
     ts_content = ts_path.read_text(encoding="utf-8")
+
+    assert "CreateSweepRequest: {" in ts_content, "CreateSweepRequest schema missing from generated TypeScript definitions"
 
     for field_name in CreateSweepRequest.model_fields:
         assert field_name in ts_content, (

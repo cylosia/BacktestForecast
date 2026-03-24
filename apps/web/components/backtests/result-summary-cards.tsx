@@ -1,5 +1,5 @@
 import type { BacktestSummaryResponse } from "@backtestforecast/api-client";
-import { formatCurrency, formatNumber, formatPercent } from "@/lib/backtests/format";
+import { formatCurrency, formatNumber, formatPercent, formatRatio } from "@/lib/backtests/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type NumericValue = string | number | null | undefined;
@@ -40,14 +40,14 @@ const advancedCards: Array<{
   label: string;
   formatter: (value: NumericValue) => string;
 }> = [
-  { key: "sharpe_ratio", label: "Sharpe ratio", formatter: safeRatio },
-  { key: "sortino_ratio", label: "Sortino ratio", formatter: safeRatio },
-  { key: "profit_factor", label: "Profit factor", formatter: safeRatio },
+  { key: "sharpe_ratio", label: "Sharpe ratio", formatter: formatRatio },
+  { key: "sortino_ratio", label: "Sortino ratio", formatter: formatRatio },
+  { key: "profit_factor", label: "Profit factor", formatter: formatRatio },
   { key: "expectancy", label: "Expectancy", formatter: (value) => (value != null ? formatCurrency(value) : "—") },
   { key: "cagr_pct", label: "CAGR", formatter: (value) => (value != null ? formatPercent(value) : "—") },
-  { key: "payoff_ratio", label: "Payoff ratio", formatter: safeRatio },
-  { key: "calmar_ratio", label: "Calmar ratio", formatter: safeRatio },
-  { key: "recovery_factor", label: "Recovery factor", formatter: safeRatio },
+  { key: "payoff_ratio", label: "Payoff ratio", formatter: formatRatio },
+  { key: "calmar_ratio", label: "Calmar ratio", formatter: formatRatio },
+  { key: "recovery_factor", label: "Recovery factor", formatter: formatRatio },
   { key: "max_consecutive_wins", label: "Max consec. wins", formatter: (value) => (value != null ? String(value) : "—") },
   { key: "max_consecutive_losses", label: "Max consec. losses", formatter: (value) => (value != null ? String(value) : "—") },
 ];

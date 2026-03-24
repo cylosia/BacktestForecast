@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db, get_readonly_db
+from backtestforecast.db.session import get_db
 from backtestforecast.errors import FeatureLockedError
 from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
@@ -40,7 +40,7 @@ router = APIRouter(prefix="/sweeps", tags=["sweeps"])
 @router.get("", response_model=SweepJobListResponse)
 def list_sweeps(
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,
@@ -95,7 +95,7 @@ def create_sweep(
 def get_sweep_status(
     job_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobStatusResponse:
     get_rate_limiter().check(
@@ -122,7 +122,7 @@ def get_sweep_status(
 def get_sweep(
     job_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> SweepJobResponse:
     get_rate_limiter().check(
@@ -174,7 +174,7 @@ def cancel_sweep(
 def get_sweep_remediation_actions(
     job_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> RemediationActionsResponse:
     get_rate_limiter().check(
@@ -197,7 +197,7 @@ def get_sweep_remediation_actions(
 def get_sweep_results(
     job_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     settings: Settings = Depends(get_settings),

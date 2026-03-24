@@ -78,6 +78,17 @@ class BillingService:
         self.webhook_handler = WebhookHandler(self)
         self.reconciliation_service = ReconciliationService(self)
 
+    def __enter__(self) -> BillingService:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is not None:
+            try:
+                self.session.rollback()
+            except Exception:
+                logger.warning("billing.context_manager_rollback_failed", exc_info=True)
+        return False
+
 
     def create_checkout_session(
         self, user: User, payload: CreateCheckoutSessionRequest, *, request_id: str | None = None, ip_address: str | None = None,
@@ -94,8 +105,8 @@ class BillingService:
     ) -> dict[str, str]:
         return self.webhook_handler.handle_webhook(payload_bytes, signature_header, request_id=request_id, ip_address=ip_address)
 
-    def reconcile_subscriptions(self, *, batch_size: int = 100) -> int:
-        return self.reconciliation_service.reconcile_subscriptions(batch_size=batch_size)
+    def reconcile_subscriptions(self, *, grace_hours: int = 48, dry_run: bool = False) -> list[dict[str, Any]]:
+        return self.reconciliation_service.reconcile_subscriptions(grace_hours=grace_hours, dry_run=dry_run)
 
 
     def _create_checkout_session_impl(
@@ -175,9 +186,9 @@ class BillingService:
         request_id: str | None = None,
         ip_address: str | None = None,
     ) -> PortalSessionResponse:
-        client = self._get_stripe_client()
         if not user.stripe_customer_id:
             raise NotFoundError("No Stripe customer is attached to this account yet.")
+        client = self._get_stripe_client()
         return_url = self._resolve_return_url(payload.return_path)
         portal_session = client.billing_portal.sessions.create(
             params={"customer": user.stripe_customer_id, "return_url": return_url}
@@ -536,7 +547,7 @@ class BillingService:
                 User.subscription_status == "active",
                 User.subscription_current_period_end < cutoff,
                 User.stripe_subscription_id.isnot(None),
-            ).with_for_update(skip_locked=True).limit(100)
+            ).with_for_update(skip_locked=True).limit(self.settings.max_reconciliation_users)
         ))
         actions: list[dict[str, Any]] = []
         client = self._get_stripe_client() if stale_users else None
@@ -760,13 +771,17 @@ class BillingService:
                     customer_id_hash=short_hash(customer.id),
                 )
                 try:
-                    from apps.worker.app.celery_app import celery_app
-                    celery_app.send_task(
-                        "maintenance.cleanup_stripe_orphan",
-                        kwargs={"customer_id": customer.id, "subscription_id": None, "user_id_str": str(user.id)},
-                        queue="maintenance",
-                        countdown=10,
-                    )
+                    from apps.api.app.dispatch import dispatch_outbox_task
+                    from backtestforecast.db.session import create_session
+
+                    with create_session() as cleanup_session:
+                        dispatch_outbox_task(
+                            db=cleanup_session,
+                            task_name="maintenance.cleanup_stripe_orphan",
+                            task_kwargs={"customer_id": customer.id, "subscription_id": None, "user_id_str": str(user.id)},
+                            queue="recovery",
+                            logger=logger,
+                        )
                 except Exception:
                     logger.warning("billing.orphan_customer_cleanup_dispatch_failed", customer_id_hash=short_hash(customer.id))
             self.session.refresh(user)

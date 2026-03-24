@@ -36,4 +36,4 @@ def test_scan_service_is_split_across_component_classes() -> None:
 def test_worker_task_modules_exist() -> None:
     assert Path('apps/worker/app/research_tasks.py').exists()
     assert Path('apps/worker/app/pipeline_tasks.py').exists()
-    assert Path('apps/worker/app/worker_maintenance_tasks.py').exists()
+    assert Path('apps/worker/app/maintenance_tasks.py').exists()

@@ -24,6 +24,7 @@ def _make_limiter(*, fail_closed: bool = False, memory_max_keys: int = 10_000) -
     settings = MagicMock()
     settings.rate_limit_prefix = "test"
     settings.rate_limit_fail_closed = fail_closed
+    settings.rate_limit_degraded_memory_fallback = False
     settings.rate_limit_memory_max_keys = memory_max_keys
     settings.redis_url = "redis://localhost:6379/0"
     limiter = RateLimiter(settings=settings)

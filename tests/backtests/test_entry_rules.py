@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
+import backtestforecast.backtests.rules as rules_mod
 from backtestforecast.backtests.rules import EntryRuleEvaluator
 from backtestforecast.backtests.types import BacktestConfig
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
@@ -281,14 +282,32 @@ def test_iv_percentile_zero_when_current_is_minimum(monkeypatch):
     )
 
     iv_series = [0.30] * 49 + [0.10]
-    import backtestforecast.backtests.rules as rules_mod
-
     monkeypatch.setattr(rules_mod, "build_estimated_iv_series", lambda **kwargs: iv_series)
 
     ev = _build_evaluator(closes, [rule])
     assert ev.is_entry_allowed(49) is True, (
         "Current IV is the minimum - percentile should be 0%, satisfying <= 0 threshold"
     )
+
+
+def test_build_estimated_iv_series_does_not_forward_fill_missing_quotes(monkeypatch):
+    bars = _make_bars([100.0, 101.0, 102.0])
+    sequence = iter([0.25, None, 0.30])
+
+    monkeypatch.setattr(
+        rules_mod,
+        "estimate_atm_iv_for_date",
+        lambda **kwargs: next(sequence),
+    )
+
+    series = rules_mod.build_estimated_iv_series(
+        bars=bars,
+        option_gateway=StubGateway(iv_values=[0.25, None, 0.30]),
+        target_dte=30,
+        dte_tolerance_days=10,
+    )
+
+    assert series == [0.25, None, 0.30]
 
 
 # ---------------------------------------------------------------------------

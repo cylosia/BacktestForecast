@@ -14,23 +14,28 @@ from starlette.responses import StreamingResponse
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db, get_readonly_db
+from backtestforecast.db.session import get_db
 from backtestforecast.models import User
 from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
 from backtestforecast.schemas.common import RemediationActionsResponse, sanitize_error_message
 from backtestforecast.schemas.exports import CreateExportRequest, ExportJobListResponse, ExportJobResponse
 from backtestforecast.security import get_rate_limiter
-from backtestforecast.services.exports import MAX_EXPORT_BYTES, ExportService
+from backtestforecast.services.exports import (
+    MAX_DATABASE_DOWNLOADABLE_EXPORT_BYTES,
+    MAX_EXPORT_BYTES,
+    ExportService,
+)
 from backtestforecast.services.remediation_actions import build_job_remediation_actions
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 logger = structlog.get_logger("api.exports")
+_MAX_DB_INLINE_DOWNLOAD_BYTES = MAX_DATABASE_DOWNLOADABLE_EXPORT_BYTES
 
 
 @router.get("", response_model=ExportJobListResponse)
 def list_exports(
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     cursor: Annotated[str | None, Query(max_length=200)] = None,
@@ -97,7 +102,7 @@ def create_export(
 def get_export_status(
     export_job_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> ExportJobResponse:
     get_rate_limiter().check(
@@ -176,7 +181,7 @@ def cancel_export(
 def get_export_remediation_actions(
     export_job_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> RemediationActionsResponse:
     get_rate_limiter().check(
@@ -326,6 +331,18 @@ def download_export(
                     "Export storage is temporarily unavailable. Please retry in a moment."
                 ) from exc
 
+        if export_job.size_bytes > _MAX_DB_INLINE_DOWNLOAD_BYTES:
+            logger.error(
+                "export.db_inline_download_blocked",
+                export_job_id=str(export_job_id),
+                size_bytes=export_job.size_bytes,
+                max_inline_bytes=_MAX_DB_INLINE_DOWNLOAD_BYTES,
+            )
+            from backtestforecast.errors import AppValidationError
+            raise AppValidationError(
+                "This export is too large for database-backed download delivery. Re-export after enabling object storage."
+            )
+
         content = service.get_db_content_bytes_for_download(user, export_job_id)
 
         if content is None:
@@ -335,6 +352,11 @@ def download_export(
         if len(content) > MAX_EXPORT_BYTES:
             from backtestforecast.errors import AppValidationError
             raise AppValidationError("Export file exceeds maximum allowed size.")
+        if len(content) > _MAX_DB_INLINE_DOWNLOAD_BYTES:
+            from backtestforecast.errors import AppValidationError
+            raise AppValidationError(
+                "This export is too large for database-backed download delivery. Re-export after enabling object storage."
+            )
 
         if export_job.sha256_hex:
             import hashlib

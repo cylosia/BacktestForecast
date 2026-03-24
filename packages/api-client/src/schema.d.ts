@@ -787,9 +787,7 @@ export interface components {
             /** Error Message */
             error_message?: string | null;
             /** Forecast */
-            forecast?: {
-                [key: string]: unknown;
-            } | null;
+            forecast?: components["schemas"]["AnalysisForecast"] | null;
             /** Integrity Warnings */
             integrity_warnings?: string[];
             /**
@@ -816,6 +814,43 @@ export interface components {
             top_results?: components["schemas"]["AnalysisTopResult"][] | null;
             /** Top Results Count */
             top_results_count: number;
+        };
+        /** AnalysisForecast */
+        AnalysisForecast: {
+            /** As Of Date */
+            as_of_date: string;
+            /** Analog Count */
+            analog_count: number;
+            /** Analogs Used */
+            analogs_used?: number | null;
+            /** Disclaimer */
+            disclaimer: string;
+            /** Expected Return High Pct */
+            expected_return_high_pct: string;
+            /** Expected Return Low Pct */
+            expected_return_low_pct: string;
+            /** Expected Return Median Pct */
+            expected_return_median_pct: string;
+            /** Horizon Days */
+            horizon_days: number;
+            /** No Results Message */
+            no_results_message?: string | null;
+            /** Positive Outcome Rate Pct */
+            positive_outcome_rate_pct?: string | null;
+            /** Strategy Type */
+            strategy_type: string;
+            /** Summary */
+            summary: string;
+            /** Symbol */
+            symbol: string;
+            /** Trading Days Used */
+            trading_days_used?: number | null;
+            /** Analog Dates */
+            analog_dates?: string[];
+            /** Analog Dates Shown */
+            analog_dates_shown?: number | null;
+            /** Analog Dates Total */
+            analog_dates_total?: number | null;
         };
         /** AnalysisListResponse */
         AnalysisListResponse: {
@@ -889,9 +924,12 @@ export interface components {
                 [key: string]: unknown;
             }[];
             /** Forecast */
-            forecast?: {
-                [key: string]: unknown;
-            };
+            forecast?: components["schemas"]["AnalysisForecast"];
+            /**
+             * Max Holding Days
+             * @default 0
+             */
+            max_holding_days: number;
             /**
              * Rank
              * @default 0
@@ -913,9 +951,7 @@ export interface components {
              */
             strategy_type: string;
             /** Summary */
-            summary?: {
-                [key: string]: unknown;
-            };
+            summary?: components["schemas"]["BacktestSummaryResponse"];
             /**
              * Target Dte
              * @default 0
@@ -1001,9 +1037,27 @@ export interface components {
             max_holding_days: number;
             /**
              * Risk Free Rate
-             * @description Annualized risk-free rate used for Sharpe and Sortino ratio calculations. Sourced from the run's persisted column or input snapshot. Null only when the value could not be determined (very old runs).
+             * @description Annualized scalar risk-free-rate anchor recorded with the run. For curve-based runs this is the default or starting rate, not every daily Treasury point used during execution. Null only when the value could not be determined (very old runs).
              */
             risk_free_rate?: string | null;
+            /**
+             * Risk Free Rate Curve Points
+             * @description Per-date risk-free-rate points used for curve-based execution when they were persisted with the run. Empty for scalar runs or older runs that predate curve snapshot persistence.
+             */
+            risk_free_rate_curve_points?: {
+                /**
+                 * Trade Date
+                 * Format: date
+                 */
+                trade_date: string;
+                /** Rate */
+                rate: string;
+            }[];
+            /**
+             * Risk Free Rate Model
+             * @description Whether the run used a single scalar risk-free rate or a date-varying curve with this value as the anchor/default.
+             */
+            risk_free_rate_model?: "scalar" | "curve_default" | "unknown" | null;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: string;
             /** Started At */
@@ -1672,12 +1726,38 @@ export interface components {
          * @description Known keys produced by the forecaster for daily pick forecasts.
          */
         DailyPickForecast: {
+            /** As Of Date */
+            as_of_date: string;
             /** Analog Count */
-            analog_count?: number | null;
+            analog_count: number;
+            /** Analogs Used */
+            analogs_used?: number | null;
+            /** Disclaimer */
+            disclaimer: string;
+            /** Expected Return High Pct */
+            expected_return_high_pct: string;
+            /** Expected Return Low Pct */
+            expected_return_low_pct: string;
             /** Expected Return Median Pct */
-            expected_return_median_pct?: number | null;
+            expected_return_median_pct: string;
+            /** Horizon Days */
+            horizon_days: number;
             /** Positive Outcome Rate Pct */
-            positive_outcome_rate_pct?: number | null;
+            positive_outcome_rate_pct?: string | null;
+            /** Strategy Type */
+            strategy_type: string;
+            /** Summary */
+            summary: string;
+            /** Symbol */
+            symbol: string;
+            /** Trading Days Used */
+            trading_days_used?: number | null;
+            /** Analog Dates */
+            analog_dates?: string[];
+            /** Analog Dates Shown */
+            analog_dates_shown?: number | null;
+            /** Analog Dates Total */
+            analog_dates_total?: number | null;
         };
         /** DailyPickItemResponse */
         DailyPickItemResponse: {
@@ -1718,9 +1798,9 @@ export interface components {
              */
             max_drawdown_pct: number;
             /** Profit Factor */
-            profit_factor?: number | null;
+            profit_factor?: string | null;
             /** Sharpe Ratio */
-            sharpe_ratio?: number | null;
+            sharpe_ratio?: string | null;
             /**
              * Total Net Pnl
              * @default 0
@@ -1744,6 +1824,8 @@ export interface components {
         };
         /** DailyPicksResponse */
         DailyPicksResponse: {
+            /** Integrity Warnings */
+            integrity_warnings?: string[];
             /** Items */
             items?: components["schemas"]["DailyPickItemResponse"][];
             /** Pipeline Run Id */
@@ -1863,6 +1945,22 @@ export interface components {
             id: string;
             /** Mime Type */
             mime_type: string;
+            /** Risk Free Rate */
+            risk_free_rate?: string | null;
+            /** Risk Free Rate Curve Points */
+            risk_free_rate_curve_points?: {
+                /**
+                 * Trade Date
+                 * Format: date
+                 */
+                trade_date: string;
+                /** Rate */
+                rate: string;
+            }[];
+            /** Risk Free Rate Model */
+            risk_free_rate_model?: "scalar" | "curve_default" | "unknown" | null;
+            /** Risk Free Rate Source */
+            risk_free_rate_source?: string | null;
             /** Sha256 Hex */
             sha256_hex?: string | null;
             /**
@@ -2175,6 +2273,11 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             };
+            /**
+             * Decided Trades
+             * @default 0
+             */
+            decided_trades: number;
             /**
              * Max Drawdown Pct
              * @default 0

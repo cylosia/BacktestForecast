@@ -212,8 +212,8 @@ class Settings(BaseSettings):
     trusted_proxy_cidrs: str = "127.0.0.0/8"
 
     rate_limit_prefix: str = "bff:rate-limit"
-    rate_limit_fail_closed: bool = True
-    rate_limit_degraded_memory_fallback: bool = False
+    rate_limit_fail_closed: bool = False
+    rate_limit_degraded_memory_fallback: bool = True
     rate_limit_memory_max_keys: int = 10_000
     backtest_create_rate_limit: int = 10
     backtest_read_rate_limit: int = 60
@@ -564,9 +564,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def default_redis_cache_url(self) -> Settings:
-        if not self.redis_cache_url:
+        if not self.redis_cache_url and self.app_env not in {"production", "staging"}:
             self.redis_cache_url = self.redis_url
-        if not self.celery_result_backend_url:
+        if not self.celery_result_backend_url and self.app_env not in {"production", "staging"}:
             self.celery_result_backend_url = self.redis_url
         return self
 
@@ -708,6 +708,26 @@ class Settings(BaseSettings):
                 raise ValueError("admin_token must be at least 16 characters")
             if not self.redis_password:
                 raise ValueError("Production-like environments require a non-empty REDIS_PASSWORD.")
+            if not self.redis_cache_url:
+                raise ValueError(
+                    "Production-like environments require REDIS_CACHE_URL to be set explicitly. "
+                    "Do not let cache/ops traffic default to the Celery broker Redis."
+                )
+            if not self.celery_result_backend_url:
+                raise ValueError(
+                    "Production-like environments require CELERY_RESULT_BACKEND_URL to be set explicitly. "
+                    "Do not let the Celery result backend default to the broker Redis."
+                )
+            if self.redis_cache_url == self.redis_url:
+                raise ValueError(
+                    "REDIS_CACHE_URL must differ from REDIS_URL in production/staging so cache, "
+                    "rate limiting, SSE, and operational coordination do not share the broker fault domain."
+                )
+            if self.celery_result_backend_url == self.redis_url:
+                raise ValueError(
+                    "CELERY_RESULT_BACKEND_URL must differ from REDIS_URL in production/staging so "
+                    "result storage does not share the broker fault domain."
+                )
             _redis_urls = [self.redis_url, self.redis_cache_url or self.redis_url]
             if any(u.startswith("redis://") for u in _redis_urls):
                 logger.warning(
@@ -753,10 +773,11 @@ class Settings(BaseSettings):
                     "DATABASE_URL contains the default password 'backtestforecast:backtestforecast'. "
                     "Production-like environments require a strong, unique database password."
                 )
-            if not self.rate_limit_fail_closed:
+            if not self.rate_limit_fail_closed and not self.rate_limit_degraded_memory_fallback:
                 raise ValueError(
                     "Production-like environments require RATE_LIMIT_FAIL_CLOSED=true "
-                    "to enforce rate limits even when Redis is unavailable."
+                    "or RATE_LIMIT_DEGRADED_MEMORY_FALLBACK=true so rate limiting "
+                    "does not fail completely when Redis is unavailable."
                 )
             if self.feature_billing_enabled:
                 _stripe_fields = [

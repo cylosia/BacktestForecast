@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from apps.api.app.dependencies import get_current_user_readonly
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_readonly_db
+from backtestforecast.db.session import get_db
 from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import StrategyType
@@ -31,7 +31,7 @@ def get_forecast(
     ticker: str,
     user: User = Depends(get_current_user_readonly),
     _: None = Depends(_require_forecasts_enabled),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     strategy_type: StrategyType | None = Query(default=None),
     horizon_days: int = Query(default=20, ge=5, le=90),
     settings: Settings = Depends(get_settings),

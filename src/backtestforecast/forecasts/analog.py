@@ -6,7 +6,11 @@ from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 
-from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES, BULLISH_STRATEGIES
+from backtestforecast.backtests.strategies.registry import (
+    BEARISH_STRATEGIES,
+    BULLISH_STRATEGIES,
+    NEUTRAL_STRATEGIES,
+)
 from backtestforecast.indicators.calculations import ema, rolling_stddev, rsi, sma
 from backtestforecast.market_data.types import DailyBar
 from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
@@ -34,8 +38,13 @@ class HistoricalAnalogForecaster:
         if horizon_days < 1:
             raise ValueError("horizon_days must be at least 1.")
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
+        if len(sorted_bars) < 1:
+            raise ValueError("Not enough historical bars were available to build a forecast.")
         calendar_horizon = horizon_days
-        trading_horizon = self._calendar_to_trading_days(horizon_days)
+        trading_horizon = self._calendar_to_trading_days(
+            horizon_days,
+            reference_date=sorted_bars[-1].trade_date,
+        )
         if len(sorted_bars) < max(80, trading_horizon + 40):
             raise ValueError("Not enough historical bars were available to build a forecast.")
 
@@ -114,7 +123,7 @@ class HistoricalAnalogForecaster:
         if not analogs:
             analogs = ranked[: min(max_analogs, len(ranked))]
         returns = sorted(candidate.forward_return_pct for candidate in analogs)
-        positive_rate = (sum(1 for value in returns if value > 0) / len(returns)) * 100.0
+        positive_rate = self._outcome_rate_pct(returns, strategy_type)
         low = self._percentile(returns, 0.25)
         med = median(returns)
         high = self._percentile(returns, 0.75)
@@ -131,7 +140,7 @@ class HistoricalAnalogForecaster:
             expected_return_low_pct=self._to_decimal(low),
             expected_return_median_pct=self._to_decimal(med),
             expected_return_high_pct=self._to_decimal(high),
-            positive_outcome_rate_pct=self._to_decimal(positive_rate),
+            positive_outcome_rate_pct=self._to_decimal(positive_rate) if positive_rate is not None else None,
             summary=summary,
             disclaimer=(
                 "This is a bounded probability range based on historical analogs under similar daily-bar conditions. "
@@ -255,7 +264,7 @@ class HistoricalAnalogForecaster:
         median_return: float,
         low_return: float,
         high_return: float,
-        positive_rate: float,
+        positive_rate: float | None,
         horizon_days: int,
     ) -> str:
         direction_hint = "neutral"
@@ -275,11 +284,28 @@ class HistoricalAnalogForecaster:
         else:
             alignment = "suggests a mixed or neutral backdrop"
 
+        positive_rate_text = (
+            f" and {positive_rate:.1f}% favorable analogs"
+            if positive_rate is not None
+            else ""
+        )
         return (
             f"Across {horizon_days}-day analogs, the middle historical outcome ranged "
             f"from {low_return:.2f}% to {high_return:.2f}% "
-            f"with a median of {median_return:.2f}% and {positive_rate:.1f}% positive analogs; this {alignment}."
+            f"with a median of {median_return:.2f}%{positive_rate_text}; this {alignment}."
         )
+
+    @staticmethod
+    def _outcome_rate_pct(returns: list[float], strategy_type: str | None) -> float | None:
+        if not returns:
+            return None
+        if strategy_type in NEUTRAL_STRATEGIES:
+            return None
+        if strategy_type in BEARISH_STRATEGIES:
+            favorable = sum(1 for value in returns if value < 0)
+        else:
+            favorable = sum(1 for value in returns if value > 0)
+        return (favorable / len(returns)) * 100.0
 
     @staticmethod
     def _calendar_to_trading_days(calendar_days: int, reference_date: date | None = None) -> int:
@@ -293,8 +319,9 @@ class HistoricalAnalogForecaster:
             return 0
         if reference_date is not None and calendar_days <= 30:
             from backtestforecast.utils.dates import trading_days_in_range
+
             end = reference_date + timedelta(days=calendar_days)
-            count = trading_days_in_range(reference_date, end)
+            count = trading_days_in_range(reference_date + timedelta(days=1), end)
             return max(1, count)
         weekday_days = round(calendar_days * 5 / 7)
         estimated_holidays = calendar_days * 9.0 / 365.0

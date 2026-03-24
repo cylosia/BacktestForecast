@@ -59,6 +59,21 @@ def test_s4_sweep_score_handles_none_sharpe():
     assert math.isfinite(score)
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_s4_sweep_score_rejects_infinite_metrics():
+    from backtestforecast.services.sweeps import SweepService
+
+    score = SweepService._score_candidate_from_summary({
+        "trade_count": 10,
+        "win_rate": 60.0,
+        "total_roi_pct": float("inf"),
+        "max_drawdown_pct": 5.0,
+        "sharpe_ratio": 1.2,
+    })
+
+    assert score == 0.0
+
+
 # ---- S5: _normalize_utc warns on non-UTC TZ ----
 
 def test_s5_normalize_utc_handles_naive():

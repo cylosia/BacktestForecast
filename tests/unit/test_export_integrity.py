@@ -104,6 +104,7 @@ class TestExportSizeLimitEnforcement:
         mock_detail.trades = [MagicMock()] * 100_000
         mock_detail.equity_curve = [MagicMock()] * 100_000
         service = ExportService.__new__(ExportService)
+        service._storage = DatabaseStorage()
         with pytest.raises(ValueError, match="size"):
             service._build_csv(mock_detail)
 

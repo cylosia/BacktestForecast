@@ -92,9 +92,9 @@ def test_add_always_uuid_suffix_format(db_session: Session) -> None:
         user_id=None,
         metadata_json={},
     )
-    repo.add_always(event)
+    inserted, _ = repo.add_always(event)
     db_session.flush()
 
-    assert event.subject_id is not None
-    assert event.subject_id.startswith(f"{original_subject_id}:")
-    assert len(event.subject_id) > len(original_subject_id) + 1
+    assert inserted.subject_id is not None
+    assert inserted.subject_id.startswith(f"{original_subject_id}:")
+    assert len(inserted.subject_id) > len(original_subject_id) + 1

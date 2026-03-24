@@ -39,12 +39,21 @@ function regimeColor(r: string) {
   return "bg-muted text-muted-foreground";
 }
 
+function normalizedScoreValue(score: number, rawMin: number, rawMax: number): number {
+  if (!Number.isFinite(score)) return 0;
+  if (rawMax <= 0) {
+    if (rawMax === rawMin) return 1;
+    return Math.max(score - rawMin, 0);
+  }
+  return Math.max(score, 0);
+}
+
 function indicatorCard(label: string, value: number | null | undefined, suffix?: string) {
   return (
     <div className="rounded-lg border border-border/60 p-3">
       <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
       <p className="mt-1 text-lg font-semibold">
-        {value != null ? `${formatNumber(value)}${suffix || ""}` : "—"}
+        {value != null ? `${formatNumber(value)}${suffix || ""}` : "-"}
       </p>
     </div>
   );
@@ -55,7 +64,7 @@ function RegimeSection({ regime }: { regime: RegimeDetail }) {
     <Card>
       <CardHeader>
         <CardTitle>Current regime</CardTitle>
-        <CardDescription>Technical indicator snapshot as of the latest close at {regime.close_price != null ? formatCurrency(regime.close_price) : "—"}</CardDescription>
+        <CardDescription>Technical indicator snapshot as of the latest close at {regime.close_price != null ? formatCurrency(regime.close_price) : "-"}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
@@ -73,7 +82,7 @@ function RegimeSection({ regime }: { regime: RegimeDetail }) {
           {indicatorCard("SMA (200)", regime.sma_200)}
           {indicatorCard("Vol (20d)", regime.realized_vol_20, "%")}
           {indicatorCard("IV Rank", regime.iv_rank_proxy, "%")}
-          {indicatorCard("Volume ratio", regime.volume_ratio, "×")}
+          {indicatorCard("Volume ratio", regime.volume_ratio, "x")}
         </div>
       </CardContent>
     </Card>
@@ -96,7 +105,10 @@ function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
     .sort((a, b) => b[1].score - a[1].score)
     .slice(0, 20);
 
-  const maxScore = sorted.length > 0 ? Math.max(sorted[0][1].score, 0.01) : 1;
+  const scoreValues = sorted.map(([, cell]) => cell.score).filter(Number.isFinite);
+  const rawMax = scoreValues.length > 0 ? Math.max(...scoreValues) : 0;
+  const rawMin = scoreValues.length > 0 ? Math.min(...scoreValues) : 0;
+  const scoreRange = rawMax <= 0 ? (rawMax === rawMin ? 1 : Math.max(rawMax - rawMin, 1)) : Math.max(rawMax, 1);
 
   return (
     <Card>
@@ -116,15 +128,26 @@ function LandscapeSection({ cells }: { cells: LandscapeCell[] }) {
             >
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium truncate">{strategyLabel(stratType)}</p>
+                <p className="text-xs text-muted-foreground">{landscapeEvidenceLabel(best)}</p>
+                {false && (
                 <p className="text-xs text-muted-foreground">
-                  DTE {best.target_dte} · {best.trade_count} trades · {formatPercent(best.win_rate)} WR
+                  DTE {best.target_dte}  -  {best.trade_count} trades  -  {formatPercent(best.win_rate)} WR
                 </p>
+                )}
+                {landscapeDecidedTradeContext(best) ? (
+                  <p className="text-xs text-muted-foreground">{landscapeDecidedTradeContext(best)}</p>
+                ) : null}
               </div>
               <div className="w-24 shrink-0">
                 <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
                   <div
                     className="h-full rounded-full bg-primary"
-                    style={{ width: `${Math.max((best.score / maxScore) * 100, 2)}%` }}
+                    style={{
+                      width: `${Math.max(
+                        (normalizedScoreValue(best.score, rawMin, rawMax) / scoreRange) * 100,
+                        2,
+                      )}%`,
+                    }}
                   />
                 </div>
               </div>
@@ -158,9 +181,35 @@ function asNullableNumericRecord(value: unknown): Partial<Record<string, number 
   return result;
 }
 
+function decidedTradeContext(summary: Partial<Record<string, number | null>>): string | null {
+  const total = summary.trade_count;
+  const decided = summary.decided_trades;
+  if (total == null || decided == null || total <= 0 || decided === total) return null;
+  const breakEven = total - decided;
+  if (breakEven <= 0) return null;
+  return `Based on ${formatNumber(decided)} of ${formatNumber(total)} trades (${formatNumber(breakEven)} break-even excluded)`;
+}
+
+function landscapeDecidedTradeContext(cell: LandscapeCell): string | null {
+  const total = cell.trade_count;
+  const decided = cell.decided_trades;
+  if (decided == null || total <= 0 || decided === total) return null;
+  const breakEven = total - decided;
+  if (breakEven <= 0) return null;
+  return `WR based on ${formatNumber(decided)} decided trades (${formatNumber(breakEven)} break-even excluded)`;
+}
+
+function landscapeEvidenceLabel(cell: LandscapeCell): string {
+  if (cell.decided_trades !== cell.trade_count) {
+    return `DTE ${cell.target_dte}  -  ${formatNumber(cell.decided_trades)} decided / ${formatNumber(cell.trade_count)} total  -  ${formatPercent(cell.win_rate)} WR`;
+  }
+  return `DTE ${cell.target_dte}  -  ${formatNumber(cell.trade_count)} decided trades  -  ${formatPercent(cell.win_rate)} WR`;
+}
+
 function TopResultCard({ result }: { result: AnalysisTopResult }) {
   const summary = asNullableNumericRecord(result.summary);
   const forecast = asNullableNumericRecord(result.forecast);
+  const winRateContext = decidedTradeContext(summary);
 
   return (
     <Card>
@@ -172,6 +221,12 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
               <span className="font-semibold">{strategyLabel(result.strategy_type)}</span>
             </div>
             <p className="text-xs text-muted-foreground">DTE {result.target_dte}</p>
+            {typeof result.forecast?.summary === "string" && result.forecast.summary ? (
+              <p className="mt-1 text-muted-foreground">{result.forecast.summary}</p>
+            ) : null}
+            {typeof result.forecast?.disclaimer === "string" && result.forecast.disclaimer ? (
+              <p className="mt-1 text-muted-foreground">{result.forecast.disclaimer}</p>
+            ) : null}
           </div>
           <div className="text-right">
             <p className="text-xs text-muted-foreground">Score</p>
@@ -183,32 +238,41 @@ function TopResultCard({ result }: { result: AnalysisTopResult }) {
           <div>
             <span className="text-xs text-muted-foreground">ROI</span>
             <p className={`font-medium ${(summary.total_roi_pct ?? 0) >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-              {summary.total_roi_pct != null ? formatPercent(summary.total_roi_pct) : "—"}
+              {summary.total_roi_pct != null ? formatPercent(summary.total_roi_pct) : "-"}
             </p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Win rate</span>
-            <p className="font-medium">{summary.win_rate != null ? formatPercent(summary.win_rate) : "—"}</p>
+            <p className="font-medium">{summary.win_rate != null ? formatPercent(summary.win_rate) : "-"}</p>
+            {winRateContext ? <p className="text-xs text-muted-foreground">{winRateContext}</p> : null}
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Trades</span>
-            <p className="font-medium">{summary.trade_count ?? "—"}</p>
+            <p className="font-medium">{summary.trade_count ?? "-"}</p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Max DD</span>
-            <p className="font-medium">{summary.max_drawdown_pct != null ? formatPercent(summary.max_drawdown_pct) : "—"}</p>
+            <p className="font-medium">{summary.max_drawdown_pct != null ? formatPercent(summary.max_drawdown_pct) : "-"}</p>
           </div>
         </div>
 
         {forecast && forecast.expected_return_median_pct != null ? (
           <div className="rounded-lg border border-border/60 bg-muted/30 p-2 text-xs">
             <span className="text-muted-foreground">Forecast: </span>
+            {forecast.expected_return_low_pct != null && forecast.expected_return_high_pct != null ? (
+              <span className="font-medium">
+                {formatPercent(forecast.expected_return_low_pct)} to {formatPercent(forecast.expected_return_high_pct)} range
+              </span>
+            ) : null}
+            {forecast.expected_return_low_pct != null && forecast.expected_return_high_pct != null ? (
+              <span className="text-muted-foreground">  -  </span>
+            ) : null}
             <span className="font-medium">
               {formatPercent(forecast.expected_return_median_pct)} median
             </span>
             <span className="text-muted-foreground">
-              {" "}({forecast.positive_outcome_rate_pct != null ? formatPercent(forecast.positive_outcome_rate_pct) : "—"} positive,{" "}
-              {forecast.analog_count ?? "—"} analogs)
+              {" "}({forecast.positive_outcome_rate_pct != null ? formatPercent(forecast.positive_outcome_rate_pct) : "-"} favorable,{" "}
+              {forecast.analog_count ?? "-"} analogs)
             </span>
           </div>
         ) : null}
@@ -460,7 +524,7 @@ export function SymbolAnalysisLauncher() {
             </div>
             <div className="rounded-xl border border-border/70 p-3 text-center">
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Duration</p>
-              <p className="mt-1 text-xl font-semibold">{(() => { const durationSeconds = toNumber(result.duration_seconds); return Number.isNaN(durationSeconds) ? "—" : `${Math.round(durationSeconds)}s`; })()}</p>
+              <p className="mt-1 text-xl font-semibold">{(() => { const durationSeconds = toNumber(result.duration_seconds); return Number.isNaN(durationSeconds) ? "-" : `${Math.round(durationSeconds)}s`; })()}</p>
             </div>
           </div>
 
@@ -492,3 +556,4 @@ export function SymbolAnalysisLauncher() {
     </div>
   );
 }
+

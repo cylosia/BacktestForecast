@@ -218,19 +218,20 @@ class RateLimiter:
         bucket = int(time.time() // window_seconds)
         namespaced = f"{key}:{bucket}"
         max_keys = self.settings.rate_limit_memory_max_keys
+        hard_cap = max_keys * 2
         with self._memory_lock:
             if len(self._memory_counters) > max_keys:
                 cutoff = bucket - 2
                 stale = [k for k, (b, _) in self._memory_counters.items() if b < cutoff]
                 for k in stale:
                     del self._memory_counters[k]
-            if len(self._memory_counters) > max_keys * 2:
+            if len(self._memory_counters) > hard_cap:
                 logger.warning("rate_limiter.memory_hard_cap", size=len(self._memory_counters), max_keys=max_keys)
                 cutoff_aggressive = bucket - 1
                 stale_aggressive = [k for k, (b, _) in self._memory_counters.items() if b < cutoff_aggressive]
                 for k in stale_aggressive:
                     del self._memory_counters[k]
-                if len(self._memory_counters) > max_keys * 2:
+                if len(self._memory_counters) > hard_cap:
                     current_items = {k: v for k, v in self._memory_counters.items() if v[0] >= bucket}
                     older_items = {k: v for k, v in self._memory_counters.items() if v[0] < bucket}
                     keep_older = max(0, max_keys - len(current_items))
@@ -243,6 +244,17 @@ class RateLimiter:
                 counter_value = 0
             counter_value += 1
             self._memory_counters[namespaced] = (bucket, counter_value)
+            if len(self._memory_counters) > hard_cap:
+                overflow = len(self._memory_counters) - hard_cap
+                if overflow > 0:
+                    # Enforce a true upper bound even when all keys are in the
+                    # current bucket and age-based eviction cannot help.
+                    oldest_keys = list(self._memory_counters.keys())[:overflow]
+                    for old_key in oldest_keys:
+                        if old_key != namespaced:
+                            del self._memory_counters[old_key]
+                    if len(self._memory_counters) > hard_cap:
+                        self._memory_counters = dict(list(self._memory_counters.items())[-hard_cap:])
             return counter_value, bucket
 
 

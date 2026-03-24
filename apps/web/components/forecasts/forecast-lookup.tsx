@@ -248,13 +248,13 @@ export function ForecastLookup() {
               <div className="grid gap-4 sm:grid-cols-3">
                 <div className="rounded-xl border border-border/70 p-4">
                   <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                    Positive outcome rate
+                    Favorable outcome rate
                   </p>
                   <p className="mt-2 text-2xl font-semibold tracking-tight">
                     {formatPercent(forecast.positive_outcome_rate_pct)}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Of historical analogs that were positive
+                    Of historical analogs that favored this strategy direction
                   </p>
                 </div>
                 <div className="rounded-xl border border-border/70 p-4">

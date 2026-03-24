@@ -80,4 +80,5 @@ def test_sse_resources_and_task_route_names_stay_consistent() -> None:
 def test_repo_get_routes_keep_readonly_session_audit_guardrails() -> None:
     source = _read("tests/unit/test_readonly_endpoint_routing.py")
     assert "test_read_heavy_routers_use_readonly_auth_dependency" in source
-    assert "test_backtests_router_uses_readonly_db_for_read_heavy_endpoints" in source
+    assert "test_backtests_router_uses_primary_for_customer_visible_reads" in source
+    assert "test_analysis_router_uses_primary_for_list_and_hot_reads" in source

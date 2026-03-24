@@ -404,6 +404,34 @@ class _MassiveClientCore:
         return sum(values) / len(values)
 
     @staticmethod
+    def parse_treasury_yield_series(
+        rows: list[dict[str, Any]],
+        *,
+        field_name: str,
+    ) -> dict[date, float]:
+        values: dict[date, float] = {}
+        for row in rows:
+            raw_date = row.get("date")
+            raw_value = row.get(field_name)
+            if not isinstance(raw_date, str) or raw_value is None:
+                continue
+            try:
+                trade_date = date.fromisoformat(raw_date)
+                value = _parse_finite_float(raw_value, field_name)
+            except (TypeError, ValueError):
+                logger.debug("massive_client.treasury_yield_parse_skipped", row=row, field_name=field_name)
+                continue
+            if value < 0 or value > 100:
+                logger.debug(
+                    "massive_client.treasury_yield_out_of_range",
+                    field_name=field_name,
+                    value=value,
+                )
+                continue
+            values[trade_date] = value / 100.0
+        return values
+
+    @staticmethod
     def _pick_quote_timestamp(row: dict[str, Any]) -> int | None:
         for key in ("participant_timestamp", "sip_timestamp", "timestamp"):
             raw = row.get(key)
@@ -571,6 +599,24 @@ class MassiveClient(_MassiveClientCore):
             },
         )
         return self.parse_treasury_yield_average(rows, field_name=field_name)
+
+    def get_treasury_yield_series(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        field_name: str = "yield_3_month",
+    ) -> dict[date, float]:
+        rows = self._get_paginated_json(
+            "/fed/v1/treasury-yields",
+            params={
+                "date.gte": start_date.isoformat(),
+                "date.lte": end_date.isoformat(),
+                "sort": "date.asc",
+                "limit": 50000,
+            },
+        )
+        return self.parse_treasury_yield_series(rows, field_name=field_name)
 
     # -- Transport ----------------------------------------------------------
 

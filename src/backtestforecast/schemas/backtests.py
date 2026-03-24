@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from backtestforecast.config import get_settings
 from backtestforecast.schemas.common import (
@@ -20,6 +20,21 @@ from backtestforecast.schemas.common import (
 from backtestforecast.version import DEFAULT_ENGINE_VERSION, ENGINE_VERSION_CHOICES
 
 SYMBOL_ALLOWED_CHARS = re.compile(r"^[\^A-Z][A-Z0-9./^-]{0,15}$")
+InfiniteMetricString = Literal["Infinity", "-Infinity"]
+RatioMetric = Decimal | InfiniteMetricString
+
+
+def _normalize_ratio_metric(value: Any) -> Any:
+    if isinstance(value, Decimal) and value.is_infinite():
+        return "Infinity" if value > 0 else "-Infinity"
+    if isinstance(value, float):
+        if value == float("inf"):
+            return "Infinity"
+        if value == float("-inf"):
+            return "-Infinity"
+    if value in {"Infinity", "-Infinity", None}:
+        return value
+    return value
 
 
 class StrategyType(StrEnum):
@@ -593,16 +608,48 @@ class BacktestSummaryResponse(BaseModel):
     total_net_pnl: Decimal
     starting_equity: Decimal
     ending_equity: Decimal
-    profit_factor: Decimal | None = None
-    payoff_ratio: Decimal | None = None
+    profit_factor: RatioMetric | None = None
+    payoff_ratio: RatioMetric | None = None
     expectancy: Decimal = Decimal("0")
-    sharpe_ratio: Decimal | None = None
-    sortino_ratio: Decimal | None = None
-    cagr_pct: Decimal | None = None
-    calmar_ratio: Decimal | None = None
+    sharpe_ratio: RatioMetric | None = None
+    sortino_ratio: RatioMetric | None = None
+    cagr_pct: RatioMetric | None = None
+    calmar_ratio: RatioMetric | None = None
     max_consecutive_wins: int = 0
     max_consecutive_losses: int = 0
-    recovery_factor: Decimal | None = None
+    recovery_factor: RatioMetric | None = None
+
+    @field_validator(
+        "profit_factor",
+        "payoff_ratio",
+        "sharpe_ratio",
+        "sortino_ratio",
+        "cagr_pct",
+        "calmar_ratio",
+        "recovery_factor",
+        mode="before",
+    )
+    @classmethod
+    def normalize_ratio_metrics(cls, value: Any) -> Any:
+        return _normalize_ratio_metric(value)
+
+    @field_serializer(
+        "profit_factor",
+        "payoff_ratio",
+        "sharpe_ratio",
+        "sortino_ratio",
+        "cagr_pct",
+        "calmar_ratio",
+        "recovery_factor",
+        when_used="json",
+    )
+    def serialize_ratio_metrics(self, value: RatioMetric | None) -> str | Decimal | None:
+        return _normalize_ratio_metric(value)
+
+
+class RiskFreeRatePointResponse(BaseModel):
+    trade_date: date
+    rate: Decimal
 
 
 class BacktestTradeResponse(BaseModel):
@@ -737,10 +784,18 @@ class BacktestRunDetailResponse(BaseModel):
     risk_free_rate: Decimal | None = Field(
         default=None,
         description=(
-            "Annualized risk-free rate used for Sharpe and Sortino ratio calculations. "
-            "Sourced from the run's persisted column or input snapshot. "
+            "Annualized scalar risk-free-rate anchor recorded with the run. "
+            "For curve-based runs this is the default or starting rate, not every daily Treasury point used during execution. "
             "Null only when the value could not be determined (very old runs)."
         ),
+    )
+    risk_free_rate_model: Literal["scalar", "curve_default", "unknown"] | None = Field(
+        default=None,
+        description="Whether the run used a single scalar risk-free rate or a date-varying curve with this value as the anchor/default.",
+    )
+    risk_free_rate_curve_points: list[RiskFreeRatePointResponse] = Field(
+        default_factory=list,
+        description="Per-date risk-free-rate points used for curve-based execution when they were persisted with the run. Empty for scalar runs or older runs that predate curve snapshot persistence.",
     )
 
     model_config = ConfigDict(populate_by_name=True)

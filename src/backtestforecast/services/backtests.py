@@ -62,7 +62,10 @@ from backtestforecast.services.job_cancellation import (
     revoke_celery_task,
 )
 from backtestforecast.services.job_transitions import cancellation_blocked_message, deletion_blocked_message
-from backtestforecast.services.risk_free_rate import resolve_backtest_risk_free_rate
+from backtestforecast.services.risk_free_rate import (
+    build_backtest_risk_free_rate_curve,
+    resolve_backtest_risk_free_rate,
+)
 from backtestforecast.utils import to_decimal
 from backtestforecast.version import DEFAULT_ENGINE_VERSION
 
@@ -71,6 +74,7 @@ logger = structlog.get_logger("services.backtests")
 EQUITY_CURVE_LIMIT = 10_000
 _RUNNING_DELETE_CONFLICT = deletion_blocked_message("backtest run")
 _SUMMARY_PROVENANCE = "persisted_run_aggregates"
+_BACKTEST_QUEUE = "backtests"
 
 class BacktestService:
     def __init__(
@@ -162,6 +166,12 @@ class BacktestService:
             ending_equity=to_decimal(request.account_size),
         )
 
+    @staticmethod
+    def _request_payload_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+        payload = snapshot or {}
+        allowed_fields = set(CreateBacktestRunRequest.model_fields)
+        return {key: value for key, value in payload.items() if key in allowed_fields}
+
     def _audit_execution_parameter_resolution(
         self,
         *,
@@ -183,6 +193,67 @@ class BacktestService:
             },
         )
 
+    @staticmethod
+    def _resolve_enqueue_parameters(request: CreateBacktestRunRequest) -> ResolvedExecutionParameters:
+        if request.risk_free_rate is not None:
+            return ResolvedExecutionParameters.from_request_resolution(
+                request,
+                resolve_backtest_risk_free_rate(request, client=None),
+            )
+        settings = get_settings()
+        return ResolvedExecutionParameters(
+            risk_free_rate=float(settings.risk_free_rate),
+            risk_free_rate_source="configured_fallback",
+            risk_free_rate_field_name=None,
+            risk_free_rate_model="curve_default",
+            dividend_yield=float(request.dividend_yield) if request.dividend_yield is not None else 0.0,
+            source_of_truth="enqueue_fallback_only",
+        )
+
+    def _refresh_worker_execution_parameters(
+        self,
+        *,
+        run: BacktestRun,
+        request: CreateBacktestRunRequest,
+        resolved_parameters: ResolvedExecutionParameters,
+    ) -> ResolvedExecutionParameters:
+        if request.risk_free_rate is not None and resolved_parameters.risk_free_rate is not None:
+            return resolved_parameters
+        if resolved_parameters.risk_free_rate_source not in {None, "configured_fallback"}:
+            return resolved_parameters
+
+        refreshed_rate = resolve_backtest_risk_free_rate(
+            request,
+            client=self.execution_service.market_data_service.client,
+        )
+        refreshed_parameters = ResolvedExecutionParameters.from_request_resolution(
+            request,
+            refreshed_rate,
+        )
+        curve_points = self._snapshot_risk_free_rate_curve_points(
+            request=request,
+            resolved_parameters=refreshed_parameters,
+        )
+        run.risk_free_rate = to_decimal(refreshed_parameters.risk_free_rate)
+        run.input_snapshot_json = {
+            **(run.input_snapshot_json or {}),
+            **refreshed_parameters.to_snapshot_fields(),
+            "resolved_risk_free_rate_curve_points": curve_points,
+        }
+        run.warnings_json = build_user_warnings(
+            request,
+            resolved_risk_free_rate=refreshed_parameters.risk_free_rate,
+            risk_free_rate_source=refreshed_parameters.risk_free_rate_source,
+        )
+        self._audit_execution_parameter_resolution(
+            run=run,
+            resolved_parameters=refreshed_parameters,
+            user_id=run.user_id,
+        )
+        self.session.commit()
+        self.session.refresh(run)
+        return refreshed_parameters
+
     def enqueue(self, user: User, request: CreateBacktestRunRequest) -> BacktestRun:
         """Create a queued backtest run. The caller is responsible for dispatching to Celery."""
         if request.idempotency_key:
@@ -194,27 +265,24 @@ class BacktestService:
                     model_name="BacktestRun",
                     task_name="backtests.run",
                     task_kwargs={"run_id": str(existing.id)},
-                    queue="research",
+                    queue=_BACKTEST_QUEUE,
                     log_event="backtest",
                     logger=logger,
                 )
 
         self._enforce_backtest_quota(user)
 
-        resolved_risk_free_rate = resolve_backtest_risk_free_rate(
-            request,
-            client=self.execution_service.market_data_service.client,
-        )
-        resolved_parameters = ResolvedExecutionParameters.from_request_resolution(
-            request,
-            resolved_risk_free_rate,
-        )
+        resolved_parameters = self._resolve_enqueue_parameters(request)
         run = self._build_initial_run(
             user.id,
             request,
             resolved_parameters=resolved_parameters,
             status="queued",
         )
+        if request.risk_free_rate is None:
+            run.input_snapshot_json = {
+                key: value for key, value in (run.input_snapshot_json or {}).items() if key != "risk_free_rate"
+            }
         self.run_repository.add(run)
         self.audit.record(
             event_type="backtest.created",
@@ -261,7 +329,7 @@ class BacktestService:
             job=run,
             task_name="backtests.run",
             task_kwargs={"run_id": str(run.id)},
-            queue="research",
+            queue=_BACKTEST_QUEUE,
             log_event="backtest",
             logger=dispatch_logger or logger,
             request_id=request_id,
@@ -301,8 +369,15 @@ class BacktestService:
         self.session.refresh(run)
         observe_job_create_to_running_latency(run)
 
-        request = CreateBacktestRunRequest.model_validate(run.input_snapshot_json)
+        request = CreateBacktestRunRequest.model_validate(
+            self._request_payload_from_snapshot(run.input_snapshot_json)
+        )
         resolved_parameters = ResolvedExecutionParameters.from_snapshot(run.input_snapshot_json)
+        resolved_parameters = self._refresh_worker_execution_parameters(
+            run=run,
+            request=request,
+            resolved_parameters=resolved_parameters,
+        )
 
         _exec_start = _time.monotonic()
         try:
@@ -421,6 +496,13 @@ class BacktestService:
             status="running",
             started_at=datetime.now(UTC),
         )
+        run.input_snapshot_json = {
+            **(run.input_snapshot_json or {}),
+            "resolved_risk_free_rate_curve_points": self._snapshot_risk_free_rate_curve_points(
+                request=request,
+                resolved_parameters=resolved_parameters,
+            ),
+        }
         self.run_repository.add(run)
         try:
             self.session.commit()
@@ -522,16 +604,15 @@ class BacktestService:
                 raise
             raise
 
-        runs, total = self.run_repository.list_for_user_with_count(
+        runs, total = self.run_repository.list_for_user_with_capped_count(
             user.id,
+            max_items=feature_policy.history_item_limit,
             limit=effective_limit + 1,
             offset=offset,
             created_since=created_since,
             cursor_before=cursor_before,
         )
-
-        capped_total = min(total, feature_policy.history_item_limit)
-        page = finalize_cursor_page(runs, total=capped_total, offset=offset, limit=effective_limit)
+        page = finalize_cursor_page(runs, total=total, offset=offset, limit=effective_limit)
 
         return BacktestRunListResponse(
             items=[self._to_history_item(run) for run in page.items],
@@ -1066,6 +1147,68 @@ class BacktestService:
             }
         ).risk_free_rate
 
+    def _snapshot_risk_free_rate_curve_points(
+        self,
+        *,
+        request: CreateBacktestRunRequest,
+        resolved_parameters: ResolvedExecutionParameters,
+    ) -> list[dict[str, Any]]:
+        curve = build_backtest_risk_free_rate_curve(
+            request,
+            default_rate=resolved_parameters.risk_free_rate or 0.0,
+            client=self.execution_service.market_data_service.client,
+        )
+        if not curve.dates or not curve.rates:
+            return []
+        return [
+            {
+                "trade_date": trade_date.isoformat(),
+                "rate": rate,
+            }
+            for trade_date, rate in zip(curve.dates, curve.rates, strict=False)
+        ]
+
+    @staticmethod
+    def _resolve_risk_free_rate_curve_points(run: BacktestRun) -> list[dict[str, Any]]:
+        snapshot = run.input_snapshot_json or {}
+        raw_points = snapshot.get("resolved_risk_free_rate_curve_points")
+        if not isinstance(raw_points, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for item in raw_points:
+            if not isinstance(item, dict):
+                continue
+            trade_date = item.get("trade_date")
+            rate = item.get("rate")
+            if not isinstance(trade_date, str):
+                continue
+            try:
+                normalized_rate = float(rate)
+            except (TypeError, ValueError):
+                continue
+            normalized.append({"trade_date": trade_date, "rate": normalized_rate})
+        return normalized
+
+    @staticmethod
+    def _risk_free_rate_curve_payload_warning(run: BacktestRun) -> dict[str, Any] | None:
+        snapshot = run.input_snapshot_json or {}
+        raw_points = snapshot.get("resolved_risk_free_rate_curve_points")
+        if not isinstance(raw_points, list):
+            return None
+        normalized_count = len(BacktestService._resolve_risk_free_rate_curve_points(run))
+        malformed_count = len(raw_points) - normalized_count
+        if malformed_count <= 0:
+            return None
+        return make_warning(
+            "risk_free_rate_curve_partial",
+            "Some persisted risk-free-rate curve points were malformed and have been omitted from this response.",
+            metadata={
+                "persisted_points": len(raw_points),
+                "returned_points": normalized_count,
+                "omitted_points": malformed_count,
+            },
+        )
+
     def _to_history_item(self, run: BacktestRun) -> BacktestRunHistoryItemResponse:
         return BacktestRunHistoryItemResponse(
             id=run.id,
@@ -1110,6 +1253,12 @@ class BacktestService:
         if equity_curve_points_omitted is None:
             equity_curve_points_omitted = max(len(equity_points) - EQUITY_CURVE_LIMIT, 0)
         trimmed_equity_points = equity_points[:EQUITY_CURVE_LIMIT]
+        curve_warning = self._risk_free_rate_curve_payload_warning(run)
+        merged_warnings = merge_warnings(
+            run.warnings_json,
+            additional_warnings,
+            [curve_warning] if curve_warning is not None else None,
+        )
         return BacktestRunDetailResponse(
             id=run.id,
             symbol=run.symbol,
@@ -1128,7 +1277,7 @@ class BacktestService:
             created_at=run.created_at,
             started_at=run.started_at,
             completed_at=run.completed_at,
-            warnings=merge_warnings(run.warnings_json, additional_warnings),
+            warnings=merged_warnings,
             error_code=run.error_code,
             error_message=run.error_message,
             summary=self._summary_response(run, decided_trades=decided_trades),
@@ -1139,4 +1288,6 @@ class BacktestService:
             trade_items_omitted=trade_items_omitted,
             equity_curve_points_omitted=equity_curve_points_omitted,
             risk_free_rate=self._resolve_risk_free_rate(run),
+            risk_free_rate_model=ResolvedExecutionParameters.from_snapshot(run.input_snapshot_json).risk_free_rate_model,
+            risk_free_rate_curve_points=self._resolve_risk_free_rate_curve_points(run),
         )

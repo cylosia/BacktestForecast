@@ -66,6 +66,7 @@ _MAX_CSV_TRADES = 10_000
 _MAX_CSV_EQUITY_POINTS = 50_000
 _MAX_PDF_PAGES = 50
 MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_DATABASE_DOWNLOADABLE_EXPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 _MAX_EXPORT_BYTES = MAX_EXPORT_BYTES
 
 
@@ -83,6 +84,9 @@ class ExportBacktestSnapshot:
     warnings: list[dict[str, Any]]
     risk_free_rate: float | None
     risk_free_rate_source: str | None
+    risk_free_rate_model: str | None
+    risk_free_rate_curve_points: list[dict[str, Any]]
+    risk_free_rate_curve_warning: str | None
 
 
 class ExportService:
@@ -111,6 +115,11 @@ class ExportService:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+    def _max_allowed_export_bytes(self) -> int:
+        if isinstance(self._storage, DatabaseStorage):
+            return min(MAX_EXPORT_BYTES, MAX_DATABASE_DOWNLOADABLE_EXPORT_BYTES)
+        return MAX_EXPORT_BYTES
 
     def enqueue_export(
         self,
@@ -148,6 +157,12 @@ class ExportService:
                 f"Cannot export a backtest run with status \"{run.status}\". "
                 "Only succeeded runs can be exported."
             )
+        if isinstance(self._storage, DatabaseStorage):
+            estimated_db_size = (run.trade_count or 0) * 500
+            if estimated_db_size > MAX_DATABASE_DOWNLOADABLE_EXPORT_BYTES:
+                raise AppValidationError(
+                    "This export is too large for database-backed delivery. Enable object storage for larger exports."
+                )
 
         export_job = ExportJob(
             user_id=user.id,
@@ -341,14 +356,16 @@ class ExportService:
             trade_count = run.trade_count or 0
             _bytes_per_trade = 500 if export_job.export_format == "csv" else 200
             estimated_size = trade_count * _bytes_per_trade
-            if estimated_size > MAX_EXPORT_BYTES:
+            if estimated_size > self._max_allowed_export_bytes():
                 self.session.execute(
                     sa_update(ExportJob)
                     .where(ExportJob.id == export_job_id, ExportJob.status == "running")
                     .values(
                         status="failed",
                         error_code="export_too_large",
-                        error_message=f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades).",
+                        error_message=(
+                            f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades)."
+                        ),
                         completed_at=datetime.now(UTC),
                         updated_at=datetime.now(UTC),
                     )
@@ -369,9 +386,9 @@ class ExportService:
             )
             fmt = ExportFormat(export_job.export_format)
             content = self._build_csv(detail) if fmt == ExportFormat.CSV else self._build_pdf(detail)
-            if len(content) > MAX_EXPORT_BYTES:
+            if len(content) > self._max_allowed_export_bytes():
                 raise ValueError(
-                    f"Generated export exceeds the {MAX_EXPORT_BYTES // (1024 * 1024)} MB size limit."
+                    f"Generated export exceeds the {self._max_allowed_export_bytes() // (1024 * 1024)} MB size limit."
                 )
             # ORPHAN RISK: The storage write below happens outside the DB
             # transaction.  If the subsequent commit fails, the uploaded object
@@ -714,7 +731,10 @@ class ExportService:
             raise NotFoundError("Export not found.")
         if export_job.status != "succeeded":
             raise NotFoundError("Export content is not available.")
-        if export_job.expires_at is not None and export_job.expires_at < datetime.now(UTC):
+        if (
+            export_job.expires_at is not None
+            and self._normalize_utc(export_job.expires_at) < datetime.now(UTC)
+        ):
             raise NotFoundError("Export has expired.")
         if not use_db_content and not export_job.storage_key:
             raise NotFoundError("Export content is not available.")
@@ -785,15 +805,22 @@ class ExportService:
             warnings=safe_validate_warning_list(run.warnings_json),
             risk_free_rate=resolved_parameters.risk_free_rate,
             risk_free_rate_source=resolved_parameters.risk_free_rate_source,
+            risk_free_rate_model=resolved_parameters.risk_free_rate_model,
+            risk_free_rate_curve_points=self.backtest_service._resolve_risk_free_rate_curve_points(run),
+            risk_free_rate_curve_warning=(
+                self.backtest_service._risk_free_rate_curve_payload_warning(run).get("message")
+                if self.backtest_service._risk_free_rate_curve_payload_warning(run) is not None
+                else None
+            ),
         )
 
     def _build_csv(self, detail: ExportBacktestSnapshot) -> bytes:
         estimated_rows = len(detail.trades) + len(detail.equity_curve) + 30
         estimated_bytes = estimated_rows * 200
-        if estimated_bytes > MAX_EXPORT_BYTES:
+        if estimated_bytes > self._max_allowed_export_bytes():
             raise ValueError(
                 f"Estimated CSV size ({estimated_bytes // (1024 * 1024)} MB) exceeds "
-                f"the {MAX_EXPORT_BYTES // (1024 * 1024)} MB limit. "
+                f"the {self._max_allowed_export_bytes() // (1024 * 1024)} MB limit. "
                 f"Trades: {len(detail.trades)}, equity points: {len(detail.equity_curve)}."
             )
         buf = io.BytesIO()
@@ -804,9 +831,9 @@ class ExportService:
             return [self._sanitize_csv_cell(value) for value in values]
 
         def _check_size() -> None:
-            if buf.tell() > MAX_EXPORT_BYTES:
+            if buf.tell() > self._max_allowed_export_bytes():
                 raise ValueError(
-                    f"CSV export exceeded {MAX_EXPORT_BYTES // (1024 * 1024)} MB during generation."
+                    f"CSV export exceeded {self._max_allowed_export_bytes() // (1024 * 1024)} MB during generation."
                 )
 
         writer.writerow(safe_row(["section", "field", "value"]))
@@ -817,6 +844,11 @@ class ExportService:
         writer.writerow(safe_row(["run", "date_to", detail.end_date.isoformat()]))
         writer.writerow(safe_row(["run", "risk_free_rate", detail.risk_free_rate]))
         writer.writerow(safe_row(["run", "risk_free_rate_source", detail.risk_free_rate_source]))
+        writer.writerow(safe_row(["run", "risk_free_rate_model", detail.risk_free_rate_model]))
+        for point in detail.risk_free_rate_curve_points:
+            writer.writerow(safe_row(["run", "risk_free_rate_curve_point", f'{point["trade_date"]}:{point["rate"]}']))
+        if detail.risk_free_rate_curve_warning:
+            writer.writerow(safe_row(["note", detail.risk_free_rate_curve_warning]))
         writer.writerow(safe_row(["summary", "trade_count", detail.summary.trade_count]))
         writer.writerow(safe_row(["summary", "win_rate", detail.summary.win_rate]))
         writer.writerow(safe_row(["summary", "total_roi_pct", detail.summary.total_roi_pct]))
@@ -983,19 +1015,13 @@ class ExportService:
             return True
 
         def _fmt(val: object) -> str:
-            if val is None:
-                return "N/A"
-            return f"{float(val):,.2f}"
+            return self._format_metric_value(val)
 
         def _fmt_pct(val: object) -> str:
-            if val is None:
-                return "N/A"
-            return f"{float(val):.2f}%"
+            return self._format_metric_value(val, percent=True)
 
         def _fmt_usd(val: object) -> str:
-            if val is None:
-                return "N/A"
-            return f"${float(val):,.2f}"
+            return self._format_metric_value(val, usd=True)
 
         line("BacktestForecast.com Export", bold=True, step=22.0)
         line(f"Symbol: {detail.symbol}")
@@ -1007,10 +1033,24 @@ class ExportService:
             line(f"Risk-free rate: {_fmt(detail.risk_free_rate)}")
         if detail.risk_free_rate_source:
             line(f"Risk-free rate source: {detail.risk_free_rate_source}")
+        if detail.risk_free_rate_model:
+            line(f"Risk-free rate model: {detail.risk_free_rate_model}")
+        if detail.risk_free_rate_curve_points:
+            line(f"Risk-free rate curve points: {len(detail.risk_free_rate_curve_points)}")
+            line("Risk-Free Rate Curve", bold=True, step=20.0)
+            for point in detail.risk_free_rate_curve_points:
+                if not line(f'{point["trade_date"]}: {_fmt(point["rate"])}', step=14.0):
+                    break
+        if detail.risk_free_rate_curve_warning:
+            line(detail.risk_free_rate_curve_warning, step=14.0)
         line("")
         line("Summary", bold=True, step=20.0)
         line(f"Trades: {detail.summary.trade_count}")
-        line(f"Win rate: {_fmt_pct(detail.summary.win_rate)}")
+        if detail.summary.decided_trades is not None:
+            line(f"Decided trades: {detail.summary.decided_trades}")
+            line(f"Win rate (decided trades only): {_fmt_pct(detail.summary.win_rate)}")
+        else:
+            line(f"Win rate: {_fmt_pct(detail.summary.win_rate)}")
         line(f"ROI: {_fmt_pct(detail.summary.total_roi_pct)}")
         line(f"Net P&L: {_fmt_usd(detail.summary.total_net_pnl)}")
         line(f"Max drawdown: {_fmt_pct(detail.summary.max_drawdown_pct)}")
@@ -1110,10 +1150,35 @@ class ExportService:
             return "'" + sanitized
         return sanitized
 
+    @staticmethod
+    def _format_metric_value(val: object, *, percent: bool = False, usd: bool = False) -> str:
+        if val is None:
+            return "N/A"
+        if isinstance(val, str) and val in {"Infinity", "-Infinity"}:
+            return val
+        try:
+            numeric = float(val)
+        except (TypeError, ValueError):
+            return str(val)
+        if numeric == float("inf"):
+            return "Infinity"
+        if numeric == float("-inf"):
+            return "-Infinity"
+        if usd:
+            return f"${numeric:,.2f}"
+        if percent:
+            return f"{numeric:.2f}%"
+        return f"{numeric:,.2f}"
+
     def _resolved_execution_fields_for_export(self, job: ExportJob) -> dict[str, Any]:
         run = self.backtests.get_lightweight_for_user(job.backtest_run_id, job.user_id)
         if run is None:
-            return {"risk_free_rate": None, "risk_free_rate_source": None}
+            return {
+                "risk_free_rate": None,
+                "risk_free_rate_source": None,
+                "risk_free_rate_model": None,
+                "risk_free_rate_curve_points": [],
+            }
         snapshot = run.input_snapshot_json or {}
         resolved = ResolvedExecutionParameters.from_snapshot(
             {
@@ -1124,16 +1189,25 @@ class ExportService:
         return {
             "risk_free_rate": resolved.risk_free_rate,
             "risk_free_rate_source": resolved.risk_free_rate_source,
+            "risk_free_rate_model": resolved.risk_free_rate_model,
+            "risk_free_rate_curve_points": self.backtest_service._resolve_risk_free_rate_curve_points(run),
         }
 
     @staticmethod
-    def to_response(job: ExportJob, *, risk_free_rate: float | None = None, risk_free_rate_source: str | None = None) -> ExportJobResponse:
+    def to_response(
+        job: ExportJob,
+        *,
+        risk_free_rate: float | None = None,
+        risk_free_rate_source: str | None = None,
+        risk_free_rate_model: str | None = None,
+        risk_free_rate_curve_points: list[dict[str, Any]] | None = None,
+    ) -> ExportJobResponse:
         effective_status = job.status
         diagnostic = get_dispatch_diagnostic(job)
         if (
             job.status == "succeeded"
             and job.expires_at is not None
-            and job.expires_at < datetime.now(UTC)
+            and ExportService._normalize_utc(job.expires_at) < datetime.now(UTC)
         ):
             effective_status = "expired"
         return ExportJobResponse(
@@ -1153,6 +1227,8 @@ class ExportService:
             expires_at=job.expires_at,
             risk_free_rate=risk_free_rate,
             risk_free_rate_source=risk_free_rate_source,
+            risk_free_rate_model=risk_free_rate_model,
+            risk_free_rate_curve_points=risk_free_rate_curve_points or [],
         )
 
 
@@ -1161,3 +1237,14 @@ class ExportService:
         if content is None:
             raise NotFoundError("Export content is not available.")
         return content
+    @staticmethod
+    def _normalize_utc(dt: datetime) -> datetime:
+        """Ensure a datetime is timezone-aware (UTC) for safe comparison.
+
+        SQLite-backed test sessions may return timezone-naive datetimes even
+        when the column is declared with ``timezone=True``. PostgreSQL returns
+        timezone-aware values, so this is a no-op in production.
+        """
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt

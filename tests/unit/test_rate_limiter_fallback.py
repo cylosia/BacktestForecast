@@ -213,7 +213,9 @@ class TestMemoryCapEviction:
                 window_seconds=60,
             )
 
-        assert len(limiter._memory_counters) == 20
+        # The implementation bounds growth by evicting stale keys in batches
+        # once the configured ceiling is exceeded.
+        assert len(limiter._memory_counters) <= 10
 
     def test_reset_clears_counters(self):
         settings = _make_settings()

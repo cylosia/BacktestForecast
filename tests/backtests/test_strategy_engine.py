@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -107,8 +107,8 @@ def test_bull_call_debit_spread_realizes_expected_profit() -> None:
 
     assert result.summary.trade_count == 1
     trade = result.trades[0]
-    assert round(trade.gross_pnl, 2) == 300.0
-    assert round(trade.net_pnl, 2) == 300.0
+    assert round(float(trade.gross_pnl), 2) == 300.0
+    assert round(float(trade.net_pnl), 2) == 300.0
     assert trade.detail_json["max_profit_per_unit"] == 300.0
     assert trade.detail_json["actual_units"] == 1
 
@@ -155,7 +155,7 @@ def test_calendar_spread_exits_on_near_leg_expiration() -> None:
     assert result.summary.trade_count == 1
     trade = result.trades[0]
     assert trade.exit_date == date(2025, 2, 4)
-    assert round(trade.net_pnl, 2) == 50.0
+    assert round(float(trade.net_pnl), 2) == 50.0
     assert trade.detail_json["legs"][0]["ticker"] == "FAR100"
 
 
@@ -202,7 +202,7 @@ def test_put_calendar_spread_uses_put_contracts_when_overridden() -> None:
     assert result.summary.trade_count == 1
     trade = result.trades[0]
     assert trade.exit_date == date(2025, 2, 4)
-    assert round(trade.net_pnl, 2) == 50.0
+    assert round(float(trade.net_pnl), 2) == 50.0
     assert trade.detail_json["legs"][0]["contract_type"] == "put"
     assert trade.detail_json["legs"][1]["contract_type"] == "put"
 
@@ -391,7 +391,7 @@ def test_strategy_runs_without_error(strategy_type: str) -> None:
         assert trade.exit_date >= trade.entry_date
 
 
-def test_wheel_records_assignment_callaway_and_stock_exit() -> None:
+def test_wheel_records_assignment_and_stock_exit() -> None:
     engine = OptionsBacktestEngine()
     bars = [
         make_bar(date(2025, 3, 1), 101),
@@ -426,15 +426,14 @@ def test_wheel_records_assignment_callaway_and_stock_exit() -> None:
         FakeGateway(contracts=contracts, quotes=quotes),
     )
 
-    assert result.summary.trade_count == 3
+    assert result.summary.trade_count == 2
     phases = [trade.detail_json.get("phase") for trade in result.trades]
-    assert phases == ["cash_secured_put", "covered_call", "stock_inventory"]
+    assert phases == ["cash_secured_put", "stock_inventory"]
     assert result.trades[0].exit_reason == "assignment"
-    assert result.trades[1].exit_reason == "call_assignment"
-    assert result.trades[2].exit_reason == "called_away"
-    assert result.trades[2].exit_mid == 100.0, "shares called away at strike, not close"
-    # CSP premium: 2x100x2=$400, CC premium: 1x100xqty, stock sold at strike=bought at strike -> $0
-    assert round(result.summary.total_net_pnl, 2) == 600.0
+    assert result.trades[1].exit_reason == "backtest_end_share_liquidation"
+    assert result.trades[1].exit_mid == 105.0
+    # CSP premium: 2x100x2=$400, then assigned shares liquidated at +$5/share for 200 shares = $1000
+    assert round(result.summary.total_net_pnl, 2) == 1400.0
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +488,7 @@ class TestWheelAssignmentCommission:
         assert trade.exit_reason == "assignment"
 
         expected_entry_commission = self.COMMISSION * trade.quantity
-        assert round(trade.total_commissions, 2) == round(expected_entry_commission, 2), (
+        assert round(float(trade.total_commissions), 2) == round(expected_entry_commission, 2), (
             f"Assignment exit should have zero exit commission; "
             f"total_commissions ({trade.total_commissions}) should equal "
             f"entry-only commission ({expected_entry_commission})"
@@ -558,13 +557,13 @@ class TestBullCallSpreadCorrectness:
         # At expiration: C100 intrinsic = 8.00, C105 intrinsic = 3.00
         # exit_value_per_unit = (8 - 3) x 100 = 500
         # gross = (500 - 250) x 2 = 500
-        assert round(trade.gross_pnl, 2) == 500.0
+        assert round(float(trade.gross_pnl), 2) == 500.0
 
         # 2 legs x 2 units x $0.65, charged at entry and exit
         expected_comm = commission * 2 * 2 * 2  # 5.20
-        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
+        assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
 
-        assert round(trade.net_pnl, 2) == round(500.0 - expected_comm, 2)
+        assert round(float(trade.net_pnl), 2) == round(500.0 - expected_comm, 2)
         assert trade.detail_json["max_profit_per_unit"] == 250.0
         assert trade.detail_json["actual_units"] == 2
 
@@ -648,13 +647,13 @@ class TestIronCondorCorrectness:
 
         # All intrinsics = 0 at expiration with underlying = 100
         # gross = (0 - (-400)) x 2 = 800
-        assert round(trade.gross_pnl, 2) == 800.0
+        assert round(float(trade.gross_pnl), 2) == 800.0
 
         # 4 legs x 2 units x $0.65 x 2 (entry + exit) = $10.40
         expected_comm = commission * 4 * 2 * 2
-        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
+        assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
 
-        assert round(trade.net_pnl, 2) == round(800.0 - expected_comm, 2)
+        assert round(float(trade.net_pnl), 2) == round(800.0 - expected_comm, 2)
         assert trade.net_pnl > 0
 
         # Gross profit does not exceed wing_width x quantity
@@ -673,7 +672,7 @@ class TestIronCondorCorrectness:
         # At 110: C100 intrinsic = 10, C105 = 5, puts = 0
         # exit_value_per_unit = (-10 + 5) x 100 = -500
         # gross = (-500 - (-400)) x 2 = -200
-        assert round(trade.gross_pnl, 2) == -200.0
+        assert round(float(trade.gross_pnl), 2) == -200.0
         assert trade.net_pnl < 0
 
         # Max loss per unit ($100) x 2 units - gross loss exactly equals maximum
@@ -684,8 +683,8 @@ class TestIronCondorCorrectness:
         assert abs(trade.gross_pnl) <= wing_width_per_unit * trade.quantity
 
         expected_comm = commission * 4 * 2 * 2
-        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
-        assert round(trade.net_pnl, 2) == round(-200.0 - expected_comm, 2)
+        assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
+        assert round(float(trade.net_pnl), 2) == round(-200.0 - expected_comm, 2)
 
 
 class TestCashSecuredPutCorrectness:
@@ -753,15 +752,15 @@ class TestCashSecuredPutCorrectness:
 
         # Full premium: gross = 2.00 x 100 = $200
         premium_collected = self.PREMIUM * 100
-        assert round(trade.gross_pnl, 2) == premium_collected
+        assert round(float(trade.gross_pnl), 2) == premium_collected
 
         # 1 leg x 1 unit x $0.65 x 2 (entry + exit) = $1.30
         expected_comm = self.COMMISSION * 1 * 1 * 2
-        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
-        assert round(trade.net_pnl, 2) == round(premium_collected - expected_comm, 2)
+        assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
+        assert round(float(trade.net_pnl), 2) == round(premium_collected - expected_comm, 2)
 
     def test_itm_realizes_assignment_loss(self) -> None:
-        """Underlying drops to 90 - put ITM, loss = (strike - spot) x 100 - premium."""
+        """Deep ITM short put is assigned before expiry under the engine's early-assignment model."""
         bars = [
             make_bar(date(2025, 6, 1), 105),
             make_bar(self.ENTRY_DATE, 105),
@@ -775,16 +774,18 @@ class TestCashSecuredPutCorrectness:
         assert result.summary.trade_count == 1
         trade = result.trades[0]
         assert trade.quantity == 1
+        assert trade.exit_reason == "early_assignment_put_deep_itm"
 
-        # intrinsic = (100 - 90) x 100 = $1,000 loss on short put
-        # offset by premium = $200 -> gross = -$800
-        intrinsic_loss = (self.STRIKE - 90) * 100
-        expected_gross = -(intrinsic_loss - self.PREMIUM * 100)  # -800
-        assert round(trade.gross_pnl, 2) == expected_gross
+        # The engine assigns the short put on 2025-06-04 when it is deep ITM near expiry.
+        # intrinsic = (100 - 95) x 100 = $500 loss on short put
+        # offset by premium = $200 -> gross = -$300
+        intrinsic_loss = (self.STRIKE - 95) * 100
+        expected_gross = -(intrinsic_loss - self.PREMIUM * 100)  # -300
+        assert round(float(trade.gross_pnl), 2) == expected_gross
 
         expected_comm = self.COMMISSION * 1 * 1 * 2
-        assert round(trade.total_commissions, 2) == round(expected_comm, 2)
-        assert round(trade.net_pnl, 2) == round(expected_gross - expected_comm, 2)
+        assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
+        assert round(float(trade.net_pnl), 2) == round(expected_gross - expected_comm, 2)
         assert trade.net_pnl < 0
 
 
@@ -845,8 +846,8 @@ class TestWheelExitSlippageInCash:
         assert result.summary.trade_count >= 1
         total_net_pnl = sum(t.net_pnl for t in result.trades)
         ending_cash = result.equity_curve[-1].cash
-        cash_delta = ending_cash - account_size
-        assert round(cash_delta, 2) == round(total_net_pnl, 2), (
+        cash_delta = float(ending_cash) - account_size
+        assert round(float(cash_delta), 2) == round(total_net_pnl, 2), (
             f"Cash delta ({cash_delta:.2f}) should equal net P&L sum ({total_net_pnl:.2f}) "
             "when slippage is correctly included in exit cash flow"
         )
@@ -1250,3 +1251,4 @@ class TestIronCondorZeroCreditEntry:
             FakeGateway(contracts=contracts, quotes=quotes),
         )
         assert result.summary is not None
+

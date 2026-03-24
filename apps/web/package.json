@@ -8,8 +8,10 @@
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --configLoader native --pool threads",
+    "test:native": "vitest run --configLoader native --pool threads",
+    "test:watch:native": "vitest --configLoader native --pool threads",
+    "test:watch": "vitest --configLoader native --pool threads",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"
   },

@@ -9,6 +9,7 @@ import {
   formatDateTime,
   formatNumber,
   formatPercent,
+  formatRatio,
   isTerminalStatus,
   statusLabel,
   strategyLabel,
@@ -42,6 +43,10 @@ export default async function BacktestDetailPage({
     const isComplete = isTerminalStatus(run.status);
     const partialDataMessages = getBacktestPartialDataMessages(run);
     const tradePayloadPartial = isTradePayloadPartial(run.summary?.trade_count, run.trades.length);
+    const riskFreeCurveWarning = (run.warnings ?? []).find((warning) => {
+      if (typeof warning !== "object" || warning === null) return false;
+      return "code" in warning && (warning as Record<string, unknown>).code === "risk_free_rate_curve_partial";
+    });
 
     return (
       <div className="space-y-6">
@@ -151,6 +156,59 @@ export default async function BacktestDetailPage({
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader>
+              <CardTitle>Risk-free rate audit</CardTitle>
+              <CardDescription>
+                Inspect the scalar anchor and any persisted curve points used during execution.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-xl border border-border/70 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Model</p>
+                  <p className="mt-2 font-medium">{run.risk_free_rate_model ?? "unknown"}</p>
+                </div>
+                <div className="rounded-xl border border-border/70 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Anchor/default rate</p>
+                  <p className="mt-2 font-medium">{formatPercent(run.risk_free_rate)}</p>
+                </div>
+              </div>
+              {riskFreeCurveWarning && typeof riskFreeCurveWarning === "object" && "message" in riskFreeCurveWarning ? (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-muted-foreground">
+                  {String((riskFreeCurveWarning as Record<string, unknown>).message)}
+                </div>
+              ) : null}
+              {run.risk_free_rate_curve_points && run.risk_free_rate_curve_points.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Curve points</p>
+                  <div className="max-h-48 overflow-auto rounded-xl border border-border/70">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/40 text-left text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                        <tr>
+                          <th className="px-4 py-3 font-medium">Trade date</th>
+                          <th className="px-4 py-3 font-medium">Rate</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {run.risk_free_rate_curve_points.map((point) => (
+                          <tr key={`${point.trade_date}-${point.rate}`} className="border-t border-border/60">
+                            <td className="px-4 py-3">{formatDate(point.trade_date)}</td>
+                            <td className="px-4 py-3">{formatPercent(point.rate)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No persisted curve points are available for this run.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
           {run.summary ? (
           <Card>
             <CardHeader>
@@ -186,7 +244,7 @@ export default async function BacktestDetailPage({
               <div className="rounded-xl border border-border/70 p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Profit factor</p>
                 <p className="mt-2 text-xl font-semibold tracking-tight">
-                  {formatNumber(run.summary.profit_factor)}
+                  {formatRatio(run.summary.profit_factor)}
                 </p>
               </div>
               ) : null}

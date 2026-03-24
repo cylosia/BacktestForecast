@@ -17,6 +17,7 @@ __pycache__
 *.py[cod]
 *.egg-info/
 .pytest_cache
+.pytest-file-logs/
 .mypy_cache
 .ruff_cache
 openapi.snapshot.json.new

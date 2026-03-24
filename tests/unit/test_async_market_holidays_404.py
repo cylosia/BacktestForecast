@@ -5,7 +5,6 @@ the sync variant correctly returned []. After the fix, both behave identically.
 """
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -41,7 +40,8 @@ class TestAsyncMarketHolidays404:
             result = client.get_market_holidays()
             assert result == []
 
-    def test_async_client_returns_empty_on_404(self):
+    @pytest.mark.asyncio
+    async def test_async_client_returns_empty_on_404(self):
         """Async AsyncMassiveClient.get_market_holidays should return [] on 404."""
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -50,14 +50,16 @@ class TestAsyncMarketHolidays404:
         with patch("backtestforecast.integrations.massive_client.get_settings", return_value=mock_settings):
             from backtestforecast.integrations.massive_client import AsyncMassiveClient
             client = AsyncMassiveClient(api_key="test-key", base_url="https://api.test.com")
+            await client.close()
             client._http = MagicMock()
             client._http.get = AsyncMock(return_value=mock_response)
             client._circuit.allow_request_async = AsyncMock(return_value=True)
 
-            result = asyncio.run(client.get_market_holidays())
+            result = await client.get_market_holidays()
             assert result == []
 
-    def test_sync_and_async_parity_on_404(self):
+    @pytest.mark.asyncio
+    async def test_sync_and_async_parity_on_404(self):
         """Both sync and async must return the same value on 404."""
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -75,16 +77,18 @@ class TestAsyncMarketHolidays404:
             sync_client._circuit.allow_request = MagicMock(return_value=True)
 
             async_client = AsyncMassiveClient(api_key="test-key", base_url="https://api.test.com")
+            await async_client.close()
             async_client._http = MagicMock()
             async_client._http.get = AsyncMock(return_value=mock_response)
             async_client._circuit.allow_request_async = AsyncMock(return_value=True)
 
             sync_result = sync_client.get_market_holidays()
-            async_result = asyncio.run(async_client.get_market_holidays())
+            async_result = await async_client.get_market_holidays()
 
             assert sync_result == async_result == []
 
-    def test_async_client_raises_on_non_404_error(self):
+    @pytest.mark.asyncio
+    async def test_async_client_raises_on_non_404_error(self):
         """Non-404 errors should still raise ExternalServiceError."""
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -94,10 +98,11 @@ class TestAsyncMarketHolidays404:
         with patch("backtestforecast.integrations.massive_client.get_settings", return_value=mock_settings):
             from backtestforecast.integrations.massive_client import AsyncMassiveClient
             client = AsyncMassiveClient(api_key="test-key", base_url="https://api.test.com")
+            await client.close()
             client._http = MagicMock()
             client._http.get = AsyncMock(return_value=mock_response)
             client._circuit.allow_request_async = AsyncMock(return_value=True)
             client._circuit.record_failure_async = AsyncMock()
 
             with pytest.raises(ExternalServiceError):
-                asyncio.run(client.get_market_holidays())
+                await client.get_market_holidays()

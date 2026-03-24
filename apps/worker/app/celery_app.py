@@ -46,12 +46,12 @@ celery_app = Celery(
         "apps.worker.app.tasks",
         "apps.worker.app.research_tasks",
         "apps.worker.app.pipeline_tasks",
-        "apps.worker.app.worker_maintenance_tasks",
+        "apps.worker.app.maintenance_tasks",
     ],
 )
 
 celery_app.conf.update(
-    task_default_queue="research",
+    task_default_queue="maintenance",
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
@@ -67,7 +67,7 @@ celery_app.conf.update(
     worker_max_tasks_per_child=200,
     worker_max_memory_per_child=800_000,
     broker_connection_retry_on_startup=True,
-    redbeat_redis_url=settings.redis_url,
+    redbeat_redis_url=settings.redis_cache_url or settings.redis_url,
     # REQUIREMENT: visibility_timeout must exceed the longest task's hard
     # time_limit to prevent the broker from re-delivering tasks that are still
     # running.  Current longest task_time_limit = 3900s (65 min), so we set
@@ -85,8 +85,13 @@ if _visibility_timeout <= _hard_limit:
     )
 
 celery_app.conf.task_queues = (
+    Queue("backtests"),
+    Queue("scans"),
+    Queue("sweeps"),
+    Queue("analysis"),
     Queue("research"),
     Queue("exports"),
+    Queue("recovery"),
     Queue("maintenance"),
     Queue("pipeline"),
 )
@@ -95,24 +100,24 @@ _settings = get_settings()
 
 celery_app.conf.task_routes = {
     "maintenance.ping": {"queue": "maintenance"},
-    "maintenance.reap_stale_jobs": {"queue": "maintenance"},
-    "maintenance.reconcile_stranded_jobs": {"queue": "maintenance"},
+    "maintenance.reap_stale_jobs": {"queue": "recovery"},
+    "maintenance.reconcile_stranded_jobs": {"queue": "recovery"},
     "maintenance.reconcile_s3_orphans": {"queue": "maintenance"},
-    "backtests.run": {"queue": "research"},
-    "scans.run_job": {"queue": "research"},
+    "backtests.run": {"queue": "backtests"},
+    "scans.run_job": {"queue": "scans"},
     "scans.refresh_prioritized": {"queue": "maintenance"},
-    "sweeps.run": {"queue": "research"},
+    "sweeps.run": {"queue": "sweeps"},
     "exports.generate": {"queue": "exports"},
     "pipeline.nightly_scan": {"queue": "pipeline"},
-    "analysis.deep_symbol": {"queue": "research"},
+    "analysis.deep_symbol": {"queue": "analysis"},
     "maintenance.cleanup_audit_events": {"queue": "maintenance"},
     "maintenance.cleanup_daily_recommendations": {"queue": "maintenance"},
     "maintenance.refresh_market_holidays": {"queue": "maintenance"},
     "maintenance.cleanup_outbox": {"queue": "maintenance"},
-    "maintenance.poll_outbox": {"queue": "maintenance"},
+    "maintenance.poll_outbox": {"queue": "recovery"},
     "maintenance.drain_billing_audit_fallback": {"queue": "maintenance"},
-    "maintenance.reconcile_subscriptions": {"queue": "maintenance"},
-    "maintenance.cleanup_stripe_orphan": {"queue": "maintenance"},
+    "maintenance.reconcile_subscriptions": {"queue": "recovery"},
+    "maintenance.cleanup_stripe_orphan": {"queue": "recovery"},
     "maintenance.expire_old_exports": {"queue": "maintenance"},
 }
 
@@ -169,7 +174,7 @@ celery_app.conf.beat_schedule = {
     },
     "reconcile-subscriptions-daily": {
         "task": "maintenance.reconcile_subscriptions",
-        "schedule": crontab(hour=5, minute=0),
+        "schedule": crontab(minute=0),
     },
     "expire-old-exports": {
         "task": "maintenance.expire_old_exports",
@@ -377,8 +382,18 @@ def _seed_market_holidays() -> None:
     finally:
         r.close()
 
-    celery_app.send_task("maintenance.refresh_market_holidays")
-    _shutdown_logger.info("worker.market_holidays_seed_dispatched")
+    from apps.api.app.dispatch import dispatch_outbox_task
+    from backtestforecast.db.session import create_session
+
+    with create_session() as session:
+        result = dispatch_outbox_task(
+            db=session,
+            task_name="maintenance.refresh_market_holidays",
+            task_kwargs={},
+            queue="maintenance",
+            logger=_shutdown_logger,
+        )
+    _shutdown_logger.info("worker.market_holidays_seed_dispatched", result=result.value)
 
 
 @worker_shutting_down.connect

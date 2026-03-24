@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from types import SimpleNamespace
 
+from backtestforecast.schemas.analysis import DailyPickSummary
+from backtestforecast.schemas.backtests import BacktestSummaryResponse
+from backtestforecast.services.exports import ExportService
 from backtestforecast.services.serialization import _opt_decimal, _safe_decimal, serialize_summary
+from backtestforecast.utils import to_decimal
 
 
 def _make_summary(**overrides):
     defaults = dict(
-        trade_count=10, win_rate=60.0, total_roi_pct=15.0,
+        trade_count=10, decided_trades=10, win_rate=60.0, total_roi_pct=15.0,
         average_win_amount=200.0, average_loss_amount=-100.0,
         average_holding_period_days=5.0, average_dte_at_open=30.0,
         max_drawdown_pct=8.0, total_commissions=50.0,
@@ -26,22 +31,22 @@ def _make_summary(**overrides):
 
 
 class TestInfinityHandling:
-    def test_profit_factor_infinity_serializes_as_none(self):
+    def test_profit_factor_infinity_serializes_as_explicit_string(self):
         summary = _make_summary(profit_factor=float("inf"))
         result = serialize_summary(summary)
-        assert result["profit_factor"] is None
+        assert result["profit_factor"] == "Infinity"
         json.dumps(result)  # must not raise
 
-    def test_sharpe_ratio_infinity_serializes_as_none(self):
+    def test_sharpe_ratio_infinity_serializes_as_explicit_string(self):
         summary = _make_summary(sharpe_ratio=float("inf"))
         result = serialize_summary(summary)
-        assert result["sharpe_ratio"] is None
+        assert result["sharpe_ratio"] == "Infinity"
         json.dumps(result)
 
-    def test_negative_infinity_serializes_as_none(self):
+    def test_negative_infinity_serializes_as_explicit_string(self):
         summary = _make_summary(sortino_ratio=float("-inf"))
         result = serialize_summary(summary)
-        assert result["sortino_ratio"] is None
+        assert result["sortino_ratio"] == "-Infinity"
         json.dumps(result)
 
     def test_nan_win_rate_serializes_as_zero(self):
@@ -69,9 +74,13 @@ class TestInfinityHandling:
         result = serialize_summary(summary)
         serialized = json.dumps(result)
         parsed = json.loads(serialized)
-        for key in ["profit_factor", "payoff_ratio", "sharpe_ratio", "sortino_ratio",
-                     "cagr_pct", "calmar_ratio", "recovery_factor"]:
-            assert parsed[key] is None, f"{key} should be None, got {parsed[key]}"
+        assert parsed["profit_factor"] == "Infinity"
+        assert parsed["payoff_ratio"] == "Infinity"
+        assert parsed["sharpe_ratio"] == "-Infinity"
+        assert parsed["sortino_ratio"] is None
+        assert parsed["cagr_pct"] == "Infinity"
+        assert parsed["calmar_ratio"] == "-Infinity"
+        assert parsed["recovery_factor"] is None
 
 
 class TestSafeDecimalDirect:
@@ -84,11 +93,11 @@ class TestSafeDecimalDirect:
     def test_safe_decimal_normal_value(self):
         assert abs(_safe_decimal(42.5) - 42.5) < 0.001
 
-    def test_opt_decimal_inf_returns_none(self):
-        assert _opt_decimal(float("inf")) is None
+    def test_opt_decimal_inf_returns_explicit_string(self):
+        assert _opt_decimal(float("inf")) == "Infinity"
 
-    def test_opt_decimal_neg_inf_returns_none(self):
-        assert _opt_decimal(float("-inf")) is None
+    def test_opt_decimal_neg_inf_returns_explicit_string(self):
+        assert _opt_decimal(float("-inf")) == "-Infinity"
 
     def test_opt_decimal_nan_returns_none(self):
         assert _opt_decimal(float("nan")) is None
@@ -100,3 +109,48 @@ class TestSafeDecimalDirect:
         result = _opt_decimal(42.5)
         assert result is not None
         assert abs(result - 42.5) < 0.001
+
+
+class TestToDecimalAllowInfinite:
+    def test_allow_infinite_preserves_positive_infinity(self):
+        assert to_decimal(float("inf"), allow_infinite=True) == Decimal("Infinity")
+
+    def test_allow_infinite_preserves_negative_infinity(self):
+        assert to_decimal(float("-inf"), allow_infinite=True) == Decimal("-Infinity")
+
+
+class TestResponseSchemas:
+    def test_backtest_summary_response_accepts_and_json_serializes_infinite_metrics(self):
+        summary = BacktestSummaryResponse.model_validate({
+            "trade_count": 1,
+            "total_commissions": 0,
+            "total_net_pnl": 1,
+            "starting_equity": 1,
+            "ending_equity": 2,
+            "win_rate": 1,
+            "total_roi_pct": 1,
+            "max_drawdown_pct": 1,
+            "profit_factor": Decimal("Infinity"),
+            "payoff_ratio": "Infinity",
+            "recovery_factor": Decimal("-Infinity"),
+        })
+
+        dumped = summary.model_dump(mode="json")
+        assert dumped["profit_factor"] == "Infinity"
+        assert dumped["payoff_ratio"] == "Infinity"
+        assert dumped["recovery_factor"] == "-Infinity"
+
+    def test_daily_pick_summary_preserves_json_safe_infinite_metrics(self):
+        summary = DailyPickSummary.model_validate({
+            "profit_factor": "Infinity",
+            "sharpe_ratio": Decimal("-Infinity"),
+        })
+
+        dumped = summary.model_dump(mode="json")
+        assert dumped["profit_factor"] == "Infinity"
+        assert dumped["sharpe_ratio"] == "-Infinity"
+
+    def test_export_metric_formatter_preserves_explicit_infinity_strings(self):
+        assert ExportService._format_metric_value("Infinity") == "Infinity"
+        assert ExportService._format_metric_value("-Infinity", percent=True) == "-Infinity"
+        assert ExportService._format_metric_value(float("inf"), usd=True) == "Infinity"

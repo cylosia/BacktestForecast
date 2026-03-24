@@ -102,6 +102,35 @@ from backtestforecast.utils.dates import market_date_today
 from backtestforecast.version import DEFAULT_ENGINE_VERSION, DEFAULT_RANKING_VERSION
 
 logger = structlog.get_logger("services.scans")
+_SCAN_QUEUE = "scans"
+
+
+def _historical_metric_or_none(summary: dict[str, Any], field: str) -> float | None:
+    try:
+        value = float(summary.get(field, 0.0))
+    except (TypeError, ValueError):
+        return None
+    return value if value.is_finite() else None
+
+
+def _historical_observation_from_summary(
+    *,
+    completed_at: datetime | None,
+    summary: dict[str, Any],
+) -> HistoricalObservation | None:
+    if completed_at is None:
+        return None
+    win_rate = _historical_metric_or_none(summary, "win_rate")
+    total_roi_pct = _historical_metric_or_none(summary, "total_roi_pct")
+    max_drawdown_pct = _historical_metric_or_none(summary, "max_drawdown_pct")
+    if None in (win_rate, total_roi_pct, max_drawdown_pct):
+        return None
+    return HistoricalObservation(
+        completed_at=completed_at,
+        win_rate=win_rate,
+        total_roi_pct=total_roi_pct,
+        max_drawdown_pct=max_drawdown_pct,
+    )
 
 
 def _get_fallback_entry_rules() -> list[RsiRule]:
@@ -239,7 +268,7 @@ class ScanService:
                     model_name="ScannerJob",
                     task_name="scans.run_job",
                     task_kwargs={"job_id": str(existing_by_key.id)},
-                    queue="research",
+                    queue=_SCAN_QUEUE,
                     log_event="scan",
                     logger=logger,
                 )
@@ -257,7 +286,7 @@ class ScanService:
                 model_name="ScannerJob",
                 task_name="scans.run_job",
                 task_kwargs={"job_id": str(recent_duplicate.id)},
-                queue="research",
+                queue=_SCAN_QUEUE,
                 log_event="scan",
                 logger=logger,
             )
@@ -329,7 +358,7 @@ class ScanService:
             job=job,
             task_name="scans.run_job",
             task_kwargs={"job_id": str(job.id)},
-            queue="research",
+            queue=_SCAN_QUEUE,
             log_event="scan",
             logger=dispatch_logger or logger,
             request_id=request_id,
@@ -796,8 +825,8 @@ class ScanService:
             limit=effective_limit,
         )
 
-    def create_scheduled_refresh_jobs(self, limit: int = 25) -> list[ScannerJob]:
-        created_jobs: list[ScannerJob] = []
+    def _list_scheduled_refresh_specs(self, limit: int = 25) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = []
         latest_sources: dict[tuple[UUID, str, str], ScannerJob] = {}
         for source in self.repository.list_refresh_sources(limit=200):
             key = (source.user_id, source.request_hash, source.mode)
@@ -849,26 +878,50 @@ class ScanService:
                     limit=_MAX_REFRESH_PER_USER,
                 )
                 continue
-            refresh_key = f"{source.user_id}:{source.request_hash}:{refresh_day}:{source.mode}"
+            specs.append(
+                {
+                    "user_id": source.user_id,
+                    "parent_job_id": source.id,
+                    "name": source.name,
+                    "mode": source.mode,
+                    "plan_tier_snapshot": owner.plan_tier,
+                    "job_kind": "refresh",
+                    "request_hash": source.request_hash,
+                    "refresh_key": f"{source.user_id}:{source.request_hash}:{refresh_day}:{source.mode}",
+                    "refresh_daily": source.refresh_daily,
+                    "refresh_priority": source.refresh_priority,
+                    "candidate_count": source.candidate_count,
+                    "request_snapshot_json": source.request_snapshot_json,
+                    "warnings_json": [],
+                    "ranking_version": source.ranking_version,
+                    "engine_version": source.engine_version,
+                }
+            )
+            user_refresh_counts[source.user_id] = user_count + 1
+        return specs
+
+    def create_scheduled_refresh_jobs(self, limit: int = 25) -> list[ScannerJob]:
+        created_jobs: list[ScannerJob] = []
+        for spec in self._list_scheduled_refresh_specs(limit=limit):
             job = ScannerJob(
-                user_id=source.user_id,
-                parent_job_id=source.id,
-                name=source.name,
+                user_id=spec["user_id"],
+                parent_job_id=spec["parent_job_id"],
+                name=spec["name"],
                 status="queued",
-                mode=source.mode,
-                plan_tier_snapshot=owner.plan_tier,
-                job_kind="refresh",
-                request_hash=source.request_hash,
-                refresh_key=refresh_key,
-                refresh_daily=source.refresh_daily,
-                refresh_priority=source.refresh_priority,
-                candidate_count=source.candidate_count,
+                mode=spec["mode"],
+                plan_tier_snapshot=spec["plan_tier_snapshot"],
+                job_kind=spec["job_kind"],
+                request_hash=spec["request_hash"],
+                refresh_key=spec["refresh_key"],
+                refresh_daily=spec["refresh_daily"],
+                refresh_priority=spec["refresh_priority"],
+                candidate_count=spec["candidate_count"],
                 evaluated_candidate_count=0,
                 recommendation_count=0,
-                request_snapshot_json=source.request_snapshot_json,
-                warnings_json=[],
-                ranking_version=source.ranking_version,
-                engine_version=source.engine_version,
+                request_snapshot_json=spec["request_snapshot_json"],
+                warnings_json=spec["warnings_json"],
+                ranking_version=spec["ranking_version"],
+                engine_version=spec["engine_version"],
             )
             try:
                 nested = self.session.begin_nested()
@@ -876,13 +929,69 @@ class ScanService:
                 nested.commit()
                 self.session.refresh(job)
                 created_jobs.append(job)
-                user_refresh_counts[source.user_id] = user_count + 1
             except IntegrityError:
                 nested.rollback()
                 continue
-        if created_jobs:
-            self.session.commit()
         return created_jobs
+
+    def create_and_dispatch_scheduled_refresh_jobs(
+        self,
+        *,
+        limit: int = 25,
+        request_id: str | None = None,
+        traceparent: str | None = None,
+        dispatch_logger: Any | None = None,
+    ) -> tuple[int, int]:
+        from apps.api.app.dispatch import DispatchResult, dispatch_celery_task
+
+        dispatched = 0
+        pending_recovery = 0
+        for spec in self._list_scheduled_refresh_specs(limit=limit):
+            job = ScannerJob(
+                user_id=spec["user_id"],
+                parent_job_id=spec["parent_job_id"],
+                name=spec["name"],
+                status="queued",
+                mode=spec["mode"],
+                plan_tier_snapshot=spec["plan_tier_snapshot"],
+                job_kind=spec["job_kind"],
+                request_hash=spec["request_hash"],
+                refresh_key=spec["refresh_key"],
+                refresh_daily=spec["refresh_daily"],
+                refresh_priority=spec["refresh_priority"],
+                candidate_count=spec["candidate_count"],
+                evaluated_candidate_count=0,
+                recommendation_count=0,
+                request_snapshot_json=spec["request_snapshot_json"],
+                warnings_json=spec["warnings_json"],
+                ranking_version=spec["ranking_version"],
+                engine_version=spec["engine_version"],
+            )
+            try:
+                self.repository.add(job)
+                result = dispatch_celery_task(
+                    db=self.session,
+                    job=job,
+                    task_name="scans.run_job",
+                    task_kwargs={"job_id": str(job.id)},
+                    queue=_SCAN_QUEUE,
+                    log_event="scan.refresh",
+                    logger=dispatch_logger or logger,
+                    request_id=request_id,
+                    traceparent=traceparent,
+                )
+                if result == DispatchResult.SENT:
+                    dispatched += 1
+                elif result == DispatchResult.ENQUEUE_FAILED:
+                    pending_recovery += 1
+                self.session.refresh(job)
+            except IntegrityError:
+                self.session.rollback()
+                continue
+            except Exception:
+                logger.exception("refresh.dispatch_failed", parent_job_id=str(spec["parent_job_id"]))
+                self.session.rollback()
+        return dispatched, pending_recovery
 
     def _build_forecast_impl(
         self,
@@ -1093,18 +1202,13 @@ class ScanService:
         for key, rows in raw.items():
             observations: list[HistoricalObservation] = []
             for recommendation, completed_at in rows:
-                if completed_at is None:
-                    continue
                 summary = recommendation.summary_json or {}
-                observations.append(
-                    HistoricalObservation(
-                        completed_at=completed_at,
-                        win_rate=float(summary.get("win_rate", 0.0)),
-                        total_roi_pct=float(summary.get("total_roi_pct", 0.0)),
-                        total_net_pnl=float(summary.get("total_net_pnl", 0.0)),
-                        max_drawdown_pct=float(summary.get("max_drawdown_pct", 0.0)),
-                    )
+                observation = _historical_observation_from_summary(
+                    completed_at=completed_at,
+                    summary=summary,
                 )
+                if observation is not None:
+                    observations.append(observation)
             result[key] = aggregate_historical_performance(observations, reference_time=before)
         return result
 
@@ -1123,18 +1227,13 @@ class ScanService:
             rule_set_hash=candidate_rule_set_hash,
             before=before,
         ):
-            if completed_at is None:
-                continue
             summary = recommendation.summary_json or {}
-            observations.append(
-                HistoricalObservation(
-                    completed_at=completed_at,
-                    win_rate=float(summary.get("win_rate", 0.0)),
-                    total_roi_pct=float(summary.get("total_roi_pct", 0.0)),
-                    total_net_pnl=float(summary.get("total_net_pnl", 0.0)),
-                    max_drawdown_pct=float(summary.get("max_drawdown_pct", 0.0)),
-                )
+            observation = _historical_observation_from_summary(
+                completed_at=completed_at,
+                summary=summary,
             )
+            if observation is not None:
+                observations.append(observation)
         return aggregate_historical_performance(observations, reference_time=before)
 
     def _forecast_for_bundle(
@@ -1284,7 +1383,6 @@ class ScanService:
                     "sample_count",
                     "weighted_win_rate",
                     "weighted_total_roi_pct",
-                    "weighted_total_net_pnl",
                     "weighted_max_drawdown_pct",
                 },
             ),

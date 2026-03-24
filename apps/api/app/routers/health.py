@@ -18,6 +18,9 @@ router = APIRouter(tags=["health"])
 
 _broker_redis = None
 _broker_redis_lock = Lock()
+_OPERATIONS_STATUS_TTL_SECONDS = 30.0
+_operations_status_cache: tuple[float, dict[str, object]] | None = None
+_operations_status_lock = Lock()
 
 
 def _invalidate_broker_redis() -> None:
@@ -140,6 +143,40 @@ def _show_version_in_health() -> bool:
     return get_settings().app_env not in ("production", "staging")
 
 
+def _get_broker_queue_depths() -> dict[str, int]:
+    from redis import Redis
+
+    settings = get_settings()
+    redis = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=3)
+    try:
+        return {
+            "maintenance": int(redis.llen("maintenance")),
+            "recovery": int(redis.llen("recovery")),
+        }
+    finally:
+        redis.close()
+
+
+def _get_operations_status(*, use_cache: bool = True) -> dict[str, object]:
+    global _operations_status_cache
+
+    now = monotonic()
+    if use_cache:
+        with _operations_status_lock:
+            if _operations_status_cache is not None:
+                checked_at, cached = _operations_status_cache
+                if now - checked_at < _OPERATIONS_STATUS_TTL_SECONDS:
+                    return dict(cached)
+
+    payload = {
+        "outbox": _check_outbox_health(),
+        "queue_diagnostics": _check_queue_health(),
+    }
+    with _operations_status_lock:
+        _operations_status_cache = (now, payload)
+    return dict(payload)
+
+
 @router.get("/health/live", response_model=None)
 def live() -> dict[str, str] | JSONResponse:
     resp: dict[str, str] = {"status": "ok", "service": API_SERVICE_NAME}
@@ -178,17 +215,6 @@ def ready(request: Request) -> JSONResponse:
             content["broker"] = "up" if broker_up else "down"
         return JSONResponse(status_code=503, content=content)
 
-    if not broker_up:
-        content = {"status": "degraded"}
-        if _show_version_in_health():
-            content["version"] = get_public_version()
-        if show_details:
-            content["environment"] = settings.app_env
-            content["database"] = "up"
-            content["redis"] = "up" if redis_up else "down"
-            content["broker"] = "down"
-        return JSONResponse(status_code=503, content=content)
-
     degraded_memory_fallback = bool(
         getattr(settings, "rate_limit_degraded_memory_fallback", False)
     )
@@ -214,7 +240,7 @@ def ready(request: Request) -> JSONResponse:
 
     massive_status = _check_massive_health(settings)
     migration_aligned = True
-    if settings.app_env not in ("development",):
+    if show_details and settings.app_env not in ("development",):
         migration_aligned = _check_migration_drift()
         if not migration_aligned:
             payload: dict[str, object] = {"status": "degraded"}
@@ -228,29 +254,8 @@ def ready(request: Request) -> JSONResponse:
                 payload["rate_limit_mode"] = rl_mode
                 payload["massive_api"] = massive_status
                 payload["migration_aligned"] = False
-                payload["outbox"] = _check_outbox_health()
-                payload["queue_diagnostics"] = _check_queue_health()
-            return JSONResponse(status_code=503, content=payload)
-
-    outbox = _check_outbox_health()
-    queue_diagnostics = _check_queue_health()
-    outbox_status = str(outbox.get("status", "unknown"))
-    queue_status = str(queue_diagnostics.get("status", "unknown"))
-    if outbox_status == "stale" or queue_status == "stale_without_outbox":
-        payload = {"status": "degraded"}
-        if _show_version_in_health():
-            payload["version"] = get_public_version()
-        if show_details:
-            payload["environment"] = settings.app_env
-            payload["database"] = "up"
-            payload["redis"] = "up" if redis_up else "down"
-            payload["broker"] = "up" if broker_up else "down"
-            payload["rate_limit_mode"] = rl_mode
-            payload["massive_api"] = massive_status
-            payload["migration_aligned"] = migration_aligned
-            payload["outbox"] = outbox
-            payload["queue_diagnostics"] = queue_diagnostics
-        return JSONResponse(status_code=503, content=payload)
+                payload.update(_get_operations_status())
+            return JSONResponse(status_code=200, content=payload)
 
     all_ok = redis_up and broker_up and massive_status in ("ok", "unconfigured")
     payload: dict[str, object] = {
@@ -286,10 +291,9 @@ def ready(request: Request) -> JSONResponse:
                 payload["sentry"] = "initialized" if sentry_sdk.is_initialized() else "not_initialized"
             except Exception:
                 payload["sentry"] = "unavailable"
-        if settings.app_env not in ("development",):
+        if show_details and settings.app_env not in ("development",):
             payload["migration_aligned"] = migration_aligned
-        payload["outbox"] = outbox
-        payload["queue_diagnostics"] = queue_diagnostics
+        payload.update(_get_operations_status())
     return JSONResponse(status_code=200, content=payload)
 
 
@@ -336,6 +340,10 @@ def _check_queue_health() -> dict[str, object]:
         with create_session() as session:
             result = get_queue_diagnostics(session)
             session.rollback()
-            return result
+        queue_depths = _get_broker_queue_depths()
+        result["broker_queue_depths"] = queue_depths
+        if queue_depths.get("recovery", 0) > 0 and result.get("status") == "ok":
+            result["status"] = "recovery_backlog"
+        return result
     except Exception:
         return {"status": "unknown"}

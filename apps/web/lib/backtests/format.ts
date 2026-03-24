@@ -29,20 +29,27 @@ export function toNumber(value: NumericValue | null | undefined): number {
 
 export function formatCurrency(value: NumericValue | null | undefined): string {
   const n = toNumber(value);
-  if (Number.isNaN(n)) return "—";
+  if (Number.isNaN(n)) return "-";
   return currencyFormatter.format(n);
 }
 
 export function formatPercent(value: NumericValue | null | undefined): string {
   const n = toNumber(value);
-  if (Number.isNaN(n)) return "—";
+  if (Number.isNaN(n)) return "-";
   return `${percentFormatter.format(n)}%`;
 }
 
 export function formatNumber(value: NumericValue | null | undefined): string {
   const n = toNumber(value);
-  if (Number.isNaN(n)) return "—";
+  if (Number.isNaN(n)) return "-";
   return numberFormatter.format(n);
+}
+
+export function formatRatio(value: NumericValue | null | undefined): string {
+  if (value === "Infinity" || value === "-Infinity") return value;
+  const n = toNumber(value);
+  if (Number.isNaN(n)) return "-";
+  return n.toFixed(2);
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -62,16 +69,16 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
 });
 
 export function formatDate(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "-";
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return dateFormatter.format(d);
 }
 
 export function formatDateTime(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "-";
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return dateTimeFormatter.format(d);
 }
 

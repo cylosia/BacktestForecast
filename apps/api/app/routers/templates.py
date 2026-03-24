@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db, get_readonly_db
+from backtestforecast.db.session import get_db
 from backtestforecast.models import User
 from backtestforecast.schemas.templates import (
     CreateTemplateRequest,
@@ -38,7 +38,7 @@ def _template_service(db: Session) -> Generator[BacktestTemplateService, None, N
 @router.get("", response_model=TemplateListResponse)
 def list_templates(
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10000),
     settings: Settings = Depends(get_settings),
@@ -75,7 +75,7 @@ def create_template(
 def get_template(
     template_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TemplateResponse:
     # Derived limit: reads are cheaper than mutations so we allow 5x the mutate limit.

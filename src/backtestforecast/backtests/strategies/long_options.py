@@ -57,6 +57,7 @@ class LongOptionStrategy(StrategyDefinition):
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
             iv_cache=getattr(option_gateway, '_iv_cache', None),
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
         )
         contract = require_contract_for_strike(exp_contracts, strike)
         entry_quote = option_gateway.get_quote(contract.ticker, bar.trade_date)

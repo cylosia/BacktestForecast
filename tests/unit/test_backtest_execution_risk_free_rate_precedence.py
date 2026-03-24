@@ -21,11 +21,29 @@ from tests.conftest import strip_partial_indexes_for_sqlite
 
 
 class _StubMarketDataService:
-    def __init__(self, bundle: HistoricalDataBundle, *, treasury_rate: float | None = None) -> None:
+    def __init__(
+        self,
+        bundle: HistoricalDataBundle,
+        *,
+        treasury_rate: float | None = None,
+        treasury_series: dict[date, float] | None = None,
+    ) -> None:
         self._bundle = bundle
+        self.treasury_calls: list[tuple[date, date, str | None]] = []
+        self.treasury_series_calls: list[tuple[date, date, str | None]] = []
+
+        def _get_average_treasury_yield(start_date, end_date, field_name=None):
+            self.treasury_calls.append((start_date, end_date, field_name))
+            return treasury_rate
+
+        def _get_treasury_yield_series(start_date, end_date, field_name=None):
+            self.treasury_series_calls.append((start_date, end_date, field_name))
+            return dict(treasury_series or {})
+
         self.client = SimpleNamespace(
             close=lambda: None,
-            get_average_treasury_yield=lambda *_args, **_kwargs: treasury_rate,
+            get_average_treasury_yield=_get_average_treasury_yield,
+            get_treasury_yield_series=_get_treasury_yield_series,
         )
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
@@ -46,6 +64,7 @@ class _CapturingEngine:
             trades,
             equity_curve,
             risk_free_rate=config.risk_free_rate,
+            risk_free_rate_curve=config.risk_free_rate_curve,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve)
 
@@ -195,6 +214,7 @@ def test_request_risk_free_rate_override_takes_precedence_and_round_trips(
 
     assert float(detail.summary.sharpe_ratio) == pytest.approx(expected_override.sharpe_ratio, abs=1e-4)
     assert detail.risk_free_rate == override_rate
+    assert detail.risk_free_rate_model == "scalar"
     assert run.input_snapshot_json["resolved_risk_free_rate_source"] == "request_override"
 
 
@@ -239,10 +259,73 @@ def test_server_default_is_replaced_by_massive_treasury_rate(monkeypatch, db_ses
     target_assertion()
     assert engine.last_config is not None
     assert engine.last_config.risk_free_rate == pytest.approx(treasury_rate)
+    assert execution_service.market_data_service.treasury_calls == [
+        (request.start_date, request.start_date, "yield_3_month")
+    ]
+    assert execution_service.market_data_service.treasury_series_calls == [
+        (request.start_date, request.end_date, "yield_3_month"),
+        (request.start_date, request.end_date, "yield_3_month"),
+    ]
     assert float(detail.risk_free_rate) == pytest.approx(treasury_rate)
+    assert detail.risk_free_rate_model == "curve_default"
     assert run.input_snapshot_json["resolved_risk_free_rate_source"] == "massive_treasury"
+    assert run.input_snapshot_json["resolved_risk_free_rate_model"] == "curve_default"
     warning_codes = {warning.code for warning in detail.warnings}
     assert "historical_treasury_risk_free_rate" in warning_codes
+
+
+def test_treasury_curve_is_used_for_later_date_excess_returns(monkeypatch):
+    settings = SimpleNamespace(app_env="test", risk_free_rate=0.045, option_cache_warn_age_seconds=259_200)
+    monkeypatch.setattr("backtestforecast.services.backtest_execution.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.services.risk_free_rate.get_settings", lambda: settings)
+
+    bundle = HistoricalDataBundle(bars=[], earnings_dates=set(), ex_dividend_dates=set(), option_gateway=SimpleNamespace())
+    curve = {
+        date(2024, 1, 2): 0.01,
+        date(2024, 1, 20): 0.08,
+    }
+    engine = _CapturingEngine()
+    execution_service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle, treasury_rate=0.01, treasury_series=curve),
+        engine=engine,
+    )
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2024-01-02",
+        end_date="2024-03-31",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
+    )
+
+    result = execution_service.execute_request(request)
+
+    expected_curve = build_summary(
+        10_000.0,
+        float(result.equity_curve[-1].equity),
+        result.trades,
+        result.equity_curve,
+        risk_free_rate=0.01,
+        risk_free_rate_curve=engine.last_config.risk_free_rate_curve,
+    )
+    expected_static = build_summary(
+        10_000.0,
+        float(result.equity_curve[-1].equity),
+        result.trades,
+        result.equity_curve,
+        risk_free_rate=0.01,
+    )
+
+    assert engine.last_config is not None
+    assert engine.last_config.risk_free_rate_curve is not None
+    assert engine.last_config.risk_free_rate_curve.rate_for(date(2024, 2, 1)) == pytest.approx(0.08)
+    assert result.summary.sharpe_ratio == pytest.approx(expected_curve.sharpe_ratio)
+    assert result.summary.sharpe_ratio != pytest.approx(expected_static.sharpe_ratio)
 
 
 def test_enqueue_audits_execution_parameter_resolution(monkeypatch, db_session, user):
@@ -278,7 +361,52 @@ def test_enqueue_audits_execution_parameter_resolution(monkeypatch, db_session, 
 
     run = service.enqueue(user, request)
 
-    assert run.input_snapshot_json["resolved_risk_free_rate_source"] == "massive_treasury"
+    assert run.input_snapshot_json["resolved_risk_free_rate_source"] == "configured_fallback"
     event = next(event for event in recorded if event["event_type"] == "backtest.execution_parameters_resolved")
-    assert event["metadata"]["risk_free_rate"] == treasury_rate
-    assert event["metadata"]["risk_free_rate_source"] == "massive_treasury"
+    assert event["metadata"]["risk_free_rate"] == settings.risk_free_rate
+    assert event["metadata"]["risk_free_rate_source"] == "configured_fallback"
+
+
+def test_enqueue_defers_massive_lookup_until_worker_execution(monkeypatch, db_session, user):
+    treasury_rate = 0.031
+    settings = SimpleNamespace(app_env="test", risk_free_rate=0.045, option_cache_warn_age_seconds=259_200)
+
+    monkeypatch.setattr("backtestforecast.services.backtest_execution.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.services.backtests.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.backtests.run_warnings.get_settings", lambda: settings)
+    monkeypatch.setattr("backtestforecast.services.risk_free_rate.get_settings", lambda: settings)
+
+    bundle = HistoricalDataBundle(bars=[], earnings_dates=set(), ex_dividend_dates=set(), option_gateway=SimpleNamespace())
+    market_data = _StubMarketDataService(bundle, treasury_rate=treasury_rate)
+    execution_service = BacktestExecutionService(
+        market_data_service=market_data,
+        engine=_CapturingEngine(),
+    )
+
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2024-01-02",
+        end_date="2024-03-31",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
+    )
+
+    service = BacktestService(db_session, execution_service=execution_service)
+    run = service.enqueue(user, request)
+
+    assert market_data.treasury_calls == []
+    assert float(run.risk_free_rate) == pytest.approx(settings.risk_free_rate)
+    assert run.input_snapshot_json["resolved_risk_free_rate_source"] == "configured_fallback"
+
+    executed = service.execute_run_by_id(run.id)
+
+    assert executed.status == "succeeded"
+    assert market_data.treasury_calls == [(request.start_date, request.start_date, "yield_3_month")]
+    assert float(executed.risk_free_rate) == pytest.approx(treasury_rate)
+    assert executed.input_snapshot_json["resolved_risk_free_rate_source"] == "massive_treasury"

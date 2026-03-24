@@ -46,8 +46,16 @@ class CoveredCallStrategy(StrategyDefinition):
         call_contracts = contracts_for_expiration(calls, primary_expiration)
         dte = (primary_expiration - bar.trade_date).days
         strike = resolve_strike(
-            [c.strike_price for c in call_contracts], bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=call_contracts, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
+            [c.strike_price for c in call_contracts],
+            bar.close_price,
+            "call",
+            overrides.short_call_strike,
+            dte,
+            contracts=call_contracts,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            iv_cache=getattr(option_gateway, '_iv_cache', None),
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
         )
         short_call = require_contract_for_strike(call_contracts, strike)
         quote = option_gateway.get_quote(short_call.ticker, bar.trade_date)

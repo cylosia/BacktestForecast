@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 import structlog
-from sqlalchemy import case, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import Session, defer, noload, selectinload
 
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade
@@ -144,6 +144,53 @@ class BacktestRunRepository:
             self.session,
             base_stmt=stmt,
             count_stmt=select(func.count(BacktestRun.id)).where(*base_filter),
+            model=BacktestRun,
+            cursor_before=cursor_before,
+            limit=limit,
+            offset=offset,
+            max_page_size=_MAX_PAGE_SIZE,
+        )
+
+    def list_for_user_with_capped_count(
+        self,
+        user_id: UUID,
+        *,
+        max_items: int,
+        limit: int = 50,
+        offset: int = 0,
+        created_since: datetime | None = None,
+        cursor_before: tuple[datetime, UUID] | None = None,
+    ) -> tuple[list[BacktestRun], int]:
+        """Return a page from the newest ``max_items`` runs only.
+
+        This enforces history entitlements at the dataset level instead of
+        merely capping the reported total.
+        """
+        base_filter = [BacktestRun.user_id == user_id]
+        if created_since is not None:
+            base_filter.append(BacktestRun.created_at >= created_since)
+
+        capped_ids = (
+            select(BacktestRun.id)
+            .where(*base_filter)
+            .order_by(desc(BacktestRun.created_at), desc(BacktestRun.id))
+            .limit(max_items)
+            .subquery()
+        )
+        stmt = (
+            select(BacktestRun)
+            .where(BacktestRun.id.in_(select(capped_ids.c.id)))
+            .options(
+                noload(BacktestRun.trades),
+                noload(BacktestRun.equity_points),
+                defer(BacktestRun.input_snapshot_json),
+            )
+        )
+        count_stmt = select(func.count()).select_from(capped_ids)
+        return list_with_total(
+            self.session,
+            base_stmt=stmt,
+            count_stmt=count_stmt,
             model=BacktestRun,
             cursor_before=cursor_before,
             limit=limit,

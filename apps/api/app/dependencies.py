@@ -127,6 +127,16 @@ def _bind_user_context(user: User) -> None:
     )
 
 
+def _get_user_from_primary(clerk_user_id: str) -> User | None:
+    with create_session() as write_db:
+        repository = UserRepository(write_db)
+        user = repository.get_by_clerk_user_id(clerk_user_id)
+        if user is None:
+            return None
+        write_db.expunge(user)
+        return user
+
+
 def _resolve_current_user(
     request: Request,
     *,
@@ -225,14 +235,19 @@ def _resolve_current_user(
     principal = get_token_verifier().verify_bearer_token(token)
     repository = UserRepository(db)
     user = repository.get_by_clerk_user_id(principal.clerk_user_id)
-    email_needs_sync = bool(user is not None and repository.sync_email_if_needed(user, principal.email))
-    if user is not None and not email_needs_sync:
-        _bind_user_context(user)
-        return user
 
     if not allow_write_fallback:
-        if user is None:
+        primary_user = None
+        if get_settings().database_read_replica_url:
+            primary_user = _get_user_from_primary(principal.clerk_user_id)
+        resolved_user = primary_user or user
+        if resolved_user is None:
             raise AuthenticationError("User account not initialized.")
+        _bind_user_context(resolved_user)
+        return resolved_user
+
+    email_needs_sync = bool(user is not None and repository.sync_email_if_needed(user, principal.email))
+    if user is not None and not email_needs_sync:
         _bind_user_context(user)
         return user
 

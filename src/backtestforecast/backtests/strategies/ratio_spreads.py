@@ -47,8 +47,16 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
         dte = (expiration - bar.trade_date).days
 
         short_strike = resolve_strike(
-            strikes, bar.close_price, "call", overrides.short_call_strike, dte,
-            contracts=cc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
+            strikes,
+            bar.close_price,
+            "call",
+            overrides.short_call_strike,
+            dte,
+            contracts=cc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            iv_cache=getattr(option_gateway, '_iv_cache', None),
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
         )
         long_strike = offset_strike(strikes, short_strike, 1)
         if long_strike is None:
@@ -116,8 +124,16 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
         dte = (expiration - bar.trade_date).days
 
         short_strike = resolve_strike(
-            strikes, bar.close_price, "put", overrides.short_put_strike, dte,
-            contracts=pc, option_gateway=option_gateway, trade_date=bar.trade_date, iv_cache=getattr(option_gateway, '_iv_cache', None),
+            strikes,
+            bar.close_price,
+            "put",
+            overrides.short_put_strike,
+            dte,
+            contracts=pc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            iv_cache=getattr(option_gateway, '_iv_cache', None),
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
         )
         long_strike = offset_strike(strikes, short_strike, -1)
         if long_strike is None:

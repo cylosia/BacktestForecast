@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import date
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
 from backtestforecast.billing.entitlements import ensure_forecasting_access
 from backtestforecast.config import Settings, get_settings
-from backtestforecast.db.session import get_db, get_readonly_db
+from backtestforecast.db.session import get_db
 from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.feature_flags import is_feature_enabled
 from backtestforecast.models import User
@@ -21,6 +22,7 @@ from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import (
     AnalysisDetailResponse,
+    AnalysisForecast,
     AnalysisListResponse,
     AnalysisSummaryResponse,
     AnalysisTopResult,
@@ -94,7 +96,7 @@ def create_analysis(
 def get_analysis(
     analysis_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisDetailResponse:
     """Get full analysis results (for polling and display)."""
@@ -111,6 +113,20 @@ def get_analysis(
         detail_kwargs = summary.model_dump()
         if analysis.status == "succeeded":
             integrity_warnings: list[str] = []
+            expected_as_of_date = analysis.trade_date
+            top_results = _validate_analysis_list(
+                AnalysisTopResult,
+                analysis.top_results_json,
+                field_name="top_results_json",
+                warnings=integrity_warnings,
+            )
+            top_results = _validate_top_result_forecast_contexts(
+                top_results,
+                symbol=analysis.symbol,
+                as_of_date=expected_as_of_date,
+                warnings=integrity_warnings,
+            )
+            expected_top_result = top_results[0] if top_results else None
             detail_kwargs.update(
                 regime=_validate_analysis_regime(analysis.regime_json, integrity_warnings),
                 landscape=_validate_analysis_list(
@@ -119,13 +135,19 @@ def get_analysis(
                     field_name="landscape_json",
                     warnings=integrity_warnings,
                 ),
-                top_results=_validate_analysis_list(
-                    AnalysisTopResult,
-                    analysis.top_results_json,
-                    field_name="top_results_json",
-                    warnings=integrity_warnings,
+                top_results=top_results,
+                forecast=_validate_analysis_forecast(
+                    analysis.forecast_json,
+                    integrity_warnings,
+                    expected_symbol=analysis.symbol,
+                    expected_strategy_type=expected_top_result.strategy_type if expected_top_result is not None else None,
+                    expected_horizon_days=(
+                        expected_top_result.max_holding_days or expected_top_result.target_dte
+                    )
+                    if expected_top_result is not None
+                    else None,
+                    expected_as_of_date=expected_as_of_date,
                 ),
-                forecast=_validate_analysis_forecast(analysis.forecast_json, integrity_warnings),
                 integrity_warnings=integrity_warnings,
             )
         return AnalysisDetailResponse(**detail_kwargs)
@@ -135,7 +157,7 @@ def get_analysis(
 def get_analysis_status(
     analysis_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisSummaryResponse:
     """Lightweight status endpoint for polling."""
@@ -189,7 +211,7 @@ def cancel_analysis(
 def get_analysis_remediation_actions(
     analysis_id: UUID,
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> RemediationActionsResponse:
     get_rate_limiter().check(
@@ -211,7 +233,7 @@ def get_analysis_remediation_actions(
 @router.get("", response_model=AnalysisListResponse)
 def list_analyses(
     user: User = Depends(get_current_user_readonly),
-    db: Session = Depends(get_readonly_db),
+    db: Session = Depends(get_db),
     limit: int = Query(default=10, ge=1, le=50),
     offset: Annotated[int, Query(ge=0, le=10000)] = 0,
     cursor: Annotated[str | None, Query(max_length=200, description="Opaque cursor from a previous response's next_cursor field. When provided, offset is ignored.")] = None,
@@ -262,14 +284,91 @@ def _validate_analysis_regime(regime_json: Any, warnings: list[str]) -> RegimeDe
         return None
 
 
-def _validate_analysis_forecast(forecast_json: Any, warnings: list[str]) -> dict[str, Any] | None:
+def _validate_analysis_forecast(
+    forecast_json: Any,
+    warnings: list[str],
+    *,
+    expected_symbol: str | None = None,
+    expected_strategy_type: str | None = None,
+    expected_horizon_days: int | None = None,
+    expected_as_of_date: date | None = None,
+) -> AnalysisForecast | None:
+    required_forecast_keys = {
+        "symbol",
+        "strategy_type",
+        "as_of_date",
+        "horizon_days",
+        "analog_count",
+        "expected_return_low_pct",
+        "expected_return_median_pct",
+        "expected_return_high_pct",
+        "positive_outcome_rate_pct",
+        "summary",
+        "disclaimer",
+    }
     if forecast_json is None:
         return None
-    if isinstance(forecast_json, dict):
-        return forecast_json
-    logger.warning("analysis.invalid_forecast_json", got_type=type(forecast_json).__name__)
-    warnings.append("Stored forecast data was corrupted and could not be shown.")
-    return None
+    if not isinstance(forecast_json, dict):
+        logger.warning("analysis.invalid_forecast_json", got_type=type(forecast_json).__name__)
+        warnings.append("Stored forecast data was corrupted and could not be shown.")
+        return None
+    has_no_results_message = "no_results_message" in forecast_json
+    has_full_forecast = required_forecast_keys.issubset(forecast_json)
+    if not (has_no_results_message or has_full_forecast):
+        logger.warning(
+            "analysis.invalid_forecast_json_missing_required_keys",
+            item_keys=list(forecast_json.keys()),
+        )
+        warnings.append("Stored forecast data was corrupted and could not be shown.")
+        return None
+    try:
+        forecast = AnalysisForecast.model_validate(forecast_json)
+    except ValidationError:
+        logger.warning(
+            "analysis.invalid_forecast_json",
+            got_type=type(forecast_json).__name__,
+            item_keys=list(forecast_json.keys()),
+            exc_info=True,
+        )
+        warnings.append("Stored forecast data was corrupted and could not be shown.")
+        return None
+    if expected_symbol is not None and forecast.symbol is not None and forecast.symbol != expected_symbol:
+        logger.warning(
+            "analysis.forecast_context_mismatch",
+            field="symbol",
+            expected=expected_symbol,
+            actual=forecast.symbol,
+        )
+        warnings.append("Stored forecast data did not match the analyzed symbol and was omitted.")
+        return None
+    if expected_strategy_type is not None and forecast.strategy_type != expected_strategy_type:
+        logger.warning(
+            "analysis.forecast_context_mismatch",
+            field="strategy_type",
+            expected=expected_strategy_type,
+            actual=forecast.strategy_type,
+        )
+        warnings.append("Stored forecast data did not match the analyzed strategy and was omitted.")
+        return None
+    if expected_horizon_days is not None and forecast.horizon_days is not None and forecast.horizon_days != expected_horizon_days:
+        logger.warning(
+            "analysis.forecast_context_mismatch",
+            field="horizon_days",
+            expected=expected_horizon_days,
+            actual=forecast.horizon_days,
+        )
+        warnings.append("Stored forecast data did not match the analyzed horizon and was omitted.")
+        return None
+    if expected_as_of_date is not None and forecast.as_of_date is not None and forecast.as_of_date != expected_as_of_date:
+        logger.warning(
+            "analysis.forecast_context_mismatch",
+            field="as_of_date",
+            expected=expected_as_of_date.isoformat(),
+            actual=forecast.as_of_date.isoformat(),
+        )
+        warnings.append("Stored forecast data did not match the analyzed date and was omitted.")
+        return None
+    return forecast
 
 
 def _validate_analysis_list(model_cls: type, payload: Any, *, field_name: str, warnings: list[str]) -> list[Any]:
@@ -297,3 +396,26 @@ def _validate_analysis_list(model_cls: type, payload: Any, *, field_name: str, w
         label = field_name.removesuffix("_json").replace("_", " ")
         warnings.append(f"{dropped_items} stored {label} item(s) were corrupted and were omitted.")
     return validated
+
+
+def _validate_top_result_forecast_contexts(
+    top_results: list[AnalysisTopResult],
+    *,
+    symbol: str,
+    as_of_date: date | None,
+    warnings: list[str],
+) -> list[AnalysisTopResult]:
+    for result in top_results:
+        if result.forecast is None:
+            continue
+        expected_horizon_days = result.max_holding_days or result.target_dte
+        normalized = _validate_analysis_forecast(
+            result.forecast.model_dump(mode="json"),
+            warnings,
+            expected_symbol=symbol,
+            expected_strategy_type=result.strategy_type,
+            expected_horizon_days=expected_horizon_days,
+            expected_as_of_date=as_of_date,
+        )
+        result.forecast = normalized
+    return top_results

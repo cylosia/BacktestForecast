@@ -137,9 +137,9 @@ def test_to_decimal_returns_none_for_nan_with_allow_infinite():
 
 
 def test_to_decimal_returns_none_for_infinity_when_allowed():
-    assert to_decimal(float("inf"), allow_infinite=True) is None
-    assert to_decimal(float("-inf"), allow_infinite=True) is None
-    assert to_decimal(Decimal("Infinity"), allow_infinite=True) is None
+    assert to_decimal(float("inf"), allow_infinite=True) == Decimal("Infinity")
+    assert to_decimal(float("-inf"), allow_infinite=True) == Decimal("-Infinity")
+    assert to_decimal(Decimal("Infinity"), allow_infinite=True) == Decimal("Infinity")
 
 
 def test_to_decimal_raises_for_infinity_when_not_allowed():

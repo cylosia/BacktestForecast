@@ -22,7 +22,11 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backtestforecast.backtests.strategies.registry import BEARISH_STRATEGIES, STRATEGY_REGISTRY
+from backtestforecast.backtests.strategies.registry import (
+    BEARISH_STRATEGIES,
+    NEUTRAL_STRATEGIES,
+    STRATEGY_REGISTRY,
+)
 from backtestforecast.errors import (
     ConfigurationError,
     ConflictError,
@@ -30,7 +34,12 @@ from backtestforecast.errors import (
     NotFoundError,
     QuotaExceededError,
 )
-from backtestforecast.pipeline.scoring import compute_backtest_score
+from backtestforecast.pipeline.scoring import (
+    apply_support_multiplier,
+    compute_backtest_score,
+    finite_drawdown_pct,
+    finite_metric_value,
+)
 from backtestforecast.schemas.json_shapes import (
     _REGIME_REQUIRED_KEYS,
     validate_json_shape,
@@ -60,6 +69,7 @@ from backtestforecast.services.job_transitions import (
 )
 
 logger = structlog.get_logger("deep_analysis")
+_ANALYSIS_QUEUE = "analysis"
 
 _STAGE_ORDER = ["pending", "regime", "landscape", "deep_dive", "forecast"]
 
@@ -130,8 +140,10 @@ class LandscapeCell:
     strategy_type: str
     strategy_label: str
     target_dte: int
+    max_holding_days: int
     config_snapshot: dict[str, Any]
     trade_count: int = 0
+    decided_trades: int = 0
     win_rate: float = 0.0
     total_roi_pct: float = 0.0
     max_drawdown_pct: float = 0.0
@@ -147,6 +159,7 @@ class TopResult:
     strategy_type: str
     strategy_label: str
     target_dte: int
+    max_holding_days: int
     config_snapshot: dict[str, Any]
     summary: dict[str, Any]
     trades: list[dict[str, Any]]
@@ -206,7 +219,7 @@ class SymbolDeepAnalysisService:
                     model_name="SymbolAnalysis",
                     task_name="analysis.deep_symbol",
                     task_kwargs={"analysis_id": str(existing.id)},
-                    queue="research",
+                    queue=_ANALYSIS_QUEUE,
                     log_event="analysis",
                     logger=logger,
                 )
@@ -278,7 +291,7 @@ class SymbolDeepAnalysisService:
             job=analysis,
             task_name="analysis.deep_symbol",
             task_kwargs={"analysis_id": str(analysis.id)},
-            queue="research",
+            queue=_ANALYSIS_QUEUE,
             log_event="analysis",
             logger=dispatch_logger or logger,
             request_id=request_id,
@@ -400,6 +413,7 @@ class SymbolDeepAnalysisService:
                     "target_dte": cell.target_dte,
                     "config": cell.config_snapshot,
                     "trade_count": cell.trade_count,
+                    "decided_trades": cell.decided_trades,
                     "win_rate": cell.win_rate,
                     "total_roi_pct": cell.total_roi_pct,
                     "max_drawdown_pct": cell.max_drawdown_pct,
@@ -425,7 +439,7 @@ class SymbolDeepAnalysisService:
             seen_strategies: set[str] = set()
             top_candidates: list[LandscapeCell] = []
             for cell in landscape:
-                if cell.strategy_type not in seen_strategies and cell.score > 0:
+                if cell.strategy_type not in seen_strategies:
                     seen_strategies.add(cell.strategy_type)
                     top_candidates.append(cell)
                 if len(top_candidates) >= 10:
@@ -438,6 +452,7 @@ class SymbolDeepAnalysisService:
                     "strategy_type": r.strategy_type,
                     "strategy_label": r.strategy_label,
                     "target_dte": r.target_dte,
+                    "max_holding_days": r.max_holding_days,
                     "config": r.config_snapshot,
                     "summary": r.summary,
                     "trades": r.trades,
@@ -597,6 +612,7 @@ class SymbolDeepAnalysisService:
             )
             try:
                 target_dte = param_config["target_dte"]
+                max_holding_days = min(param_config.get("max_holding_days", target_dte), target_dte)
                 overrides = param_config.get("strategy_overrides")
                 summary = self.executor.run_quick_backtest(
                     symbol=symbol,
@@ -609,16 +625,25 @@ class SymbolDeepAnalysisService:
                 if summary is None:
                     return None
                 trade_count = summary.get("trade_count", 0)
-                win_rate = summary.get("win_rate", 0.0)
-                roi = summary.get("total_roi_pct", 0.0)
-                drawdown = min(summary.get("max_drawdown_pct", 50.0), 100.0)
+                if trade_count <= 0:
+                    return None
+                decided_trades = summary.get("decided_trades", trade_count)
+                win_rate = finite_metric_value(summary.get("win_rate", 0.0))
+                roi = finite_metric_value(summary.get("total_roi_pct", 0.0))
+                drawdown = finite_drawdown_pct(summary.get("max_drawdown_pct", 50.0))
                 score = compute_backtest_score(summary)
                 return LandscapeCell(
                     strategy_type=strategy_type,
                     strategy_label=label,
                     target_dte=target_dte,
-                    config_snapshot={"target_dte": target_dte, "strategy_overrides": overrides},
+                    max_holding_days=max_holding_days,
+                    config_snapshot={
+                        "target_dte": target_dte,
+                        "max_holding_days": max_holding_days,
+                        "strategy_overrides": overrides,
+                    },
                     trade_count=trade_count,
+                    decided_trades=decided_trades,
                     win_rate=win_rate,
                     total_roi_pct=roi,
                     max_drawdown_pct=drawdown,
@@ -719,7 +744,6 @@ class SymbolDeepAnalysisService:
             if full is None or full.get("trade_count", 0) == 0:
                 continue
 
-            roi = full.get("total_roi_pct", 0.0)
             score = compute_backtest_score(full)
 
             forecast: dict[str, Any] = {}
@@ -728,23 +752,27 @@ class SymbolDeepAnalysisService:
                     f = self.forecaster.get_forecast(
                         symbol=symbol,
                         strategy_type=cell.strategy_type,
-                        horizon_days=cell.target_dte,
+                        horizon_days=min(cell.max_holding_days, cell.target_dte),
                         as_of_date=trade_date,
                     )
                     if f:
                         forecast = f
                         median_return = f.get("expected_return_median_pct", 0)
-                        forecast_supports = float(median_return) > 0
+                        forecast_supports = False
                         if cell.strategy_type in BEARISH_STRATEGIES:
                             forecast_supports = float(median_return) < 0
-                        if roi > 0 and float(median_return) != 0 and forecast_supports:
-                            score *= 1.2
-                        positive_rate = f.get("positive_outcome_rate_pct") or 50
-                        effective_rate = float(positive_rate)
-                        if cell.strategy_type in BEARISH_STRATEGIES:
-                            effective_rate = 100.0 - effective_rate
-                        if effective_rate > 60:
-                            score *= 1.0 + (effective_rate - 60) / 200.0
+                        elif cell.strategy_type not in NEUTRAL_STRATEGIES:
+                            forecast_supports = float(median_return) > 0
+                        if float(median_return) != 0 and forecast_supports:
+                            score = apply_support_multiplier(score, 1.2)
+                        positive_rate = f.get("positive_outcome_rate_pct")
+                        if positive_rate is not None and cell.strategy_type not in NEUTRAL_STRATEGIES:
+                            effective_rate = float(positive_rate)
+                            if effective_rate > 60:
+                                score = apply_support_multiplier(
+                                    score,
+                                    1.0 + (effective_rate - 60) / 200.0,
+                                )
                 except Exception:
                     logger.warning(
                         "deep_analysis.candidate_forecast_failed",
@@ -758,6 +786,7 @@ class SymbolDeepAnalysisService:
                     strategy_type=cell.strategy_type,
                     strategy_label=cell.strategy_label,
                     target_dte=cell.target_dte,
+                    max_holding_days=cell.max_holding_days,
                     config_snapshot=cell.config_snapshot,
                     summary=full,
                     trades=full.get("trades", [])[:50],

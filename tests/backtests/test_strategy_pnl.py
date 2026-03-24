@@ -47,6 +47,10 @@ class SimpleGateway:
         return {}
 
 
+def _assert_money_close(actual, expected: float, tolerance: float = 0.01) -> None:
+    assert abs(float(actual) - expected) < tolerance
+
+
 class TestLongCallPnl:
     """Hand-verified P&L for a long call.
 
@@ -61,7 +65,7 @@ class TestLongCallPnl:
 
     def test_long_call_profitable_at_expiration(self):
         entry = date(2025, 4, 2)
-        expiration = date(2025, 4, 5)
+        expiration = date(2025, 4, 4)
         bars = [
             _bar(date(2025, 4, 1), 99),
             _bar(entry, 100),
@@ -86,7 +90,7 @@ class TestLongCallPnl:
                 symbol="AAPL",
                 strategy_type="long_call",
                 start_date=date(2025, 4, 1),
-                end_date=date(2025, 4, 3),
+                end_date=expiration,
                 target_dte=30,
                 dte_tolerance_days=30,
                 max_holding_days=30,
@@ -110,14 +114,14 @@ class TestLongCallPnl:
         expected_comm = commission * trade.quantity * 2
         expected_net = expected_gross - expected_comm
 
-        assert abs(trade.gross_pnl - expected_gross) < 0.01
-        assert abs(trade.total_commissions - expected_comm) < 0.01
-        assert abs(trade.net_pnl - expected_net) < 0.01
+        _assert_money_close(trade.gross_pnl, expected_gross)
+        _assert_money_close(trade.total_commissions, expected_comm)
+        _assert_money_close(trade.net_pnl, expected_net)
 
     def test_long_call_expires_worthless(self):
         """Underlying stays below strike - call expires worthless, full premium lost."""
         entry = date(2025, 4, 2)
-        expiration = date(2025, 4, 5)
+        expiration = date(2025, 4, 4)
         bars = [
             _bar(date(2025, 4, 1), 99),
             _bar(entry, 100),
@@ -142,7 +146,7 @@ class TestLongCallPnl:
                 symbol="AAPL",
                 strategy_type="long_call",
                 start_date=date(2025, 4, 1),
-                end_date=date(2025, 4, 3),
+                end_date=expiration,
                 target_dte=30,
                 dte_tolerance_days=30,
                 max_holding_days=30,
@@ -159,7 +163,7 @@ class TestLongCallPnl:
         assert result.summary.trade_count == 1
         trade = result.trades[0]
         expected_gross = -3.0 * 100 * trade.quantity
-        assert abs(trade.gross_pnl - expected_gross) < 0.01
+        _assert_money_close(trade.gross_pnl, expected_gross)
         assert trade.net_pnl < 0
 
 
@@ -177,7 +181,7 @@ class TestLongPutPnl:
 
     def test_long_put_profitable_at_expiration(self):
         entry = date(2025, 4, 2)
-        expiration = date(2025, 4, 5)
+        expiration = date(2025, 4, 4)
         bars = [
             _bar(date(2025, 4, 1), 101),
             _bar(entry, 100),
@@ -202,7 +206,7 @@ class TestLongPutPnl:
                 symbol="AAPL",
                 strategy_type="long_put",
                 start_date=date(2025, 4, 1),
-                end_date=date(2025, 4, 3),
+                end_date=expiration,
                 target_dte=30,
                 dte_tolerance_days=30,
                 max_holding_days=30,
@@ -225,14 +229,14 @@ class TestLongPutPnl:
         expected_comm = commission * trade.quantity * 2
         expected_net = expected_gross - expected_comm
 
-        assert abs(trade.gross_pnl - expected_gross) < 0.01
-        assert abs(trade.total_commissions - expected_comm) < 0.01
-        assert abs(trade.net_pnl - expected_net) < 0.01
+        _assert_money_close(trade.gross_pnl, expected_gross)
+        _assert_money_close(trade.total_commissions, expected_comm)
+        _assert_money_close(trade.net_pnl, expected_net)
 
     def test_long_put_expires_worthless(self):
         """Underlying rises above strike - put expires worthless, full premium lost."""
         entry = date(2025, 4, 2)
-        expiration = date(2025, 4, 5)
+        expiration = date(2025, 4, 4)
         bars = [
             _bar(date(2025, 4, 1), 99),
             _bar(entry, 100),
@@ -257,7 +261,7 @@ class TestLongPutPnl:
                 symbol="AAPL",
                 strategy_type="long_put",
                 start_date=date(2025, 4, 1),
-                end_date=date(2025, 4, 3),
+                end_date=expiration,
                 target_dte=30,
                 dte_tolerance_days=30,
                 max_holding_days=30,
@@ -274,5 +278,5 @@ class TestLongPutPnl:
         assert result.summary.trade_count == 1
         trade = result.trades[0]
         expected_gross = -2.50 * 100 * trade.quantity
-        assert abs(trade.gross_pnl - expected_gross) < 0.01
+        _assert_money_close(trade.gross_pnl, expected_gross)
         assert trade.net_pnl < 0

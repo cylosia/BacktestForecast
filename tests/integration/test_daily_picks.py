@@ -42,7 +42,7 @@ def _create_pipeline_run_with_picks(session, trade_date=None):
             close_price=Decimal("150.00"),
             target_dte=30,
             config_snapshot_json={"key": "value"},
-            summary_json={"win_rate": 65.0},
+            summary_json={"trade_count": 5, "decided_trades": 3, "win_rate": 65.0},
             forecast_json={"direction": "up"},
         )
         session.add(rec)
@@ -66,6 +66,7 @@ def test_daily_picks_returns_items(client, auth_headers, db_session):
     assert data["items"][0]["symbol"] == "AAPL"
     assert isinstance(data["items"][0]["regime_labels"], list)
     assert "bullish" in data["items"][0]["regime_labels"]
+    assert data["items"][0]["summary"]["decided_trades"] == 3
 
 
 def test_daily_picks_no_data(client, auth_headers, db_session):
@@ -218,3 +219,124 @@ def test_daily_picks_history_includes_error_code_when_pipeline_run_failed(client
     assert failed_items
     assert failed_items[0]["error_code"] == "pipeline_failed"
     assert failed_items[0]["error_message"] == "Upstream fetch timed out"
+
+
+def test_daily_picks_surfaces_integrity_warnings_and_omits_malformed_payloads(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    run = _create_pipeline_run_with_picks(db_session)
+
+    bad = DailyRecommendation(
+        pipeline_run_id=run.id,
+        trade_date=run.trade_date,
+        rank=99,
+        score=Decimal("0.1"),
+        symbol="NVDA",
+        strategy_type="long_call",
+        regime_labels=["bullish"],
+        close_price=Decimal("100.00"),
+        target_dte=30,
+        config_snapshot_json={},
+        summary_json="bad-summary",
+        forecast_json=["bad-forecast"],
+    )
+    db_session.add(bad)
+    db_session.commit()
+
+    resp = client.get("/v1/daily-picks", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    malformed_item = next(item for item in body["items"] if item["symbol"] == "NVDA")
+    assert malformed_item["summary"] is None
+    assert malformed_item["forecast"] is None
+    assert any("summary" in warning.lower() for warning in body["integrity_warnings"])
+    assert any("forecast" in warning.lower() for warning in body["integrity_warnings"])
+
+
+def test_daily_picks_omits_partial_forecast_payloads_that_missing_favorable_rate(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    run = _create_pipeline_run_with_picks(db_session)
+
+    partial = DailyRecommendation(
+        pipeline_run_id=run.id,
+        trade_date=run.trade_date,
+        rank=98,
+        score=Decimal("0.2"),
+        symbol="AMD",
+        strategy_type="long_call",
+        regime_labels=["bullish"],
+        close_price=Decimal("120.00"),
+        target_dte=21,
+        config_snapshot_json={},
+        summary_json={
+            "trade_count": 10,
+            "decided_trades": 9,
+            "win_rate": 60.0,
+            "total_roi_pct": 12.0,
+            "max_drawdown_pct": 6.0,
+            "total_net_pnl": 450.0,
+        },
+        forecast_json={
+            "expected_return_median_pct": 4.5,
+            "analog_count": 11,
+        },
+    )
+    db_session.add(partial)
+    db_session.commit()
+
+    resp = client.get("/v1/daily-picks", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    partial_item = next(item for item in body["items"] if item["symbol"] == "AMD")
+    assert partial_item["forecast"] is None
+    assert any("forecast" in warning.lower() for warning in body["integrity_warnings"])
+
+
+def test_daily_picks_omits_forecast_payloads_with_symbol_mismatch(client, auth_headers, db_session):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    run = _create_pipeline_run_with_picks(db_session)
+
+    mismatched = DailyRecommendation(
+        pipeline_run_id=run.id,
+        trade_date=run.trade_date,
+        rank=97,
+        score=Decimal("0.3"),
+        symbol="TSLA",
+        strategy_type="long_call",
+        regime_labels=["bullish"],
+        close_price=Decimal("200.00"),
+        target_dte=30,
+        config_snapshot_json={},
+        summary_json={
+            "trade_count": 10,
+            "decided_trades": 9,
+            "win_rate": 60.0,
+            "total_roi_pct": 12.0,
+            "max_drawdown_pct": 6.0,
+            "total_net_pnl": 450.0,
+        },
+        forecast_json={
+            "symbol": "QQQ",
+            "strategy_type": "long_call",
+            "as_of_date": str(run.trade_date),
+            "horizon_days": 30,
+            "expected_return_low_pct": -4.0,
+            "expected_return_median_pct": 5.0,
+            "expected_return_high_pct": 12.0,
+            "analog_count": 11,
+            "positive_outcome_rate_pct": 63.0,
+            "summary": "Mismatched forecast",
+            "disclaimer": "Probabilistic only.",
+        },
+    )
+    db_session.add(mismatched)
+    db_session.commit()
+
+    resp = client.get("/v1/daily-picks", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    item = next(item for item in body["items"] if item["symbol"] == "TSLA")
+    assert item["forecast"] is None
+    assert any("forecast" in warning.lower() for warning in body["integrity_warnings"])

@@ -67,7 +67,14 @@ class WheelStrategyBacktestEngine:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         if not sorted_bars:
             return BacktestExecutionResult(
-                summary=build_summary(float(config.account_size), float(config.account_size), [], [], risk_free_rate=config.risk_free_rate),
+                summary=build_summary(
+                    float(config.account_size),
+                    float(config.account_size),
+                    [],
+                    [],
+                    risk_free_rate=config.risk_free_rate,
+                    risk_free_rate_curve=config.risk_free_rate_curve,
+                ),
                 trades=[], equity_curve=[]
             )
 
@@ -508,6 +515,7 @@ class WheelStrategyBacktestEngine:
             trades=trades,
             equity_curve=equity_curve,
             risk_free_rate=config.risk_free_rate,
+            risk_free_rate_curve=config.risk_free_rate_curve,
             warnings=warnings,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
@@ -518,7 +526,7 @@ class WheelStrategyBacktestEngine:
         bar: DailyBar,
         bar_index: int,
         option_gateway: OptionDataGateway,
-        cash: float,
+        cash: float | Decimal,
         warnings: list[dict[str, Any]],
         warning_codes: set[str],
     ) -> OpenShortOptionPhase | None:
@@ -529,10 +537,15 @@ class WheelStrategyBacktestEngine:
             dte = (expiration - bar.trade_date).days
             overrides = get_overrides(config.strategy_overrides)
             strike = resolve_strike(
-                [contract.strike_price for contract in put_contracts], bar.close_price, "put",
-                overrides.short_put_strike, dte,
-                contracts=put_contracts, option_gateway=option_gateway,
+                [contract.strike_price for contract in put_contracts],
+                bar.close_price,
+                "put",
+                overrides.short_put_strike,
+                dte,
+                contracts=put_contracts,
+                option_gateway=option_gateway,
                 trade_date=bar.trade_date,
+                risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
             )
             contract = require_contract_for_strike(put_contracts, strike)
         except DataUnavailableError:
@@ -577,7 +590,7 @@ class WheelStrategyBacktestEngine:
         max_loss_per_unit = max((contract.strike_price - quote.mid_price) * 100.0, 0.0)
         risk_budget = float(config.account_size) * (float(config.risk_per_trade_pct) / 100.0)
         by_risk = int(risk_budget // max_loss_per_unit) if max_loss_per_unit > 0 else 0
-        by_cash = int(cash // total_cost_per_unit)
+        by_cash = int(float(cash) // total_cost_per_unit)
         quantity = max(0, min(by_risk, by_cash))
         if quantity <= 0:
             self._add_warning_once(
@@ -625,10 +638,15 @@ class WheelStrategyBacktestEngine:
             dte = (expiration - bar.trade_date).days
             overrides = get_overrides(config.strategy_overrides)
             strike = resolve_strike(
-                [contract.strike_price for contract in call_contracts], bar.close_price, "call",
-                overrides.short_call_strike, dte,
-                contracts=call_contracts, option_gateway=option_gateway,
+                [contract.strike_price for contract in call_contracts],
+                bar.close_price,
+                "call",
+                overrides.short_call_strike,
+                dte,
+                contracts=call_contracts,
+                option_gateway=option_gateway,
                 trade_date=bar.trade_date,
+                risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
             )
             contract = require_contract_for_strike(call_contracts, strike)
         except DataUnavailableError:

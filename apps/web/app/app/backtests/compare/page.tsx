@@ -9,6 +9,7 @@ import {
   formatDate,
   formatNumber,
   formatPercent,
+  formatRatio,
   strategyLabel,
   type NumericValue,
 } from "@/lib/backtests/format";
@@ -34,24 +35,34 @@ const GRID_COLS: Record<number, string> = {
 };
 
 function safeCurrency(v: unknown): string {
-  if (v == null) return "—";
+  if (v == null) return "-";
   const n = Number(v);
-  return Number.isFinite(n) ? formatCurrency(n) : "—";
+  return Number.isFinite(n) ? formatCurrency(n) : "-";
 }
 function safePercent(v: unknown): string {
-  if (v == null) return "—";
+  if (v == null) return "-";
   const n = Number(v);
-  return Number.isFinite(n) ? formatPercent(n) : "—";
+  return Number.isFinite(n) ? formatPercent(n) : "-";
 }
 function safeNum(v: unknown): string {
-  if (v == null) return "—";
+  if (v == null) return "-";
   const n = Number(v);
-  return Number.isFinite(n) ? formatNumber(n) : "—";
+  return Number.isFinite(n) ? formatNumber(n) : "-";
 }
 function safeRatio(v: unknown): string {
-  if (v == null) return "—";
-  const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(2) : "—";
+  if (v == null) return "-";
+  if (typeof v === "number" || typeof v === "string") {
+    return formatRatio(v);
+  }
+  return "-";
+}
+
+function renderRatioMetric(v: unknown): string {
+  if (v == null) return "-";
+  if (typeof v === "number" || typeof v === "string") {
+    return formatRatio(v);
+  }
+  return "-";
 }
 
 const METRIC_ROWS: Array<{
@@ -61,18 +72,19 @@ const METRIC_ROWS: Array<{
   higherIsBetter?: boolean;
 }> = [
   { label: "Trades", key: "trade_count", format: safeNum },
+  { label: "Decided trades", key: "decided_trades", format: safeNum },
   { label: "Win rate", key: "win_rate", format: safePercent, higherIsBetter: true },
   { label: "Total ROI", key: "total_roi_pct", format: safePercent, higherIsBetter: true },
   { label: "Net P&L", key: "total_net_pnl", format: safeCurrency, higherIsBetter: true },
   { label: "Max drawdown", key: "max_drawdown_pct", format: safePercent, higherIsBetter: false },
-  { label: "Sharpe ratio", key: "sharpe_ratio", format: safeRatio, higherIsBetter: true },
-  { label: "Sortino ratio", key: "sortino_ratio", format: safeRatio, higherIsBetter: true },
-  { label: "Profit factor", key: "profit_factor", format: safeRatio, higherIsBetter: true },
+  { label: "Sharpe ratio", key: "sharpe_ratio", format: renderRatioMetric, higherIsBetter: true },
+  { label: "Sortino ratio", key: "sortino_ratio", format: renderRatioMetric, higherIsBetter: true },
+  { label: "Profit factor", key: "profit_factor", format: renderRatioMetric, higherIsBetter: true },
   { label: "Expectancy", key: "expectancy", format: safeCurrency, higherIsBetter: true },
   { label: "CAGR", key: "cagr_pct", format: safePercent, higherIsBetter: true },
-  { label: "Payoff ratio", key: "payoff_ratio", format: safeRatio, higherIsBetter: true },
-  { label: "Calmar ratio", key: "calmar_ratio", format: safeRatio, higherIsBetter: true },
-  { label: "Recovery factor", key: "recovery_factor", format: safeRatio, higherIsBetter: true },
+  { label: "Payoff ratio", key: "payoff_ratio", format: renderRatioMetric, higherIsBetter: true },
+  { label: "Calmar ratio", key: "calmar_ratio", format: renderRatioMetric, higherIsBetter: true },
+  { label: "Recovery factor", key: "recovery_factor", format: renderRatioMetric, higherIsBetter: true },
   { label: "Max consec. wins", key: "max_consecutive_wins", format: safeNum },
   { label: "Max consec. losses", key: "max_consecutive_losses", format: safeNum },
   { label: "Avg win", key: "average_win_amount", format: safeCurrency, higherIsBetter: true },
@@ -83,6 +95,14 @@ const METRIC_ROWS: Array<{
   { label: "Starting equity", key: "starting_equity", format: safeCurrency },
   { label: "Ending equity", key: "ending_equity", format: safeCurrency, higherIsBetter: true },
 ];
+
+function renderWinRateEvidence(summary: BacktestSummaryResponse | null | undefined): string {
+  if (!summary) return "Win rate unavailable";
+  if (typeof summary.decided_trades === "number" && summary.decided_trades >= 0) {
+    return `${formatPercent(summary.win_rate)} win rate on ${formatNumber(summary.decided_trades)} decided trades`;
+  }
+  return `${formatPercent(summary.win_rate)} win rate`;
+}
 
 // max_drawdown_pct is stored as a positive magnitude (e.g. 5 means -5% drawdown),
 // so higherIsBetter: false correctly selects the smallest (best) drawdown.
@@ -146,6 +166,11 @@ export default async function ComparePage({
     const data = await compareBacktests(runIds);
     const runs = data.items;
     const partialDataMessages = getComparePartialDataMessages(data);
+    const curveModels = Array.from(new Set(runs.map((run) => run.risk_free_rate_model ?? "unknown")));
+    const curvePointRuns = runs.filter((run) => (run.risk_free_rate_curve_points?.length ?? 0) > 0).length;
+    const partialCurveWarnings = runs.reduce((count, run) => (
+      count + (run.warnings?.some((warning) => warning.code === "risk_free_rate_curve_partial") ? 1 : 0)
+    ), 0);
 
     if (runs.length < 2) {
       return (
@@ -218,18 +243,47 @@ export default async function ComparePage({
                   </Link>
                 </CardTitle>
                 <CardDescription>
-                  {formatDate(run.date_from)} – {formatDate(run.date_to)} · {run.target_dte} DTE
+                  {formatDate(run.date_from)} - {formatDate(run.date_to)}  -  {run.target_dte} DTE
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Account {formatCurrency(run.account_size)} · {formatPercent(run.risk_per_trade_pct)} risk ·{" "}
+                  Account {formatCurrency(run.account_size)}  -  {formatPercent(run.risk_per_trade_pct)} risk  - {" "}
                   {formatCurrency(run.commission_per_contract)} commission
                 </p>
               </CardContent>
             </Card>
           ))}
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Risk-free rate audit</CardTitle>
+            <CardDescription>
+              Review the rate model behind each run before comparing long-horizon Sharpe, Sortino, and pricing-sensitive results.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              Models present: {curveModels.join(", ")}. Persisted curve points are available for {curvePointRuns} of {runs.length} run(s).
+            </p>
+            {partialCurveWarnings > 0 ? (
+              <p>
+                {partialCurveWarnings} run(s) reported partial risk-free-rate curve reconstruction. Open the run detail page for the full warning and point list.
+              </p>
+            ) : null}
+            <div className={`grid gap-4 ${GRID_COLS[runs.length] ?? "md:grid-cols-2 xl:grid-cols-4"}`}>
+              {runs.map((run) => (
+                <div key={`${run.id}-risk-free`} className="rounded-xl border border-border/70 p-4">
+                  <p className="font-medium">{runLabel(run)}</p>
+                  <p className="mt-2">Model: {run.risk_free_rate_model ?? "unknown"}</p>
+                  <p>Anchor/default rate: {formatPercent(run.risk_free_rate)}</p>
+                  <p>Curve points: {run.risk_free_rate_curve_points?.length ?? 0}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Metrics comparison table */}
         <Card>
@@ -305,7 +359,7 @@ export default async function ComparePage({
                   </div>
                   <p className="mt-2 text-2xl font-semibold tracking-tight">{safeNum(run.summary?.trade_count)} trades</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {formatPercent(run.summary?.win_rate)} win rate · Max DD {formatPercent(run.summary?.max_drawdown_pct)}
+                    {renderWinRateEvidence(run.summary)}  -  Max DD {formatPercent(run.summary?.max_drawdown_pct)}
                   </p>
                 </div>
               ))}
@@ -339,3 +393,4 @@ export default async function ComparePage({
     );
   }
 }
+

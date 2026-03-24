@@ -3,7 +3,7 @@
 import bisect
 import math
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -258,6 +258,7 @@ class EntryRuleEvaluator:
                 target_dte=self.config.target_dte,
                 dte_tolerance_days=self.config.dte_tolerance_days,
                 risk_free_rate=self.config.risk_free_rate,
+                risk_free_rate_resolver=self.config.resolve_risk_free_rate,
                 dividend_yield=self.config.dividend_yield,
             )
         return self.iv_series_cache
@@ -279,12 +280,12 @@ def build_estimated_iv_series(
     target_dte: int,
     dte_tolerance_days: int,
     risk_free_rate: float = 0.045,
+    risk_free_rate_resolver: Callable[[date], float] | None = None,
     dividend_yield: float = 0.0,
     sample_interval: int = 1,
 ) -> list[float | None]:
     _SENTINEL = object()
     results: list[float | None] = []
-    last_iv: float | None = None
     last_index = len(bars) - 1
     iv_cache: dict[date, float | None | object] = {}
     for index, bar in enumerate(bars):
@@ -300,14 +301,13 @@ def build_estimated_iv_series(
                     target_dte=target_dte,
                     dte_tolerance_days=dte_tolerance_days,
                     risk_free_rate=risk_free_rate,
+                    risk_free_rate_resolver=risk_free_rate_resolver,
                     dividend_yield=dividend_yield,
                 )
                 iv_cache[bar.trade_date] = iv_value
-            if iv_value is not None:
-                last_iv = iv_value
-            results.append(iv_value if iv_value is not None else last_iv)
+            results.append(iv_value)
         else:
-            results.append(last_iv)
+            results.append(None)
     return results
 
 
@@ -318,6 +318,7 @@ def estimate_atm_iv_for_date(
     target_dte: int,
     dte_tolerance_days: int,
     risk_free_rate: float = 0.045,
+    risk_free_rate_resolver: Callable[[date], float] | None = None,
     dividend_yield: float = 0.0,
 ) -> float | None:
     calls = option_gateway.list_contracts(trade_date, "call", target_dte, dte_tolerance_days)
@@ -353,6 +354,7 @@ def estimate_atm_iv_for_date(
         return None
 
     dte = max((chosen_expiration - trade_date).days, 1)
+    current_risk_free_rate = risk_free_rate_resolver(trade_date) if risk_free_rate_resolver is not None else risk_free_rate
     estimates: list[float] = []
     for contract in (call_contract, put_contract):
         quote = option_gateway.get_quote(contract.ticker, trade_date)
@@ -368,7 +370,7 @@ def estimate_atm_iv_for_date(
             strike_price=contract.strike_price,
             time_to_expiry_years=dte / CALENDAR_DAYS_PER_YEAR,
             option_type=option_type,
-            risk_free_rate=risk_free_rate,
+            risk_free_rate=current_risk_free_rate,
             dividend_yield=dividend_yield,
         )
         if iv is not None:

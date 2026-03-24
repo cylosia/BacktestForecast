@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 
 from backtestforecast.backtests.summary import build_summary
-from backtestforecast.backtests.types import EquityPointResult, TradeResult
+from backtestforecast.backtests.types import EquityPointResult, RiskFreeRateCurve, TradeResult
 
 
 def _trade(net_pnl: float, *, day_offset: int = 0) -> TradeResult:
@@ -65,7 +65,7 @@ class TestProfitFactor:
         trades = [_trade(100.0), _trade(200.0)]
         curve = _equity_curve([10000.0, 10100.0, 10300.0])
         s = build_summary(10000.0, 10300.0, trades, curve)
-        assert s.profit_factor is None
+        assert s.profit_factor == float("inf")
 
     def test_no_wins(self):
         trades = [_trade(-100.0), _trade(-50.0)]
@@ -87,7 +87,7 @@ class TestPayoffRatio:
         trades = [_trade(100.0)]
         curve = _equity_curve([10000.0, 10100.0])
         s = build_summary(10000.0, 10100.0, trades, curve)
-        assert s.payoff_ratio is None
+        assert s.payoff_ratio == float("inf")
 
 
 class TestExpectancy:
@@ -110,7 +110,7 @@ class TestExpectancy:
 class TestSharpeRatio:
     def test_known_curve(self):
         equities = [10000.0]
-        for _ in range(20):
+        for _ in range(40):
             equities.append(equities[-1] * 1.001)
         curve = _equity_curve(equities)
         trades = [_trade(10.0, day_offset=i * 3) for i in range(6)]
@@ -118,12 +118,51 @@ class TestSharpeRatio:
         assert s.sharpe_ratio is not None
         assert s.sharpe_ratio > 0
 
+    def test_date_aware_curve_changes_excess_return_math(self):
+        equities = [10000.0]
+        for _ in range(40):
+            equities.append(equities[-1] * 1.001)
+        curve = _equity_curve(equities)
+        trades = [_trade(10.0, day_offset=i * 3) for i in range(6)]
+        risk_free_curve = RiskFreeRateCurve(
+            default_rate=0.01,
+            dates=(date(2025, 1, 2), date(2025, 1, 20)),
+            rates=(0.01, 0.08),
+        )
+
+        date_aware = build_summary(
+            10000.0,
+            equities[-1],
+            trades,
+            curve,
+            risk_free_rate=0.01,
+            risk_free_rate_curve=risk_free_curve,
+        )
+        static = build_summary(10000.0, equities[-1], trades, curve, risk_free_rate=0.01)
+
+        assert date_aware.sharpe_ratio is not None
+        assert static.sharpe_ratio is not None
+        assert date_aware.sharpe_ratio != static.sharpe_ratio
+
+    def test_curve_uses_default_rate_before_first_observed_treasury_point(self):
+        risk_free_curve = RiskFreeRateCurve(
+            default_rate=0.01,
+            dates=(date(2025, 1, 10), date(2025, 1, 20)),
+            rates=(0.08, 0.09),
+        )
+
+        assert risk_free_curve.rate_for(date(2025, 1, 5)) == 0.01
+        assert risk_free_curve.rate_for(date(2025, 1, 10)) == 0.08
+        assert risk_free_curve.rate_for(date(2025, 1, 25)) == 0.09
+
     def test_too_few_trades(self):
-        equities = [10000.0, 10050.0, 10100.0]
+        equities = [10000.0]
+        for _ in range(40):
+            equities.append(equities[-1] * 1.001)
         curve = _equity_curve(equities)
         trades = [_trade(100.0)]
-        s = build_summary(10000.0, 10100.0, trades, curve)
-        assert s.sharpe_ratio is None
+        s = build_summary(10000.0, equities[-1], trades, curve, risk_free_rate=0.0)
+        assert s.sharpe_ratio is not None
 
     def test_flat_curve(self):
         equities = [10000.0] * 10
@@ -132,11 +171,25 @@ class TestSharpeRatio:
         s = build_summary(10000.0, 10000.0, trades, curve, risk_free_rate=0.0)
         assert s.sharpe_ratio is None
 
+    def test_non_positive_equity_suppresses_ratios(self):
+        equities = [10000.0] * 20 + [5000.0, 1000.0, 0.0]
+        curve = _equity_curve(equities)
+        trades = [_trade(10.0, day_offset=i * 3) for i in range(6)]
+        warnings: list[dict[str, str]] = []
+        s = build_summary(10000.0, 0.0, trades, curve, risk_free_rate=0.0, warnings=warnings)
+        assert s.sharpe_ratio is None
+        assert s.sortino_ratio is None
+        assert any(w["code"] == "ratios_non_positive_equity" for w in warnings)
+
 
 class TestSortinoRatio:
     def test_asymmetric_returns(self):
-        equities = [10000.0, 10100.0, 10050.0, 10150.0, 10100.0, 10200.0,
-                     10180.0, 10280.0, 10250.0, 10350.0, 10320.0]
+        equities = [10000.0]
+        pattern = [10100.0, 10050.0, 10150.0, 10100.0, 10200.0, 10180.0, 10280.0, 10250.0, 10350.0, 10320.0]
+        while len(equities) < 35:
+            base = equities[-1] - 10000.0
+            equities.extend([10000.0 + base + (value - 10000.0) for value in pattern])
+        equities = equities[:35]
         curve = _equity_curve(equities)
         trades = [_trade(30.0, day_offset=i * 2) for i in range(6)]
         s = build_summary(10000.0, equities[-1], trades, curve, risk_free_rate=0.0)
@@ -256,16 +309,35 @@ class TestEdgeCases:
         trades = [_trade(100.0)]
         curve = _equity_curve([10000.0, 10100.0])
         s = build_summary(10000.0, 10100.0, trades, curve)
-        assert s.profit_factor is None
-        assert s.payoff_ratio is None
+        assert s.profit_factor == float("inf")
+        assert s.payoff_ratio == float("inf")
         assert s.expectancy == 100.0
         assert s.sharpe_ratio is None
         assert s.max_consecutive_wins == 1
         assert s.max_consecutive_losses == 0
 
+    def test_all_break_even_trades_emit_explicit_warning(self):
+        trades = [_trade(0.0), _trade(0.0), _trade(0.0)]
+        curve = _equity_curve([10000.0, 10000.0, 10000.0, 10000.0])
+        warnings: list[dict[str, str]] = []
+        s = build_summary(10000.0, 10000.0, trades, curve, warnings=warnings)
+
+        assert s.win_rate == 0.0
+        assert any(w["code"] == "all_trades_break_even" for w in warnings)
+
+    def test_low_turnover_equity_curve_can_still_report_ratios(self):
+        equities = [10000.0]
+        for step in range(45):
+            delta = 1.002 if step % 4 != 0 else 0.999
+            equities.append(equities[-1] * delta)
+        curve = _equity_curve(equities)
+        trades = [_trade(250.0)]
+        s = build_summary(10000.0, equities[-1], trades, curve, risk_free_rate=0.0)
+        assert s.sharpe_ratio is not None
+
     def test_risk_free_rate_flows_through(self):
         equities = [10000.0]
-        for _ in range(20):
+        for _ in range(40):
             equities.append(equities[-1] * 1.002)
         curve = _equity_curve(equities)
         trades = [_trade(10.0, day_offset=i * 3) for i in range(6)]
@@ -295,7 +367,7 @@ class TestRecoveryFactorMultiPeak:
             10800.0,  # peak 2
             10200.0,  # valley 2 (dd = 600 from peak 10800)
             11000.0,  # peak 3 (new high)
-            10300.0,  # valley 3 (dd = 700 from peak 11000) â† deepest
+            10300.0,  # valley 3 (dd = 700 from peak 11000) <- deepest
             10900.0,  # recovery
             11200.0,  # new peak 4
             11000.0,  # minor dip
@@ -414,9 +486,10 @@ class TestCagrWarningEmitted:
         warnings: list[dict[str, str]] = []
         build_summary(10000.0, equities[-1], [], curve, warnings=warnings)
 
-        assert len(warnings) == 1, f"Expected 1 warning, got {len(warnings)}"
-        assert warnings[0]["code"] == "cagr_insufficient_duration"
-        assert "60" in warnings[0]["message"]
+        codes = {warning["code"] for warning in warnings}
+        assert "cagr_insufficient_duration" in codes
+        cagr_warning = next(warning for warning in warnings if warning["code"] == "cagr_insufficient_duration")
+        assert "60" in cagr_warning["message"]
 
     def test_long_curve_does_not_emit_warning(self):
         equities = [10000.0 + i * 5.0 for i in range(100)]
@@ -459,7 +532,7 @@ class TestSharpeSortinoConsistency:
         import math
 
         equities = [10000.0]
-        for _ in range(20):
+        for _ in range(40):
             equities.append(equities[-1] * 1.001)
         curve = _equity_curve(equities)
         trades = [_trade(10.0, day_offset=i * 3) for i in range(6)]
@@ -475,13 +548,16 @@ class TestSharpeSortinoConsistency:
 
         assert abs(s.sharpe_ratio - expected_sharpe) < 1e-10
 
-    def test_sortino_uses_population_denominator(self):
-        """Verify Sortino ratio matches manual computation using the count of
-        downside returns as the denominator (population convention)."""
+    def test_sortino_uses_n_minus_1_denominator(self):
+        """Verify Sortino ratio matches manual computation using N-1."""
         import math
 
-        equities = [10000.0, 10100.0, 10050.0, 10150.0, 10100.0, 10200.0,
-                     10180.0, 10280.0, 10250.0, 10350.0, 10320.0]
+        equities = [10000.0]
+        pattern = [10100.0, 10050.0, 10150.0, 10100.0, 10200.0, 10180.0, 10280.0, 10250.0, 10350.0, 10320.0]
+        while len(equities) < 35:
+            base = equities[-1] - 10000.0
+            equities.extend([10000.0 + base + (value - 10000.0) for value in pattern])
+        equities = equities[:35]
         curve = _equity_curve(equities)
         trades = [_trade(30.0, day_offset=i * 2) for i in range(6)]
 
@@ -490,16 +566,14 @@ class TestSharpeSortinoConsistency:
 
         excess = self._compute_excess_returns(equities)
         mean_excess = sum(excess) / len(excess)
-        downside_returns = [x for x in excess if x < 0]
-        downside_sq_sum = sum(x ** 2 for x in downside_returns)
-        down_dev = math.sqrt(downside_sq_sum / len(downside_returns))
+        downside_sq_sum = sum(x ** 2 for x in excess if x < 0)
+        down_dev = math.sqrt(downside_sq_sum / (len(excess) - 1))
         expected_sortino = mean_excess / down_dev * math.sqrt(252.0)
 
         assert abs(s.sortino_ratio - expected_sortino) < 1e-10
 
-    def test_sharpe_sample_sortino_population_denominator(self):
-        """Sharpe uses sample stddev (N-1), Sortino uses population convention
-        (count of downside returns) as denominator."""
+    def test_sharpe_sample_sortino_n_minus_1_denominator(self):
+        """Sharpe and Sortino both use N-1 denominators in this implementation."""
         import math
 
         equities = [10000.0]
@@ -525,12 +599,11 @@ class TestSharpeSortinoConsistency:
             )
 
         if s.sortino_ratio is not None:
-            downside_returns = [x for x in excess if x < 0]
-            downside_sq_sum = sum(x ** 2 for x in downside_returns)
-            down_dev = math.sqrt(downside_sq_sum / len(downside_returns))
+            downside_sq_sum = sum(x ** 2 for x in excess if x < 0)
+            down_dev = math.sqrt(downside_sq_sum / (n - 1))
             expected_sortino = mean_excess / down_dev * math.sqrt(252.0)
             assert abs(s.sortino_ratio - expected_sortino) < 1e-10, (
-                "Sortino must use population downside dev (N_down)"
+                "Sortino must use N-1 downside deviation"
             )
 
 
@@ -562,7 +635,8 @@ class TestNanInEquityCurve:
         trades = [_trade(200.0)]
         s = build_summary(10000.0, 10200.0, trades, curve_with_nan)
 
-        assert math.isfinite(s.max_drawdown_pct) or s.max_drawdown_pct != s.max_drawdown_pct
+        assert math.isfinite(s.max_drawdown_pct)
+        assert s.max_drawdown_pct == 2.857142857142857
         assert s.total_net_pnl == 200.0
 
 

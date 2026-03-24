@@ -90,11 +90,13 @@ def get_worker_db() -> Generator[Session, None, None]:
     db = create_worker_session()
     try:
         yield db
-    except Exception:
-        db.rollback()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
         raise
     finally:
-        db.close()
+        with suppress(Exception):
+            db.close()
 
 
 @lru_cache
@@ -135,11 +137,13 @@ def get_readonly_db() -> Generator[Session, None, None]:
     db = create_readonly_session()
     try:
         yield db
-    except Exception:
-        db.rollback()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
         raise
     finally:
-        db.close()
+        with suppress(Exception):
+            db.close()
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -166,11 +170,13 @@ def get_db() -> Generator[Session, None, None]:
                 deleted=len(db.deleted),
             )
             db.rollback()
-    except Exception:
-        db.rollback()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
         raise
     finally:
-        db.close()
+        with suppress(Exception):
+            db.close()
 
 
 def ping_database() -> None:

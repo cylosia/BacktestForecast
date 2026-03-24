@@ -41,6 +41,7 @@ def test_score_adjustment_does_not_compound() -> None:
             regime=regime,
             close_price=100.0,
             target_dte=30,
+            max_holding_days=30,
             config_snapshot={},
             summary=summary,
             trades_json=[],
@@ -92,3 +93,235 @@ def test_score_adjustment_does_not_compound() -> None:
         )
     finally:
         executor.shutdown(wait=True)
+
+
+def test_stage5_forecast_uses_max_holding_days_cap() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import MagicMock
+
+    from backtestforecast.pipeline.regime import Regime, RegimeSnapshot
+    from backtestforecast.pipeline.service import FullBacktestResult, NightlyPipelineService
+
+    regime = RegimeSnapshot(
+        symbol="TEST",
+        close_price=100.0,
+        regimes=frozenset([Regime.NEUTRAL]),
+    )
+    captured: dict[str, int] = {}
+
+    class MockForecaster:
+        def get_forecast(self, *, symbol, strategy_type, horizon_days, as_of_date=None):
+            captured["horizon_days"] = horizon_days
+            return {
+                "expected_return_median_pct": 1.0,
+                "positive_outcome_rate_pct": 55.0,
+            }
+
+    service = NightlyPipelineService(
+        MagicMock(),
+        market_data_fetcher=MagicMock(),
+        backtest_executor=MagicMock(),
+        forecaster=MockForecaster(),
+    )
+    candidate = FullBacktestResult(
+        symbol="TEST",
+        strategy_type="long_call",
+        regime=regime,
+        close_price=100.0,
+        target_dte=45,
+        max_holding_days=14,
+        config_snapshot={"target_dte": 45, "max_holding_days": 14},
+        summary={"total_roi_pct": 3.0, "trade_count": 10},
+        trades_json=[],
+        equity_curve_json=[],
+        score=1.0,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        service._stage5_forecast_and_rank([candidate], date(2025, 6, 1), executor=executor)
+
+    assert captured["horizon_days"] == 14
+
+
+def test_stage5_neutral_strategy_ignores_directional_positive_rate_bonus() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import MagicMock
+
+    from backtestforecast.pipeline.regime import Regime, RegimeSnapshot
+    from backtestforecast.pipeline.service import FullBacktestResult, NightlyPipelineService
+
+    regime = RegimeSnapshot(
+        symbol="TEST",
+        close_price=100.0,
+        regimes=frozenset([Regime.NEUTRAL]),
+    )
+
+    class MockForecaster:
+        def get_forecast(self, *, symbol, strategy_type, horizon_days, as_of_date=None):
+            return {
+                "expected_return_median_pct": 4.0,
+                "positive_outcome_rate_pct": 90.0,
+            }
+
+    service = NightlyPipelineService(
+        MagicMock(),
+        market_data_fetcher=MagicMock(),
+        backtest_executor=MagicMock(),
+        forecaster=MockForecaster(),
+    )
+    candidate = FullBacktestResult(
+        symbol="TEST",
+        strategy_type="iron_condor",
+        regime=regime,
+        close_price=100.0,
+        target_dte=30,
+        max_holding_days=14,
+        config_snapshot={"target_dte": 30, "max_holding_days": 14},
+        summary={"total_roi_pct": 3.0, "trade_count": 10},
+        trades_json=[],
+        equity_curve_json=[],
+        score=1.0,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        ranked = service._stage5_forecast_and_rank([candidate], date(2025, 6, 1), executor=executor)
+
+    assert ranked[0].score == 1.0
+
+
+def test_stage5_bearish_strategy_uses_strategy_aware_positive_outcome_rate_directly() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import MagicMock
+
+    from backtestforecast.pipeline.regime import Regime, RegimeSnapshot
+    from backtestforecast.pipeline.service import FullBacktestResult, NightlyPipelineService
+
+    regime = RegimeSnapshot(
+        symbol="TEST",
+        close_price=100.0,
+        regimes=frozenset([Regime.BEARISH]),
+    )
+
+    class MockForecaster:
+        def __init__(self, positive_outcome_rate_pct: float) -> None:
+            self._rate = positive_outcome_rate_pct
+
+        def get_forecast(self, *, symbol, strategy_type, horizon_days, as_of_date=None):
+            return {
+                "expected_return_median_pct": -4.0,
+                "positive_outcome_rate_pct": self._rate,
+            }
+
+    def _run(rate: float) -> float:
+        service = NightlyPipelineService(
+            MagicMock(),
+            market_data_fetcher=MagicMock(),
+            backtest_executor=MagicMock(),
+            forecaster=MockForecaster(rate),
+        )
+        candidate = FullBacktestResult(
+            symbol="TEST",
+            strategy_type="bear_put_debit_spread",
+            regime=regime,
+            close_price=100.0,
+            target_dte=30,
+            max_holding_days=14,
+            config_snapshot={"target_dte": 30, "max_holding_days": 14},
+            summary={"total_roi_pct": 3.0, "trade_count": 10},
+            trades_json=[],
+            equity_curve_json=[],
+            score=1.0,
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            ranked = service._stage5_forecast_and_rank([candidate], date(2025, 6, 1), executor=executor)
+        return ranked[0].score
+
+    assert _run(80.0) > _run(40.0)
+
+
+def test_stage5_supportive_forecast_does_not_make_negative_score_more_negative() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import MagicMock
+
+    from backtestforecast.pipeline.regime import Regime, RegimeSnapshot
+    from backtestforecast.pipeline.service import FullBacktestResult, NightlyPipelineService
+
+    regime = RegimeSnapshot(
+        symbol="TEST",
+        close_price=100.0,
+        regimes=frozenset([Regime.BULLISH]),
+    )
+
+    class MockForecaster:
+        def get_forecast(self, *, symbol, strategy_type, horizon_days, as_of_date=None):
+            return {
+                "expected_return_median_pct": 4.0,
+                "positive_outcome_rate_pct": 80.0,
+            }
+
+    service = NightlyPipelineService(
+        MagicMock(),
+        market_data_fetcher=MagicMock(),
+        backtest_executor=MagicMock(),
+        forecaster=MockForecaster(),
+    )
+    candidate = FullBacktestResult(
+        symbol="TEST",
+        strategy_type="long_call",
+        regime=regime,
+        close_price=100.0,
+        target_dte=30,
+        max_holding_days=14,
+        config_snapshot={"target_dte": 30, "max_holding_days": 14},
+        summary={"total_roi_pct": 3.0, "trade_count": 10},
+        trades_json=[],
+        equity_curve_json=[],
+        score=-10.0,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        ranked = service._stage5_forecast_and_rank([candidate], date(2025, 6, 1), executor=executor)
+
+    assert ranked[0].score > -10.0
+
+
+def test_pipeline_stage3_selection_retains_non_positive_candidates_for_forecast_stage() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import MagicMock
+
+    from backtestforecast.pipeline.regime import Regime, RegimeSnapshot
+    from backtestforecast.pipeline.scoring import compute_backtest_score
+    from backtestforecast.pipeline.service import NightlyPipelineService, SymbolStrategyPair
+
+    regime = RegimeSnapshot(
+        symbol="TEST",
+        close_price=100.0,
+        regimes=frozenset([Regime.BULLISH]),
+    )
+    executor = MagicMock()
+    executor.run_quick_backtest.return_value = {
+        "trade_count": 8,
+        "decided_trades": 1,
+        "win_rate": 100.0,
+        "total_roi_pct": 2.0,
+        "total_net_pnl": 200.0,
+        "max_drawdown_pct": 40.0,
+        "sharpe_ratio": -1.0,
+    }
+    service = NightlyPipelineService(
+        MagicMock(),
+        market_data_fetcher=MagicMock(),
+        backtest_executor=executor,
+        forecaster=None,
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        results = service._stage3_quick_backtest(
+            [SymbolStrategyPair(symbol="TEST", strategy_type="long_call", regime=regime, close_price=100.0)],
+            date(2025, 6, 1),
+            executor=pool,
+        )
+
+    assert results
+    long_call_result = next(result for result in results if result.strategy_type == "long_call")
+    assert long_call_result.score == compute_backtest_score(executor.run_quick_backtest.return_value)

@@ -279,6 +279,7 @@ def resolve_strike(
     expiration_date: date | None = None,
     iv_cache: dict[tuple[str, date], float | None] | None = None,
     realized_vol: float | None = None,
+    risk_free_rate: float = 0.045,
 ) -> float:
     """Resolve a strike based on the selection config, or fall back to nearest OTM.
 
@@ -339,14 +340,35 @@ def resolve_strike(
                     iv = _estimate_iv_for_strike(
                         strike, contract_type, underlying_close, dte_days,
                         contracts, option_gateway, trade_date,
+                        risk_free_rate=risk_free_rate,
                         iv_cache=iv_cache,
                     )
                 if iv is not None:
-                    delta = _approx_bsm_delta(underlying_close, strike, dte_days, contract_type, vol=iv)
+                    delta = _approx_bsm_delta(
+                        underlying_close,
+                        strike,
+                        dte_days,
+                        contract_type,
+                        vol=iv,
+                        risk_free_rate=risk_free_rate,
+                    )
                 elif realized_vol is not None:
-                    delta = _approx_bsm_delta(underlying_close, strike, dte_days, contract_type, vol=realized_vol)
+                    delta = _approx_bsm_delta(
+                        underlying_close,
+                        strike,
+                        dte_days,
+                        contract_type,
+                        vol=realized_vol,
+                        risk_free_rate=risk_free_rate,
+                    )
                 else:
-                    delta = _approx_bsm_delta(underlying_close, strike, dte_days, contract_type)
+                    delta = _approx_bsm_delta(
+                        underlying_close,
+                        strike,
+                        dte_days,
+                        contract_type,
+                        risk_free_rate=risk_free_rate,
+                    )
 
             diff = abs(abs(delta) - target_delta)
             if diff < best_diff:

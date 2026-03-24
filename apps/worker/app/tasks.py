@@ -4,7 +4,7 @@ from contextlib import suppress
 from datetime import UTC
 from random import SystemRandom
 from typing import TYPE_CHECKING
-from uuid import UUID, uuid4
+from uuid import UUID
 
 if TYPE_CHECKING:
     from datetime import date
@@ -48,6 +48,7 @@ from backtestforecast.services.sweeps import SweepService
 
 logger = structlog.get_logger("worker.tasks")
 _retry_rng = SystemRandom()
+SessionLocal = create_worker_session
 
 
 @celery_app.task(name="maintenance.ping", ignore_result=True)
@@ -332,8 +333,9 @@ def _validate_task_ownership(session: Session, model_cls: type, obj_id: UUID, ex
     another worker already claimed it, the UPDATE affects zero rows and we
     treat this delivery as a duplicate.
 
-    Re-delivery after worker crash: if the stored task ID differs but the job
-    is still in a non-terminal state, allow the new delivery to claim it.
+    If the stored task ID differs, treat this delivery as superseded. Stale
+    claims must be cleared by the reaper/redispatch path before a new task may
+    take ownership.
     """
     from sqlalchemy import update
 
@@ -367,34 +369,14 @@ def _validate_task_ownership(session: Session, model_cls: type, obj_id: UUID, ex
         return True
     current_status = getattr(obj, "status", None)
     if current_status is not None and current_status not in _TERMINAL_STATUSES:
-        nested = session.begin_nested()
-        result = session.execute(
-            update(model_cls)
-            .where(
-                model_cls.id == obj_id,
-                model_cls.celery_task_id == stored,
-                model_cls.status.notin_(_TERMINAL_STATUSES),
-            )
-            .values(celery_task_id=expected_task_id)
-            .returning(model_cls.id)
+        logger.info(
+            "validate_task_ownership.superseded_delivery",
+            model=model_cls.__name__,
+            obj_id=str(obj_id),
+            stored_task_id=stored,
+            delivery_task_id=expected_task_id,
+            status=current_status,
         )
-        claimed = result.fetchone() is not None
-        try:
-            nested.commit()
-        except Exception:
-            nested.rollback()
-            logger.warning("validate_task_ownership.redelivery_commit_failed", model=model_cls.__name__, obj_id=str(obj_id), exc_info=True)
-            return False
-        if claimed:
-            logger.info(
-                "validate_task_ownership.redelivery_claimed",
-                model=model_cls.__name__,
-                obj_id=str(obj_id),
-                old_task_id=stored,
-                new_task_id=expected_task_id,
-            )
-            session.refresh(obj)
-            return True
     return False
 
 
@@ -1229,9 +1211,6 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
 
 @celery_app.task(name="scans.refresh_prioritized", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=300, time_limit=360)
 def refresh_prioritized_scans(self) -> dict[str, int]:
-    from sqlalchemy import update as sa_update
-
-    from backtestforecast.models import ScannerJob
     from backtestforecast.utils import create_cache_redis
 
     redis = create_cache_redis(decode_responses=False)
@@ -1242,47 +1221,20 @@ def refresh_prioritized_scans(self) -> dict[str, int]:
 
     try:
         dispatched = 0
+        pending_recovery = 0
         with create_worker_session() as session:
             service = ScanService(session)
             try:
-                jobs = service.create_scheduled_refresh_jobs(limit=25)
-                committed_jobs = list(jobs)
-
-                for job in committed_jobs:
-                    try:
-                        result = celery_app.send_task("scans.run_job", kwargs={"job_id": str(job.id)})
-                        session.execute(
-                            sa_update(ScannerJob)
-                            .where(ScannerJob.id == job.id)
-                            .values(celery_task_id=result.id)
-                        )
-                        session.commit()
-                        dispatched += 1
-                    except Exception:
-                        logger.exception("refresh.dispatch_failed", job_id=str(job.id))
-                        session.rollback()
-                        job_obj = session.get(ScannerJob, job.id)
-                        if job_obj is not None and job_obj.status == "queued":
-                            job_obj.status = "failed"
-                            job_obj.error_code = "enqueue_failed"
-                            job_obj.error_message = "Unable to dispatch scheduled refresh."
-                            try:
-                                session.commit()
-                                _publish_job_status_safe(
-                                    "scan",
-                                    job.id,
-                                    "failed",
-                                    metadata={"error_code": "enqueue_failed"},
-                                    log_event="scan.publish_status_failed",
-                                    job_id=str(job.id),
-                                )
-                            except Exception:
-                                session.rollback()
+                dispatched, pending_recovery = service.create_and_dispatch_scheduled_refresh_jobs(
+                    limit=25,
+                    dispatch_logger=logger,
+                )
             finally:
                 _close_owned_resource(service, label="scans.refresh_prioritized.service")
 
         return {
             "scheduled_jobs": dispatched,
+            "pending_recovery": pending_recovery,
         }
     finally:
         with suppress(Exception):
@@ -1401,6 +1353,8 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
     redis = None
     lock = None
     lock_acquired = False
+    db_lock_session = None
+    db_lock_acquired = False
     try:
         redis = create_cache_redis()
         lock = redis.lock("bff:reaper:lock", timeout=300, blocking_timeout=0)
@@ -1409,9 +1363,30 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
             logger.info("reaper.skipped_locked")
             return {"skipped": 1}
     except Exception:  # Intentional: if Redis is down we cannot acquire the lock, but the
-        # reaper should not crash - it will retry on the next scheduled beat.
+        # reaper should still attempt a database advisory lock so recovery
+        # work does not halt behind a cache-tier outage.
         logger.warning("reaper.lock_unavailable", exc_info=True)
-        return {"skipped": 1, "reason": "lock_unavailable"}
+        try:
+            from sqlalchemy import text
+
+            db_lock_session = create_worker_session()
+            bind = db_lock_session.get_bind()
+            if bind is not None and bind.dialect.name == "postgresql":
+                db_lock_acquired = bool(
+                    db_lock_session.scalar(
+                        text("SELECT pg_try_advisory_lock(('x' || left(md5(:key), 16))::bit(64)::bigint)"),
+                        {"key": "bff:reaper:lock"},
+                    )
+                )
+                if not db_lock_acquired:
+                    logger.info("reaper.skipped_db_locked")
+                    return {"skipped": 1, "reason": "db_lock_unavailable"}
+            else:
+                db_lock_acquired = True
+                logger.warning("reaper.lock_fallback_local", dialect=getattr(bind.dialect, "name", "unknown") if bind is not None else "unknown")
+        except Exception:
+            logger.warning("reaper.db_lock_unavailable", exc_info=True)
+            return {"skipped": 1, "reason": "lock_unavailable"}
 
     import time as _time
     _reaper_start = _time.monotonic()
@@ -1422,6 +1397,19 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
         if lock is not None and lock_acquired:
             with suppress(Exception):
                 lock.release()
+        if db_lock_session is not None:
+            with suppress(Exception):
+                bind = db_lock_session.get_bind()
+                if db_lock_acquired and bind is not None and bind.dialect.name == "postgresql":
+                    from sqlalchemy import text
+
+                    db_lock_session.execute(
+                        text("SELECT pg_advisory_unlock(('x' || left(md5(:key), 16))::bit(64)::bigint)"),
+                        {"key": "bff:reaper:lock"},
+                    )
+                    db_lock_session.commit()
+            with suppress(Exception):
+                db_lock_session.close()
         if redis is not None:
             with suppress(Exception):
                 redis.close()
@@ -1450,17 +1438,20 @@ def _reap_queued_jobs(
     model_name: str,
     task_name: str,
     task_kwarg_key: str,
+    queue: str,
+    log_event: str,
     cutoff,
     counts: dict[str, int],
     counts_key: str,
 ) -> None:
     """Re-dispatch queued jobs with no celery_task_id older than *cutoff*."""
-    from sqlalchemy import select, update
+    from sqlalchemy import select
 
+    from apps.api.app.dispatch import DispatchResult, dispatch_celery_task
     from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL, ORPHAN_DETECTIONS_TOTAL
 
     stale_stmt = (
-        select(model_cls.id)
+        select(model_cls)
         .where(
             model_cls.status == "queued",
             model_cls.celery_task_id.is_(None),
@@ -1469,38 +1460,30 @@ def _reap_queued_jobs(
         .limit(50)
         .with_for_update(skip_locked=True)
     )
-    stale_ids = list(session.scalars(stale_stmt))
-    if stale_ids:
-        ORPHAN_DETECTIONS_TOTAL.labels(kind="queued_job", source="reaper_no_task_id", model=model_name).inc(len(stale_ids))
-    for job_id in stale_ids:
+    stale_jobs = list(session.scalars(stale_stmt))
+    if stale_jobs:
+        ORPHAN_DETECTIONS_TOTAL.labels(kind="queued_job", source="reaper_no_task_id", model=model_name).inc(len(stale_jobs))
+    for job in stale_jobs:
+        job_id = getattr(job, "id", None)
         try:
-            task_id = str(uuid4())
-            from datetime import datetime as _dt_reap
-            rows = session.execute(
-                update(model_cls)
-                .where(model_cls.id == job_id, model_cls.celery_task_id.is_(None))
-                .values(celery_task_id=task_id, updated_at=_dt_reap.now(UTC))
+            result = dispatch_celery_task(
+                db=session,
+                job=job,
+                task_name=task_name,
+                task_kwargs={task_kwarg_key: str(job_id)},
+                queue=queue,
+                log_event=log_event,
+                logger=logger,
             )
-            if rows.rowcount == 0:
-                session.rollback()
+            if result == DispatchResult.SKIPPED:
                 logger.info("reaper.already_dispatched", model=model_name, id=str(job_id))
                 continue
-            session.commit()
-            try:
-                celery_app.send_task(task_name, kwargs={task_kwarg_key: str(job_id)}, task_id=task_id)
-            except Exception:
-                session.execute(
-                    update(model_cls)
-                    .where(model_cls.id == job_id, model_cls.celery_task_id == task_id)
-                    .values(celery_task_id=None)
-                )
-                session.commit()
-                raise
-            JOBS_STUCK_REDISPATCHED_TOTAL.labels(model=model_name).inc()
+            if result in (DispatchResult.SENT, DispatchResult.ENQUEUE_FAILED):
+                JOBS_STUCK_REDISPATCHED_TOTAL.labels(model=model_name).inc()
         except Exception:
             session.rollback()
             logger.exception("reaper.redispatch_failed", model=model_name, id=str(job_id))
-    counts[counts_key] = len(stale_ids)
+    counts[counts_key] = len(stale_jobs)
 
 
 def _fail_stale_running_jobs(
@@ -1599,7 +1582,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
         _broker_r = _Redis.from_url(_gs().redis_url, decode_responses=True, socket_timeout=5)
         try:
-            for q_name in ("research", "exports", "maintenance", "pipeline"):
+            for q_name in ("backtests", "scans", "sweeps", "analysis", "research", "exports", "maintenance", "recovery", "pipeline"):
                 depth = _broker_r.llen(q_name)
                 QUEUE_DEPTH.labels(queue=q_name).set(depth)
         finally:
@@ -1630,7 +1613,25 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         try:
             with create_worker_session() as session:
                 try:
-                    _reap_queued_jobs(session, model_cls, model_name, task_name, kwarg_key, model_cutoff, counts, f"{model_name.lower()}_queued")
+                    queue_name = {
+                        "BacktestRun": "backtests",
+                        "ExportJob": "exports",
+                        "ScannerJob": "scans",
+                        "SymbolAnalysis": "analysis",
+                        "SweepJob": "sweeps",
+                    }[model_name]
+                    _reap_queued_jobs(
+                        session,
+                        model_cls,
+                        model_name,
+                        task_name,
+                        kwarg_key,
+                        queue_name,
+                        job_type,
+                        model_cutoff,
+                        counts,
+                        f"{model_name.lower()}_queued",
+                    )
                 except Exception:
                     logger.exception("reaper.model_reap_failed", model=model_name, phase="queued")
                     session.rollback()
@@ -1700,8 +1701,10 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
                     ORPHAN_DETECTIONS_TOTAL.labels(kind="queued_job", source="reaper_stale_claim", model=model_name).inc(len(orphan_rows))
                 recovered = 0
+                uncertain = 0
                 for row_id, stale_task_id, created_at in orphan_rows:
                     task_alive = False
+                    probe_uncertain = False
                     if stale_task_id:
                         try:
                             result_obj = celery_app.AsyncResult(stale_task_id)
@@ -1709,7 +1712,11 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                             if state in ("STARTED", "RETRY", "RECEIVED") or (state == "PENDING" and created_at > result_expires_cutoff):
                                 task_alive = True
                         except Exception:
-                            logger.debug("reaper.result_backend_probe_failed", task_id=stale_task_id, exc_info=True)
+                            probe_uncertain = True
+                            logger.warning("reaper.result_backend_probe_failed", task_id=stale_task_id, exc_info=True)
+                    if probe_uncertain:
+                        uncertain += 1
+                        continue
                     if not task_alive:
                         session.execute(
                             update(model_cls)
@@ -1719,7 +1726,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                         recovered += 1
                 if recovered > 0:
                     session.commit()
-                    logger.warning("reaper.orphan_recovery", model=model_name, count=recovered)
+                    logger.warning("reaper.orphan_recovery", model=model_name, count=recovered, uncertain=uncertain)
                 else:
                     session.rollback()
         except Exception:
@@ -1868,18 +1875,28 @@ def cleanup_outbox(self) -> dict:  # type: ignore[override]
     """Remove outbox messages older than 7 days (batched)."""
     from datetime import datetime, timedelta
 
-    from sqlalchemy import delete, select
+    from sqlalchemy import delete, func, select
 
     from backtestforecast.models import OutboxMessage
 
     cutoff = datetime.now(UTC) - timedelta(days=7)
     deleted = 0
+    preserved_pending = 0
     batch_size = 500
     with create_worker_session() as session:
+        preserved_pending = int(session.scalar(
+            select(func.count(OutboxMessage.id)).where(
+                OutboxMessage.created_at < cutoff,
+                OutboxMessage.status == "pending",
+            )
+        ) or 0)
         while True:
             batch_ids = list(session.scalars(
                 select(OutboxMessage.id)
-                .where(OutboxMessage.created_at < cutoff)
+                .where(
+                    OutboxMessage.created_at < cutoff,
+                    OutboxMessage.status.in_(("sent", "failed")),
+                )
                 .limit(batch_size)
             ))
             if not batch_ids:
@@ -1889,9 +1906,9 @@ def cleanup_outbox(self) -> dict:  # type: ignore[override]
             )
             deleted += result.rowcount
             session.commit()
-        logger.info("outbox.cleanup", deleted=deleted)
+        logger.info("outbox.cleanup", deleted=deleted, preserved_pending=preserved_pending)
     CELERY_TASKS_TOTAL.labels(task_name="maintenance.cleanup_outbox", status="succeeded").inc()
-    return {"deleted": deleted}
+    return {"deleted": deleted, "preserved_pending": preserved_pending}
 
 
 @celery_app.task(
@@ -1999,6 +2016,22 @@ _OUTBOX_TASK_ID_KWARG: dict[str, str] = {
     "sweeps.run": "job_id",
     "analysis.deep_symbol": "analysis_id",
 }
+
+
+def _resolve_outbox_task_id(session: Session, msg: OutboxMessage) -> str | None:
+    from backtestforecast import models
+
+    model_name = _OUTBOX_TASK_MODEL_MAP.get(msg.task_name)
+    if model_name is None or msg.correlation_id is None:
+        return None
+    model_cls = getattr(models, model_name, None)
+    if model_cls is None:
+        return None
+    job = session.get(model_cls, msg.correlation_id)
+    if job is None:
+        return None
+    task_id = getattr(job, "celery_task_id", None)
+    return task_id if isinstance(task_id, str) and task_id else None
 
 
 def _fail_outbox_correlated_job(session: Session, msg: OutboxMessage) -> None:
@@ -2116,10 +2149,16 @@ def poll_outbox(self, max_messages: int = 50) -> dict[str, int]:
         messages = list(session.scalars(stmt))
         for msg in messages:
             try:
+                from apps.api.app.dispatch import decode_outbox_task_kwargs
+
+                send_kwargs, persisted_task_id, headers = decode_outbox_task_kwargs(msg.task_kwargs_json)
+                task_id = _resolve_outbox_task_id(session, msg) or persisted_task_id
                 celery_app.send_task(
                     msg.task_name,
-                    kwargs=msg.task_kwargs_json,
+                    kwargs=send_kwargs,
                     queue=msg.queue,
+                    task_id=task_id,
+                    headers=headers,
                 )
                 from datetime import datetime as _dt_outbox
                 msg.status = "sent"

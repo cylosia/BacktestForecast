@@ -151,7 +151,12 @@ class TestSortinoDenominator:
     def test_sortino_uses_downside_count(self):
         from backtestforecast.backtests.summary import _compute_sharpe_sortino
 
-        equities = [10000, 10100, 10200, 10150, 10300, 10250, 10400, 10500, 10600, 10700]
+        equities = [
+            10000, 10100, 10200, 10150, 10300, 10250, 10400, 10500, 10600, 10700,
+            10650, 10800, 10750, 10900, 10820, 11000, 10920, 11100, 11050, 11200,
+            11100, 11300, 11220, 11400, 11320, 11500, 11420, 11600, 11550, 11700,
+            11620,
+        ]
         curve = [
             EquityPointResult(
                 trade_date=date(2024, 1, 1) + timedelta(days=i),

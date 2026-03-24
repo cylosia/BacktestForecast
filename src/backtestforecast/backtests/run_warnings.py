@@ -55,7 +55,7 @@ def build_user_warnings(
             warnings.append(
                 make_warning(
                     "historical_treasury_risk_free_rate",
-                    f"Sharpe and Sortino are using the average 3-month Treasury yield fetched from Massive for {request.start_date.isoformat()} through {request.end_date.isoformat()} ({resolved:.4f}).",
+                    f"Sharpe and Sortino are using a date-varying 3-month Treasury curve from Massive for {request.start_date.isoformat()} through {request.end_date.isoformat()} (anchor/default rate {resolved:.4f}).",
                     metadata={
                         "configured_risk_free_rate": configured_rfr,
                         "resolved_risk_free_rate": resolved,
@@ -69,7 +69,7 @@ def build_user_warnings(
             warnings.append(
                 make_warning(
                     "configured_fallback_risk_free_rate",
-                    f"Massive Treasury yields were unavailable for {request.start_date.isoformat()} through {request.end_date.isoformat()}, so Sharpe and Sortino are using the configured server risk-free rate ({configured_rfr:.4f}).",
+                    f"Massive Treasury yields were unavailable for {request.start_date.isoformat()} through {request.end_date.isoformat()}, so Sharpe and Sortino are using the configured server risk-free-rate anchor/default ({configured_rfr:.4f}).",
                     metadata={
                         "configured_risk_free_rate": configured_rfr,
                         "resolved_risk_free_rate": resolved,
@@ -83,7 +83,7 @@ def build_user_warnings(
             warnings.append(
                 make_warning(
                     "resolved_risk_free_rate_recorded",
-                    f"Sharpe and Sortino are using the resolved run risk-free rate recorded at creation time ({resolved:.4f}).",
+                    f"Sharpe and Sortino are using the resolved run risk-free-rate anchor recorded at creation time ({resolved:.4f}).",
                     metadata={
                         "configured_risk_free_rate": configured_rfr,
                         "resolved_risk_free_rate": resolved,

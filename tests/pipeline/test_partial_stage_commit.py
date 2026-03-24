@@ -48,6 +48,9 @@ class TestPartialStageCommit:
         mock_analysis = MagicMock()
         mock_analysis.id = analysis_id
         mock_analysis.symbol = "AAPL"
+        mock_analysis.user_id = uuid4()
+        mock_analysis.created_at = datetime(2025, 5, 31, 12, 0, 0)
+        mock_analysis.started_at = None
         mock_analysis.status = "queued"
         mock_analysis.stage = "pending"
         mock_analysis.strategies_tested = None
@@ -58,8 +61,22 @@ class TestPartialStageCommit:
         mock_analysis.top_results_json = None
         mock_analysis.forecast_json = None
 
-        session.scalar.return_value = mock_analysis
-        session.get.return_value = mock_analysis
+        mock_user = MagicMock()
+        mock_user.id = mock_analysis.user_id
+        mock_user.plan_tier = "pro"
+        mock_user.subscription_status = "active"
+        mock_user.subscription_current_period_end = None
+
+        session.scalar.side_effect = [mock_analysis, 0]
+
+        def get_side_effect(model, key):
+            if key == mock_analysis.user_id:
+                return mock_user
+            if key == analysis_id:
+                return mock_analysis
+            return None
+
+        session.get.side_effect = get_side_effect
 
         mock_regime = MagicMock()
         mock_regime.regimes = []
@@ -75,6 +92,7 @@ class TestPartialStageCommit:
 
         mock_policy = MagicMock()
         mock_policy.forecasting_access = True
+        mock_policy.tier.value = "pro"
 
         with patch.object(service, "_market_data") as mock_md, \
              patch("backtestforecast.pipeline.deep_analysis.classify_regime", return_value=mock_regime), \
@@ -110,6 +128,9 @@ class TestPartialStageCommit:
         mock_analysis = MagicMock()
         mock_analysis.id = analysis_id
         mock_analysis.symbol = "AAPL"
+        mock_analysis.user_id = uuid4()
+        mock_analysis.created_at = datetime(2025, 5, 31, 12, 0, 0)
+        mock_analysis.started_at = None
         mock_analysis.status = "queued"
         mock_analysis.stage = "pending"
         mock_analysis.strategies_tested = 0
@@ -120,8 +141,22 @@ class TestPartialStageCommit:
         mock_analysis.top_results_json = None
         mock_analysis.forecast_json = None
 
-        session.scalar.return_value = mock_analysis
-        session.get.return_value = mock_analysis
+        mock_user = MagicMock()
+        mock_user.id = mock_analysis.user_id
+        mock_user.plan_tier = "pro"
+        mock_user.subscription_status = "active"
+        mock_user.subscription_current_period_end = None
+
+        session.scalar.side_effect = [mock_analysis, 0]
+
+        def get_side_effect(model, key):
+            if key == mock_analysis.user_id:
+                return mock_user
+            if key == analysis_id:
+                return mock_analysis
+            return None
+
+        session.get.side_effect = get_side_effect
 
         mock_regime = MagicMock()
         mock_regime.regimes = []
@@ -148,17 +183,20 @@ class TestPartialStageCommit:
         mock_top_result.score = 1.0
 
         commit_count = 0
+        forecast_commit_failed = False
 
         def commit_side_effect():
-            nonlocal commit_count
+            nonlocal commit_count, forecast_commit_failed
             commit_count += 1
-            if mock_analysis.stage == "forecast":
+            if mock_analysis.stage == "forecast" and not forecast_commit_failed:
+                forecast_commit_failed = True
                 raise RuntimeError("Forecast computation failed")
 
         session.commit.side_effect = commit_side_effect
 
         mock_policy = MagicMock()
         mock_policy.forecasting_access = True
+        mock_policy.tier.value = "pro"
 
         with patch.object(service, "_market_data") as mock_md, \
              patch("backtestforecast.pipeline.deep_analysis.classify_regime", return_value=mock_regime), \
