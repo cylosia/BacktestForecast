@@ -10,6 +10,12 @@ import {
   validateCurrentUserResponse,
   validateDailyPicksResponse,
   validateMetaResponse,
+  validateMultiStepRunDetailResponse,
+  validateMultiStepRunListResponse,
+  validateMultiStepRunStatusResponse,
+  validateMultiSymbolRunDetailResponse,
+  validateMultiSymbolRunListResponse,
+  validateMultiSymbolRunStatusResponse,
   validatePipelineHistoryResponse,
   validateScannerJobListResponse,
   validateScannerJobResponse,
@@ -20,6 +26,14 @@ import {
   validateSweepResultListResponse,
 } from "@/lib/api/contracts";
 import { buildCursorPaginatedPath, buildPaginatedListPath } from "@/lib/api/pagination";
+import type {
+  MultiStepRunDetailResponse,
+  MultiStepRunListResponse,
+  MultiStepRunStatusResponse,
+  MultiSymbolRunDetailResponse,
+  MultiSymbolRunListResponse,
+  MultiSymbolRunStatusResponse,
+} from "@/lib/api/multi-workflow-types";
 import { validateTemplateListResponse } from "@/lib/templates/contracts";
 import type {
   AnalysisDetailResponse,
@@ -96,6 +110,66 @@ export const getBacktestRun = cache(async (runId: string): Promise<BacktestRunDe
     `/v1/backtests/${encodeURIComponent(runId)}`,
     token,
     validateBacktestRunDetailResponse,
+    { cache: "no-store" },
+  );
+});
+
+export const getMultiSymbolBacktestHistory = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<MultiSymbolRunListResponse> => {
+  const token = await getServerToken();
+  return validatedApiRequest<MultiSymbolRunListResponse>(
+    buildPaginatedListPath("/v1/multi-symbol-backtests", limit, offset, 100, cursor),
+    token,
+    validateMultiSymbolRunListResponse,
+    { cache: "no-store" },
+  );
+});
+
+export const getMultiSymbolBacktestRun = cache(async (runId: string): Promise<MultiSymbolRunDetailResponse> => {
+  const token = await getServerToken();
+  return validatedApiRequest<MultiSymbolRunDetailResponse>(
+    `/v1/multi-symbol-backtests/${encodeURIComponent(runId)}`,
+    token,
+    validateMultiSymbolRunDetailResponse,
+    { cache: "no-store" },
+  );
+});
+
+export const getMultiSymbolBacktestRunStatus = cache(async (runId: string): Promise<MultiSymbolRunStatusResponse> => {
+  const token = await getServerToken();
+  return validatedApiRequest<MultiSymbolRunStatusResponse>(
+    `/v1/multi-symbol-backtests/${encodeURIComponent(runId)}/status`,
+    token,
+    validateMultiSymbolRunStatusResponse,
+    { cache: "no-store" },
+  );
+});
+
+export const getMultiStepBacktestHistory = cache(async (limit = 50, offset = 0, cursor?: string | null): Promise<MultiStepRunListResponse> => {
+  const token = await getServerToken();
+  return validatedApiRequest<MultiStepRunListResponse>(
+    buildPaginatedListPath("/v1/multi-step-backtests", limit, offset, 100, cursor),
+    token,
+    validateMultiStepRunListResponse,
+    { cache: "no-store" },
+  );
+});
+
+export const getMultiStepBacktestRun = cache(async (runId: string): Promise<MultiStepRunDetailResponse> => {
+  const token = await getServerToken();
+  return validatedApiRequest<MultiStepRunDetailResponse>(
+    `/v1/multi-step-backtests/${encodeURIComponent(runId)}`,
+    token,
+    validateMultiStepRunDetailResponse,
+    { cache: "no-store" },
+  );
+});
+
+export const getMultiStepBacktestRunStatus = cache(async (runId: string): Promise<MultiStepRunStatusResponse> => {
+  const token = await getServerToken();
+  return validatedApiRequest<MultiStepRunStatusResponse>(
+    `/v1/multi-step-backtests/${encodeURIComponent(runId)}/status`,
+    token,
+    validateMultiStepRunStatusResponse,
     { cache: "no-store" },
   );
 });

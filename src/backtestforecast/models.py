@@ -82,6 +82,8 @@ class User(Base):
     )
 
     backtest_runs: Mapped[list[BacktestRun]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    multi_symbol_runs: Mapped[list[MultiSymbolRun]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    multi_step_runs: Mapped[list[MultiStepRun]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
     scanner_jobs: Mapped[list[ScannerJob]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
     export_jobs: Mapped[list[ExportJob]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
     templates: Mapped[list[BacktestTemplate]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="raise")
@@ -264,6 +266,357 @@ class BacktestEquityPoint(Base):
     drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
 
     run: Mapped[BacktestRun] = relationship(back_populates="equity_points", lazy="raise")
+
+
+class MultiSymbolRun(Base):
+    __tablename__ = "multi_symbol_runs"
+    __table_args__ = (
+        Index("ix_multi_symbol_runs_user_id", "user_id"),
+        Index("ix_multi_symbol_runs_user_created_at", "user_id", "created_at"),
+        Index("ix_multi_symbol_runs_status", "status"),
+        UniqueConstraint("user_id", "idempotency_key", name="uq_multi_symbol_runs_user_idempotency_key"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_multi_symbol_runs_valid_run_status",
+        ),
+        CheckConstraint("start_date < end_date", name="ck_multi_symbol_runs_date_order"),
+        CheckConstraint("account_size > 0", name="ck_multi_symbol_runs_account_positive"),
+        CheckConstraint("commission_per_contract >= 0", name="ck_multi_symbol_runs_commission_nonneg"),
+        CheckConstraint("slippage_pct >= 0 AND slippage_pct <= 5", name="ck_multi_symbol_runs_slippage_range"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    account_size: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    capital_allocation_mode: Mapped[str] = mapped_column(String(24), nullable=False, default="equal_weight", server_default="equal_weight")
+    commission_per_contract: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    slippage_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trade_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    win_rate: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_roi_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_win_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_loss_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_holding_period_days: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_dte_at_open: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    max_drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_net_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    starting_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    ending_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    profit_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    payoff_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    expectancy: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    sharpe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    sortino_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    cagr_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    calmar_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    max_consecutive_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_consecutive_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    recovery_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="multi_symbol_runs", lazy="raise")
+    symbols: Mapped[list[MultiSymbolRunSymbol]] = relationship(back_populates="run", cascade="all, delete-orphan", lazy="raise")
+    trade_groups: Mapped[list[MultiSymbolTradeGroup]] = relationship(back_populates="run", cascade="all, delete-orphan", lazy="raise")
+    trades: Mapped[list[MultiSymbolTrade]] = relationship(back_populates="run", cascade="all, delete-orphan", lazy="raise")
+    equity_points: Mapped[list[MultiSymbolEquityPoint]] = relationship(back_populates="run", cascade="all, delete-orphan", lazy="raise")
+
+
+class MultiSymbolRunSymbol(Base):
+    __tablename__ = "multi_symbol_run_symbols"
+    __table_args__ = (
+        Index("ix_multi_symbol_run_symbols_run_id", "run_id"),
+        UniqueConstraint("run_id", "symbol", name="uq_multi_symbol_run_symbols_run_symbol"),
+        CheckConstraint("risk_per_trade_pct > 0 AND risk_per_trade_pct <= 100", name="ck_multi_symbol_run_symbols_risk_pct_range"),
+        CheckConstraint("max_open_positions >= 1", name="ck_multi_symbol_run_symbols_max_open_positions_positive"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_symbol_runs.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    risk_per_trade_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    max_open_positions: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    capital_allocation_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    trade_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    win_rate: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_roi_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    max_drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_net_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    starting_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    ending_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+
+    run: Mapped[MultiSymbolRun] = relationship(back_populates="symbols", lazy="raise")
+    equity_points: Mapped[list[MultiSymbolSymbolEquityPoint]] = relationship(back_populates="run_symbol", cascade="all, delete-orphan", lazy="raise")
+
+
+class MultiSymbolTradeGroup(Base):
+    __tablename__ = "multi_symbol_trade_groups"
+    __table_args__ = (
+        Index("ix_multi_symbol_trade_groups_run_id", "run_id"),
+        CheckConstraint("status IN ('open', 'closed', 'cancelled')", name="ck_multi_symbol_trade_groups_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_symbol_runs.id", ondelete="CASCADE"), nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    exit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", server_default="open")
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+
+    run: Mapped[MultiSymbolRun] = relationship(back_populates="trade_groups", lazy="raise")
+    trades: Mapped[list[MultiSymbolTrade]] = relationship(back_populates="trade_group", cascade="all, delete-orphan", lazy="raise")
+
+
+class MultiSymbolTrade(Base):
+    __tablename__ = "multi_symbol_trades"
+    __table_args__ = (
+        Index("ix_multi_symbol_trades_run_id", "run_id"),
+        Index("ix_multi_symbol_trades_trade_group_id", "trade_group_id"),
+        CheckConstraint("quantity > 0", name="ck_multi_symbol_trades_quantity_positive"),
+        CheckConstraint("entry_date <= exit_date", name="ck_multi_symbol_trades_date_order"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_symbol_runs.id", ondelete="CASCADE"), nullable=False)
+    trade_group_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_symbol_trade_groups.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    option_ticker: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    exit_date: Mapped[date] = mapped_column(Date, nullable=False)
+    expiration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    dte_at_open: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    holding_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    entry_underlying_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    exit_underlying_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    entry_mid: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    exit_mid: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    gross_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    net_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    entry_reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    exit_reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+
+    run: Mapped[MultiSymbolRun] = relationship(back_populates="trades", lazy="raise")
+    trade_group: Mapped[MultiSymbolTradeGroup] = relationship(back_populates="trades", lazy="raise")
+
+
+class MultiSymbolEquityPoint(Base):
+    __tablename__ = "multi_symbol_equity_points"
+    __table_args__ = (
+        Index("ix_multi_symbol_equity_points_run_id", "run_id"),
+        UniqueConstraint("run_id", "trade_date", name="uq_multi_symbol_equity_points_run_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_symbol_runs.id", ondelete="CASCADE"), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    cash: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    position_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+
+    run: Mapped[MultiSymbolRun] = relationship(back_populates="equity_points", lazy="raise")
+
+
+class MultiSymbolSymbolEquityPoint(Base):
+    __tablename__ = "multi_symbol_symbol_equity_points"
+    __table_args__ = (
+        Index("ix_multi_symbol_symbol_equity_points_run_symbol_id", "run_symbol_id"),
+        UniqueConstraint("run_symbol_id", "trade_date", name="uq_multi_symbol_symbol_equity_points_symbol_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_symbol_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_symbol_run_symbols.id", ondelete="CASCADE"), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    cash: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    position_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+
+    run_symbol: Mapped[MultiSymbolRunSymbol] = relationship(back_populates="equity_points", lazy="raise")
+
+
+class MultiStepRun(Base):
+    __tablename__ = "multi_step_runs"
+    __table_args__ = (
+        Index("ix_multi_step_runs_user_id", "user_id"),
+        Index("ix_multi_step_runs_user_created_at", "user_id", "created_at"),
+        UniqueConstraint("user_id", "idempotency_key", name="uq_multi_step_runs_user_idempotency_key"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_multi_step_runs_valid_run_status",
+        ),
+        CheckConstraint("start_date < end_date", name="ck_multi_step_runs_date_order"),
+        CheckConstraint("account_size > 0", name="ck_multi_step_runs_account_positive"),
+        CheckConstraint("risk_per_trade_pct > 0 AND risk_per_trade_pct <= 100", name="ck_multi_step_runs_risk_pct_range"),
+        CheckConstraint("commission_per_contract >= 0", name="ck_multi_step_runs_commission_nonneg"),
+        CheckConstraint("slippage_pct >= 0 AND slippage_pct <= 5", name="ck_multi_step_runs_slippage_range"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    workflow_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    account_size: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    risk_per_trade_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    commission_per_contract: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    slippage_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VARIANT, nullable=False, default=list, server_default=JSON_DEFAULT_EMPTY_ARRAY)
+    idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trade_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    win_rate: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_roi_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_win_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_loss_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_holding_period_days: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    average_dte_at_open: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    max_drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_net_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    starting_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    ending_equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    profit_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    payoff_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    expectancy: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    sharpe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    sortino_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    cagr_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    calmar_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    max_consecutive_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_consecutive_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    recovery_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="multi_step_runs", lazy="raise")
+    steps: Mapped[list[MultiStepRunStep]] = relationship(back_populates="run", cascade="all, delete-orphan", lazy="raise")
+    events: Mapped[list[MultiStepStepEvent]] = relationship(back_populates="run", cascade="all, delete-orphan", lazy="raise")
+    trades: Mapped[list[MultiStepTrade]] = relationship(back_populates="run", cascade="all, delete-orphan", lazy="raise")
+    equity_points: Mapped[list[MultiStepEquityPoint]] = relationship(back_populates="run", cascade="all, delete-orphan", lazy="raise")
+
+
+class MultiStepRunStep(Base):
+    __tablename__ = "multi_step_run_steps"
+    __table_args__ = (
+        Index("ix_multi_step_run_steps_run_id", "run_id"),
+        UniqueConstraint("run_id", "step_number", name="uq_multi_step_run_steps_run_step_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_step_runs.id", ondelete="CASCADE"), nullable=False)
+    step_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    trigger_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    contract_selection_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+    failure_policy: Mapped[str] = mapped_column(String(32), nullable=False, default="liquidate", server_default="liquidate")
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", server_default="pending")
+    triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    run: Mapped[MultiStepRun] = relationship(back_populates="steps", lazy="raise")
+
+
+class MultiStepStepEvent(Base):
+    __tablename__ = "multi_step_step_events"
+    __table_args__ = (
+        Index("ix_multi_step_step_events_run_id", "run_id"),
+        Index("ix_multi_step_step_events_step_number", "step_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_step_runs.id", ondelete="CASCADE"), nullable=False)
+    step_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("multi_step_run_steps.id", ondelete="SET NULL"), nullable=True)
+    step_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+
+    run: Mapped[MultiStepRun] = relationship(back_populates="events", lazy="raise")
+
+
+class MultiStepTrade(Base):
+    __tablename__ = "multi_step_trades"
+    __table_args__ = (
+        Index("ix_multi_step_trades_run_id", "run_id"),
+        CheckConstraint("quantity > 0", name="ck_multi_step_trades_quantity_positive"),
+        CheckConstraint("entry_date <= exit_date", name="ck_multi_step_trades_date_order"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_step_runs.id", ondelete="CASCADE"), nullable=False)
+    step_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    option_ticker: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    exit_date: Mapped[date] = mapped_column(Date, nullable=False)
+    expiration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    dte_at_open: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    holding_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    entry_underlying_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    exit_underlying_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    entry_mid: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    exit_mid: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    gross_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    net_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    total_commissions: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
+    entry_reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    exit_reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict, server_default=JSON_DEFAULT_EMPTY_OBJECT)
+
+    run: Mapped[MultiStepRun] = relationship(back_populates="trades", lazy="raise")
+
+
+class MultiStepEquityPoint(Base):
+    __tablename__ = "multi_step_equity_points"
+    __table_args__ = (
+        Index("ix_multi_step_equity_points_run_id", "run_id"),
+        UniqueConstraint("run_id", "trade_date", name="uq_multi_step_equity_points_run_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("multi_step_runs.id", ondelete="CASCADE"), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    equity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    cash: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    position_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+
+    run: Mapped[MultiStepRun] = relationship(back_populates="equity_points", lazy="raise")
 
 
 class BacktestTemplate(Base):
@@ -465,6 +818,8 @@ class ExportJob(Base):
         Index("ix_export_jobs_user_status", "user_id", "status"),
         Index("ix_export_jobs_celery_task_id", "celery_task_id"),
         Index("ix_export_jobs_backtest_run_id", "backtest_run_id"),
+        Index("ix_export_jobs_multi_symbol_run_id", "multi_symbol_run_id"),
+        Index("ix_export_jobs_multi_step_run_id", "multi_step_run_id"),
         Index("ix_export_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         Index("ix_export_jobs_status_expires_at", "status", "expires_at"),
         Index("ix_export_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
@@ -476,6 +831,14 @@ class ExportJob(Base):
             name="ck_export_jobs_valid_export_status",
         ),
         CheckConstraint(
+            "export_target_kind IN ('backtest', 'multi_symbol', 'multi_step')",
+            name="ck_export_jobs_valid_target_kind",
+        ),
+        CheckConstraint(
+            "((backtest_run_id IS NOT NULL)::int + (multi_symbol_run_id IS NOT NULL)::int + (multi_step_run_id IS NOT NULL)::int) = 1",
+            name="ck_export_jobs_exactly_one_target",
+        ),
+        CheckConstraint(
             "status != 'succeeded' OR content_bytes IS NOT NULL OR storage_key IS NOT NULL",
             name="ck_export_jobs_succeeded_has_storage",
         ),
@@ -485,9 +848,16 @@ class ExportJob(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    backtest_run_id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False
+    backtest_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=True
     )
+    multi_symbol_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("multi_symbol_runs.id", ondelete="CASCADE"), nullable=True
+    )
+    multi_step_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("multi_step_runs.id", ondelete="CASCADE"), nullable=True
+    )
+    export_target_kind: Mapped[str] = mapped_column(String(24), nullable=False, default="backtest", server_default="backtest")
     export_format: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -515,7 +885,7 @@ class ExportJob(Base):
     # The ix_export_jobs_status_expires_at index supports efficient lookup of
     # candidates for this transition.
     user: Mapped[User] = relationship(back_populates="export_jobs", lazy="raise")
-    backtest_run: Mapped[BacktestRun] = relationship(back_populates="exports", lazy="raise")
+    backtest_run: Mapped[BacktestRun | None] = relationship(back_populates="exports", lazy="raise")
 
 
 class AuditEvent(Base):

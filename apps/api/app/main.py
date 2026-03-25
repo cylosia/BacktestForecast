@@ -35,6 +35,8 @@ from apps.api.app.routers import (
     health,
     me,
     meta,
+    multi_step_backtests,
+    multi_symbol_backtests,
     scans,
     sweeps,
     templates,
@@ -454,6 +456,8 @@ app.include_router(meta.router, prefix="/v1")
 app.include_router(me.router, prefix="/v1")
 app.include_router(catalog.router, prefix="/v1")
 app.include_router(backtests.router, prefix="/v1")
+app.include_router(multi_symbol_backtests.router, prefix="/v1")
+app.include_router(multi_step_backtests.router, prefix="/v1")
 app.include_router(templates.router, prefix="/v1")
 app.include_router(scans.router, prefix="/v1")
 app.include_router(sweeps.router, prefix="/v1")

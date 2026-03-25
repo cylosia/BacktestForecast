@@ -111,6 +111,7 @@ def test_export_snapshot_uses_export_limit_not_detail_limit(db_session: Session)
     snapshot = ExportService(db_session)._build_export_snapshot(
         user_id=user.id,
         run_id=run.id,
+        run_kind="backtest",
         export_format=ExportFormat.CSV,
     )
 

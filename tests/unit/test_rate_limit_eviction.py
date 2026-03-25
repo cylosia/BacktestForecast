@@ -113,9 +113,8 @@ class TestEvictionPreservesCurrentBucket:
         for i in range(4):
             assert f"very_old_{i}" not in limiter._memory_counters
 
-    def test_many_current_bucket_keys_all_survive(self):
-        """Even if the number of current-bucket entries exceeds max_keys,
-        all must survive the hard-cap eviction."""
+    def test_many_current_bucket_keys_are_bounded_by_true_hard_cap(self):
+        """Current-bucket pressure must still respect the true hard cap."""
         limiter = _make_limiter(max_keys=2)
 
         fixed_time = 1_000_000.0
@@ -135,6 +134,11 @@ class TestEvictionPreservesCurrentBucket:
         with patch("time.time", return_value=fixed_time):
             limiter._check_memory("trigger", window_seconds)
 
-        for key, expected in expected_counts.items():
-            assert key in limiter._memory_counters, f"{key} was evicted"
-            assert limiter._memory_counters[key] == (current_bucket, expected)
+        assert len(limiter._memory_counters) <= 4
+        assert limiter._memory_counters[f"trigger:{current_bucket}"] == (current_bucket, 1)
+        assert all(bucket == current_bucket for bucket, _count in limiter._memory_counters.values())
+        assert all(not key.startswith("old_") for key in limiter._memory_counters)
+        retained_current_keys = {key for key in limiter._memory_counters if key.startswith("cur_")}
+        assert retained_current_keys
+        for key in retained_current_keys:
+            assert limiter._memory_counters[key] == (current_bucket, expected_counts[key])

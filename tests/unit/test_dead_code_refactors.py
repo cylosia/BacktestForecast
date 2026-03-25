@@ -80,7 +80,7 @@ def test_dc5_no_outerjoin_import():
 # ---- DC6: _LOOKS_NUMERIC at module level (acceptable) ----
 
 def test_dc6_looks_numeric_at_module_level():
-    from backtestforecast.services.exports import _LOOKS_NUMERIC
+    from backtestforecast.services.export_service_helpers import _LOOKS_NUMERIC
     assert _LOOKS_NUMERIC is not None
     assert _LOOKS_NUMERIC.match("42")
     assert not _LOOKS_NUMERIC.match("007")

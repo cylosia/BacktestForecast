@@ -22,6 +22,14 @@ import type {
   SweepResultListResponse,
   SymbolAnalysisSummary,
 } from "@backtestforecast/api-client";
+import type {
+  MultiStepRunStatusResponse,
+  MultiStepRunDetailResponse,
+  MultiStepRunListResponse,
+  MultiSymbolRunStatusResponse,
+  MultiSymbolRunDetailResponse,
+  MultiSymbolRunListResponse,
+} from "@/lib/api/multi-workflow-types";
 
 export interface PricingIntervalContract {
   price_id: string | null;
@@ -255,6 +263,54 @@ function validateForecastPayload(value: unknown, label: string): void {
   }
   assertOptionalNumber(value.analog_dates_shown, `${label}.analog_dates_shown`);
   assertOptionalNumber(value.analog_dates_total, `${label}.analog_dates_total`);
+}
+
+function validateMultiSymbolDefinition(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  assertString(value.symbol, `${label}.symbol`);
+  assertNumericLike(value.risk_per_trade_pct, `${label}.risk_per_trade_pct`);
+  assertNumber(value.max_open_positions, `${label}.max_open_positions`);
+  assertOptionalNumericLike(value.capital_allocation_pct, `${label}.capital_allocation_pct`);
+}
+
+function validateMultiSymbolTrade(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  assertString(value.id, `${label}.id`);
+  assertString(value.trade_group_id, `${label}.trade_group_id`);
+  assertString(value.symbol, `${label}.symbol`);
+  assertString(value.option_ticker, `${label}.option_ticker`);
+  assertString(value.strategy_type, `${label}.strategy_type`);
+  assertString(value.entry_date, `${label}.entry_date`);
+  assertString(value.exit_date, `${label}.exit_date`);
+  assertNumber(value.quantity, `${label}.quantity`);
+  assertNumericLike(value.gross_pnl, `${label}.gross_pnl`);
+  assertNumericLike(value.net_pnl, `${label}.net_pnl`);
+  assertNumericLike(value.total_commissions, `${label}.total_commissions`);
+  assertString(value.entry_reason, `${label}.entry_reason`);
+  assertString(value.exit_reason, `${label}.exit_reason`);
+}
+
+function validateMultiSymbolRunListItem(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  assertString(value.id, `${label}.id`);
+  assertOptionalString(value.name, `${label}.name`);
+  assertString(value.status, `${label}.status`);
+  assertString(value.created_at, `${label}.created_at`);
+  assertOptionalString(value.completed_at, `${label}.completed_at`);
+  assertStringArray(value.symbols, `${label}.symbols`);
+  validateSummary(value.summary, `${label}.summary`);
+}
+
+function validateMultiStepRunListItem(value: unknown, label: string): void {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  assertString(value.id, `${label}.id`);
+  assertOptionalString(value.name, `${label}.name`);
+  assertString(value.symbol, `${label}.symbol`);
+  assertString(value.workflow_type, `${label}.workflow_type`);
+  assertString(value.status, `${label}.status`);
+  assertString(value.created_at, `${label}.created_at`);
+  assertOptionalString(value.completed_at, `${label}.completed_at`);
+  validateSummary(value.summary, `${label}.summary`);
 }
 
 function validateAnalysisForecast(value: unknown, label: string): void {
@@ -770,6 +826,137 @@ export function validateStrategyCatalogResponse(data: unknown): StrategyCatalogR
     }
   }
   return data as StrategyCatalogResponse;
+}
+
+export function validateMultiSymbolRunListResponse(data: unknown): MultiSymbolRunListResponse {
+  assertPaginatedCollection(data, "multi_symbol_runs");
+  for (const [index, item] of data.items.entries()) {
+    validateMultiSymbolRunListItem(item, `multi_symbol_runs.items[${index}]`);
+  }
+  return data as MultiSymbolRunListResponse;
+}
+
+export function validateMultiSymbolRunDetailResponse(data: unknown): MultiSymbolRunDetailResponse {
+  if (!isRecord(data)) throw new Error("multi_symbol_run must be an object");
+  assertString(data.id, "multi_symbol_run.id");
+  assertOptionalString(data.name, "multi_symbol_run.name");
+  assertString(data.status, "multi_symbol_run.status");
+  assertString(data.start_date, "multi_symbol_run.start_date");
+  assertString(data.end_date, "multi_symbol_run.end_date");
+  assertString(data.created_at, "multi_symbol_run.created_at");
+  assertOptionalString(data.started_at, "multi_symbol_run.started_at");
+  assertOptionalString(data.completed_at, "multi_symbol_run.completed_at");
+  validateWarningList(data.warnings, "multi_symbol_run.warnings");
+  assertOptionalString(data.error_code, "multi_symbol_run.error_code");
+  assertOptionalString(data.error_message, "multi_symbol_run.error_message");
+  assertArray(data.symbols, "multi_symbol_run.symbols");
+  for (const [index, symbol] of data.symbols.entries()) {
+    validateMultiSymbolDefinition(symbol, `multi_symbol_run.symbols[${index}]`);
+  }
+  validateSummary(data.summary, "multi_symbol_run.summary");
+  assertArray(data.symbol_summaries, "multi_symbol_run.symbol_summaries");
+  for (const [index, item] of data.symbol_summaries.entries()) {
+    if (!isRecord(item)) throw new Error(`multi_symbol_run.symbol_summaries[${index}] must be an object`);
+    assertString(item.symbol, `multi_symbol_run.symbol_summaries[${index}].symbol`);
+    validateSummary(item.summary, `multi_symbol_run.symbol_summaries[${index}].summary`);
+  }
+  assertArray(data.trade_groups, "multi_symbol_run.trade_groups");
+  for (const [groupIndex, group] of data.trade_groups.entries()) {
+    if (!isRecord(group)) throw new Error(`multi_symbol_run.trade_groups[${groupIndex}] must be an object`);
+    assertString(group.id, `multi_symbol_run.trade_groups[${groupIndex}].id`);
+    assertString(group.entry_date, `multi_symbol_run.trade_groups[${groupIndex}].entry_date`);
+    assertOptionalString(group.exit_date, `multi_symbol_run.trade_groups[${groupIndex}].exit_date`);
+    assertString(group.status, `multi_symbol_run.trade_groups[${groupIndex}].status`);
+    assertArray(group.trades, `multi_symbol_run.trade_groups[${groupIndex}].trades`);
+    for (const [tradeIndex, trade] of group.trades.entries()) {
+      validateMultiSymbolTrade(trade, `multi_symbol_run.trade_groups[${groupIndex}].trades[${tradeIndex}]`);
+    }
+  }
+  assertArray(data.equity_curve, "multi_symbol_run.equity_curve");
+  if (!isRecord(data.symbol_equity_curves)) throw new Error("multi_symbol_run.symbol_equity_curves must be an object");
+  return data as unknown as MultiSymbolRunDetailResponse;
+}
+
+export function validateMultiStepRunListResponse(data: unknown): MultiStepRunListResponse {
+  assertPaginatedCollection(data, "multi_step_runs");
+  for (const [index, item] of data.items.entries()) {
+    validateMultiStepRunListItem(item, `multi_step_runs.items[${index}]`);
+  }
+  return data as MultiStepRunListResponse;
+}
+
+export function validateMultiStepRunDetailResponse(data: unknown): MultiStepRunDetailResponse {
+  if (!isRecord(data)) throw new Error("multi_step_run must be an object");
+  assertString(data.id, "multi_step_run.id");
+  assertOptionalString(data.name, "multi_step_run.name");
+  assertString(data.symbol, "multi_step_run.symbol");
+  assertString(data.workflow_type, "multi_step_run.workflow_type");
+  assertString(data.status, "multi_step_run.status");
+  assertString(data.start_date, "multi_step_run.start_date");
+  assertString(data.end_date, "multi_step_run.end_date");
+  assertString(data.created_at, "multi_step_run.created_at");
+  assertOptionalString(data.started_at, "multi_step_run.started_at");
+  assertOptionalString(data.completed_at, "multi_step_run.completed_at");
+  validateWarningList(data.warnings, "multi_step_run.warnings");
+  assertOptionalString(data.error_code, "multi_step_run.error_code");
+  assertOptionalString(data.error_message, "multi_step_run.error_message");
+  validateSummary(data.summary, "multi_step_run.summary");
+  assertArray(data.steps, "multi_step_run.steps");
+  for (const [index, item] of data.steps.entries()) {
+    if (!isRecord(item)) throw new Error(`multi_step_run.steps[${index}] must be an object`);
+    assertNumber(item.step_number, `multi_step_run.steps[${index}].step_number`);
+    assertString(item.name, `multi_step_run.steps[${index}].name`);
+    assertString(item.action, `multi_step_run.steps[${index}].action`);
+    assertString(item.status, `multi_step_run.steps[${index}].status`);
+    assertOptionalString(item.triggered_at, `multi_step_run.steps[${index}].triggered_at`);
+    assertOptionalString(item.executed_at, `multi_step_run.steps[${index}].executed_at`);
+    assertOptionalString(item.failure_reason, `multi_step_run.steps[${index}].failure_reason`);
+  }
+  assertArray(data.events, "multi_step_run.events");
+  for (const [index, item] of data.events.entries()) {
+    if (!isRecord(item)) throw new Error(`multi_step_run.events[${index}] must be an object`);
+    assertNumber(item.step_number, `multi_step_run.events[${index}].step_number`);
+    assertString(item.event_type, `multi_step_run.events[${index}].event_type`);
+    assertString(item.event_at, `multi_step_run.events[${index}].event_at`);
+    assertOptionalString(item.message, `multi_step_run.events[${index}].message`);
+  }
+  assertArray(data.trades, "multi_step_run.trades");
+  for (const [index, item] of data.trades.entries()) {
+    if (!isRecord(item)) throw new Error(`multi_step_run.trades[${index}] must be an object`);
+    assertString(item.id, `multi_step_run.trades[${index}].id`);
+    assertNumber(item.step_number, `multi_step_run.trades[${index}].step_number`);
+    assertString(item.option_ticker, `multi_step_run.trades[${index}].option_ticker`);
+    assertString(item.strategy_type, `multi_step_run.trades[${index}].strategy_type`);
+    assertString(item.entry_date, `multi_step_run.trades[${index}].entry_date`);
+    assertString(item.exit_date, `multi_step_run.trades[${index}].exit_date`);
+    assertNumber(item.quantity, `multi_step_run.trades[${index}].quantity`);
+    assertNumericLike(item.gross_pnl, `multi_step_run.trades[${index}].gross_pnl`);
+    assertNumericLike(item.net_pnl, `multi_step_run.trades[${index}].net_pnl`);
+  }
+  assertArray(data.equity_curve, "multi_step_run.equity_curve");
+  return data as unknown as MultiStepRunDetailResponse;
+}
+
+export function validateMultiSymbolRunStatusResponse(data: unknown): MultiSymbolRunStatusResponse {
+  if (!isRecord(data)) throw new Error("multi_symbol_run_status must be an object");
+  assertString(data.id, "multi_symbol_run_status.id");
+  assertString(data.status, "multi_symbol_run_status.status");
+  assertOptionalString(data.started_at, "multi_symbol_run_status.started_at");
+  assertOptionalString(data.completed_at, "multi_symbol_run_status.completed_at");
+  assertOptionalString(data.error_code, "multi_symbol_run_status.error_code");
+  assertOptionalString(data.error_message, "multi_symbol_run_status.error_message");
+  return data as unknown as MultiSymbolRunStatusResponse;
+}
+
+export function validateMultiStepRunStatusResponse(data: unknown): MultiStepRunStatusResponse {
+  if (!isRecord(data)) throw new Error("multi_step_run_status must be an object");
+  assertString(data.id, "multi_step_run_status.id");
+  assertString(data.status, "multi_step_run_status.status");
+  assertOptionalString(data.started_at, "multi_step_run_status.started_at");
+  assertOptionalString(data.completed_at, "multi_step_run_status.completed_at");
+  assertOptionalString(data.error_code, "multi_step_run_status.error_code");
+  assertOptionalString(data.error_message, "multi_step_run_status.error_message");
+  return data as unknown as MultiStepRunStatusResponse;
 }
 
 export function validatePricingContractResponse(data: unknown): PricingContractResponseShape {

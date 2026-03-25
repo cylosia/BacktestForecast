@@ -86,6 +86,8 @@ if _visibility_timeout <= _hard_limit:
 
 celery_app.conf.task_queues = (
     Queue("backtests"),
+    Queue("multi_symbol_backtests"),
+    Queue("multi_step_backtests"),
     Queue("scans"),
     Queue("sweeps"),
     Queue("analysis"),
@@ -104,6 +106,8 @@ celery_app.conf.task_routes = {
     "maintenance.reconcile_stranded_jobs": {"queue": "recovery"},
     "maintenance.reconcile_s3_orphans": {"queue": "maintenance"},
     "backtests.run": {"queue": "backtests"},
+    "multi_symbol_backtests.run": {"queue": "multi_symbol_backtests"},
+    "multi_step_backtests.run": {"queue": "multi_step_backtests"},
     "scans.run_job": {"queue": "scans"},
     "scans.refresh_prioritized": {"queue": "maintenance"},
     "sweeps.run": {"queue": "sweeps"},

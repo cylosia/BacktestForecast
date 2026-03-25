@@ -7,12 +7,24 @@ import {
   validateCompareBacktestsResponse,
   validateExportJobResponse,
   validateForecastEnvelopeResponse,
+  validateMultiStepRunDetailResponse,
+  validateMultiStepRunStatusResponse,
+  validateMultiSymbolRunDetailResponse,
+  validateMultiSymbolRunStatusResponse,
   validatePortalSessionResponse,
   validateScannerJobResponse,
   validateScannerRecommendationListResponse,
   validateSymbolAnalysisSummary,
   validateSweepJobResponse,
 } from "@/lib/api/contracts";
+import type {
+  CreateMultiStepRunRequest,
+  CreateMultiSymbolRunRequest,
+  MultiStepRunDetailResponse,
+  MultiStepRunStatusResponse,
+  MultiSymbolRunDetailResponse,
+  MultiSymbolRunStatusResponse,
+} from "@/lib/api/multi-workflow-types";
 import { validateTemplateResponse } from "@/lib/templates/contracts";
 import type {
   BacktestRunDetailResponse,
@@ -51,6 +63,30 @@ export async function createBacktestRun(
   });
 }
 
+export async function createMultiSymbolRun(
+  token: string,
+  payload: CreateMultiSymbolRunRequest,
+  signal?: AbortSignal,
+): Promise<MultiSymbolRunDetailResponse> {
+  return validatedApiRequest<MultiSymbolRunDetailResponse>("/v1/multi-symbol-backtests", token, validateMultiSymbolRunDetailResponse, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
+
+export async function createMultiStepRun(
+  token: string,
+  payload: CreateMultiStepRunRequest,
+  signal?: AbortSignal,
+): Promise<MultiStepRunDetailResponse> {
+  return validatedApiRequest<MultiStepRunDetailResponse>("/v1/multi-step-backtests", token, validateMultiStepRunDetailResponse, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
+
 export async function fetchBacktestRunStatus(
   token: string,
   runId: string,
@@ -60,6 +96,32 @@ export async function fetchBacktestRunStatus(
     `/v1/backtests/${encodeURIComponent(runId)}/status`,
     token,
     validateBacktestRunStatusResponse,
+    signal ? { signal } : undefined,
+  );
+}
+
+export async function fetchMultiSymbolRunStatus(
+  token: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<MultiSymbolRunStatusResponse> {
+  return validatedApiRequest<MultiSymbolRunStatusResponse>(
+    `/v1/multi-symbol-backtests/${encodeURIComponent(runId)}/status`,
+    token,
+    validateMultiSymbolRunStatusResponse,
+    signal ? { signal } : undefined,
+  );
+}
+
+export async function fetchMultiStepRunStatus(
+  token: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<MultiStepRunStatusResponse> {
+  return validatedApiRequest<MultiStepRunStatusResponse>(
+    `/v1/multi-step-backtests/${encodeURIComponent(runId)}/status`,
+    token,
+    validateMultiStepRunStatusResponse,
     signal ? { signal } : undefined,
   );
 }

@@ -24,7 +24,7 @@ _CALL_REPORT = pytest.StashKey[pytest.TestReport]()
 
 
 def strip_partial_indexes_for_sqlite(engine) -> None:
-    """Remove PostgreSQL-specific partial indexes so SQLite create_all succeeds.
+    """Remove PostgreSQL-specific DDL so SQLite create_all succeeds.
 
     Shared across test suites to avoid duplicating this workaround in every
     conftest.py that creates an in-memory SQLite engine.
@@ -38,6 +38,14 @@ def strip_partial_indexes_for_sqlite(engine) -> None:
         ]
         for idx in indexes_to_remove:
             table.indexes.discard(idx)
+        constraints_to_remove = [
+            constraint
+            for constraint in table.constraints
+            if getattr(constraint, "sqltext", None) is not None
+            and "::" in str(constraint.sqltext)
+        ]
+        for constraint in constraints_to_remove:
+            table.constraints.discard(constraint)
 
 
 @pytest.fixture

@@ -65,10 +65,10 @@ def test_structured_logging_and_readonly_routing_quick_wins_have_guardrails() ->
     assert "config.massive_api_key_missing" in config_source
     assert "logger.warning(" in config_source
     assert "warnings.warn(" not in config_source
-    assert "test_backtests_router_uses_readonly_db_for_read_heavy_endpoints" in readonly_tests
-    assert "test_scans_router_uses_readonly_db_for_list_and_recommendations" in readonly_tests
-    assert "test_sweeps_router_uses_readonly_db_for_list_and_results" in readonly_tests
-    assert "test_daily_picks_router_uses_readonly_db_for_reads" in readonly_tests
+    assert "test_backtests_router_uses_primary_for_customer_visible_reads" in readonly_tests
+    assert "test_scans_router_uses_primary_for_list_and_recommendations" in readonly_tests
+    assert "test_sweeps_router_uses_primary_for_list_and_results" in readonly_tests
+    assert "test_daily_picks_router_uses_primary_db_for_reads" in readonly_tests
 
 
 def test_web_request_budget_and_schedule_copy_quick_wins_are_guarded() -> None:

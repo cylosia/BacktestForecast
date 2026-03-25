@@ -70,7 +70,7 @@ class TestAggressiveEviction:
 
         count, _ = limiter._check_memory("newest:key", window)
         assert count == 1
-        assert len(limiter._memory_counters) == 16
+        assert len(limiter._memory_counters) <= 10
         assert f"newest:key:{current_bucket}" in limiter._memory_counters
 
     def test_most_recent_actor_preserved_after_hard_eviction(self):
@@ -157,5 +157,5 @@ class TestFullCheckFallback:
         final = limiter.check(bucket="test", actor_key="final_actor", limit=100, window_seconds=60)
         assert final.remaining == 99
         current_bucket = int(time.time() // 60)
-        assert len(limiter._memory_counters) == 26
+        assert len(limiter._memory_counters) <= 20
         assert f"bff:rate-limit:test:final_actor:{current_bucket}" in limiter._memory_counters

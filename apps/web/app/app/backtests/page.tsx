@@ -75,6 +75,31 @@ export default async function BacktestsPage({
           </Card>
         </div>
 
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Alpha: Multi-Symbol</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">Coordinate 2-3 symbols in one workflow with grouped entry.</p>
+              <Button asChild className="mt-4" variant="outline">
+                <Link href="/app/multi-symbol-backtests">Open multi-symbol</Link>
+              </Button>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Alpha: Multi-Step</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">Model staged workflows on a single symbol with explicit downstream liquidation.</p>
+              <Button asChild className="mt-4" variant="outline">
+                <Link href="/app/multi-step-backtests">Open multi-step</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+
         <Card>
           <CardContent className="pt-6">
             <div className="mb-4 rounded-xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">

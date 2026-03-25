@@ -164,7 +164,7 @@ class TestAuditEventRepositoryPaging:
 
 
 class TestSummaryNegativeEquity:
-    def test_sharpe_and_sortino_use_positive_prefix_before_negative_equity(self):
+    def test_sharpe_and_sortino_are_suppressed_when_equity_turns_negative(self):
         equities = [10000.0]
         for i in range(34):
             equities.append(equities[-1] + (50.0 if i % 2 == 0 else -20.0))
@@ -174,8 +174,8 @@ class TestSummaryNegativeEquity:
 
         summary = build_summary(10000.0, equities[-2], trades, curve, risk_free_rate=0.0)
 
-        assert summary.sharpe_ratio is not None
-        assert summary.sortino_ratio is not None
+        assert summary.sharpe_ratio is None
+        assert summary.sortino_ratio is None
 
 
 class TestMetaGracefulDegradation:

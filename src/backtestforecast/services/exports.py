@@ -5,10 +5,12 @@ import hashlib
 import io
 import time as _time
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy import update as sa_update_top
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,7 +20,16 @@ from backtestforecast.config import Settings, get_settings
 from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
 from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError
 from backtestforecast.exports.storage import DatabaseStorage, ExportStorage, get_storage
-from backtestforecast.models import ExportJob, User
+from backtestforecast.models import (
+    ExportJob,
+    MultiStepEquityPoint,
+    MultiStepRun,
+    MultiStepTrade,
+    MultiSymbolEquityPoint,
+    MultiSymbolRun,
+    MultiSymbolTrade,
+    User,
+)
 from backtestforecast.observability.metrics import EXPORT_EXECUTION_DURATION_SECONDS
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
@@ -59,6 +70,42 @@ MAX_EXPORT_BYTES = 10 * 1024 * 1024  # 10 MB
 MAX_DATABASE_DOWNLOADABLE_EXPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 _MAX_EXPORT_BYTES = MAX_EXPORT_BYTES
 
+
+def _curve_point_field(point: Any, field: str) -> Any:
+    if isinstance(point, dict):
+        return point.get(field)
+    return getattr(point, field, None)
+
+
+def _generic_summary_from_run(run: Any) -> Any:
+    from backtestforecast.schemas.backtests import BacktestSummaryResponse
+
+    return BacktestSummaryResponse(
+        trade_count=run.trade_count,
+        decided_trades=run.trade_count,
+        win_rate=run.win_rate,
+        total_roi_pct=run.total_roi_pct,
+        average_win_amount=run.average_win_amount,
+        average_loss_amount=run.average_loss_amount,
+        average_holding_period_days=run.average_holding_period_days,
+        average_dte_at_open=run.average_dte_at_open,
+        max_drawdown_pct=run.max_drawdown_pct,
+        total_commissions=run.total_commissions,
+        total_net_pnl=run.total_net_pnl,
+        starting_equity=run.starting_equity,
+        ending_equity=run.ending_equity,
+        profit_factor=run.profit_factor,
+        payoff_ratio=run.payoff_ratio,
+        expectancy=run.expectancy,
+        sharpe_ratio=run.sharpe_ratio,
+        sortino_ratio=run.sortino_ratio,
+        cagr_pct=run.cagr_pct,
+        calmar_ratio=run.calmar_ratio,
+        max_consecutive_wins=run.max_consecutive_wins,
+        max_consecutive_losses=run.max_consecutive_losses,
+        recovery_factor=run.recovery_factor,
+    )
+
 class ExportService:
     def __init__(
         self,
@@ -91,6 +138,37 @@ class ExportService:
             return min(MAX_EXPORT_BYTES, MAX_DATABASE_DOWNLOADABLE_EXPORT_BYTES)
         return MAX_EXPORT_BYTES
 
+    def _resolve_export_target(self, user_id: UUID, run_id: UUID) -> tuple[str, Any]:
+        backtest_run = self.backtests.get_lightweight_for_user(run_id, user_id)
+        if backtest_run is not None:
+            return ("backtest", backtest_run)
+
+        multi_symbol_run = self.session.get(MultiSymbolRun, run_id)
+        if multi_symbol_run is not None and multi_symbol_run.user_id == user_id:
+            return ("multi_symbol", multi_symbol_run)
+
+        multi_step_run = self.session.get(MultiStepRun, run_id)
+        if multi_step_run is not None and multi_step_run.user_id == user_id:
+            return ("multi_step", multi_step_run)
+
+        raise NotFoundError("Backtest run not found.")
+
+    @staticmethod
+    def _target_run_id(job: ExportJob) -> UUID:
+        return job.backtest_run_id or job.multi_symbol_run_id or job.multi_step_run_id  # type: ignore[return-value]
+
+    @staticmethod
+    def _target_label(kind: str, run: Any) -> tuple[str, str]:
+        if kind == "backtest":
+            return run.symbol, run.strategy_type
+        if kind == "multi_symbol":
+            snapshot = run.input_snapshot_json or {}
+            strategy_groups = snapshot.get("strategy_groups") or []
+            group_name = strategy_groups[0].get("name") if strategy_groups and isinstance(strategy_groups[0], dict) else "multi_symbol"
+            symbols = [item.get("symbol") for item in (snapshot.get("symbols") or []) if isinstance(item, dict)]
+            return "+".join(filter(None, symbols)) or "multi-symbol", str(group_name)
+        return run.symbol, run.workflow_type
+
     def enqueue_export(
         self,
         user: User,
@@ -119,12 +197,10 @@ class ExportService:
                     request_id=request_id,
                 )
 
-        run = self.backtests.get_lightweight_for_user(payload.run_id, user.id)
-        if run is None:
-            raise NotFoundError("Backtest run not found.")
+        target_kind, run = self._resolve_export_target(user.id, payload.run_id)
         if run.status != "succeeded":
             raise AppValidationError(
-                f"Cannot export a backtest run with status \"{run.status}\". "
+                f"Cannot export a run with status \"{run.status}\". "
                 "Only succeeded runs can be exported."
             )
         if isinstance(self._storage, DatabaseStorage):
@@ -134,12 +210,16 @@ class ExportService:
                     "This export is too large for database-backed delivery. Enable object storage for larger exports."
                 )
 
+        label_symbol, label_strategy = self._target_label(target_kind, run)
         export_job = ExportJob(
             user_id=user.id,
-            backtest_run_id=run.id,
+            backtest_run_id=run.id if target_kind == "backtest" else None,
+            multi_symbol_run_id=run.id if target_kind == "multi_symbol" else None,
+            multi_step_run_id=run.id if target_kind == "multi_step" else None,
+            export_target_kind=target_kind,
             export_format=payload.export_format.value,
             status="queued",
-            file_name=self._build_file_name(run.symbol, run.strategy_type, payload.export_format),
+            file_name=self._build_file_name(label_symbol, label_strategy, payload.export_format),
             mime_type=self._mime_type(payload.export_format),
             idempotency_key=payload.idempotency_key,
             expires_at=datetime.now(UTC) + timedelta(days=30),
@@ -154,6 +234,7 @@ class ExportService:
             ip_address=ip_address,
             metadata={
                 "run_id": str(run.id),
+                "run_kind": target_kind,
                 "format": payload.export_format.value,
             },
         )
@@ -162,7 +243,6 @@ class ExportService:
         except IntegrityError:
             self.session.rollback()
             if payload.idempotency_key:
-                from sqlalchemy import select
                 stmt = select(ExportJob).where(
                     ExportJob.user_id == user.id,
                     ExportJob.idempotency_key == payload.idempotency_key,
@@ -224,7 +304,7 @@ class ExportService:
 
         payload = CreateExportRequest.model_validate(
             {
-                "run_id": original.backtest_run_id,
+                "run_id": self._target_run_id(original),
                 "format": original.export_format,
                 "idempotency_key": f"regen-{original.id}-{uuid4().hex[:12]}",
             }
@@ -246,7 +326,8 @@ class ExportService:
             ip_address=ip_address,
             metadata={
                 "previous_export_job_id": str(original.id),
-                "run_id": str(original.backtest_run_id),
+                "run_id": str(self._target_run_id(original)),
+                "run_kind": original.export_target_kind,
                 "format": original.export_format,
             },
         )
@@ -321,7 +402,9 @@ class ExportService:
         self.session.refresh(export_job)
         observe_job_create_to_running_latency(export_job)
 
-        run = self.backtests.get_lightweight_for_user(export_job.backtest_run_id, export_job.user_id)
+        target_run_id = self._target_run_id(export_job)
+        target_kind = export_job.export_target_kind
+        target_kind, run = self._resolve_export_target(export_job.user_id, target_run_id)
         if run is not None:
             trade_count = run.trade_count or 0
             _bytes_per_trade = 500 if export_job.export_format == "csv" else 200
@@ -351,7 +434,8 @@ class ExportService:
         try:
             detail = self._build_export_snapshot(
                 user_id=export_job.user_id,
-                run_id=export_job.backtest_run_id,
+                run_id=target_run_id,
+                run_kind=target_kind,
                 export_format=ExportFormat(export_job.export_format),
             )
             fmt = ExportFormat(export_job.export_format)
@@ -449,7 +533,8 @@ class ExportService:
                     subject_id=export_job.id,
                     user_id=export_job.user_id,
                     metadata={
-                        "run_id": str(export_job.backtest_run_id),
+                        "run_id": str(target_run_id),
+                        "run_kind": target_kind,
                         "format": export_job.export_format,
                         "size_bytes": export_job.size_bytes,
                     },
@@ -470,7 +555,8 @@ class ExportService:
                     subject_id=export_job.id,
                     user_id=export_job.user_id,
                     metadata={
-                        "run_id": str(export_job.backtest_run_id),
+                        "run_id": str(target_run_id),
+                        "run_kind": target_kind,
                         "format": export_job.export_format,
                         "error_code": export_job.error_code or "unknown",
                     },
@@ -653,7 +739,7 @@ class ExportService:
             subject_type="export_job",
             subject_id=export_job.id,
             user_id=user_id,
-            metadata={"backtest_run_id": str(export_job.backtest_run_id), "reason": "user_cancelled"},
+            metadata={"run_id": str(self._target_run_id(export_job)), "run_kind": export_job.export_target_kind, "reason": "user_cancelled"},
         )
         try:
             self.session.commit()
@@ -720,7 +806,8 @@ class ExportService:
             request_id=request_id,
             ip_address=ip_address,
             metadata={
-                "run_id": str(export_job.backtest_run_id),
+                "run_id": str(self._target_run_id(export_job)),
+                "run_kind": export_job.export_target_kind,
                 "format": export_job.export_format,
             },
         )
@@ -740,43 +827,183 @@ class ExportService:
         *,
         user_id: UUID,
         run_id: UUID,
+        run_kind: str,
         export_format: ExportFormat,
     ) -> ExportBacktestSnapshot:
-        run = self.backtests.get_lightweight_for_user(run_id, user_id)
-        if run is None:
-            raise NotFoundError("Backtest run not found.")
+        if run_kind == "backtest":
+            run = self.backtests.get_lightweight_for_user(run_id, user_id)
+            if run is None:
+                raise NotFoundError("Backtest run not found.")
+            trade_limit = _MAX_CSV_TRADES if export_format == ExportFormat.CSV else get_settings().max_pdf_trades
+            equity_limit = _MAX_CSV_EQUITY_POINTS if export_format == ExportFormat.CSV else 10_000
+            trades = self.backtests.get_trades_for_run(run.id, limit=trade_limit, user_id=user_id)
+            equity_points = self.backtests.get_equity_points_for_run(run.id, limit=equity_limit, user_id=user_id)
+            payload_counts = self.backtests.get_payload_counts_for_run(run.id, user_id=user_id)
+            snapshot = run.input_snapshot_json or {}
+            resolved_parameters = ResolvedExecutionParameters.from_snapshot(
+                {
+                    **snapshot,
+                    "risk_free_rate": float(run.risk_free_rate) if run.risk_free_rate is not None else snapshot.get("risk_free_rate"),
+                }
+            )
+            return ExportBacktestSnapshot(
+                symbol=run.symbol,
+                strategy_type=run.strategy_type,
+                status=run.status,
+                start_date=run.date_from,
+                end_date=run.date_to,
+                created_at=run.created_at,
+                summary=self.backtest_service._summary_response(run, decided_trades=payload_counts.decided_trade_count),
+                trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
+                equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
+                warnings=safe_validate_warning_list(run.warnings_json),
+                risk_free_rate=resolved_parameters.risk_free_rate,
+                risk_free_rate_source=resolved_parameters.risk_free_rate_source,
+                risk_free_rate_model=resolved_parameters.risk_free_rate_model,
+                risk_free_rate_curve_points=self.backtest_service._resolve_risk_free_rate_curve_points(run),
+                risk_free_rate_curve_warning=(
+                    self.backtest_service._risk_free_rate_curve_payload_warning(run).get("message")
+                    if self.backtest_service._risk_free_rate_curve_payload_warning(run) is not None
+                    else None
+                ),
+            )
+
         trade_limit = _MAX_CSV_TRADES if export_format == ExportFormat.CSV else get_settings().max_pdf_trades
         equity_limit = _MAX_CSV_EQUITY_POINTS if export_format == ExportFormat.CSV else 10_000
-        trades = self.backtests.get_trades_for_run(run.id, limit=trade_limit, user_id=user_id)
-        equity_points = self.backtests.get_equity_points_for_run(run.id, limit=equity_limit, user_id=user_id)
-        payload_counts = self.backtests.get_payload_counts_for_run(run.id, user_id=user_id)
-        snapshot = run.input_snapshot_json or {}
-        resolved_parameters = ResolvedExecutionParameters.from_snapshot(
-            {
-                **snapshot,
-                "risk_free_rate": float(run.risk_free_rate) if run.risk_free_rate is not None else snapshot.get("risk_free_rate"),
-            }
+
+        if run_kind == "multi_symbol":
+            run = self.session.get(MultiSymbolRun, run_id)
+            if run is None or run.user_id != user_id:
+                raise NotFoundError("Multi-symbol run not found.")
+            trades = list(
+                self.session.scalars(
+                    select(MultiSymbolTrade)
+                    .where(MultiSymbolTrade.run_id == run.id)
+                    .order_by(MultiSymbolTrade.entry_date.desc())
+                    .limit(trade_limit)
+                )
+            )
+            trades.reverse()
+            equity_points = list(
+                self.session.scalars(
+                    select(MultiSymbolEquityPoint)
+                    .where(MultiSymbolEquityPoint.run_id == run.id)
+                    .order_by(MultiSymbolEquityPoint.trade_date.asc())
+                    .limit(equity_limit)
+                )
+            )
+            snapshot = run.input_snapshot_json or {}
+            symbols = [item.get("symbol") for item in (snapshot.get("symbols") or []) if isinstance(item, dict)]
+            strategy_groups = snapshot.get("strategy_groups") or []
+            group_name = strategy_groups[0].get("name") if strategy_groups and isinstance(strategy_groups[0], dict) else "multi_symbol"
+            return ExportBacktestSnapshot(
+                symbol="+".join(filter(None, symbols)) or "multi-symbol",
+                strategy_type=str(group_name),
+                status=run.status,
+                start_date=run.start_date,
+                end_date=run.end_date,
+                created_at=run.created_at,
+                summary=_generic_summary_from_run(run),
+                trades=[
+                    BacktestTradeResponse.model_validate(
+                        {
+                            "id": trade.id,
+                            "option_ticker": trade.option_ticker,
+                            "strategy_type": trade.strategy_type,
+                            "underlying_symbol": trade.symbol,
+                            "entry_date": trade.entry_date,
+                            "exit_date": trade.exit_date,
+                            "expiration_date": trade.expiration_date or trade.exit_date,
+                            "quantity": trade.quantity,
+                            "dte_at_open": trade.dte_at_open or 0,
+                            "holding_period_days": trade.holding_period_days or 0,
+                            "holding_period_trading_days": None,
+                            "entry_underlying_close": trade.entry_underlying_close or Decimal("0"),
+                            "exit_underlying_close": trade.exit_underlying_close or Decimal("0"),
+                            "entry_mid": trade.entry_mid or Decimal("0"),
+                            "exit_mid": trade.exit_mid or Decimal("0"),
+                            "gross_pnl": trade.gross_pnl,
+                            "net_pnl": trade.net_pnl,
+                            "total_commissions": trade.total_commissions,
+                            "entry_reason": trade.entry_reason,
+                            "exit_reason": trade.exit_reason,
+                            "detail_json": trade.detail_json,
+                        }
+                    )
+                    for trade in trades
+                ],
+                equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
+                warnings=safe_validate_warning_list(run.warnings_json),
+                risk_free_rate=None,
+                risk_free_rate_source=None,
+                risk_free_rate_model=None,
+                risk_free_rate_curve_points=[],
+                risk_free_rate_curve_warning=None,
+            )
+
+        run = self.session.get(MultiStepRun, run_id)
+        if run is None or run.user_id != user_id:
+            raise NotFoundError("Multi-step run not found.")
+        trades = list(
+            self.session.scalars(
+                select(MultiStepTrade)
+                .where(MultiStepTrade.run_id == run.id)
+                .order_by(MultiStepTrade.entry_date.desc())
+                .limit(trade_limit)
+            )
+        )
+        trades.reverse()
+        equity_points = list(
+            self.session.scalars(
+                select(MultiStepEquityPoint)
+                .where(MultiStepEquityPoint.run_id == run.id)
+                .order_by(MultiStepEquityPoint.trade_date.asc())
+                .limit(equity_limit)
+            )
         )
         return ExportBacktestSnapshot(
             symbol=run.symbol,
-            strategy_type=run.strategy_type,
+            strategy_type=run.workflow_type,
             status=run.status,
-            start_date=run.date_from,
-            end_date=run.date_to,
+            start_date=run.start_date,
+            end_date=run.end_date,
             created_at=run.created_at,
-            summary=self.backtest_service._summary_response(run, decided_trades=payload_counts.decided_trade_count),
-            trades=[BacktestTradeResponse.model_validate(trade) for trade in trades],
+            summary=_generic_summary_from_run(run),
+            trades=[
+                BacktestTradeResponse.model_validate(
+                    {
+                        "id": trade.id,
+                        "option_ticker": trade.option_ticker,
+                        "strategy_type": trade.strategy_type,
+                        "underlying_symbol": run.symbol,
+                        "entry_date": trade.entry_date,
+                        "exit_date": trade.exit_date,
+                        "expiration_date": trade.expiration_date or trade.exit_date,
+                        "quantity": trade.quantity,
+                        "dte_at_open": trade.dte_at_open or 0,
+                        "holding_period_days": trade.holding_period_days or 0,
+                        "holding_period_trading_days": None,
+                        "entry_underlying_close": trade.entry_underlying_close or Decimal("0"),
+                        "exit_underlying_close": trade.exit_underlying_close or Decimal("0"),
+                        "entry_mid": trade.entry_mid or Decimal("0"),
+                        "exit_mid": trade.exit_mid or Decimal("0"),
+                        "gross_pnl": trade.gross_pnl,
+                        "net_pnl": trade.net_pnl,
+                        "total_commissions": trade.total_commissions,
+                        "entry_reason": trade.entry_reason,
+                        "exit_reason": trade.exit_reason,
+                        "detail_json": trade.detail_json,
+                    }
+                )
+                for trade in trades
+            ],
             equity_curve=[EquityCurvePointResponse.model_validate(point) for point in equity_points],
             warnings=safe_validate_warning_list(run.warnings_json),
-            risk_free_rate=resolved_parameters.risk_free_rate,
-            risk_free_rate_source=resolved_parameters.risk_free_rate_source,
-            risk_free_rate_model=resolved_parameters.risk_free_rate_model,
-            risk_free_rate_curve_points=self.backtest_service._resolve_risk_free_rate_curve_points(run),
-            risk_free_rate_curve_warning=(
-                self.backtest_service._risk_free_rate_curve_payload_warning(run).get("message")
-                if self.backtest_service._risk_free_rate_curve_payload_warning(run) is not None
-                else None
-            ),
+            risk_free_rate=None,
+            risk_free_rate_source=None,
+            risk_free_rate_model=None,
+            risk_free_rate_curve_points=[],
+            risk_free_rate_curve_warning=None,
         )
 
     def _build_csv(self, detail: ExportBacktestSnapshot) -> bytes:
@@ -811,7 +1038,15 @@ class ExportService:
         writer.writerow(safe_row(["run", "risk_free_rate_source", detail.risk_free_rate_source]))
         writer.writerow(safe_row(["run", "risk_free_rate_model", detail.risk_free_rate_model]))
         for point in detail.risk_free_rate_curve_points:
-            writer.writerow(safe_row(["run", "risk_free_rate_curve_point", f'{point["trade_date"]}:{point["rate"]}']))
+            writer.writerow(
+                safe_row(
+                    [
+                        "run",
+                        "risk_free_rate_curve_point",
+                        f'{_curve_point_field(point, "trade_date")}:{_curve_point_field(point, "rate")}',
+                    ]
+                )
+            )
         if detail.risk_free_rate_curve_warning:
             writer.writerow(safe_row(["note", detail.risk_free_rate_curve_warning]))
         writer.writerow(safe_row(["summary", "trade_count", detail.summary.trade_count]))
@@ -1004,7 +1239,10 @@ class ExportService:
             line(f"Risk-free rate curve points: {len(detail.risk_free_rate_curve_points)}")
             line("Risk-Free Rate Curve", bold=True, step=20.0)
             for point in detail.risk_free_rate_curve_points:
-                if not line(f'{point["trade_date"]}: {_fmt(point["rate"])}', step=14.0):
+                if not line(
+                    f'{_curve_point_field(point, "trade_date")}: {_fmt(_curve_point_field(point, "rate"))}',
+                    step=14.0,
+                ):
                     break
         if detail.risk_free_rate_curve_warning:
             line(detail.risk_free_rate_curve_warning, step=14.0)
@@ -1106,7 +1344,14 @@ class ExportService:
         return format_metric_value(val, percent=percent, usd=usd)
 
     def _resolved_execution_fields_for_export(self, job: ExportJob) -> dict[str, Any]:
-        run = self.backtests.get_lightweight_for_user(job.backtest_run_id, job.user_id)
+        if job.export_target_kind != "backtest":
+            return {
+                "risk_free_rate": None,
+                "risk_free_rate_source": None,
+                "risk_free_rate_model": None,
+                "risk_free_rate_curve_points": [],
+            }
+        run = self.backtests.get_lightweight_for_user(job.backtest_run_id, job.user_id) if job.backtest_run_id is not None else None
         if run is None:
             return {
                 "risk_free_rate": None,
@@ -1147,7 +1392,7 @@ class ExportService:
             effective_status = "expired"
         return ExportJobResponse(
             id=job.id,
-            run_id=job.backtest_run_id,
+            run_id=job.backtest_run_id or job.multi_symbol_run_id or job.multi_step_run_id,
             export_format=job.export_format,
             status=effective_status,
             file_name=job.file_name,

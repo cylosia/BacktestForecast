@@ -57,6 +57,8 @@ from backtestforecast.observability.metrics import (
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.dispatch_recovery import DISPATCH_SLA, repair_stranded_jobs
 from backtestforecast.services.exports import ExportService
+from backtestforecast.services.multi_step_backtests import MultiStepBacktestService
+from backtestforecast.services.multi_symbol_backtests import MultiSymbolBacktestService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
 
@@ -404,6 +406,70 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
             "run_id": run_id,
             "trade_count": run.trade_count,
         }
+
+
+@celery_app.task(name="multi_symbol_backtests.run", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=180, time_limit=240)
+def run_multi_symbol_backtest(self, run_id: str) -> dict[str, str]:
+    from backtestforecast.models import MultiSymbolRun
+
+    with create_worker_session() as session:
+        if not _validate_task_ownership(session, MultiSymbolRun, UUID(run_id), self.request.id):
+            DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="multi_symbol_backtests.run").inc()
+            logger.info("multi_symbol_backtests.run.duplicate_delivery", run_id=run_id, task_id=self.request.id)
+            return {"status": "skipped", "run_id": run_id, "reason": "duplicate_delivery"}
+        run_obj = session.get(MultiSymbolRun, UUID(run_id))
+        if run_obj is None:
+            CELERY_TASKS_TOTAL.labels(task_name="multi_symbol_backtests.run", status="failed").inc()
+            return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
+        publish_job_status("multi_symbol_backtest", UUID(run_id), "running")
+        _update_heartbeat(session, MultiSymbolRun, UUID(run_id))
+        service = MultiSymbolBacktestService(session)
+        try:
+            run = service.execute_run_by_id(UUID(run_id))
+        finally:
+            _close_owned_resource(service, label="multi_symbol_backtests.run.service")
+        _publish_job_status_safe(
+            "multi_symbol_backtest",
+            UUID(run_id),
+            run.status,
+            metadata={"error_code": run.error_code} if run.error_code else None,
+            log_event="multi_symbol_backtest.publish_status_failed",
+            run_id=run_id,
+        )
+        CELERY_TASKS_TOTAL.labels(task_name="multi_symbol_backtests.run", status=run.status).inc()
+        return {"status": run.status, "run_id": run_id}
+
+
+@celery_app.task(name="multi_step_backtests.run", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=180, time_limit=240)
+def run_multi_step_backtest(self, run_id: str) -> dict[str, str]:
+    from backtestforecast.models import MultiStepRun
+
+    with create_worker_session() as session:
+        if not _validate_task_ownership(session, MultiStepRun, UUID(run_id), self.request.id):
+            DUPLICATE_TASK_EXECUTION_TOTAL.labels(task_name="multi_step_backtests.run").inc()
+            logger.info("multi_step_backtests.run.duplicate_delivery", run_id=run_id, task_id=self.request.id)
+            return {"status": "skipped", "run_id": run_id, "reason": "duplicate_delivery"}
+        run_obj = session.get(MultiStepRun, UUID(run_id))
+        if run_obj is None:
+            CELERY_TASKS_TOTAL.labels(task_name="multi_step_backtests.run", status="failed").inc()
+            return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
+        publish_job_status("multi_step_backtest", UUID(run_id), "running")
+        _update_heartbeat(session, MultiStepRun, UUID(run_id))
+        service = MultiStepBacktestService(session)
+        try:
+            run = service.execute_run_by_id(UUID(run_id))
+        finally:
+            _close_owned_resource(service, label="multi_step_backtests.run.service")
+        _publish_job_status_safe(
+            "multi_step_backtest",
+            UUID(run_id),
+            run.status,
+            metadata={"error_code": run.error_code} if run.error_code else None,
+            log_event="multi_step_backtest.publish_status_failed",
+            run_id=run_id,
+        )
+        CELERY_TASKS_TOTAL.labels(task_name="multi_step_backtests.run", status=run.status).inc()
+        return {"status": run.status, "run_id": run_id}
 
 
 @celery_app.task(name="exports.generate", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=2, soft_time_limit=120, time_limit=150)
