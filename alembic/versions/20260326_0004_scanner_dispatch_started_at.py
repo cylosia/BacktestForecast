@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.exc import NoSuchTableError
 
 from alembic import op
 
@@ -21,7 +22,10 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = inspect(bind)
-    existing_columns = {column["name"] for column in inspector.get_columns("scanner_jobs")}
+    try:
+        existing_columns = {column["name"] for column in inspector.get_columns("scanner_jobs")}
+    except NoSuchTableError:
+        return
     if "dispatch_started_at" in existing_columns:
         return
 
@@ -32,7 +36,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     inspector = inspect(bind)
-    existing_columns = {column["name"] for column in inspector.get_columns("scanner_jobs")}
+    try:
+        existing_columns = {column["name"] for column in inspector.get_columns("scanner_jobs")}
+    except NoSuchTableError:
+        return
     if "dispatch_started_at" not in existing_columns:
         return
 

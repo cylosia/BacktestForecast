@@ -40,6 +40,9 @@ class SymbolAnalysisRepository:
         stmt = select(SymbolAnalysis).where(SymbolAnalysis.id == analysis_id, SymbolAnalysis.user_id == user_id)
         return self.session.scalar(stmt)
 
+    def get_for_user(self, analysis_id: UUID, user_id: UUID) -> SymbolAnalysis | None:
+        return self.get_by_id(analysis_id, user_id=user_id)
+
     def list_for_user(
         self,
         user_id: UUID,

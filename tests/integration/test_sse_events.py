@@ -52,7 +52,7 @@ def _create_scanner_job(db_session, user_id) -> uuid.UUID:
     job = ScannerJob(
         user_id=user_id,
         status="running",
-        mode="full",
+        mode="basic",
         plan_tier_snapshot="pro",
         job_kind="manual",
         request_hash="abc123",

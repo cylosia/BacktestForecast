@@ -8,7 +8,7 @@ from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob
 from backtestforecast.utils import decode_cursor, encode_cursor
 from tests.integration.test_endpoint_coverage import _ensure_user, _set_user_plan
 
-SAME_TIME = datetime(2025, 3, 10, 12, 0, 0, tzinfo=UTC)
+SAME_TIME = datetime.now(UTC).replace(microsecond=0)
 OLDER_TIME = SAME_TIME - timedelta(minutes=1)
 
 

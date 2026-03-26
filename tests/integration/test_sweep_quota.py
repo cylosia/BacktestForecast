@@ -1,6 +1,8 @@
 ﻿"""Integration tests for sweep quota enforcement."""
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from backtestforecast.models import User
 
 
@@ -47,25 +49,30 @@ class TestSweepQuota:
         client.get("/v1/me", headers=auth_headers)
         _set_user_plan(db_session, tier="pro", subscription_status="active")
 
-        # Pro tier has 10 sweeps/month limit. Create 10 sweeps.
-        for i in range(10):
+        class _UnlimitedRateLimiter:
+            def check(self, *args, **kwargs):
+                return None
+
+        with patch("apps.api.app.routers.sweeps.get_rate_limiter", return_value=_UnlimitedRateLimiter()):
+            # Pro tier has 10 sweeps/month limit. Create 10 sweeps.
+            for i in range(10):
+                resp = client.post(
+                    "/v1/sweeps",
+                    json=_sweep_payload(idempotency_key=f"quota-test-{i}"),
+                    headers=auth_headers,
+                )
+                assert resp.status_code == 202, (
+                    f"Expected 202 for sweep {i+1}, got {resp.status_code}: {resp.text}"
+                )
+
+            # 11th sweep should exceed quota
             resp = client.post(
                 "/v1/sweeps",
-                json=_sweep_payload(idempotency_key=f"quota-test-{i}"),
+                json=_sweep_payload(idempotency_key="quota-test-11"),
                 headers=auth_headers,
             )
-            assert resp.status_code == 202, (
-                f"Expected 202 for sweep {i+1}, got {resp.status_code}: {resp.text}"
-            )
-
-        # 11th sweep should exceed quota
-        resp = client.post(
-            "/v1/sweeps",
-            json=_sweep_payload(idempotency_key="quota-test-11"),
-            headers=auth_headers,
-        )
-        assert resp.status_code == 403
-        assert resp.json()["error"]["code"] == "quota_exceeded"
+            assert resp.status_code == 403
+            assert resp.json()["error"]["code"] == "quota_exceeded"
 
     def test_exceeding_quota_returns_quota_exceeded_error(
         self, client, auth_headers, db_session, _fake_celery
@@ -74,20 +81,25 @@ class TestSweepQuota:
         client.get("/v1/me", headers=auth_headers)
         _set_user_plan(db_session, tier="pro", subscription_status="active")
 
-        # Exhaust quota (10 for Pro)
-        for i in range(10):
-            client.post(
+        class _UnlimitedRateLimiter:
+            def check(self, *args, **kwargs):
+                return None
+
+        with patch("apps.api.app.routers.sweeps.get_rate_limiter", return_value=_UnlimitedRateLimiter()):
+            # Exhaust quota (10 for Pro)
+            for i in range(10):
+                client.post(
+                    "/v1/sweeps",
+                    json=_sweep_payload(idempotency_key=f"exceed-test-{i}"),
+                    headers=auth_headers,
+                )
+
+            resp = client.post(
                 "/v1/sweeps",
-                json=_sweep_payload(idempotency_key=f"exceed-test-{i}"),
+                json=_sweep_payload(idempotency_key="exceed-test-11"),
                 headers=auth_headers,
             )
-
-        resp = client.post(
-            "/v1/sweeps",
-            json=_sweep_payload(idempotency_key="exceed-test-11"),
-            headers=auth_headers,
-        )
-        assert resp.status_code == 403
-        data = resp.json()
-        assert data["error"]["code"] == "quota_exceeded"
-        assert "quota" in data["error"]["message"].lower() or "used" in data["error"]["message"].lower()
+            assert resp.status_code == 403
+            data = resp.json()
+            assert data["error"]["code"] == "quota_exceeded"
+            assert "quota" in data["error"]["message"].lower() or "used" in data["error"]["message"].lower()

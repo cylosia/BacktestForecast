@@ -32,20 +32,19 @@ class TestDailyPicksHistory:
     def test_with_cursor_parameter(
         self, client, auth_headers, db_session
     ):
-        """GET /v1/daily-picks/history accepts cursor for pagination."""
+        """GET /v1/daily-picks/history rejects raw timestamps and expects opaque cursors."""
         client.get("/v1/me", headers=auth_headers)
         _set_user_plan(db_session, tier="pro", subscription_status="active")
 
-        # Valid ISO 8601 timestamp with timezone
+        # Raw timestamps are no longer valid cursor values; the API expects an opaque encoded cursor.
         cursor = "2025-01-15T12:00:00+00:00"
         resp = client.get(
             "/v1/daily-picks/history",
             params={"cursor": cursor, "limit": 5},
             headers=auth_headers,
         )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "items" in data
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "validation_error"
 
     def test_invalid_cursor_returns_422(
         self, client, auth_headers, db_session

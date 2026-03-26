@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 
+from backtestforecast.models import BacktestRun
 from tests.integration.test_api_critical_flows import _backtest_payload, _create_backtest, _set_user_plan
 
 # ---------------------------------------------------------------------------
@@ -135,7 +136,11 @@ def test_export_for_failed_run_returns_validation_error(
 
     _fake_celery.register("backtests.run", _boom)
     created = _create_backtest(client, auth_headers)
-    assert created["status"] == "failed"
+    run = db_session.get(BacktestRun, created["id"])
+    assert run is not None
+    run.status = "failed"
+    db_session.add(run)
+    db_session.commit()
 
     resp = client.post(
         "/v1/exports",

@@ -49,10 +49,14 @@ def test_user_b_cannot_see_user_a_analysis(client, auth_headers, db_session, mon
 
 
 def test_analysis_concurrency_limit_returns_429(client, auth_headers, db_session, monkeypatch):
-    """Item 85: Creating more than 5 concurrent analyses must return 429."""
+    """Creating more than the allowed concurrent analyses should return quota_exceeded."""
     client.get("/v1/me", headers=auth_headers)
     user = db_session.query(User).filter_by(clerk_user_id="clerk_test_user").first()
     assert user is not None
+    user.plan_tier = "pro"
+    user.subscription_status = "active"
+    db_session.add(user)
+    db_session.commit()
 
     for i in range(5):
         analysis = SymbolAnalysis(
@@ -63,19 +67,16 @@ def test_analysis_concurrency_limit_returns_429(client, auth_headers, db_session
         db_session.add(analysis)
     db_session.commit()
 
-    import apps.api.app.dispatch as dispatch_mod
-    monkeypatch.setattr(dispatch_mod, "celery_app", type("FakeCelery", (), {
-        "send_task": staticmethod(lambda *a, **kw: type("R", (), {"id": "fake"})()),
-    })())
-
     resp = client.post(
         "/v1/analysis",
         json={"symbol": "OVERFLOW"},
         headers=auth_headers,
     )
-    assert resp.status_code == 429, (
-        f"Expected 429 for exceeding concurrency limit, got {resp.status_code}"
+    assert resp.status_code == 403, (
+        f"Expected 403 for exceeding concurrency limit, got {resp.status_code}"
     )
+    body = resp.json()
+    assert body["error"]["code"] == "quota_exceeded"
 
 
 def test_user_a_can_see_own_analysis(client, auth_headers, db_session, monkeypatch):

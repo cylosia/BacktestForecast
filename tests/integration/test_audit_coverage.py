@@ -35,7 +35,7 @@ def _create_backtest(client: TestClient, auth_headers: dict[str, str]) -> dict:
             "account_size": 10000,
             "risk_per_trade_pct": 5,
             "commission_per_contract": 0.65,
-            "entry_rules": [{"rule_type": "dte_range"}],
+            "entry_rules": [{"type": "rsi", "operator": "lte", "threshold": "40", "period": 14}],
         },
     )
     assert resp.status_code in (201, 202), resp.text

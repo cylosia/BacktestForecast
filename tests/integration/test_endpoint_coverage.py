@@ -71,7 +71,7 @@ def _backtest_payload(**overrides):
         "account_size": "10000",
         "risk_per_trade_pct": "2.0",
         "commission_per_contract": "0.65",
-        "entry_rules": [{"type": "always_enter"}],
+        "entry_rules": [{"type": "rsi", "operator": "lte", "threshold": "40", "period": 14}],
     }
     payload.update(overrides)
     return payload
@@ -82,7 +82,12 @@ def _scan_payload(**overrides):
         "mode": "basic",
         "symbols": ["SPY"],
         "strategy_types": ["long_call"],
-        "rule_sets": [{"name": "test", "entry_rules": [{"type": "always_enter"}]}],
+        "rule_sets": [
+            {
+                "name": "test",
+                "entry_rules": [{"type": "rsi", "operator": "lte", "threshold": "40", "period": 14}],
+            }
+        ],
         "start_date": "2024-01-01",
         "end_date": "2024-06-01",
         "target_dte": 30,
@@ -294,7 +299,7 @@ class TestScanStatus:
 
 
 class TestDeleteScan:
-    def test_delete_scan_returns_204(self, client, auth_headers, db_session, _fake_celery):
+    def test_delete_scan_returns_409_while_queued(self, client, auth_headers, db_session, _fake_celery):
         _ensure_user(client, auth_headers)
         _set_user_plan(db_session, tier="pro")
 
@@ -303,10 +308,8 @@ class TestDeleteScan:
         job_id = created.json()["id"]
 
         resp = client.delete(f"/v1/scans/{job_id}", headers=auth_headers)
-        assert resp.status_code == 204
-
-        get_resp = client.get(f"/v1/scans/{job_id}", headers=auth_headers)
-        assert get_resp.status_code == 404
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "conflict"
 
     def test_delete_nonexistent_scan_returns_404(self, client, auth_headers):
         fake_id = str(uuid.uuid4())
@@ -320,7 +323,7 @@ class TestDeleteScan:
 
 
 class TestDeleteSweep:
-    def test_delete_sweep_returns_204(self, client, auth_headers, db_session, _fake_celery):
+    def test_delete_sweep_returns_409_while_queued(self, client, auth_headers, db_session, _fake_celery):
         _ensure_user(client, auth_headers)
         _set_user_plan(db_session, tier="pro")
 
@@ -329,10 +332,8 @@ class TestDeleteSweep:
         job_id = created.json()["id"]
 
         resp = client.delete(f"/v1/sweeps/{job_id}", headers=auth_headers)
-        assert resp.status_code == 204
-
-        get_resp = client.get(f"/v1/sweeps/{job_id}", headers=auth_headers)
-        assert get_resp.status_code == 404
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "conflict"
 
     def test_delete_nonexistent_sweep_returns_404(self, client, auth_headers):
         fake_id = str(uuid.uuid4())
@@ -372,7 +373,7 @@ class TestSweepStatus:
 
 
 class TestDeleteAnalysis:
-    def test_delete_analysis_returns_204(self, client, auth_headers, db_session, _fake_celery):
+    def test_delete_analysis_returns_409_while_queued(self, client, auth_headers, db_session, _fake_celery):
         _ensure_user(client, auth_headers)
         _set_user_plan(db_session, tier="pro")
 
@@ -381,10 +382,8 @@ class TestDeleteAnalysis:
         analysis_id = created.json()["id"]
 
         resp = client.delete(f"/v1/analysis/{analysis_id}", headers=auth_headers)
-        assert resp.status_code == 204
-
-        get_resp = client.get(f"/v1/analysis/{analysis_id}", headers=auth_headers)
-        assert get_resp.status_code == 404
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "conflict"
 
     def test_delete_nonexistent_analysis_returns_404(self, client, auth_headers, db_session):
         _ensure_user(client, auth_headers)
@@ -450,7 +449,7 @@ class TestHealthLive:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "ok"
-        assert body["service"] == "api"
+        assert body["service"] == "backtestforecast-api"
         assert "version" in body
 
 
@@ -481,7 +480,7 @@ class TestRoot:
         body = resp.json()
         assert body["service"] == "backtestforecast-api"
         assert body["status"] == "ok"
-        assert body["health"] == "/health/ready"
+        assert body["health"] == "/health/live"
 
 
 # ===========================================================================

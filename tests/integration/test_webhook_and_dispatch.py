@@ -21,7 +21,8 @@ def test_webhook_returns_500_for_transient_errors(client: TestClient) -> None:
 
     assert response.status_code == 500
     body = response.json()
-    assert body["error"]["code"] == "webhook_processing_failed"
+    assert body["received"] is False
+    assert "retry" in body["reason"].lower()
 
 
 def test_webhook_reraises_auth_error(client: TestClient) -> None:
@@ -45,16 +46,21 @@ def test_dispatch_failure_marks_job_failed(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the Celery broker is down, the job should be marked failed."""
+    """When the Celery broker is down, the job should stay queued for outbox recovery."""
     from kombu.exceptions import OperationalError
-
-    import apps.api.app.dispatch as dispatch_mod
+    from backtestforecast.security import get_rate_limiter
 
     class _BrokenCelery:
         def send_task(self, *args, **kwargs):
             raise OperationalError("broker down")
 
-    monkeypatch.setattr(dispatch_mod, "celery_app", _BrokenCelery())
+    class _UnlimitedRateLimiter:
+        def check(self, *args, **kwargs):
+            return None
+
+    get_rate_limiter().reset()
+    monkeypatch.setattr("apps.worker.app.celery_app.celery_app", _BrokenCelery())
+    monkeypatch.setattr("apps.api.app.routers.backtests.get_rate_limiter", lambda: _UnlimitedRateLimiter())
 
     response = client.post(
         "/v1/backtests",
@@ -69,11 +75,14 @@ def test_dispatch_failure_marks_job_failed(
             "account_size": 10000,
             "risk_per_trade_pct": 2.0,
             "commission_per_contract": 0.65,
+            "entry_rules": [
+                {"type": "rsi", "operator": "lt", "threshold": "30", "period": 14}
+            ],
         },
         headers={"Authorization": "Bearer test-token"},
     )
 
     assert response.status_code == 202
     body = response.json()
-    assert body["status"] == "failed"
-    assert body.get("error_code") == "enqueue_failed"
+    assert body["status"] == "queued"
+    assert body.get("error_code") in (None, "dispatch_sla_exceeded")

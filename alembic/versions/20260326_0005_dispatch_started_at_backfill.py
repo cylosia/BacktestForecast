@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.exc import NoSuchTableError
 
 from alembic import op
 
@@ -31,7 +32,10 @@ def upgrade() -> None:
     inspector = inspect(bind)
 
     for table_name, index_name in _TABLES:
-        existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        try:
+            existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        except NoSuchTableError:
+            continue
         if "dispatch_started_at" not in existing_columns:
             op.add_column(table_name, sa.Column("dispatch_started_at", sa.DateTime(timezone=True), nullable=True))
 
@@ -45,8 +49,11 @@ def downgrade() -> None:
     inspector = inspect(bind)
 
     for table_name, index_name in _TABLES:
-        existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
-        existing_indexes = {index["name"] for index in inspector.get_indexes(table_name)}
+        try:
+            existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+            existing_indexes = {index["name"] for index in inspector.get_indexes(table_name)}
+        except NoSuchTableError:
+            continue
         if index_name in existing_indexes:
             op.drop_index(index_name, table_name=table_name)
         if "dispatch_started_at" in existing_columns:

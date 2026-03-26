@@ -113,7 +113,7 @@ def get_analysis(
         detail_kwargs = summary.model_dump()
         if analysis.status == "succeeded":
             integrity_warnings: list[str] = []
-            expected_as_of_date = analysis.trade_date
+            expected_as_of_date = getattr(analysis, "trade_date", None)
             top_results = _validate_analysis_list(
                 AnalysisTopResult,
                 analysis.top_results_json,

@@ -12,6 +12,7 @@ def _create_pipeline_run_with_picks(session, trade_date=None):
     """Create a succeeded pipeline run with sample recommendations."""
     if trade_date is None:
         trade_date = date(2025, 3, 1)
+    created_at = datetime(trade_date.year, trade_date.month, trade_date.day, 12, 0, tzinfo=UTC)
 
     run = NightlyPipelineRun(
         trade_date=trade_date,
@@ -24,8 +25,11 @@ def _create_pipeline_run_with_picks(session, trade_date=None):
         full_backtests_run=20,
         recommendations_produced=3,
         duration_seconds=Decimal("120.5"),
-        completed_at=datetime.now(UTC),
+        completed_at=created_at,
     )
+    session.add(run)
+    session.commit()
+    run.created_at = created_at
     session.add(run)
     session.commit()
     session.refresh(run)
@@ -42,7 +46,14 @@ def _create_pipeline_run_with_picks(session, trade_date=None):
             close_price=Decimal("150.00"),
             target_dte=30,
             config_snapshot_json={"key": "value"},
-            summary_json={"trade_count": 5, "decided_trades": 3, "win_rate": 65.0},
+            summary_json={
+                "trade_count": 5,
+                "decided_trades": 3,
+                "win_rate": 65.0,
+                "total_roi_pct": 12.5,
+                "max_drawdown_pct": -4.2,
+                "total_net_pnl": 375.0,
+            },
             forecast_json={"direction": "up"},
         )
         session.add(rec)

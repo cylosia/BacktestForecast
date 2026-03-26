@@ -44,5 +44,5 @@ class ScanPresenter:
     def get_job(self, user, job_id):
         return self.service._get_job_impl(user, job_id)
 
-    def get_recommendations(self, user, job_id):
-        return self.service._get_recommendations_impl(user, job_id)
+    def get_recommendations(self, user, job_id, *, limit=100, offset=0):
+        return self.service._get_recommendations_impl(user, job_id, limit=limit, offset=offset)

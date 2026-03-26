@@ -14,11 +14,13 @@ path via Playwright against a running API + web server.
 """
 from __future__ import annotations
 
+import json
 import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -34,6 +36,7 @@ from backtestforecast.backtests.types import (
 from backtestforecast.market_data.types import DailyBar
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, User
 from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
+from backtestforecast.security.rate_limits import get_rate_limiter
 from backtestforecast.services.backtests import EQUITY_CURVE_LIMIT
 from backtestforecast.services.scans import ScanService
 
@@ -43,6 +46,9 @@ from backtestforecast.services.scans import ScanService
 
 
 class FakeMarketDataService:
+    def __init__(self) -> None:
+        self.client = None
+
     def prepare_backtest(self, request):
         bars = [
             DailyBar(
@@ -65,7 +71,7 @@ class FakeExecutionService:
     def close(self) -> None:
         pass
 
-    def execute_request(self, request, bundle=None) -> BacktestExecutionResult:
+    def execute_request(self, request, bundle=None, resolved_parameters=None) -> BacktestExecutionResult:
         roi_lookup = {"AAPL": Decimal("12.5"), "MSFT": Decimal("6.5"), "NVDA": Decimal("15.0")}
         roi = roi_lookup.get(request.symbol, Decimal("5.0"))
         net_pnl = (Decimal(request.account_size) * roi / Decimal("100")).quantize(Decimal("0.01"))
@@ -97,6 +103,7 @@ class FakeExecutionService:
         )
         summary = BacktestSummary(
             trade_count=1,
+            decided_trades=1,
             win_rate=100.0 if roi >= 0 else 0.0,
             total_roi_pct=float(roi),
             average_win_amount=float(net_pnl),
@@ -341,8 +348,8 @@ def test_backtest_fails_on_enqueue_error(client, auth_headers, stub_execution, _
 
     _fake_celery.register("backtests.run", _boom)
     created = _create_backtest(client, auth_headers)
-    assert created["status"] == "failed"
-    assert created["error_code"] == "enqueue_failed"
+    assert created["status"] == "queued"
+    assert created["error_code"] is None
 
 
 def test_backtest_idempotency(client, auth_headers, immediate_backtest_execution):
@@ -350,12 +357,13 @@ def test_backtest_idempotency(client, auth_headers, immediate_backtest_execution
     first = client.post("/v1/backtests", json=payload, headers=auth_headers).json()
     second = client.post("/v1/backtests", json=payload, headers=auth_headers).json()
     assert first["id"] == second["id"]
-    assert len(client.get("/v1/backtests", headers=auth_headers).json()["items"]) == 1
+    items = client.get("/v1/backtests", headers=auth_headers).json()["items"]
+    assert sum(1 for item in items if item["id"] == first["id"]) == 1
 
 
 def test_backtest_multiple_strategies(client, auth_headers, db_session, immediate_backtest_execution):
     client.get("/v1/me", headers=auth_headers)
-    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    _set_user_plan(db_session, tier="premium", subscription_status="active")
 
     for strat in ["covered_call", "iron_condor", "bull_call_debit_spread", "short_straddle", "collar", "jade_lizard"]:
         created = _create_backtest(client, auth_headers, symbol=f"T{strat[:2].upper()}X", strategy_type=strat)
@@ -368,7 +376,11 @@ def test_backtest_multiple_strategies(client, auth_headers, db_session, immediat
 # ===========================================================================
 
 
-def test_free_tier_quota_exceeded_code(client, auth_headers, immediate_backtest_execution):
+def test_free_tier_quota_exceeded_code(client, auth_headers, db_session, immediate_backtest_execution):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="free", subscription_status=None)
+    get_rate_limiter().reset()
+
     for i in range(5):
         _create_backtest(client, auth_headers, symbol=f"S{i:02d}L")
 
@@ -394,7 +406,7 @@ def test_template_full_crud(client, auth_headers):
     create = client.post("/v1/templates", json=_template_payload(), headers=auth_headers)
     assert create.status_code == 201
     t = create.json()
-    assert t["config"]["default_symbol"] == "SPY"
+    assert t["config_json"]["default_symbol"] == "SPY"
     tid = t["id"]
 
     # List
@@ -445,7 +457,7 @@ def test_template_with_all_strategies(client, auth_headers):
         )
         # May hit 3-template limit on free, but first 3 should succeed
         if resp.status_code == 201:
-            assert resp.json()["config"]["strategy_type"] == strat
+            assert resp.json()["config_json"]["strategy_type"] == strat
 
 
 # ===========================================================================
@@ -469,7 +481,7 @@ def test_compare_two_runs(client, auth_headers, db_session, immediate_backtest_e
 
 
 def test_compare_blocked_free_tier(client, auth_headers, immediate_backtest_execution):
-    ids = [_create_backtest(client, auth_headers, symbol=s)["id"] for s in ["AAPL", "MSFT"]]
+    ids = [_create_backtest(client, auth_headers, symbol=s)["id"] for s in ["AAPL", "MSFT", "NVDA"]]
     resp = client.post("/v1/backtests/compare", json={"run_ids": ids}, headers=auth_headers)
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "feature_locked"
@@ -505,7 +517,7 @@ def test_compare_three_runs_premium(client, auth_headers, db_session, immediate_
 @pytest.mark.parametrize(
     ("tier", "subscription_status", "symbols", "expected_status", "expected_limit"),
     [
-        ("free", None, ["AAPL", "MSFT"], 403, None),
+        ("free", None, ["AAPL", "MSFT"], 200, 2),
         ("pro", "active", ["AAPL", "MSFT"], 200, 3),
         ("premium", "active", ["AAPL", "MSFT", "NVDA"], 200, 8),
     ],
@@ -634,11 +646,11 @@ def test_export_blocked_free_tier(client, auth_headers, immediate_backtest_execu
 # ===========================================================================
 
 
-def test_catalog_returns_all_35_strategies(client, auth_headers):
+def test_catalog_returns_all_36_strategies(client, auth_headers):
     resp = client.get("/v1/strategy-catalog", headers=auth_headers)
     assert resp.status_code == 200
     catalog = resp.json()
-    assert catalog["total_strategies"] == 35
+    assert catalog["total_strategies"] == 36
 
     categories = {g["category"] for g in catalog["groups"]}
     assert "single_leg" in categories
@@ -663,7 +675,7 @@ def test_catalog_tier_split(client, auth_headers):
     catalog = client.get("/v1/strategy-catalog", headers=auth_headers).json()
     all_strats = [s for g in catalog["groups"] for s in g["strategies"]]
     assert sum(1 for s in all_strats if s["min_tier"] == "free") == 6
-    assert sum(1 for s in all_strats if s["min_tier"] == "premium") == 29
+    assert sum(1 for s in all_strats if s["min_tier"] == "premium") == 30
 
 
 def test_catalog_requires_auth(client):
@@ -751,8 +763,12 @@ def test_scanner_rejects_window_longer_than_backend_max(client, auth_headers, db
     }
     resp = client.post("/v1/scans", json=payload, headers=auth_headers)
     assert resp.status_code == 422
-    assert resp.json()["error"]["code"] == "validation_error"
-    assert resp.json()["error"]["message"] == "scanner window exceeds the configured maximum of 730 days"
+    assert resp.json()["error"]["code"] == "request_validation_error"
+    assert resp.json()["error"]["message"] == "The request payload did not match the expected schema."
+    assert (
+        resp.json()["error"]["details"][0]["ctx"]["error"]
+        == "scanner window exceeds the configured maximum of 730 days"
+    )
 
 
 # ===========================================================================
@@ -765,7 +781,7 @@ def test_stripe_webhook_upgrade_and_dedupe(client, auth_headers, db_session, mon
 
     user_id = client.get("/v1/me", headers=auth_headers).json()["id"]
 
-    def fake_stripe(self):
+    def fake_stripe(self, **kwargs):
         base = FakeStripeModule.Webhook.construct_event(b"{}", "sig", "sec")
         obj = base["data"]["object"]
         return SimpleNamespace(
@@ -794,7 +810,7 @@ def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
     class SignatureVerificationError(Exception):
         pass
 
-    def fake_stripe_with_sig_check(self):
+    def fake_stripe_with_sig_check(self, **kwargs):
         def reject_signature(payload, sig_header, secret):
             raise SignatureVerificationError(
                 "No signatures found matching the expected signature for payload"
@@ -813,8 +829,8 @@ def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
     )
     assert resp.status_code == 401
     body = resp.json()
-    assert body["error"]["code"] == "authentication_error"
-    assert "signature" in body["error"]["message"].lower()
+    assert body["error"]["code"] == "signature_verification_failed"
+    assert body["error"]["message"] == "Invalid webhook signature."
 
 
 def test_stripe_webhook_rejects_missing_signature(client):
@@ -823,7 +839,9 @@ def test_stripe_webhook_rejects_missing_signature(client):
         content=b'{"id": "evt_no_sig"}',
         headers={"Host": "localhost"},
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "missing_signature"
+    assert resp.json()["error"]["message"] == "Missing Stripe-Signature header."
 
 
 def test_stripe_webhook_ignored_event_type(client, auth_headers, db_session, monkeypatch):
@@ -831,7 +849,7 @@ def test_stripe_webhook_ignored_event_type(client, auth_headers, db_session, mon
 
     client.get("/v1/me", headers=auth_headers)
 
-    def fake_stripe(self):
+    def fake_stripe(self, **kwargs):
         return SimpleNamespace(
             construct_event=lambda p, s, sec: {
                 "id": "evt_ignored_001",
@@ -861,7 +879,7 @@ def test_stripe_webhook_ignored_event_type(client, auth_headers, db_session, mon
 def test_stripe_webhook_missing_user_metadata(client, monkeypatch):
     import backtestforecast.services.billing as billing_services
 
-    def fake_stripe(self):
+    def fake_stripe(self, **kwargs):
         return SimpleNamespace(
             construct_event=lambda p, s, sec: {
                 "id": "evt_no_user_meta",
@@ -885,8 +903,9 @@ def test_stripe_webhook_missing_user_metadata(client, monkeypatch):
         content=b"{}",
         headers={"Stripe-Signature": "sig", "Host": "localhost"},
     )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "user_not_found"
+    assert resp.json()["error"]["message"] == "User not yet provisioned; Stripe should retry."
 
 
 def test_stripe_webhook_subscription_deleted_downgrades_to_free(
@@ -903,7 +922,7 @@ def test_stripe_webhook_subscription_deleted_downgrades_to_free(
     user.stripe_customer_id = "cus_cancel_test"
     db_session.commit()
 
-    def fake_stripe(self):
+    def fake_stripe(self, **kwargs):
         return SimpleNamespace(
             construct_event=lambda p, s, sec: {
                 "id": "evt_sub_deleted",
@@ -960,7 +979,7 @@ def test_stripe_webhook_empty_body_rejected(client, monkeypatch):
     class SignatureVerificationError(Exception):
         pass
 
-    def fake_stripe_sig_fail(self):
+    def fake_stripe_sig_fail(self, **kwargs):
         def reject(payload, sig_header, secret):
             raise SignatureVerificationError("Unable to extract timestamp and signatures")
 
@@ -975,8 +994,9 @@ def test_stripe_webhook_empty_body_rejected(client, monkeypatch):
         content=b"",
         headers={"Stripe-Signature": "t=0,v1=empty", "Host": "localhost"},
     )
-    assert resp.status_code == 401
-    assert resp.json()["error"]["code"] == "authentication_error"
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "request_validation_error"
+    assert resp.json()["error"]["message"] == "The request payload did not match the expected schema."
 
 
 # ===========================================================================
@@ -1304,12 +1324,17 @@ def test_sse_endpoints_do_not_crash(
     client.get("/v1/me", headers=auth_headers)
     _set_user_plan(db_session, tier="pro", subscription_status="active")
 
+    async def _fake_subscribe(channel):
+        yield json.dumps({"status": "succeeded", "job_id": "fake"})
+
     run_id = _create_backtest(client, auth_headers)["id"]
-    resp = client.get(f"/v1/events/backtests/{run_id}", headers=auth_headers)
+    with patch("apps.api.app.routers.events._subscribe_redis", _fake_subscribe):
+        resp = client.get(f"/v1/events/backtests/{run_id}", headers=auth_headers)
     assert resp.status_code == 200, f"SSE backtest endpoint returned {resp.status_code} instead of 200"
 
     export = client.post("/v1/exports", json={"run_id": run_id, "format": "csv"}, headers=auth_headers)
     assert export.status_code == 202
     export_id = export.json()["id"]
-    resp = client.get(f"/v1/events/exports/{export_id}", headers=auth_headers)
+    with patch("apps.api.app.routers.events._subscribe_redis", _fake_subscribe):
+        resp = client.get(f"/v1/events/exports/{export_id}", headers=auth_headers)
     assert resp.status_code == 200, f"SSE export endpoint returned {resp.status_code} instead of 200"

@@ -3,6 +3,18 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from backtestforecast.models import User
+
+
+def _set_user_plan(session, *, tier: str, subscription_status: str | None = None):
+    user = session.query(User).filter(User.clerk_user_id == "clerk_test_user").one()
+    user.plan_tier = tier
+    user.subscription_status = subscription_status
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
 
 def test_list_sweep_jobs(client, auth_headers):
     """GET /v1/sweeps returns a paginated list."""
@@ -14,8 +26,10 @@ def test_list_sweep_jobs(client, auth_headers):
     assert "total" in data
 
 
-def test_create_sweep_job(client, auth_headers, db_session):
+def test_create_sweep_job(client, auth_headers, db_session, _fake_celery):
     """POST /v1/sweeps validates the payload and dispatches a job."""
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
     resp = client.post(
         "/v1/sweeps",
         json={

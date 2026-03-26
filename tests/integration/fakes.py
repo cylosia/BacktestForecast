@@ -20,6 +20,9 @@ from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
 
 
 class FakeMarketDataService:
+    def __init__(self) -> None:
+        self.client = None
+
     def prepare_backtest(self, request):
         bars = [
             DailyBar(
@@ -42,7 +45,7 @@ class FakeExecutionService:
     def close(self) -> None:
         pass
 
-    def execute_request(self, request, bundle=None) -> BacktestExecutionResult:
+    def execute_request(self, request, bundle=None, resolved_parameters=None) -> BacktestExecutionResult:
         roi_lookup = {"AAPL": Decimal("12.5"), "MSFT": Decimal("6.5"), "NVDA": Decimal("15.0")}
         roi = roi_lookup.get(request.symbol, Decimal("5.0"))
         net_pnl = (Decimal(request.account_size) * roi / Decimal("100")).quantize(Decimal("0.01"))
@@ -74,6 +77,7 @@ class FakeExecutionService:
         )
         summary = BacktestSummary(
             trade_count=1,
+            decided_trades=1,
             win_rate=100.0 if roi >= 0 else 0.0,
             total_roi_pct=float(roi),
             average_win_amount=float(net_pnl),

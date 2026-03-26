@@ -101,7 +101,7 @@ class TestSweepLifecycle:
         assert resp.status_code == 404
 
     def test_delete_sweep(self, client, auth_headers, db_session, _fake_celery):
-        """DELETE /v1/sweeps/{id} cancels/deletes the sweep."""
+        """DELETE /v1/sweeps/{id} rejects queued jobs; cancel is the active-state path."""
         client.get("/v1/me", headers=auth_headers)
         _set_user_plan(db_session, tier="pro", subscription_status="active")
 
@@ -110,7 +110,8 @@ class TestSweepLifecycle:
         ).json()["id"]
 
         delete_resp = client.delete(f"/v1/sweeps/{sweep_id}", headers=auth_headers)
-        assert delete_resp.status_code == 204
+        assert delete_resp.status_code == 409
+        assert delete_resp.json()["error"]["code"] == "conflict"
 
     def test_sweep_results_empty_for_queued_job(self, client, auth_headers, db_session, _fake_celery):
         """GET /v1/sweeps/{id}/results returns empty list for a queued sweep."""

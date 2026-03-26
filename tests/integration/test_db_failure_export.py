@@ -36,6 +36,13 @@ def test_export_marks_job_failed_and_rolls_back_on_db_failure(
         db_session.add(user)
         db_session.commit()
         db_session.refresh(user)
+    else:
+        user.plan_tier = "pro"
+        user.subscription_status = "active"
+        user.subscription_current_period_end = datetime.now(UTC) + timedelta(days=30)
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
 
     today = datetime.now(UTC).date()
     start = today - timedelta(days=90)
@@ -78,8 +85,8 @@ def test_export_marks_job_failed_and_rolls_back_on_db_failure(
     with session_factory() as session:
         service = ExportService(session)
         with patch.object(
-            service.backtest_service,
-            "get_run_for_owner",
+            service.backtests,
+            "get_lightweight_for_user",
             side_effect=SQLAlchemyError("connection lost"),
         ), pytest.raises(SQLAlchemyError):
             service.execute_export_by_id(export_id)

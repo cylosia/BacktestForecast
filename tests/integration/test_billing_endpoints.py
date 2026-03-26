@@ -39,9 +39,14 @@ def test_portal_session_requires_auth(client):
 
 def test_portal_session_billing_disabled(client, auth_headers, monkeypatch):
     """When feature_billing_enabled is False, portal-session returns 403/feature_locked."""
-    from backtestforecast.config import Settings
+    from apps.api.app.routers import billing as billing_router
+    from backtestforecast.config import get_settings
 
-    monkeypatch.setattr(Settings, "feature_billing_enabled", False)
+    monkeypatch.setattr(
+        billing_router,
+        "get_settings",
+        lambda: get_settings().model_copy(update={"feature_billing_enabled": False}),
+    )
 
     client.get("/v1/me", headers=auth_headers)
     resp = client.post(

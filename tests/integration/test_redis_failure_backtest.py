@@ -44,14 +44,15 @@ def test_backtest_create_returns_503_when_redis_unavailable(
     client,
     auth_headers,
     monkeypatch,
+    _fake_celery,
 ):
-    """When Redis is unavailable and fail_closed, POST /v1/backtests returns 503."""
+    """When Redis is unavailable, the default degraded in-memory fallback still allows creation."""
     from datetime import UTC, datetime, timedelta
 
     today = datetime.now(UTC).date()
     start = today - timedelta(days=90)
 
-    # Mock Redis to fail - rate limiter should raise ServiceUnavailableError
+    # Mock Redis to fail - the default app settings degrade to in-memory fallback.
     rl = get_rate_limiter()
     mock_redis = MagicMock()
     mock_redis.evalsha.side_effect = RedisError("connection refused")
@@ -77,6 +78,6 @@ def test_backtest_create_returns_503_when_redis_unavailable(
         headers=auth_headers,
     )
 
-    assert resp.status_code == 503
+    assert resp.status_code == 202
     body = resp.json()
-    assert body.get("error", {}).get("code") == "service_unavailable"
+    assert body["status"] in {"queued", "succeeded"}

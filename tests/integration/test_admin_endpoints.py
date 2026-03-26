@@ -8,10 +8,10 @@ def test_metrics_accessible_in_dev(client):
     assert resp.status_code == 200
 
 
-def test_dlq_accessible_in_dev(client):
-    """In dev/test, /admin/dlq should be accessible without auth."""
+def test_dlq_requires_auth_in_dev(client):
+    """In dev/test, /admin/dlq should not be accessible without auth."""
     resp = client.get("/admin/dlq")
-    assert resp.status_code in (200, 503)
+    assert resp.status_code == 403
 
 
 def test_dlq_requires_auth_even_in_dev(client):
@@ -44,9 +44,13 @@ def test_dlq_requires_auth_even_in_dev(client):
 
 def test_dlq_rejects_wrong_token(client, monkeypatch):
     """DLQ must reject requests with an incorrect metrics token."""
-    from backtestforecast.config import Settings
+    from backtestforecast.config import get_settings
 
-    monkeypatch.setattr(Settings, "metrics_token", "correct-secret-token")
+    settings = get_settings().model_copy(update={"admin_token": None, "metrics_token": "correct-secret-token"})
+    monkeypatch.setattr(
+        "apps.api.app.main.get_settings",
+        lambda: settings,
+    )
 
     resp = client.get(
         "/admin/dlq",

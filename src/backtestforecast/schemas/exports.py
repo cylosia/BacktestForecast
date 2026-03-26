@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from backtestforecast.billing.entitlements import ExportFormat
 from backtestforecast.schemas.backtests import RiskFreeRatePointResponse
@@ -32,7 +32,9 @@ class ExportJobResponse(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
     id: UUID
-    run_id: UUID = Field(alias="backtest_run_id")
+    run_id: UUID = Field(
+        validation_alias=AliasChoices("backtest_run_id", "multi_symbol_run_id", "multi_step_run_id"),
+    )
     export_format: ExportFormat
     status: JobStatus
     file_name: str

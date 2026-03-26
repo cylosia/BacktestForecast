@@ -49,6 +49,7 @@ from backtestforecast.schemas.backtests import (
     UsageSummaryResponse,
 )
 from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
+from backtestforecast.strategy_catalog.catalog import STRATEGY_CATALOG, StrategyTier
 from backtestforecast.services.audit import AuditService
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.backtest_service_helpers import (
@@ -86,6 +87,11 @@ EQUITY_CURVE_LIMIT = 10_000
 _RUNNING_DELETE_CONFLICT = deletion_blocked_message("backtest run")
 _SUMMARY_PROVENANCE = "persisted_run_aggregates"
 _BACKTEST_QUEUE = "backtests"
+_STRATEGY_TIER_ORDER = {
+    StrategyTier.FREE.value: 0,
+    StrategyTier.PRO.value: 1,
+    StrategyTier.PREMIUM.value: 2,
+}
 
 class BacktestService:
     def __init__(
@@ -167,6 +173,24 @@ class BacktestService:
             starting_equity=to_decimal(request.account_size),
             ending_equity=to_decimal(request.account_size),
         )
+
+    @staticmethod
+    def _ensure_strategy_access(user: User, strategy_type: str) -> None:
+        entry = STRATEGY_CATALOG.get(strategy_type)
+        if entry is None:
+            return
+        feature_policy = resolve_feature_policy(
+            user.plan_tier,
+            user.subscription_status,
+            user.subscription_current_period_end,
+        )
+        current_tier = _STRATEGY_TIER_ORDER.get(feature_policy.tier, 0)
+        required_tier = _STRATEGY_TIER_ORDER.get(entry.min_tier.value, 0)
+        if current_tier < required_tier:
+            raise FeatureLockedError(
+                f"{entry.label} requires the {entry.min_tier.value} plan.",
+                required_tier=entry.min_tier.value,
+            )
 
     @staticmethod
     def _request_payload_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
@@ -270,6 +294,7 @@ class BacktestService:
                     logger=logger,
                 )
 
+        self._ensure_strategy_access(user, request.strategy_type.value)
         self._enforce_backtest_quota(user)
 
         resolved_parameters = self._resolve_enqueue_parameters(request)
@@ -681,6 +706,20 @@ class BacktestService:
             ),
         )
 
+    def get_run_status_for_owner(self, *, user_id: UUID, run_id: UUID) -> BacktestRunStatusResponse:
+        run = self.run_repository.get_lightweight_for_user(run_id, user_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        diagnostic = get_dispatch_diagnostic(run)
+        return BacktestRunStatusResponse(
+            id=run.id,
+            status=run.status,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            error_code=run.error_code or (diagnostic[0] if diagnostic else None),
+            error_message=run.error_message or (diagnostic[1] if diagnostic else None),
+        )
+
     def delete_for_user(self, run_id: UUID, user_id: UUID) -> None:
         run = self.run_repository.get_lightweight_for_user(run_id, user_id)
         if run is None:
@@ -722,7 +761,17 @@ class BacktestService:
             raise
         revoke_celery_task(task_id, job_type="backtest", job_id=run.id)
         publish_cancellation_event(job_type="backtest", job_id=run.id)
-        return self.get_run_status_for_owner(user_id=user_id, run_id=run_id)
+        refreshed = self.run_repository.get_lightweight_for_user(run_id, user_id)
+        if refreshed is None:
+            raise NotFoundError("Backtest run not found.")
+        return BacktestRunStatusResponse(
+            id=refreshed.id,
+            status=refreshed.status,
+            started_at=refreshed.started_at,
+            completed_at=refreshed.completed_at,
+            error_code=refreshed.error_code,
+            error_message=refreshed.error_message,
+        )
 
     def compare_runs(self, user: User, request: CompareBacktestsRequest) -> CompareBacktestsResponse:
         if len(request.run_ids) != len(set(request.run_ids)):

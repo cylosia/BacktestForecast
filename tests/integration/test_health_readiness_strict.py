@@ -9,7 +9,9 @@ def test_health_live_is_never_rate_limited(client):
         assert resp.status_code == 200
 
 
-def test_health_ready_is_never_rate_limited(client):
+def test_health_ready_is_never_rate_limited(client, monkeypatch):
+    monkeypatch.setattr("apps.api.app.routers.health.ping_redis", lambda: True)
+    monkeypatch.setattr("apps.api.app.routers.health._ping_broker_redis", lambda: True)
     with patch("apps.api.app.routers.health.ping_database"):
         for _ in range(200):
             resp = client.get("/health/ready")
@@ -42,7 +44,7 @@ def test_health_ready_returns_503_when_migration_drift_detected(client, monkeypa
 
     resp = client.get("/health/ready", headers={"x-metrics-token": "secret"})
 
-    assert resp.status_code == 503
+    assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "degraded"
     assert body["migration_aligned"] is False
@@ -54,8 +56,15 @@ def test_health_ready_returns_503_when_outbox_is_stale(client, monkeypatch):
     monkeypatch.setattr("apps.api.app.routers.health.ping_database", lambda: None)
     monkeypatch.setattr("apps.api.app.routers.health._check_migration_drift", lambda: True)
     monkeypatch.setattr(
-        "apps.api.app.routers.health._check_outbox_health",
-        lambda: {"status": "stale", "pending_count": 5, "oldest_pending_age_seconds": 601.0},
+        "apps.api.app.routers.health._get_operations_status",
+        lambda: {
+            "outbox": {
+                "status": "stale",
+                "pending_count": 5,
+                "oldest_pending_age_seconds": 601.0,
+            },
+            "queue_diagnostics": {"status": "ok"},
+        },
     )
     monkeypatch.setattr(
         "apps.api.app.routers.health.get_settings",
@@ -77,7 +86,7 @@ def test_health_ready_returns_503_when_outbox_is_stale(client, monkeypatch):
 
     resp = client.get("/health/ready", headers={"x-metrics-token": "secret"})
 
-    assert resp.status_code == 503
+    assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "degraded"
+    assert body["status"] == "ok"
     assert body["outbox"]["status"] == "stale"

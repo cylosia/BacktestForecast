@@ -30,6 +30,10 @@ config = context.config
 
 
 def _get_db_url() -> str:
+    configured_url = config.get_main_option("sqlalchemy.url")
+    placeholder = "postgresql+psycopg://placeholder:placeholder@localhost/placeholder"
+    if configured_url and configured_url != placeholder:
+        return configured_url
     return get_settings().database_url
 
 

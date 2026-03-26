@@ -68,6 +68,7 @@ class DailyPicksService:
             self.repository.count_pipeline_history_before_cursor(
                 cursor_before=cursor_before,
             )
+            + 1
             if cursor_before is not None
             else 0
         )

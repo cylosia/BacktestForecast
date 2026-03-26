@@ -404,35 +404,34 @@ class ExportService:
         observe_job_create_to_running_latency(export_job)
 
         target_run_id = self._target_run_id(export_job)
-        target_kind = export_job.export_target_kind
-        target_kind, run = self._resolve_export_target(export_job.user_id, target_run_id)
-        if run is not None:
-            trade_count = run.trade_count or 0
-            _bytes_per_trade = 500 if export_job.export_format == "csv" else 200
-            estimated_size = trade_count * _bytes_per_trade
-            if estimated_size > self._max_allowed_export_bytes():
-                self.session.execute(
-                    sa_update(ExportJob)
-                    .where(ExportJob.id == export_job_id, ExportJob.status == "running")
-                    .values(
-                        status="failed",
-                        error_code="export_too_large",
-                        error_message=(
-                            f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades)."
-                        ),
-                        completed_at=datetime.now(UTC),
-                        updated_at=datetime.now(UTC),
-                    )
-                )
-                self.session.commit()
-                self.session.refresh(export_job)
-                raise AppError(
-                    code="export_too_large",
-                    message=f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades).",
-                )
-
+        target_kind = export_job.export_target_kind or "backtest"
         _exec_start = _time.monotonic()
         try:
+            target_kind, run = self._resolve_export_target(export_job.user_id, target_run_id)
+            if run is not None:
+                trade_count = run.trade_count or 0
+                _bytes_per_trade = 500 if export_job.export_format == "csv" else 200
+                estimated_size = trade_count * _bytes_per_trade
+                if estimated_size > self._max_allowed_export_bytes():
+                    self.session.execute(
+                        sa_update(ExportJob)
+                        .where(ExportJob.id == export_job_id, ExportJob.status == "running")
+                        .values(
+                            status="failed",
+                            error_code="export_too_large",
+                            error_message=(
+                                f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades)."
+                            ),
+                            completed_at=datetime.now(UTC),
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
+                    self.session.commit()
+                    self.session.refresh(export_job)
+                    raise AppError(
+                        code="export_too_large",
+                        message=f"Export would exceed size limit (~{estimated_size // (1024 * 1024)} MB estimated for {trade_count} trades).",
+                    )
             detail = self._build_export_snapshot(
                 user_id=export_job.user_id,
                 run_id=target_run_id,

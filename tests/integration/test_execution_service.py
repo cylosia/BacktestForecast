@@ -40,6 +40,7 @@ def mock_massive_client():
     ]
     client.get_stock_daily_bars.return_value = bars
     client.list_ex_dividend_dates.return_value = {date(2024, 3, 15), date(2024, 5, 17)}
+    client.get_average_treasury_yield.return_value = 0.02
     return client
 
 

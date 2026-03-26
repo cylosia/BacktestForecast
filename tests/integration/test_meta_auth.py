@@ -27,12 +27,13 @@ def test_meta_returns_features_with_bearer_token(client, auth_headers):
     assert "backtests" in data["features"]
 
 
-def test_meta_without_auth_omits_features(client):
-    """GET /v1/meta without auth should NOT include features."""
+def test_meta_without_auth_returns_null_features(client):
+    """GET /v1/meta without auth should not expose feature flags."""
     response = client.get("/v1/meta")
     assert response.status_code == 200
     data = response.json()
-    assert "features" not in data, "Unauthenticated /v1/meta should omit 'features'"
+    assert "features" in data
+    assert data["features"] is None
 
 
 def test_meta_with_auth_but_no_user_record_omits_features(client):

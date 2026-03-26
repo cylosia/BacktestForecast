@@ -165,8 +165,8 @@ class ScanService:
     def get_job(self, user: User, job_id: UUID) -> ScannerJobResponse:
         return self.presenter.get_job(user, job_id)
 
-    def get_recommendations(self, user: User, job_id: UUID) -> ScannerRecommendationListResponse:
-        return self.presenter.get_recommendations(user, job_id)
+    def get_recommendations(self, user: User, job_id: UUID, *, limit: int = 100, offset: int = 0) -> ScannerRecommendationListResponse:
+        return self.presenter.get_recommendations(user, job_id, limit=limit, offset=offset)
 
     def build_forecast(
         self,
@@ -601,8 +601,9 @@ class ScanService:
                 ranking_with_meta["serialized_trade_count"] = candidate.get("serialized_trade_count", 0)
                 ranking_with_meta["equity_point_count"] = candidate.get("equity_point_count", 0)
                 ranking_with_meta["serialized_equity_point_count"] = candidate.get("serialized_equity_point_count", 0)
-                job.recommendations.append(
+                self.session.add(
                     ScannerRecommendation(
+                        scanner_job_id=job.id,
                         rank=rank,
                         score=to_decimal(float(candidate["ranking"]["final_score"])),
                         symbol=candidate["symbol"],

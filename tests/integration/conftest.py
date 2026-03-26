@@ -8,7 +8,7 @@ import pytest
 from alembic.command import upgrade as alembic_upgrade
 from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session, sessionmaker
 
 from apps.api.app.dependencies import get_db
@@ -17,6 +17,7 @@ from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
 from backtestforecast.db.base import Base
 from backtestforecast.db.session import get_readonly_db
+from backtestforecast.models import User
 from backtestforecast.security.rate_limits import get_rate_limiter
 
 
@@ -76,13 +77,32 @@ def _make_engine():
     return engine
 
 
+def _apply_test_schema(engine) -> None:
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
+        conn.exec_driver_sql("CREATE SCHEMA public")
+    alembic_cfg = AlembicConfig("alembic.ini")
+    alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
+    alembic_upgrade(alembic_cfg, "head")
+
+
 @pytest.fixture(scope="session")
 def session_factory() -> Generator[sessionmaker[Session], None, None]:
     engine = _make_engine()
-    alembic_cfg = AlembicConfig("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", str(engine.url))
-    alembic_upgrade(alembic_cfg, "head")
+    _apply_test_schema(engine)
     testing_session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with testing_session_factory() as session:
+        existing_user = session.query(User).filter(User.clerk_user_id == "clerk_test_user").first()
+        if existing_user is None:
+            session.add(
+                User(
+                    clerk_user_id="clerk_test_user",
+                    email="test@example.com",
+                    plan_tier="free",
+                    subscription_status=None,
+                )
+            )
+            session.commit()
     try:
         yield testing_session_factory
     finally:
@@ -100,6 +120,36 @@ def db_session(session_factory: sessionmaker[Session]) -> Generator[Session, Non
     finally:
         session.rollback()
         session.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_integration_state(session_factory: sessionmaker[Session]) -> Generator[None, None, None]:
+    engine = session_factory.kw["bind"]
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    if "users" not in existing_tables:
+        _apply_test_schema(engine)
+        existing_tables = set(inspect(engine).get_table_names())
+
+    with session_factory() as session:
+        for table in reversed(Base.metadata.sorted_tables):
+            if table.name in existing_tables:
+                session.execute(table.delete())
+        session.commit()
+        session.add(
+            User(
+                clerk_user_id="clerk_test_user",
+                email="test@example.com",
+                plan_tier="free",
+                subscription_status=None,
+            )
+        )
+        session.commit()
+    get_rate_limiter().reset()
+    try:
+        yield
+    finally:
+        get_rate_limiter().reset()
 
 
 @pytest.fixture()
@@ -148,6 +198,7 @@ class _FakeCeleryApp:
 
     def __init__(self) -> None:
         self._handlers: dict[str, object] = {}
+        self.control = self
 
     def register(self, task_name: str, handler: object) -> None:
         self._handlers[task_name] = handler
@@ -165,6 +216,9 @@ class _FakeCeleryApp:
             return types.SimpleNamespace(id=f"noop-{name}")
         handler(name, kwargs)  # type: ignore[operator]
         return types.SimpleNamespace(id="fake-task-id")
+
+    def revoke(self, task_id: str, terminate: bool = False) -> None:
+        return None
 
 
 @pytest.fixture()
