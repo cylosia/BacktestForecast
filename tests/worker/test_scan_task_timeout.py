@@ -20,7 +20,7 @@ def _make_session(get_side_effect):
     return session
 
 
-@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks._publish_job_status_safe")
 @patch("apps.worker.app.tasks.create_worker_session")
 def test_scan_timeout_sets_status_failed(mock_create_session, mock_publish):
     """SoftTimeLimitExceeded during scan must set status='failed' and
@@ -70,7 +70,7 @@ def test_scan_timeout_sets_status_failed(mock_create_session, mock_publish):
     mock_service.close.assert_called_once()
 
 
-@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks._publish_job_status_safe")
 @patch("apps.worker.app.tasks.create_worker_session")
 def test_scan_timeout_publishes_failed_event(mock_create_session, mock_publish):
     """The handler must publish a status event with error_code metadata."""
@@ -121,7 +121,7 @@ def test_scan_timeout_publishes_failed_event(mock_create_session, mock_publish):
     assert last_fail.kwargs.get("metadata", {}).get("error_code") == "time_limit_exceeded"
 
 
-@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks._publish_job_status_safe")
 @patch("apps.worker.app.tasks.create_worker_session")
 def test_scan_timeout_skips_update_for_terminal_status(mock_create_session, mock_publish):
     """If the job already reached a terminal status before the timeout handler

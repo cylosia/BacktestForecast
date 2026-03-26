@@ -151,19 +151,24 @@
           "forecast": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/AnalysisForecast"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Forecast"
+            ]
           },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "integrity_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Integrity Warnings",
+            "type": "array"
           },
           "landscape": {
             "anyOf": [
@@ -255,6 +260,152 @@
         "title": "AnalysisDetailResponse",
         "type": "object"
       },
+      "AnalysisForecast": {
+        "properties": {
+          "analog_count": {
+            "title": "Analog Count",
+            "type": "integer"
+          },
+          "analog_dates": {
+            "description": "Up to 5 representative analog dates (subset of all analogs used).",
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Analog Dates",
+            "type": "array"
+          },
+          "analog_dates_shown": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Number of analog dates included in analog_dates (max 5).",
+            "title": "Analog Dates Shown"
+          },
+          "analog_dates_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Total number of analogs used in the forecast calculation.",
+            "title": "Analog Dates Total"
+          },
+          "analogs_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analogs Used"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "disclaimer": {
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "expected_return_high_pct": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Expected Return High Pct",
+            "type": "string"
+          },
+          "expected_return_low_pct": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Expected Return Low Pct",
+            "type": "string"
+          },
+          "expected_return_median_pct": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Expected Return Median Pct",
+            "type": "string"
+          },
+          "horizon_days": {
+            "title": "Horizon Days",
+            "type": "integer"
+          },
+          "no_results_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Results Message"
+          },
+          "positive_outcome_rate_pct": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Positive Outcome Rate Pct"
+          },
+          "strategy_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Type"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "trading_days_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trading Days Used"
+          }
+        },
+        "required": [
+          "symbol",
+          "as_of_date",
+          "horizon_days",
+          "analog_count",
+          "expected_return_low_pct",
+          "expected_return_median_pct",
+          "expected_return_high_pct",
+          "summary",
+          "disclaimer"
+        ],
+        "title": "AnalysisForecast",
+        "type": "object"
+      },
       "AnalysisListResponse": {
         "properties": {
           "items": {
@@ -279,6 +430,7 @@
                 "type": "null"
               }
             ],
+            "description": "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.",
             "title": "Next Cursor"
           },
           "offset": {
@@ -289,6 +441,7 @@
           },
           "total": {
             "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
             "minimum": 0.0,
             "title": "Total",
             "type": "integer"
@@ -429,23 +582,39 @@
       "AnalysisTopResult": {
         "properties": {
           "config": {
-            "additionalProperties": true,
-            "title": "Config",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
           },
           "equity_curve": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/EquityCurvePointResponse"
             },
             "maxItems": 10000,
             "title": "Equity Curve",
             "type": "array"
           },
           "forecast": {
-            "additionalProperties": true,
-            "title": "Forecast",
-            "type": "object"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisForecast"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_holding_days": {
+            "default": 0,
+            "title": "Max Holding Days",
+            "type": "integer"
           },
           "rank": {
             "default": 0,
@@ -468,9 +637,14 @@
             "type": "string"
           },
           "summary": {
-            "additionalProperties": true,
-            "title": "Summary",
-            "type": "object"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BacktestSummaryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "target_dte": {
             "default": 0,
@@ -479,8 +653,7 @@
           },
           "trades": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/TradeJsonResponse"
             },
             "maxItems": 10000,
             "title": "Trades",
@@ -588,17 +761,17 @@
             "title": "Equity Curve",
             "type": "array"
           },
-          "equity_curve_truncated": {
-            "default": false,
-            "title": "Equity Curve Truncated",
-            "type": "boolean"
-          },
           "equity_curve_points_omitted": {
             "default": 0,
             "description": "Number of persisted equity points omitted from the returned equity-curve slice.",
             "minimum": 0.0,
             "title": "Equity Curve Points Omitted",
             "type": "integer"
+          },
+          "equity_curve_truncated": {
+            "default": false,
+            "title": "Equity Curve Truncated",
+            "type": "boolean"
           },
           "error_code": {
             "anyOf": [
@@ -641,8 +814,33 @@
                 "type": "null"
               }
             ],
-            "description": "Annualized risk-free rate used for Sharpe and Sortino ratio calculations. Sourced from the run's persisted column or input snapshot. Null only when the value could not be determined (very old runs).",
+            "description": "Annualized scalar risk-free-rate anchor recorded with the run. For curve-based runs this is the default or starting rate, not every daily Treasury point used during execution. Null only when the value could not be determined (very old runs).",
             "title": "Risk Free Rate"
+          },
+          "risk_free_rate_curve_points": {
+            "description": "Per-date risk-free-rate points used for curve-based execution when they were persisted with the run. Empty for scalar runs or older runs that predate curve snapshot persistence.",
+            "items": {
+              "$ref": "#/components/schemas/RiskFreeRatePointResponse"
+            },
+            "title": "Risk Free Rate Curve Points",
+            "type": "array"
+          },
+          "risk_free_rate_model": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scalar",
+                  "curve_default",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether the run used a single scalar risk-free rate or a date-varying curve with this value as the anchor/default.",
+            "title": "Risk Free Rate Model"
           },
           "risk_per_trade_pct": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -674,7 +872,7 @@
           "summary_provenance": {
             "const": "persisted_run_aggregates",
             "default": "persisted_run_aggregates",
-            "description": "Indicates that summary metrics come from persisted run-level aggregates, not recomputation over the transport payload.",
+            "description": "Indicates that summary metrics were serialized from persisted run aggregates, not recomputed from returned trade or equity slices.",
             "title": "Summary Provenance",
             "type": "string"
           },
@@ -703,8 +901,7 @@
           },
           "warnings": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/WarningResponse"
             },
             "maxItems": 100,
             "title": "Warnings",
@@ -727,7 +924,6 @@
           "created_at",
           "warnings",
           "summary",
-          "summary_provenance",
           "trades",
           "equity_curve"
         ],
@@ -784,6 +980,13 @@
           "summary": {
             "$ref": "#/components/schemas/BacktestSummaryResponse"
           },
+          "summary_provenance": {
+            "const": "persisted_run_aggregates",
+            "default": "persisted_run_aggregates",
+            "description": "Indicates that summary metrics were serialized from persisted run aggregates, not recomputed from returned trade or equity slices.",
+            "title": "Summary Provenance",
+            "type": "string"
+          },
           "symbol": {
             "title": "Symbol",
             "type": "string"
@@ -820,6 +1023,7 @@
           },
           "limit": {
             "default": 50,
+            "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
           },
@@ -832,16 +1036,19 @@
                 "type": "null"
               }
             ],
-            "description": "Opaque cursor for keyset pagination. Pass as `cursor` on the next request to fetch the next page.",
+            "description": "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.",
             "title": "Next Cursor"
           },
           "offset": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
           },
           "total": {
             "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -917,7 +1124,7 @@
         "type": "object"
       },
       "BacktestSummaryResponse": {
-        "description": "Backtest summary metrics.\n\nDUAL-PURPOSE: This schema is used for BOTH ORM mapping (``from_attributes=True``\non BacktestRunDetailResponse) AND manual construction from JSON blobs\n(scanner/sweep ``summary_json`` fields). Fields like ``decided_trades``\nthat don't exist on the ORM model will silently default to ``None``.\nDo not add validators that assume ORM context \u2014 they will break the\nJSON construction path.",
+        "description": "Backtest summary metrics.\n\nDUAL-PURPOSE: This schema is used for BOTH ORM mapping (``from_attributes=True``\non BacktestRunDetailResponse) AND manual construction from JSON blobs\n(scanner/sweep ``summary_json`` fields). Fields like ``decided_trades``\nthat don't exist on the ORM model will silently default to ``None``.\nDo not add validators that assume ORM context - they will break the\nJSON construction path.",
         "properties": {
           "average_dte_at_open": {
             "default": "0",
@@ -946,6 +1153,9 @@
           "cagr_pct": {
             "anyOf": [
               {
+                "type": "string"
+              },
+              {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                 "type": "string"
               },
@@ -957,6 +1167,9 @@
           },
           "calmar_ratio": {
             "anyOf": [
+              {
+                "type": "string"
+              },
               {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                 "type": "string"
@@ -1009,6 +1222,9 @@
           "payoff_ratio": {
             "anyOf": [
               {
+                "type": "string"
+              },
+              {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                 "type": "string"
               },
@@ -1020,6 +1236,9 @@
           },
           "profit_factor": {
             "anyOf": [
+              {
+                "type": "string"
+              },
               {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                 "type": "string"
@@ -1033,6 +1252,9 @@
           "recovery_factor": {
             "anyOf": [
               {
+                "type": "string"
+              },
+              {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                 "type": "string"
               },
@@ -1045,6 +1267,9 @@
           "sharpe_ratio": {
             "anyOf": [
               {
+                "type": "string"
+              },
+              {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                 "type": "string"
               },
@@ -1056,6 +1281,9 @@
           },
           "sortino_ratio": {
             "anyOf": [
+              {
+                "type": "string"
+              },
               {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                 "type": "string"
@@ -1126,7 +1354,7 @@
             "type": "string"
           },
           "entry_mid": {
-            "description": "Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value \u00d7 100 \u00d7 quantity.",
+            "description": "Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value x 100 x quantity.",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Entry Mid",
             "type": "string"
@@ -1454,6 +1682,7 @@
                 "type": "null"
               }
             ],
+            "description": "Optional client-generated key for retry-safe analysis creation. Reusing the key returns the existing analysis job rather than creating a duplicate.",
             "title": "Idempotency Key"
           },
           "symbol": {
@@ -1547,6 +1776,7 @@
             "type": "string"
           },
           "entry_rules": {
+            "description": "Entry rules for the backtest. Internal scan/sweep flows may intentionally use an empty list; the public create-backtest API rejects empty entry_rules.",
             "items": {
               "discriminator": {
                 "mapping": {
@@ -1594,7 +1824,7 @@
               ]
             },
             "maxItems": 8,
-            "minItems": 1,
+            "minItems": 0,
             "title": "Entry Rules",
             "type": "array"
           },
@@ -1609,10 +1839,11 @@
                 "type": "null"
               }
             ],
+            "description": "Optional client-generated key for retry-safe create semantics. Reusing the same payload/key returns the existing queued/running/completed job instead of creating a duplicate.",
             "title": "Idempotency Key"
           },
           "max_holding_days": {
-            "description": "Maximum holding period in trading days (weekdays only). 30 trading days \u2248 6 calendar weeks.",
+            "description": "Maximum holding period in trading days (weekdays only). 30 trading days ~= 6 calendar weeks.",
             "maximum": 120.0,
             "minimum": 1.0,
             "title": "Max Holding Days",
@@ -1651,7 +1882,7 @@
                 "type": "null"
               }
             ],
-            "description": "Annualized risk-free rate for Sharpe/Sortino calculations. If not provided, uses the server default (see /v1/meta). Set to 0.0 for ZIRP-era backtests.",
+            "description": "Annualized risk-free rate for Sharpe/Sortino calculations. If not provided, resolves from Massive Treasury yields for the backtest window and falls back to the configured server default if Massive is unavailable. Set to 0.0 for ZIRP-era backtests.",
             "title": "Risk Free Rate"
           },
           "risk_per_trade_pct": {
@@ -1711,7 +1942,7 @@
           "strategy_overrides": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/StrategyOverrides"
+                "$ref": "#/components/schemas/StrategyOverrides-Input"
               },
               {
                 "type": "null"
@@ -1790,6 +2021,7 @@
                 "type": "null"
               }
             ],
+            "description": "Optional client-generated key for retry-safe export creation. Retries with the same key return the existing export job instead of creating duplicates.",
             "title": "Idempotency Key"
           },
           "run_id": {
@@ -1803,6 +2035,327 @@
           "format"
         ],
         "title": "CreateExportRequest",
+        "type": "object"
+      },
+      "CreateMultiStepRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "account_size": {
+            "anyOf": [
+              {
+                "maximum": 100000000.0,
+                "minimum": 100.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Account Size"
+          },
+          "commission_per_contract": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Commission Per Contract"
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 4,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "initial_entry_rules": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "avoid_earnings": "#/components/schemas/AvoidEarningsRule",
+                  "bollinger_bands": "#/components/schemas/BollingerBandsRule-Input",
+                  "ema_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "iv_percentile": "#/components/schemas/IvPercentileRule-Input",
+                  "iv_rank": "#/components/schemas/IvRankRule-Input",
+                  "macd": "#/components/schemas/MacdRule",
+                  "rsi": "#/components/schemas/RsiRule-Input",
+                  "sma_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "support_resistance": "#/components/schemas/SupportResistanceRule-Input",
+                  "volume_spike": "#/components/schemas/VolumeSpikeRule-Input"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/RsiRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/MovingAverageCrossoverRule"
+                },
+                {
+                  "$ref": "#/components/schemas/MacdRule"
+                },
+                {
+                  "$ref": "#/components/schemas/BollingerBandsRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IvRankRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IvPercentileRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/VolumeSpikeRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/SupportResistanceRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/AvoidEarningsRule"
+                }
+              ]
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Initial Entry Rules",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "risk_per_trade_pct": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 100.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Risk Per Trade Pct"
+          },
+          "slippage_pct": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Slippage Pct"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDefinition"
+            },
+            "maxItems": 20,
+            "minItems": 2,
+            "title": "Steps",
+            "type": "array"
+          },
+          "symbol": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Symbol",
+            "type": "string"
+          },
+          "workflow_type": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Workflow Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "workflow_type",
+          "start_date",
+          "end_date",
+          "account_size",
+          "risk_per_trade_pct",
+          "commission_per_contract",
+          "initial_entry_rules",
+          "steps"
+        ],
+        "title": "CreateMultiStepRunRequest",
+        "type": "object"
+      },
+      "CreateMultiSymbolRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "account_size": {
+            "anyOf": [
+              {
+                "maximum": 100000000.0,
+                "minimum": 100.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Account Size"
+          },
+          "capital_allocation_mode": {
+            "default": "equal_weight",
+            "enum": [
+              "equal_weight",
+              "explicit"
+            ],
+            "title": "Capital Allocation Mode",
+            "type": "string"
+          },
+          "commission_per_contract": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Commission Per Contract"
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "entry_rules": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolPriceRule"
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Entry Rules",
+            "type": "array"
+          },
+          "exit_rules": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolPriceRule"
+            },
+            "maxItems": 12,
+            "title": "Exit Rules",
+            "type": "array"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 4,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "slippage_pct": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Slippage Pct"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "strategy_groups": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolStrategyGroup"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Strategy Groups",
+            "type": "array"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolDefinition-Input"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "title": "Symbols",
+            "type": "array"
+          }
+        },
+        "required": [
+          "symbols",
+          "strategy_groups",
+          "entry_rules",
+          "start_date",
+          "end_date",
+          "account_size",
+          "commission_per_contract"
+        ],
+        "title": "CreateMultiSymbolRunRequest",
         "type": "object"
       },
       "CreatePortalSessionRequest": {
@@ -1879,6 +2432,7 @@
                 "type": "null"
               }
             ],
+            "description": "Optional client-generated key for retry-safe create semantics. Reusing the same key lets the API return or repair the existing job instead of creating a duplicate scan.",
             "title": "Idempotency Key"
           },
           "max_holding_days": {
@@ -2079,6 +2633,7 @@
                 "type": "null"
               }
             ],
+            "description": "Optional client-generated key for retry-safe sweep creation. Retries with the same key return or repair the existing queued job instead of creating a duplicate sweep.",
             "title": "Idempotency Key"
           },
           "max_holding_days": {
@@ -2218,7 +2773,7 @@
         "type": "string"
       },
       "CurrentUserResponse": {
-        "description": "Response schema for the authenticated user endpoint.\n\n``features`` and ``usage`` are computed fields that do not correspond to\ndatabase columns on the User model.  Callers must construct this response\nexplicitly (see ``BacktestService.to_current_user_response``) rather than\npassing an ORM User object directly \u2014 ``from_attributes`` is enabled only\nfor the flat scalar fields inherited from the User row.",
+        "description": "Response schema for the authenticated user endpoint.\n\n``features`` and ``usage`` are computed fields that do not correspond to\ndatabase columns on the User model.  Callers must construct this response\nexplicitly (see ``BacktestService.to_current_user_response``) rather than\npassing an ORM User object directly - ``from_attributes`` is enabled only\nfor the flat scalar fields inherited from the User row.",
         "properties": {
           "cancel_at_period_end": {
             "default": false,
@@ -2385,6 +2940,19 @@
         "description": "Known keys produced by the forecaster for daily pick forecasts.",
         "properties": {
           "analog_count": {
+            "title": "Analog Count",
+            "type": "integer"
+          },
+          "analog_dates": {
+            "description": "Up to 5 representative analog dates (subset of all analogs used).",
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Analog Dates",
+            "type": "array"
+          },
+          "analog_dates_shown": {
             "anyOf": [
               {
                 "type": "integer"
@@ -2393,31 +2961,114 @@
                 "type": "null"
               }
             ],
-            "title": "Analog Count"
+            "description": "Number of analog dates included in analog_dates (max 5).",
+            "title": "Analog Dates Shown"
           },
-          "expected_return_median_pct": {
+          "analog_dates_total": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Expected Return Median Pct"
+            "description": "Total number of analogs used in the forecast calculation.",
+            "title": "Analog Dates Total"
+          },
+          "analogs_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analogs Used"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "disclaimer": {
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "expected_return_high_pct": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Expected Return High Pct",
+            "type": "string"
+          },
+          "expected_return_low_pct": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Expected Return Low Pct",
+            "type": "string"
+          },
+          "expected_return_median_pct": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Expected Return Median Pct",
+            "type": "string"
+          },
+          "horizon_days": {
+            "title": "Horizon Days",
+            "type": "integer"
           },
           "positive_outcome_rate_pct": {
             "anyOf": [
               {
-                "type": "number"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Positive Outcome Rate Pct"
+          },
+          "strategy_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Type"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "trading_days_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trading Days Used"
           }
         },
+        "required": [
+          "symbol",
+          "as_of_date",
+          "horizon_days",
+          "analog_count",
+          "expected_return_low_pct",
+          "expected_return_median_pct",
+          "expected_return_high_pct",
+          "summary",
+          "disclaimer"
+        ],
         "title": "DailyPickForecast",
         "type": "object"
       },
@@ -2429,12 +3080,26 @@
             "type": "string"
           },
           "config_snapshot": {
-            "additionalProperties": true,
-            "title": "Config Snapshot",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Snapshot"
           },
           "forecast": {
-            "$ref": "#/components/schemas/DailyPickForecast"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DailyPickForecast"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "rank": {
             "title": "Rank",
@@ -2457,7 +3122,14 @@
             "type": "string"
           },
           "summary": {
-            "$ref": "#/components/schemas/DailyPickSummary"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DailyPickSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "symbol": {
             "title": "Symbol",
@@ -2482,6 +3154,11 @@
       "DailyPickSummary": {
         "description": "Known keys produced by the backtest engine for daily pick summaries.",
         "properties": {
+          "decided_trades": {
+            "default": 0,
+            "title": "Decided Trades",
+            "type": "integer"
+          },
           "expectancy": {
             "default": 0.0,
             "title": "Expectancy",
@@ -2498,6 +3175,9 @@
                 "type": "number"
               },
               {
+                "type": "string"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -2507,6 +3187,9 @@
             "anyOf": [
               {
                 "type": "number"
+              },
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -2540,6 +3223,13 @@
       },
       "DailyPicksResponse": {
         "properties": {
+          "integrity_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Integrity Warnings",
+            "type": "array"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/DailyPickItemResponse"
@@ -2778,6 +3468,7 @@
           },
           "limit": {
             "default": 50,
+            "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
           },
@@ -2790,15 +3481,19 @@
                 "type": "null"
               }
             ],
+            "description": "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.",
             "title": "Next Cursor"
           },
           "offset": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
           },
           "total": {
             "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -2894,6 +3589,29 @@
               }
             ],
             "title": "Risk Free Rate"
+          },
+          "risk_free_rate_curve_points": {
+            "items": {
+              "$ref": "#/components/schemas/RiskFreeRatePointResponse"
+            },
+            "title": "Risk Free Rate Curve Points",
+            "type": "array"
+          },
+          "risk_free_rate_model": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scalar",
+                  "curve_default",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Free Rate Model"
           },
           "risk_free_rate_source": {
             "anyOf": [
@@ -3331,6 +4049,12 @@
       },
       "HistoricalPerformanceResponse": {
         "properties": {
+          "effective_sample_size": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Effective Sample Size",
+            "type": "string"
+          },
           "last_observed_at": {
             "anyOf": [
               {
@@ -3357,12 +4081,6 @@
             "default": "0",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Weighted Max Drawdown Pct",
-            "type": "string"
-          },
-          "weighted_total_net_pnl": {
-            "default": "0",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Weighted Total Net Pnl",
             "type": "string"
           },
           "weighted_total_roi_pct": {
@@ -3548,6 +4266,11 @@
             "title": "Config",
             "type": "object"
           },
+          "decided_trades": {
+            "default": 0,
+            "title": "Decided Trades",
+            "type": "integer"
+          },
           "max_drawdown_pct": {
             "default": 0.0,
             "title": "Max Drawdown Pct",
@@ -3647,6 +4370,17 @@
             ],
             "title": "Billing Enabled"
           },
+          "daily_picks_schedule_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Picks Schedule Utc"
+          },
           "environment": {
             "anyOf": [
               {
@@ -3718,6 +4452,1284 @@
           "direction"
         ],
         "title": "MovingAverageCrossoverRule",
+        "type": "object"
+      },
+      "MultiStepEventResponse": {
+        "properties": {
+          "event_at": {
+            "format": "date-time",
+            "title": "Event At",
+            "type": "string"
+          },
+          "event_type": {
+            "enum": [
+              "triggered",
+              "filled",
+              "skipped",
+              "failed",
+              "liquidated"
+            ],
+            "title": "Event Type",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "payload_json": {
+            "additionalProperties": true,
+            "title": "Payload Json",
+            "type": "object"
+          },
+          "step_number": {
+            "title": "Step Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "step_number",
+          "event_type",
+          "event_at"
+        ],
+        "title": "MultiStepEventResponse",
+        "type": "object"
+      },
+      "MultiStepRunDetailResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "equity_curve": {
+            "items": {
+              "$ref": "#/components/schemas/EquityCurvePointResponse"
+            },
+            "title": "Equity Curve",
+            "type": "array"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/MultiStepEventResponse"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunJobStatus"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/MultiStepStepOutcomeResponse"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/BacktestSummaryResponse"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/MultiStepTradeResponse"
+            },
+            "title": "Trades",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/WarningResponse"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "workflow_type": {
+            "title": "Workflow Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "symbol",
+          "workflow_type",
+          "status",
+          "start_date",
+          "end_date",
+          "created_at",
+          "summary"
+        ],
+        "title": "MultiStepRunDetailResponse",
+        "type": "object"
+      },
+      "MultiStepRunHistoryItemResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunJobStatus"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/BacktestSummaryResponse"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "workflow_type": {
+            "title": "Workflow Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "symbol",
+          "workflow_type",
+          "status",
+          "created_at",
+          "summary"
+        ],
+        "title": "MultiStepRunHistoryItemResponse",
+        "type": "object"
+      },
+      "MultiStepRunListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MultiStepRunHistoryItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.",
+            "title": "Next Cursor"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "MultiStepRunListResponse",
+        "type": "object"
+      },
+      "MultiStepRunStatusResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunJobStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "MultiStepRunStatusResponse",
+        "type": "object"
+      },
+      "MultiStepStepOutcomeResponse": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "waiting",
+              "executed",
+              "failed",
+              "liquidated",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "step_number": {
+            "title": "Step Number",
+            "type": "integer"
+          },
+          "triggered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggered At"
+          }
+        },
+        "required": [
+          "step_number",
+          "name",
+          "action",
+          "status"
+        ],
+        "title": "MultiStepStepOutcomeResponse",
+        "type": "object"
+      },
+      "MultiStepTradeResponse": {
+        "properties": {
+          "detail_json": {
+            "additionalProperties": true,
+            "title": "Detail Json",
+            "type": "object"
+          },
+          "entry_date": {
+            "format": "date",
+            "title": "Entry Date",
+            "type": "string"
+          },
+          "entry_reason": {
+            "title": "Entry Reason",
+            "type": "string"
+          },
+          "exit_date": {
+            "format": "date",
+            "title": "Exit Date",
+            "type": "string"
+          },
+          "exit_reason": {
+            "title": "Exit Reason",
+            "type": "string"
+          },
+          "gross_pnl": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Gross Pnl",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "net_pnl": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Pnl",
+            "type": "string"
+          },
+          "option_ticker": {
+            "title": "Option Ticker",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "step_number": {
+            "title": "Step Number",
+            "type": "integer"
+          },
+          "strategy_type": {
+            "title": "Strategy Type",
+            "type": "string"
+          },
+          "total_commissions": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Commissions",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "step_number",
+          "option_ticker",
+          "strategy_type",
+          "entry_date",
+          "exit_date",
+          "quantity",
+          "gross_pnl",
+          "net_pnl",
+          "total_commissions",
+          "entry_reason",
+          "exit_reason"
+        ],
+        "title": "MultiStepTradeResponse",
+        "type": "object"
+      },
+      "MultiSymbolDefinition-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "capital_allocation_pct": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 100.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capital Allocation Pct"
+          },
+          "max_open_positions": {
+            "default": 1,
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Max Open Positions",
+            "type": "integer"
+          },
+          "risk_per_trade_pct": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 100.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Risk Per Trade Pct"
+          },
+          "symbol": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "risk_per_trade_pct"
+        ],
+        "title": "MultiSymbolDefinition",
+        "type": "object"
+      },
+      "MultiSymbolDefinition-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "capital_allocation_pct": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capital Allocation Pct"
+          },
+          "max_open_positions": {
+            "default": 1,
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Max Open Positions",
+            "type": "integer"
+          },
+          "risk_per_trade_pct": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Risk Per Trade Pct",
+            "type": "string"
+          },
+          "symbol": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "risk_per_trade_pct"
+        ],
+        "title": "MultiSymbolDefinition",
+        "type": "object"
+      },
+      "MultiSymbolLegDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "custom_legs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CustomLegDefinition"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Legs"
+          },
+          "dte_tolerance_days": {
+            "default": 5,
+            "maximum": 60.0,
+            "minimum": 0.0,
+            "title": "Dte Tolerance Days",
+            "type": "integer"
+          },
+          "fixed_contracts": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fixed Contracts"
+          },
+          "max_holding_days": {
+            "maximum": 120.0,
+            "minimum": 1.0,
+            "title": "Max Holding Days",
+            "type": "integer"
+          },
+          "quantity_mode": {
+            "enum": [
+              "risk_based",
+              "fixed_contracts"
+            ],
+            "title": "Quantity Mode",
+            "type": "string"
+          },
+          "strategy_overrides": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategyOverrides-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_type": {
+            "$ref": "#/components/schemas/StrategyType"
+          },
+          "symbol": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Symbol",
+            "type": "string"
+          },
+          "target_dte": {
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Target Dte",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "symbol",
+          "strategy_type",
+          "target_dte",
+          "max_holding_days",
+          "quantity_mode"
+        ],
+        "title": "MultiSymbolLegDefinition",
+        "type": "object"
+      },
+      "MultiSymbolPriceRule": {
+        "additionalProperties": false,
+        "properties": {
+          "left_indicator": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Left Indicator",
+            "type": "string"
+          },
+          "left_symbol": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Left Symbol",
+            "type": "string"
+          },
+          "lookback_period": {
+            "anyOf": [
+              {
+                "maximum": 252.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lookback Period"
+          },
+          "operator": {
+            "enum": [
+              "lt",
+              "lte",
+              "gt",
+              "gte",
+              "eq",
+              "neq"
+            ],
+            "title": "Operator",
+            "type": "string"
+          },
+          "right_indicator": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right Indicator"
+          },
+          "right_symbol": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right Symbol"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "required": [
+          "left_symbol",
+          "left_indicator",
+          "operator"
+        ],
+        "title": "MultiSymbolPriceRule",
+        "type": "object"
+      },
+      "MultiSymbolRunDetailResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "equity_curve": {
+            "items": {
+              "$ref": "#/components/schemas/EquityCurvePointResponse"
+            },
+            "title": "Equity Curve",
+            "type": "array"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunJobStatus"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/BacktestSummaryResponse"
+          },
+          "symbol_equity_curves": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/EquityCurvePointResponse"
+              },
+              "type": "array"
+            },
+            "title": "Symbol Equity Curves",
+            "type": "object"
+          },
+          "symbol_summaries": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolRunSymbolSummaryResponse"
+            },
+            "title": "Symbol Summaries",
+            "type": "array"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolDefinition-Output"
+            },
+            "title": "Symbols",
+            "type": "array"
+          },
+          "trade_groups": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolTradeGroupResponse"
+            },
+            "title": "Trade Groups",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/WarningResponse"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "start_date",
+          "end_date",
+          "created_at",
+          "summary"
+        ],
+        "title": "MultiSymbolRunDetailResponse",
+        "type": "object"
+      },
+      "MultiSymbolRunHistoryItemResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunJobStatus"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/BacktestSummaryResponse"
+          },
+          "symbols": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Symbols",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "summary"
+        ],
+        "title": "MultiSymbolRunHistoryItemResponse",
+        "type": "object"
+      },
+      "MultiSymbolRunListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolRunHistoryItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.",
+            "title": "Next Cursor"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "MultiSymbolRunListResponse",
+        "type": "object"
+      },
+      "MultiSymbolRunStatusResponse": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunJobStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "MultiSymbolRunStatusResponse",
+        "type": "object"
+      },
+      "MultiSymbolRunSymbolSummaryResponse": {
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/BacktestSummaryResponse"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "summary"
+        ],
+        "title": "MultiSymbolRunSymbolSummaryResponse",
+        "type": "object"
+      },
+      "MultiSymbolStrategyGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolLegDefinition"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Legs",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "synchronous_entry": {
+            "default": true,
+            "title": "Synchronous Entry",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "legs"
+        ],
+        "title": "MultiSymbolStrategyGroup",
+        "type": "object"
+      },
+      "MultiSymbolTradeGroupResponse": {
+        "properties": {
+          "entry_date": {
+            "format": "date",
+            "title": "Entry Date",
+            "type": "string"
+          },
+          "exit_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Date"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "closed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/MultiSymbolTradeResponse"
+            },
+            "title": "Trades",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "entry_date",
+          "status"
+        ],
+        "title": "MultiSymbolTradeGroupResponse",
+        "type": "object"
+      },
+      "MultiSymbolTradeResponse": {
+        "properties": {
+          "detail_json": {
+            "additionalProperties": true,
+            "title": "Detail Json",
+            "type": "object"
+          },
+          "entry_date": {
+            "format": "date",
+            "title": "Entry Date",
+            "type": "string"
+          },
+          "entry_reason": {
+            "title": "Entry Reason",
+            "type": "string"
+          },
+          "exit_date": {
+            "format": "date",
+            "title": "Exit Date",
+            "type": "string"
+          },
+          "exit_reason": {
+            "title": "Exit Reason",
+            "type": "string"
+          },
+          "gross_pnl": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Gross Pnl",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "net_pnl": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Pnl",
+            "type": "string"
+          },
+          "option_ticker": {
+            "title": "Option Ticker",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "strategy_type": {
+            "title": "Strategy Type",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "total_commissions": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Commissions",
+            "type": "string"
+          },
+          "trade_group_id": {
+            "format": "uuid",
+            "title": "Trade Group Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trade_group_id",
+          "symbol",
+          "option_ticker",
+          "strategy_type",
+          "entry_date",
+          "exit_date",
+          "quantity",
+          "gross_pnl",
+          "net_pnl",
+          "total_commissions",
+          "entry_reason",
+          "exit_reason"
+        ],
+        "title": "MultiSymbolTradeResponse",
         "type": "object"
       },
       "PipelineHistoryItemResponse": {
@@ -3809,6 +5821,12 @@
             "title": "Items",
             "type": "array"
           },
+          "limit": {
+            "default": 50,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
           "next_cursor": {
             "anyOf": [
               {
@@ -3818,7 +5836,21 @@
                 "type": "null"
               }
             ],
+            "description": "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.",
             "title": "Next Cursor"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
@@ -3909,6 +5941,128 @@
           "portal_url"
         ],
         "title": "PortalSessionResponse",
+        "type": "object"
+      },
+      "PricingContractResponse": {
+        "properties": {
+          "checkout_authoritative": {
+            "default": true,
+            "title": "Checkout Authoritative",
+            "type": "boolean"
+          },
+          "currency": {
+            "default": "USD",
+            "title": "Currency",
+            "type": "string"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PricingPlanResponse"
+            },
+            "title": "Plans",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plans"
+        ],
+        "title": "PricingContractResponse",
+        "type": "object"
+      },
+      "PricingIntervalResponse": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "display_price": {
+            "title": "Display Price",
+            "type": "string"
+          },
+          "price_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Id"
+          },
+          "unit_amount_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount Usd"
+          }
+        },
+        "required": [
+          "display_price",
+          "available"
+        ],
+        "title": "PricingIntervalResponse",
+        "type": "object"
+      },
+      "PricingPlanResponse": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "monthly": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PricingIntervalResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tier": {
+            "$ref": "#/components/schemas/PlanTier"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "yearly": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PricingIntervalResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tier",
+          "title",
+          "headline",
+          "description",
+          "features"
+        ],
+        "title": "PricingPlanResponse",
         "type": "object"
       },
       "RankingBreakdownResponse": {
@@ -4060,6 +6214,115 @@
           }
         },
         "title": "RegimeDetail",
+        "type": "object"
+      },
+      "RemediationActionResponse": {
+        "properties": {
+          "action": {
+            "maxLength": 64,
+            "title": "Action",
+            "type": "string"
+          },
+          "allowed": {
+            "default": true,
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "description": {
+            "maxLength": 300,
+            "title": "Description",
+            "type": "string"
+          },
+          "href": {
+            "maxLength": 300,
+            "title": "Href",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 80,
+            "title": "Label",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 10,
+            "title": "Method",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "action",
+          "label",
+          "description",
+          "method",
+          "href"
+        ],
+        "title": "RemediationActionResponse",
+        "type": "object"
+      },
+      "RemediationActionsResponse": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/RemediationActionResponse"
+            },
+            "maxItems": 10,
+            "title": "Actions",
+            "type": "array"
+          },
+          "resource_id": {
+            "maxLength": 64,
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "maxLength": 64,
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "status": {
+            "maxLength": 32,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_type",
+          "resource_id",
+          "status"
+        ],
+        "title": "RemediationActionsResponse",
+        "type": "object"
+      },
+      "RiskFreeRatePointResponse": {
+        "properties": {
+          "rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Rate",
+            "type": "string"
+          },
+          "trade_date": {
+            "format": "date",
+            "title": "Trade Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trade_date",
+          "rate"
+        ],
+        "title": "RiskFreeRatePointResponse",
         "type": "object"
       },
       "RsiRule-Input": {
@@ -4225,6 +6488,7 @@
           },
           "limit": {
             "default": 50,
+            "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
           },
@@ -4237,16 +6501,19 @@
                 "type": "null"
               }
             ],
-            "description": "Opaque cursor for keyset pagination.",
+            "description": "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.",
             "title": "Next Cursor"
           },
           "offset": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
           },
           "total": {
             "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -4396,8 +6663,7 @@
           },
           "warnings": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/WarningResponse"
             },
             "title": "Warnings",
             "type": "array"
@@ -4438,6 +6704,28 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
           },
           "id": {
             "format": "uuid",
@@ -4500,6 +6788,7 @@
           },
           "total": {
             "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
             "minimum": 0.0,
             "title": "Total",
             "type": "integer"
@@ -4521,11 +6810,31 @@
             "title": "Equity Curve",
             "type": "array"
           },
+          "equity_curve_points_omitted": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Equity Curve Points Omitted",
+            "type": "integer"
+          },
           "forecast": {
-            "$ref": "#/components/schemas/HistoricalAnalogForecastResponse"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HistoricalAnalogForecastResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "historical_performance": {
-            "$ref": "#/components/schemas/HistoricalPerformanceResponse"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HistoricalPerformanceResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "format": "uuid",
@@ -4537,7 +6846,14 @@
             "type": "integer"
           },
           "ranking_breakdown": {
-            "$ref": "#/components/schemas/RankingBreakdownResponse"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RankingBreakdownResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "request_snapshot": {
             "additionalProperties": true,
@@ -4564,6 +6880,12 @@
             "title": "Symbol",
             "type": "string"
           },
+          "trade_items_omitted": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Trade Items Omitted",
+            "type": "integer"
+          },
           "trades": {
             "items": {
               "$ref": "#/components/schemas/TradeJsonResponse"
@@ -4579,8 +6901,7 @@
           },
           "warnings": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/WarningResponse"
             },
             "title": "Warnings",
             "type": "array"
@@ -4593,15 +6914,12 @@
           "symbol",
           "strategy_type",
           "rule_set_name",
-          "summary",
-          "historical_performance",
-          "forecast",
-          "ranking_breakdown"
+          "summary"
         ],
         "title": "ScannerRecommendationResponse",
         "type": "object"
       },
-      "SpreadWidthConfig": {
+      "SpreadWidthConfig-Input": {
         "additionalProperties": false,
         "description": "Configuration for how wide a spread's wings are.",
         "properties": {
@@ -4627,6 +6945,24 @@
         "title": "SpreadWidthConfig",
         "type": "object"
       },
+      "SpreadWidthConfig-Output": {
+        "additionalProperties": false,
+        "description": "Configuration for how wide a spread's wings are.",
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/SpreadWidthMode",
+            "default": "strike_steps"
+          },
+          "value": {
+            "default": "1",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "title": "SpreadWidthConfig",
+        "type": "object"
+      },
       "SpreadWidthMode": {
         "description": "How to determine the width of a spread (distance between short and long strikes).",
         "enum": [
@@ -4636,6 +6972,165 @@
         ],
         "title": "SpreadWidthMode",
         "type": "string"
+      },
+      "StepContractSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "custom_legs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CustomLegDefinition"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Legs"
+          },
+          "dte_tolerance_days": {
+            "default": 5,
+            "maximum": 60.0,
+            "minimum": 0.0,
+            "title": "Dte Tolerance Days",
+            "type": "integer"
+          },
+          "max_holding_days": {
+            "maximum": 120.0,
+            "minimum": 1.0,
+            "title": "Max Holding Days",
+            "type": "integer"
+          },
+          "strategy_overrides": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategyOverrides-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_type": {
+            "$ref": "#/components/schemas/StrategyType"
+          },
+          "target_dte": {
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Target Dte",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "strategy_type",
+          "target_dte",
+          "max_holding_days"
+        ],
+        "title": "StepContractSelection",
+        "type": "object"
+      },
+      "StepTriggerDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "days_after_prior_step": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days After Prior Step"
+          },
+          "mode": {
+            "enum": [
+              "date_offset",
+              "after_expiration",
+              "rule_match",
+              "event_and_rule"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "require_prior_step_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "filled",
+                  "expired",
+                  "closed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Require Prior Step Status"
+          },
+          "rules": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "avoid_earnings": "#/components/schemas/AvoidEarningsRule",
+                  "bollinger_bands": "#/components/schemas/BollingerBandsRule-Input",
+                  "ema_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "iv_percentile": "#/components/schemas/IvPercentileRule-Input",
+                  "iv_rank": "#/components/schemas/IvRankRule-Input",
+                  "macd": "#/components/schemas/MacdRule",
+                  "rsi": "#/components/schemas/RsiRule-Input",
+                  "sma_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "support_resistance": "#/components/schemas/SupportResistanceRule-Input",
+                  "volume_spike": "#/components/schemas/VolumeSpikeRule-Input"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/RsiRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/MovingAverageCrossoverRule"
+                },
+                {
+                  "$ref": "#/components/schemas/MacdRule"
+                },
+                {
+                  "$ref": "#/components/schemas/BollingerBandsRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IvRankRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IvPercentileRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/VolumeSpikeRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/SupportResistanceRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/AvoidEarningsRule"
+                }
+              ]
+            },
+            "maxItems": 8,
+            "title": "Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "StepTriggerDefinition",
+        "type": "object"
       },
       "StrategyCatalogGroupResponse": {
         "properties": {
@@ -4753,14 +7248,30 @@
         "title": "StrategyCatalogResponse",
         "type": "object"
       },
-      "StrategyOverrides": {
+      "StrategyOverrides-Input": {
         "additionalProperties": false,
         "description": "Optional overrides for how a strategy selects strikes and widths.\n\nNamed fields correspond to standard leg roles. Strategies ignore fields\nthat don't apply to them (e.g., a long call ignores ``short_call_strike``).",
         "properties": {
+          "calendar_contract_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "call",
+                  "put"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override the option type used by calendar_spread. Defaults to 'call'.",
+            "title": "Calendar Contract Type"
+          },
           "long_call_strike": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/StrikeSelection"
+                "$ref": "#/components/schemas/StrikeSelection-Input"
               },
               {
                 "type": "null"
@@ -4771,7 +7282,7 @@
           "long_put_strike": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/StrikeSelection"
+                "$ref": "#/components/schemas/StrikeSelection-Input"
               },
               {
                 "type": "null"
@@ -4782,7 +7293,7 @@
           "short_call_strike": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/StrikeSelection"
+                "$ref": "#/components/schemas/StrikeSelection-Input"
               },
               {
                 "type": "null"
@@ -4793,7 +7304,7 @@
           "short_put_strike": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/StrikeSelection"
+                "$ref": "#/components/schemas/StrikeSelection-Input"
               },
               {
                 "type": "null"
@@ -4804,7 +7315,86 @@
           "spread_width": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SpreadWidthConfig"
+                "$ref": "#/components/schemas/SpreadWidthConfig-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override wing/spread width for strategies with protection legs"
+          }
+        },
+        "title": "StrategyOverrides",
+        "type": "object"
+      },
+      "StrategyOverrides-Output": {
+        "additionalProperties": false,
+        "description": "Optional overrides for how a strategy selects strikes and widths.\n\nNamed fields correspond to standard leg roles. Strategies ignore fields\nthat don't apply to them (e.g., a long call ignores ``short_call_strike``).",
+        "properties": {
+          "calendar_contract_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "call",
+                  "put"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override the option type used by calendar_spread. Defaults to 'call'.",
+            "title": "Calendar Contract Type"
+          },
+          "long_call_strike": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrikeSelection-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override long call placement (for diagonals, PMCC)"
+          },
+          "long_put_strike": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrikeSelection-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override long put placement"
+          },
+          "short_call_strike": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrikeSelection-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override short call placement"
+          },
+          "short_put_strike": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrikeSelection-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override short put placement"
+          },
+          "spread_width": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpreadWidthConfig-Output"
               },
               {
                 "type": "null"
@@ -4858,7 +7448,7 @@
         "title": "StrategyType",
         "type": "string"
       },
-      "StrikeSelection": {
+      "StrikeSelection-Input": {
         "additionalProperties": false,
         "description": "Configuration for where a strategy leg's strike is placed relative to the underlying.",
         "properties": {
@@ -4879,7 +7469,32 @@
                 "type": "null"
               }
             ],
-            "description": "Interpretation depends on mode: pct_from_spot \u2192 percentage, atm_offset_steps \u2192 integer steps, delta_target \u2192 absolute delta (0-100).",
+            "description": "Interpretation depends on mode: pct_from_spot -> percentage, atm_offset_steps -> integer steps, delta_target -> absolute delta (0-100).",
+            "title": "Value"
+          }
+        },
+        "title": "StrikeSelection",
+        "type": "object"
+      },
+      "StrikeSelection-Output": {
+        "additionalProperties": false,
+        "description": "Configuration for where a strategy leg's strike is placed relative to the underlying.",
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/StrikeSelectionMode",
+            "default": "nearest_otm"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Interpretation depends on mode: pct_from_spot -> percentage, atm_offset_steps -> integer steps, delta_target -> absolute delta (0-100).",
             "title": "Value"
           }
         },
@@ -4991,6 +7606,7 @@
           },
           "limit": {
             "default": 50,
+            "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
           },
@@ -5003,15 +7619,19 @@
                 "type": "null"
               }
             ],
+            "description": "Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.",
             "title": "Next Cursor"
           },
           "offset": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
           },
           "total": {
             "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -5134,8 +7754,7 @@
           },
           "warnings": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/WarningResponse"
             },
             "title": "Warnings",
             "type": "array"
@@ -5172,6 +7791,28 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
           },
           "id": {
             "format": "uuid",
@@ -5234,6 +7875,7 @@
           },
           "total": {
             "default": 0,
+            "description": "Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.",
             "minimum": 0.0,
             "title": "Total",
             "type": "integer"
@@ -5282,6 +7924,12 @@
             "maxItems": 10000,
             "title": "Equity Curve",
             "type": "array"
+          },
+          "equity_curve_points_omitted": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Equity Curve Points Omitted",
+            "type": "integer"
           },
           "exit_rule_set_name": {
             "anyOf": [
@@ -5344,6 +7992,12 @@
           "summary": {
             "$ref": "#/components/schemas/BacktestSummaryResponse"
           },
+          "trade_items_omitted": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Trade Items Omitted",
+            "type": "integer"
+          },
           "trades_json": {
             "items": {
               "$ref": "#/components/schemas/TradeJsonResponse"
@@ -5359,8 +8013,7 @@
           },
           "warnings": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/WarningResponse"
             },
             "title": "Warnings",
             "type": "array"
@@ -5401,7 +8054,7 @@
       },
       "TemplateConfig-Input": {
         "additionalProperties": false,
-        "description": "The reusable portion of a backtest configuration \u2014 everything except symbol and dates.",
+        "description": "The reusable portion of a backtest configuration - everything except symbol and dates.",
         "properties": {
           "account_size": {
             "anyOf": [
@@ -5522,6 +8175,17 @@
             ],
             "title": "Risk Per Trade Pct"
           },
+          "strategy_overrides": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategyOverrides-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional strategy-specific overrides such as put-calendar selection."
+          },
           "strategy_type": {
             "$ref": "#/components/schemas/StrategyType"
           },
@@ -5545,7 +8209,7 @@
       },
       "TemplateConfig-Output": {
         "additionalProperties": false,
-        "description": "The reusable portion of a backtest configuration \u2014 everything except symbol and dates.",
+        "description": "The reusable portion of a backtest configuration - everything except symbol and dates.",
         "properties": {
           "account_size": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -5639,6 +8303,17 @@
             "title": "Risk Per Trade Pct",
             "type": "string"
           },
+          "strategy_overrides": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategyOverrides-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional strategy-specific overrides such as put-calendar selection."
+          },
           "strategy_type": {
             "$ref": "#/components/schemas/StrategyType"
           },
@@ -5694,7 +8369,7 @@
       },
       "TemplateResponse": {
         "properties": {
-          "config": {
+          "config_json": {
             "$ref": "#/components/schemas/TemplateConfig-Output"
           },
           "created_at": {
@@ -5737,7 +8412,7 @@
           "name",
           "description",
           "strategy_type",
-          "config",
+          "config_json",
           "created_at",
           "updated_at"
         ],
@@ -6071,6 +8746,50 @@
         "title": "VolumeSpikeRule",
         "type": "object"
       },
+      "WarningResponse": {
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "title": "Code",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "message": {
+            "maxLength": 2000,
+            "title": "Message",
+            "type": "string"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "WarningResponse",
+        "type": "object"
+      },
       "WebhookResponse": {
         "description": "Typed response for the Stripe webhook endpoint.",
         "properties": {
@@ -6144,6 +8863,55 @@
           "value"
         ],
         "title": "WidthGridItem",
+        "type": "object"
+      },
+      "WorkflowStepDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "open_position",
+              "sell_premium",
+              "roll",
+              "close_position",
+              "hedge"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "contract_selection": {
+            "$ref": "#/components/schemas/StepContractSelection"
+          },
+          "failure_policy": {
+            "const": "liquidate",
+            "default": "liquidate",
+            "title": "Failure Policy",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "step_number": {
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Step Number",
+            "type": "integer"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/StepTriggerDefinition"
+          }
+        },
+        "required": [
+          "step_number",
+          "name",
+          "action",
+          "trigger",
+          "contract_selection"
+        ],
+        "title": "WorkflowStepDefinition",
         "type": "object"
       },
       "_GdprAnalysis": {
@@ -6534,6 +9302,10 @@
       },
       "_GdprTotals": {
         "properties": {
+          "audit_events": {
+            "title": "Audit Events",
+            "type": "integer"
+          },
           "backtests": {
             "title": "Backtests",
             "type": "integer"
@@ -6565,7 +9337,8 @@
           "scanner_jobs",
           "sweep_jobs",
           "export_jobs",
-          "symbol_analyses"
+          "symbol_analyses",
+          "audit_events"
         ],
         "title": "_GdprTotals",
         "type": "object"
@@ -6635,7 +9408,7 @@
     }
   },
   "info": {
-    "description": "BacktestForecast API \u2014 options backtesting, scanning, forecasting, and portfolio analysis.",
+    "description": "BacktestForecast API - options backtesting, scanning, forecasting, and portfolio analysis.",
     "title": "BacktestForecast API",
     "version": "0.1.0"
   },
@@ -6697,7 +9470,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -6773,7 +9546,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -6852,7 +9625,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -6961,7 +9734,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -7159,7 +9932,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -7302,7 +10075,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -7400,7 +10173,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -7503,7 +10276,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -7611,7 +10384,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -7635,6 +10408,214 @@
           }
         },
         "summary": "Get Analysis",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/v1/analysis/{analysis_id}/cancel": {
+      "post": {
+        "operationId": "cancel_analysis_v1_analysis__analysis_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Cancel Analysis",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/v1/analysis/{analysis_id}/remediation-actions": {
+      "get": {
+        "operationId": "get_analysis_remediation_actions_v1_analysis__analysis_id__remediation_actions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationActionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Analysis Remediation Actions",
         "tags": [
           "analysis"
         ]
@@ -7721,7 +10702,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -7863,7 +10844,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -7960,7 +10941,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8059,7 +11040,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8162,7 +11143,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8281,7 +11262,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8305,6 +11286,214 @@
           }
         },
         "summary": "Get Backtest",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
+    "/v1/backtests/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_backtest_v1_backtests__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRunStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Cancel Backtest",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
+    "/v1/backtests/{run_id}/remediation-actions": {
+      "get": {
+        "operationId": "get_backtest_remediation_actions_v1_backtests__run_id__remediation_actions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationActionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Backtest Remediation Actions",
         "tags": [
           "backtests"
         ]
@@ -8390,7 +11579,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8489,7 +11678,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8588,7 +11777,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8612,6 +11801,87 @@
           }
         },
         "summary": "Create Portal Session",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/v1/billing/pricing": {
+      "get": {
+        "operationId": "get_pricing_contract_v1_billing_pricing_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PricingContractResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Pricing Contract",
         "tags": [
           "billing"
         ]
@@ -8690,7 +11960,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8831,7 +12101,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -8862,7 +12132,7 @@
     },
     "/v1/daily-picks/history": {
       "get": {
-        "description": "Return recent pipeline run history (Pro+ gated).\n\nSupports optional cursor-based pagination via the ``cursor`` parameter\nwhich should be the ``created_at`` ISO timestamp of the last item from\nthe previous page.",
+        "description": "Return recent pipeline run history (Pro+ gated).\n\nSupports optional cursor-based pagination via the ``cursor`` parameter.\nPass the exact ``next_cursor`` returned by the previous page.",
         "operationId": "get_pipeline_history_v1_daily_picks_history_get",
         "parameters": [
           {
@@ -8878,21 +12148,21 @@
             }
           },
           {
-            "description": "created_at ISO cursor from previous page",
+            "description": "Opaque cursor from the previous page's `next_cursor` value.",
             "in": "query",
             "name": "cursor",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 50,
+                  "maxLength": 100,
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "created_at ISO cursor from previous page",
+              "description": "Opaque cursor from the previous page's `next_cursor` value.",
               "title": "Cursor"
             }
           },
@@ -8962,7 +12232,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9074,7 +12344,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9186,7 +12456,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9298,7 +12568,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9410,7 +12680,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9522,7 +12792,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9662,7 +12932,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9759,7 +13029,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9862,7 +13132,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -9993,7 +13263,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10017,6 +13287,313 @@
           }
         },
         "summary": "Download Export",
+        "tags": [
+          "exports"
+        ]
+      }
+    },
+    "/v1/exports/{export_job_id}/cancel": {
+      "post": {
+        "operationId": "cancel_export_v1_exports__export_job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Cancel Export",
+        "tags": [
+          "exports"
+        ]
+      }
+    },
+    "/v1/exports/{export_job_id}/remediation-actions": {
+      "get": {
+        "operationId": "get_export_remediation_actions_v1_exports__export_job_id__remediation_actions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationActionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Export Remediation Actions",
+        "tags": [
+          "exports"
+        ]
+      }
+    },
+    "/v1/exports/{export_job_id}/retry": {
+      "post": {
+        "operationId": "retry_failed_export_v1_exports__export_job_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Retry Failed Export",
         "tags": [
           "exports"
         ]
@@ -10102,7 +13679,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10238,7 +13815,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10337,7 +13914,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10418,7 +13995,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10444,6 +14021,916 @@
         "summary": "Get Meta",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/v1/multi-step-backtests": {
+      "get": {
+        "operationId": "list_multi_step_backtests_v1_multi_step_backtests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiStepRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "List Multi Step Backtests",
+        "tags": [
+          "multi-step-backtests"
+        ]
+      },
+      "post": {
+        "operationId": "create_multi_step_backtest_v1_multi_step_backtests_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMultiStepRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiStepRunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Create Multi Step Backtest",
+        "tags": [
+          "multi-step-backtests"
+        ]
+      }
+    },
+    "/v1/multi-step-backtests/{run_id}": {
+      "get": {
+        "operationId": "get_multi_step_backtest_v1_multi_step_backtests__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiStepRunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Multi Step Backtest",
+        "tags": [
+          "multi-step-backtests"
+        ]
+      }
+    },
+    "/v1/multi-step-backtests/{run_id}/status": {
+      "get": {
+        "operationId": "get_multi_step_backtest_status_v1_multi_step_backtests__run_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiStepRunStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Multi Step Backtest Status",
+        "tags": [
+          "multi-step-backtests"
+        ]
+      }
+    },
+    "/v1/multi-symbol-backtests": {
+      "get": {
+        "operationId": "list_multi_symbol_backtests_v1_multi_symbol_backtests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiSymbolRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "List Multi Symbol Backtests",
+        "tags": [
+          "multi-symbol-backtests"
+        ]
+      },
+      "post": {
+        "operationId": "create_multi_symbol_backtest_v1_multi_symbol_backtests_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMultiSymbolRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiSymbolRunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Create Multi Symbol Backtest",
+        "tags": [
+          "multi-symbol-backtests"
+        ]
+      }
+    },
+    "/v1/multi-symbol-backtests/{run_id}": {
+      "get": {
+        "operationId": "get_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiSymbolRunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Multi Symbol Backtest",
+        "tags": [
+          "multi-symbol-backtests"
+        ]
+      }
+    },
+    "/v1/multi-symbol-backtests/{run_id}/status": {
+      "get": {
+        "operationId": "get_multi_symbol_backtest_status_v1_multi_symbol_backtests__run_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiSymbolRunStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Multi Symbol Backtest Status",
+        "tags": [
+          "multi-symbol-backtests"
         ]
       }
     },
@@ -10560,7 +15047,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10657,7 +15144,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10760,7 +15247,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10867,7 +15354,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -10891,6 +15378,105 @@
           }
         },
         "summary": "Get Scan",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/v1/scans/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancel_scan_v1_scans__job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScannerJobStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Cancel Scan",
         "tags": [
           "scans"
         ]
@@ -11000,7 +15586,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -11024,6 +15610,115 @@
           }
         },
         "summary": "Get Scan Recommendations",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/v1/scans/{job_id}/remediation-actions": {
+      "get": {
+        "operationId": "get_scan_remediation_actions_v1_scans__job_id__remediation_actions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationActionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Scan Remediation Actions",
         "tags": [
           "scans"
         ]
@@ -11109,7 +15804,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -11208,7 +15903,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -11350,7 +16045,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -11447,7 +16142,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -11550,7 +16245,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -11657,7 +16352,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -11681,6 +16376,214 @@
           }
         },
         "summary": "Get Sweep",
+        "tags": [
+          "sweeps"
+        ]
+      }
+    },
+    "/v1/sweeps/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancel_sweep_v1_sweeps__job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SweepJobStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Cancel Sweep",
+        "tags": [
+          "sweeps"
+        ]
+      }
+    },
+    "/v1/sweeps/{job_id}/remediation-actions": {
+      "get": {
+        "operationId": "get_sweep_remediation_actions_v1_sweeps__job_id__remediation_actions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationActionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Get Sweep Remediation Actions",
         "tags": [
           "sweeps"
         ]
@@ -11790,7 +16693,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -11899,7 +16802,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -12022,7 +16925,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -12119,7 +17022,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -12221,7 +17124,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -12328,7 +17231,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {
@@ -12435,7 +17338,7 @@
                 }
               }
             },
-            "description": "Validation error \u2014 request payload did not match the expected schema."
+            "description": "Validation error - request payload did not match the expected schema."
           },
           "429": {
             "content": {

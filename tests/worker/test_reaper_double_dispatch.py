@@ -56,7 +56,10 @@ def test_reaper_skips_when_lock_already_held(monkeypatch):
 
     with patch("backtestforecast.config.get_settings") as mock_settings, \
          patch("redis.Redis", mock_redis_cls):
-        mock_settings.return_value = SimpleNamespace(redis_url="redis://localhost:6379/0")
+        mock_settings.return_value = SimpleNamespace(
+            redis_url="redis://localhost:6379/0",
+            redis_cache_url="redis://localhost:6379/1",
+        )
         result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
     assert result.get("skipped") == 1
@@ -105,6 +108,7 @@ def test_reaper_does_not_double_dispatch_same_run(db_session, db_session_factory
     import apps.worker.app.tasks as tasks_module
 
     monkeypatch.setattr(tasks_module, "SessionLocal", db_session_factory)
+    monkeypatch.setattr(tasks_module, "create_worker_session", db_session_factory)
     monkeypatch.setattr(tasks_module.celery_app, "send_task", fake_send_task)
 
     tasks_module._reap_stale_jobs_inner(stale_minutes=30)
@@ -162,6 +166,7 @@ def test_reaper_runs_without_lock_when_redis_unavailable(db_session, db_session_
     import apps.worker.app.tasks as tasks_module
 
     monkeypatch.setattr(tasks_module, "SessionLocal", db_session_factory)
+    monkeypatch.setattr(tasks_module, "create_worker_session", db_session_factory)
     monkeypatch.setattr(tasks_module.celery_app, "send_task", fake_send_task)
 
     mock_redis_cls = MagicMock()
@@ -169,11 +174,14 @@ def test_reaper_runs_without_lock_when_redis_unavailable(db_session, db_session_
 
     with patch("backtestforecast.config.get_settings") as mock_settings, \
          patch("redis.Redis", mock_redis_cls):
-        mock_settings.return_value = SimpleNamespace(redis_url="redis://localhost:6379/0")
+        mock_settings.return_value = SimpleNamespace(
+            redis_url="redis://localhost:6379/0",
+            redis_cache_url="redis://localhost:6379/1",
+        )
         result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
-    assert "backtest_runs" in result
-    assert result["backtest_runs"] >= 1
+    assert "backtestrun_queued" in result
+    assert result["backtestrun_queued"] >= 1
     assert len(dispatched) >= 1, "Reaper should still dispatch even when Redis lock is unavailable"
 
     dispatched2: list[tuple[str, dict]] = []
@@ -193,9 +201,12 @@ def test_reaper_runs_without_lock_when_redis_unavailable(db_session, db_session_
 
     with patch("backtestforecast.config.get_settings") as mock_settings, \
          patch("redis.Redis", mock_redis_cls):
-        mock_settings.return_value = SimpleNamespace(redis_url="redis://localhost:6379/0")
+        mock_settings.return_value = SimpleNamespace(
+            redis_url="redis://localhost:6379/0",
+            redis_cache_url="redis://localhost:6379/1",
+        )
         result2 = tasks_module.reap_stale_jobs(stale_minutes=30)
 
-    assert result2["backtest_runs"] >= 1, (
+    assert result2["backtestrun_queued"] >= 1, (
         "Without Redis lock, a second reaper would also see and dispatch the same stale jobs"
     )

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 
 def test_enforce_quota_uses_for_update():
-    """The _enforce_backtest_quota method must lock the user row."""
+    """Shared quota enforcement must lock the user row."""
     import inspect
 
-    from backtestforecast.services.backtests import BacktestService
-    source = inspect.getsource(BacktestService._enforce_backtest_quota)
+    from backtestforecast.services.backtest_workflow_access import enforce_backtest_workflow_quota
+    source = inspect.getsource(enforce_backtest_workflow_quota)
     assert "with_for_update" in source, "Quota enforcement must use SELECT FOR UPDATE"

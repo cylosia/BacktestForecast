@@ -1452,6 +1452,7 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
     lock = None
     lock_acquired = False
     db_lock_session = None
+    db_lock_session_ctx = None
     db_lock_acquired = False
     try:
         redis = create_cache_redis()
@@ -1468,6 +1469,9 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
             from sqlalchemy import text
 
             db_lock_session = create_worker_session()
+            if not hasattr(db_lock_session, "get_bind") and hasattr(db_lock_session, "__enter__"):
+                db_lock_session_ctx = db_lock_session
+                db_lock_session = db_lock_session_ctx.__enter__()
             bind = db_lock_session.get_bind()
             if bind is not None and bind.dialect.name == "postgresql":
                 db_lock_acquired = bool(
@@ -1508,6 +1512,9 @@ def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
                     db_lock_session.commit()
             with suppress(Exception):
                 db_lock_session.close()
+            if db_lock_session_ctx is not None:
+                with suppress(Exception):
+                    db_lock_session_ctx.__exit__(None, None, None)
         if redis is not None:
             with suppress(Exception):
                 redis.close()
@@ -1543,7 +1550,9 @@ def _reap_queued_jobs(
     counts_key: str,
 ) -> None:
     """Re-dispatch queued jobs with no celery_task_id older than *cutoff*."""
-    from sqlalchemy import select
+    from datetime import datetime
+
+    from sqlalchemy import select, update
 
     from apps.api.app.dispatch import DispatchResult, dispatch_celery_task
     from backtestforecast.observability.metrics import JOBS_STUCK_REDISPATCHED_TOTAL, ORPHAN_DETECTIONS_TOTAL
@@ -1561,9 +1570,12 @@ def _reap_queued_jobs(
     stale_jobs = list(session.scalars(stale_stmt))
     if stale_jobs:
         ORPHAN_DETECTIONS_TOTAL.labels(kind="queued_job", source="reaper_no_task_id", model=model_name).inc(len(stale_jobs))
+    now = datetime.now(UTC)
     for job in stale_jobs:
         job_id = getattr(job, "id", None)
         try:
+            if hasattr(job, "updated_at"):
+                job.updated_at = now
             result = dispatch_celery_task(
                 db=session,
                 job=job,
@@ -1576,6 +1588,14 @@ def _reap_queued_jobs(
             if result == DispatchResult.SKIPPED:
                 logger.info("reaper.already_dispatched", model=model_name, id=str(job_id))
                 continue
+            if result == DispatchResult.ENQUEUE_FAILED:
+                task_id = getattr(job, "celery_task_id", None)
+                if task_id is not None:
+                    session.execute(
+                        update(model_cls)
+                        .where(model_cls.id == job_id, model_cls.celery_task_id == task_id)
+                        .values(celery_task_id=None)
+                    )
             if result in (DispatchResult.SENT, DispatchResult.ENQUEUE_FAILED):
                 JOBS_STUCK_REDISPATCHED_TOTAL.labels(model=model_name).inc()
         except Exception:

@@ -58,6 +58,7 @@ from backtestforecast.services.job_transitions import (
 )
 from backtestforecast.services.serialization import (
     downsample_equity_curve,
+    safe_validate_summary as _safe_validate_summary,
     serialize_equity_point,
     serialize_summary,
     serialize_trade,

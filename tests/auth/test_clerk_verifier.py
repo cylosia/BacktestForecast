@@ -125,6 +125,9 @@ class TestEmptyClerkAudienceBehavior:
                 log_json=True,
                 ip_hash_salt="a-secure-salt-for-testing-1234567890",
                 metrics_token="test-metrics-token",
+                redis_url="redis://broker:test-redis-password@localhost:6379/0",
+                redis_cache_url="redis://cache:test-redis-password@localhost:6379/1",
+                celery_result_backend_url="redis://results:test-redis-password@localhost:6379/2",
                 redis_password="test-redis-password",
                 database_url="postgresql+psycopg://u:p@localhost/db?sslmode=require",
             )

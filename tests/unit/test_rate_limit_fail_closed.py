@@ -16,6 +16,8 @@ def _production_settings(**overrides) -> Settings:
         "api_public_url": "https://api.example.com",
         "database_url": "postgresql+psycopg://u:strongpass@db:5432/app?sslmode=require",
         "redis_url": "redis://localhost:6379/0",
+        "redis_cache_url": "redis://localhost:6379/1",
+        "celery_result_backend_url": "redis://localhost:6379/2",
         "redis_password": "secret",
         "clerk_issuer": "https://clerk.example.com",
         "clerk_audience": "my-app",

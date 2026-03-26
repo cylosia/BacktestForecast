@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VERSIONS_DIR = PROJECT_ROOT / "alembic" / "versions"
 
 
-# ---- D1: Migration history is consolidated to a single baseline ----
+# ---- D1: Migration history is consolidated to a squashed baseline with follow-up deltas ----
 
 def test_d1_consolidated_baseline_has_correct_revision():
     content = (VERSIONS_DIR / "20260324_0001_consolidated_baseline.py").read_text()
@@ -23,7 +23,13 @@ def test_d1_consolidated_baseline_has_correct_revision():
 
 def test_d1_consolidated_baseline_is_only_revision_file():
     version_files = sorted(path.name for path in VERSIONS_DIR.glob("*.py"))
-    assert version_files == ["20260324_0001_consolidated_baseline.py"]
+    assert version_files == [
+        "20260324_0001_consolidated_baseline.py",
+        "20260325_0002_multi_symbol_and_multi_step_backtests.py",
+        "20260325_0003_export_targets_for_multi_workflows.py",
+        "20260326_0004_scanner_dispatch_started_at.py",
+        "20260326_0005_dispatch_started_at_backfill.py",
+    ]
 
 
 # ---- D2: Old branch-specific revisions were intentionally removed ----

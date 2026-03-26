@@ -82,6 +82,13 @@ def _create_queued_run(session: Session, user: User) -> BacktestRun:
     return run
 
 
+def _invoke_task(task, *args, **kwargs):
+    """Support both plain functions and bound Celery task objects."""
+    if hasattr(task, "run"):
+        return task.run(**kwargs)
+    return task(*args, **kwargs)
+
+
 class TestOutboxDispatchRecovery:
     def test_job_stays_queued_when_inline_send_fails_and_outbox_committed(self, db_session, _mock_celery_module):
         """When the Celery send_task call fails but the OutboxMessage was
@@ -251,7 +258,7 @@ class TestOutboxDispatchRecovery:
         tasks_module.create_worker_session = lambda: _SessionContext()
         tasks_module.celery_app.send_task = _mock_celery_module.send_task
 
-        result = tasks_module.poll_outbox(None, max_messages=10)
+        result = _invoke_task(tasks_module.poll_outbox, None, max_messages=10)
 
         assert result["sent"] == 1
         replay_call = _mock_celery_module.send_task.call_args_list[-1]
@@ -306,7 +313,7 @@ class TestOutboxDispatchRecovery:
         tasks_module.create_worker_session = lambda: _SessionContext()
         tasks_module.celery_app.send_task = _mock_celery_module.send_task
 
-        result = tasks_module.poll_outbox(None, max_messages=10)
+        result = _invoke_task(tasks_module.poll_outbox, None, max_messages=10)
 
         assert result["sent"] == 1
         replay_call = _mock_celery_module.send_task.call_args_list[-1]
@@ -350,7 +357,7 @@ class TestOutboxDispatchRecovery:
 
         tasks_module.create_worker_session = lambda: _SessionContext()
 
-        result = tasks_module.cleanup_outbox(None)
+        result = _invoke_task(tasks_module.cleanup_outbox, None)
 
         assert result["deleted"] == 1
         assert result["preserved_pending"] == 1
@@ -393,7 +400,7 @@ class TestOutboxDispatchRecovery:
         tasks_module.create_worker_session = lambda: _SessionContext()
         tasks_module.celery_app.send_task = _mock_celery_module.send_task
 
-        poll_result = tasks_module.poll_outbox(None, max_messages=10)
+        poll_result = _invoke_task(tasks_module.poll_outbox, None, max_messages=10)
 
         assert poll_result["sent"] == 1
         replay_call = _mock_celery_module.send_task.call_args_list[-1]

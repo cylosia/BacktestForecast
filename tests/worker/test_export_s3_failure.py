@@ -5,6 +5,7 @@ marked as failed and never left in a "succeeded" state.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -14,10 +15,12 @@ pytestmark = pytest.mark.filterwarnings("ignore:MASSIVE_API_KEY:UserWarning")
 
 
 def _make_export_job(*, status: str = "queued"):
+    now = datetime.now(UTC)
     job = MagicMock()
     job.id = uuid4()
     job.user_id = uuid4()
     job.backtest_run_id = uuid4()
+    job.export_target_kind = "backtest"
     job.export_format = "csv"
     job.file_name = "AAPL_long_call_2026-03-20.csv"
     job.status = status
@@ -26,6 +29,8 @@ def _make_export_job(*, status: str = "queued"):
     job.storage_key = None
     job.size_bytes = None
     job.sha256_hex = None
+    job.created_at = now
+    job.started_at = now
     job.completed_at = None
     job.error_code = None
     job.error_message = None

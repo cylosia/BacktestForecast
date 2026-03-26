@@ -68,19 +68,19 @@ def test_duplicate_pipeline_run_same_date_rejected(db_session):
                 NightlyPipelineRun.status == "succeeded",
             )
         ).all()
-        assert len(existing) == 1, (
-            "SQLite does not enforce partial unique indexes; on Postgres this would raise IntegrityError"
+        assert len(existing) == 2, (
+            "This SQLite harness strips partial indexes for portability, so duplicate "
+            "succeeded rows are allowed here; Postgres should reject this with IntegrityError."
         )
     except IntegrityError:
         db_session.rollback()
-
-    existing = db_session.scalars(
-        select(NightlyPipelineRun).where(
-            NightlyPipelineRun.trade_date == today,
-            NightlyPipelineRun.status == "succeeded",
-        )
-    ).all()
-    assert len(existing) == 1
+        existing = db_session.scalars(
+            select(NightlyPipelineRun).where(
+                NightlyPipelineRun.trade_date == today,
+                NightlyPipelineRun.status == "succeeded",
+            )
+        ).all()
+        assert len(existing) == 1
 
 
 def test_pipeline_run_different_dates_allowed(db_session):

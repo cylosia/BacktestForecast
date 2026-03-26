@@ -21,7 +21,7 @@ def _make_session(get_side_effect):
     return session
 
 
-@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks._publish_job_status_safe")
 @patch("apps.worker.app.tasks.create_worker_session")
 def test_sweep_success_returns_succeeded(mock_create_session, mock_publish):
     """A sweep that completes without error returns status 'succeeded'."""
@@ -73,7 +73,7 @@ def test_sweep_success_returns_succeeded(mock_create_session, mock_publish):
     mock_service.close.assert_called_once()
 
 
-@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks._publish_job_status_safe")
 @patch("apps.worker.app.tasks.create_worker_session")
 def test_sweep_user_not_found_fails(mock_create_session, mock_publish):
     """When user lookup returns None the task must fail with 'entitlement_revoked'."""
@@ -104,7 +104,7 @@ def test_sweep_user_not_found_fails(mock_create_session, mock_publish):
     assert mock_sweep.error_code == "entitlement_revoked"
 
 
-@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks._publish_job_status_safe")
 @patch("apps.worker.app.tasks.create_worker_session")
 def test_sweep_app_error_fails_with_code(mock_create_session, mock_publish):
     """When SweepService.run_job raises AppError the job is marked failed
@@ -159,7 +159,7 @@ def test_sweep_app_error_fails_with_code(mock_create_session, mock_publish):
     assert fail_calls[-1].kwargs.get("metadata", {}).get("error_code") == "data_unavailable"
 
 
-@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks._publish_job_status_safe")
 @patch("apps.worker.app.tasks.create_worker_session")
 def test_sweep_not_found_returns_failed(mock_create_session, mock_publish):
     """When the SweepJob lookup returns None the task returns status 'failed'."""

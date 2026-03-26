@@ -44,6 +44,7 @@ from backtestforecast.services.dispatch_recovery import (
 )
 from backtestforecast.services.export_service_helpers import (
     ExportBacktestSnapshot,
+    _LOOKS_NUMERIC,
     build_export_file_name,
     export_mime_type,
     format_metric_value,
@@ -1023,6 +1024,10 @@ class ExportService:
             return [sanitize_csv_cell(value) for value in values]
 
         def _check_size() -> None:
+            if buf.tell() > MAX_EXPORT_BYTES:
+                raise ValueError(
+                    f"CSV export exceeded {MAX_EXPORT_BYTES // (1024 * 1024)} MB during generation."
+                )
             if buf.tell() > self._max_allowed_export_bytes():
                 raise ValueError(
                     f"CSV export exceeded {self._max_allowed_export_bytes() // (1024 * 1024)} MB during generation."

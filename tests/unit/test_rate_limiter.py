@@ -35,7 +35,7 @@ class TestRateLimiterMemoryFallback:
         limiter._redis_lock = Lock()
         limiter._memory_counters = {}
         limiter._redis = None
-        limiter._redis_retry_after = 0.0
+        limiter._redis_retry_after = float("inf")
         limiter._lua_sha = None
 
         for _ in range(5):
@@ -56,7 +56,7 @@ class TestRateLimiterMemoryFallback:
         limiter._redis_lock = Lock()
         limiter._memory_counters = {}
         limiter._redis = None
-        limiter._redis_retry_after = 0.0
+        limiter._redis_retry_after = float("inf")
         limiter._lua_sha = None
 
         for _ in range(3):

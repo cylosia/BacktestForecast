@@ -125,7 +125,7 @@ class TestGetOrCreateCustomerRace:
 
     @patch("backtestforecast.services.billing.logger")
     def test_race_lost_orphan_cleanup_failure_dispatches_task(self, mock_logger):
-        """If orphan customer deletion fails, a Celery maintenance task must
+        """If orphan customer deletion fails, a Celery recovery task must
         be dispatched to clean it up asynchronously."""
         session = MagicMock()
         stripe_client = MagicMock()
@@ -164,4 +164,4 @@ class TestGetOrCreateCustomerRace:
         task_call = mock_celery.send_task.call_args
         assert task_call.args[0] == "maintenance.cleanup_stripe_orphan"
         assert task_call.kwargs["kwargs"]["customer_id"] == "cus_orphan_fail"
-        assert task_call.kwargs["queue"] == "maintenance"
+        assert task_call.kwargs["queue"] == "recovery"

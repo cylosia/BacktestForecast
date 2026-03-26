@@ -18,6 +18,9 @@ def test_runtime_config_invalidation_updates_health_version_visibility(monkeypat
     original_metrics_token = settings.metrics_token
     original_admin_token = settings.admin_token
     original_redis_password = settings.redis_password
+    original_redis_url = settings.redis_url
+    original_redis_cache_url = settings.redis_cache_url
+    original_celery_result_backend_url = settings.celery_result_backend_url
     original_api_allowed_hosts_raw = settings.api_allowed_hosts_raw
     original_web_cors_origins_raw = settings.web_cors_origins_raw
     original_clerk_authorized_parties_raw = settings.clerk_authorized_parties_raw
@@ -46,6 +49,9 @@ def test_runtime_config_invalidation_updates_health_version_visibility(monkeypat
         monkeypatch.setenv("METRICS_TOKEN", "integration-metrics-token")
         monkeypatch.setenv("ADMIN_TOKEN", "integration-admin-token")
         monkeypatch.setenv("REDIS_PASSWORD", "integration-redis-password")
+        monkeypatch.setenv("REDIS_URL", "redis://broker:integration-redis-password@localhost:6379/0")
+        monkeypatch.setenv("REDIS_CACHE_URL", "redis://cache:integration-redis-password@localhost:6379/1")
+        monkeypatch.setenv("CELERY_RESULT_BACKEND_URL", "redis://results:integration-redis-password@localhost:6379/2")
         monkeypatch.setenv("API_ALLOWED_HOSTS_RAW", "api.example.test")
         monkeypatch.setenv("WEB_CORS_ORIGINS_RAW", "https://app.example.test")
         monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES_RAW", "https://app.example.test")
@@ -96,6 +102,15 @@ def test_runtime_config_invalidation_updates_health_version_visibility(monkeypat
             monkeypatch.setenv("REDIS_PASSWORD", original_redis_password)
         else:
             monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+        monkeypatch.setenv("REDIS_URL", original_redis_url)
+        if original_redis_cache_url:
+            monkeypatch.setenv("REDIS_CACHE_URL", original_redis_cache_url)
+        else:
+            monkeypatch.delenv("REDIS_CACHE_URL", raising=False)
+        if original_celery_result_backend_url:
+            monkeypatch.setenv("CELERY_RESULT_BACKEND_URL", original_celery_result_backend_url)
+        else:
+            monkeypatch.delenv("CELERY_RESULT_BACKEND_URL", raising=False)
         monkeypatch.setenv("API_ALLOWED_HOSTS_RAW", original_api_allowed_hosts_raw)
         monkeypatch.setenv("WEB_CORS_ORIGINS_RAW", original_web_cors_origins_raw)
         monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES_RAW", original_clerk_authorized_parties_raw)

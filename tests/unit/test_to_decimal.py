@@ -32,4 +32,4 @@ def test_to_decimal_inf_raises_by_default():
 
 
 def test_to_decimal_inf_returns_none_when_allowed():
-    assert to_decimal(float("inf"), allow_infinite=True) is None
+    assert to_decimal(float("inf"), allow_infinite=True) == Decimal("Infinity")

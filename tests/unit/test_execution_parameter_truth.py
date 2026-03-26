@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -24,6 +25,21 @@ from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+
+
+@pytest.fixture(autouse=True)
+def _close_leaked_event_loop() -> None:
+    """Clean up stray Windows event loops leaked by earlier tests in the same session."""
+    policy = asyncio.get_event_loop_policy()
+    local = getattr(policy, "_local", None)
+    loop = getattr(local, "_loop", None) if local is not None else None
+    if loop is not None and not loop.is_running() and not loop.is_closed():
+        loop.close()
+    if local is not None and hasattr(local, "_loop"):
+        local._loop = None
+    yield
 
 
 @pytest.fixture()

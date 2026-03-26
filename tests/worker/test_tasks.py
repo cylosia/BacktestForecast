@@ -71,6 +71,13 @@ def db_session(db_session_factory) -> Session:
         session.close()
 
 
+@pytest.fixture(autouse=True)
+def _reset_worker_session_entrypoint(monkeypatch):
+    import apps.worker.app.tasks as tasks_module
+
+    monkeypatch.setattr(tasks_module, "create_worker_session", lambda: tasks_module.SessionLocal())
+
+
 def _create_user(session: Session) -> User:
     user = User(clerk_user_id="test_worker_user", email="worker@test.com")
     session.add(user)

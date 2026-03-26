@@ -835,7 +835,9 @@ class ExportJob(Base):
             name="ck_export_jobs_valid_target_kind",
         ),
         CheckConstraint(
-            "((backtest_run_id IS NOT NULL)::int + (multi_symbol_run_id IS NOT NULL)::int + (multi_step_run_id IS NOT NULL)::int) = 1",
+            "((CASE WHEN backtest_run_id IS NOT NULL THEN 1 ELSE 0 END) + "
+            "(CASE WHEN multi_symbol_run_id IS NOT NULL THEN 1 ELSE 0 END) + "
+            "(CASE WHEN multi_step_run_id IS NOT NULL THEN 1 ELSE 0 END)) = 1",
             name="ck_export_jobs_exactly_one_target",
         ),
         CheckConstraint(

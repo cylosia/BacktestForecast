@@ -542,13 +542,15 @@ class BillingService:
         taken, if *dry_run* is True).
         """
         cutoff = datetime.now(UTC) - timedelta(hours=grace_hours)
-        stale_users: list[User] = list(self.session.scalars(
-            select(User).where(
-                User.subscription_status == "active",
-                User.subscription_current_period_end < cutoff,
-                User.stripe_subscription_id.isnot(None),
-            ).with_for_update(skip_locked=True).limit(self.settings.max_reconciliation_users)
-        ))
+        stale_user_query = select(User).where(
+            User.subscription_status == "active",
+            User.subscription_current_period_end < cutoff,
+            User.stripe_subscription_id.isnot(None),
+        ).with_for_update(skip_locked=True).limit(self.settings.max_reconciliation_users)
+        # Keep a non-configurable ceiling so a bad config change cannot turn
+        # reconciliation into an unbounded Stripe API burst.
+        stale_user_query = stale_user_query.limit(100)
+        stale_users: list[User] = list(self.session.scalars(stale_user_query))
         actions: list[dict[str, Any]] = []
         client = self._get_stripe_client() if stale_users else None
 

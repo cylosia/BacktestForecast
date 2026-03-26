@@ -18,7 +18,9 @@ EXPECTED_BEAT_ENTRIES = {
     "cleanup-daily-recommendations-weekly",
     "cleanup-outbox-daily",
     "poll-outbox",
+    "drain-billing-audit-fallback",
     "reconcile-subscriptions-daily",
+    "reconcile-stranded-jobs",
     "expire-old-exports",
 }
 
@@ -31,6 +33,11 @@ def beat_schedule() -> dict:
 
 @pytest.fixture(scope="module")
 def registered_task_names() -> set[str]:
+    import apps.worker.app.maintenance_tasks  # noqa: F401
+    import apps.worker.app.pipeline_tasks  # noqa: F401
+    import apps.worker.app.research_tasks  # noqa: F401
+    import apps.worker.app.tasks  # noqa: F401
+
     from apps.worker.app.celery_app import celery_app
     return set(celery_app.tasks.keys())
 
@@ -75,14 +82,28 @@ def test_beat_entries_have_schedules(beat_schedule: dict) -> None:
     assert not missing_schedule, f"Beat entries without schedule: {missing_schedule}"
 
 
-def test_maintenance_tasks_routed_to_maintenance_queue() -> None:
-    """All maintenance.* tasks must be routed to the 'maintenance' queue."""
+def test_maintenance_tasks_routed_to_expected_queues() -> None:
+    """Maintenance tasks must use their intended queue.
+
+    Recovery-oriented maintenance tasks are intentionally isolated from the
+    general maintenance queue so they do not compete with slower housekeeping
+    work.
+    """
     from apps.worker.app.celery_app import celery_app
+
+    expected_recovery_tasks = {
+        "maintenance.reap_stale_jobs",
+        "maintenance.reconcile_stranded_jobs",
+        "maintenance.poll_outbox",
+        "maintenance.reconcile_subscriptions",
+        "maintenance.cleanup_stripe_orphan",
+    }
     routing = celery_app.conf.task_routes or {}
     for task_name, route in routing.items():
         if task_name.startswith("maintenance."):
             queue = route.get("queue") if isinstance(route, dict) else route
-            assert queue == "maintenance", (
-                f"Task {task_name} should be routed to 'maintenance' queue, "
+            expected_queue = "recovery" if task_name in expected_recovery_tasks else "maintenance"
+            assert queue == expected_queue, (
+                f"Task {task_name} should be routed to {expected_queue!r} queue, "
                 f"got {queue!r}"
             )

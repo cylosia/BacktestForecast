@@ -7,14 +7,18 @@ by validation) or 2xx (safely handled/escaped).
 """
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 from fastapi.testclient import TestClient
 
 from datetime import date
 from decimal import Decimal
 
+from apps.api.app import dispatch as dispatch_module
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly
 from apps.api.app.main import app
+from backtestforecast.db.session import create_session
 from backtestforecast.models import User
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
 from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
@@ -49,15 +53,34 @@ def unauthed_client() -> TestClient:
 @pytest.fixture()
 def authed_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """Client with auth bypass for testing input handling."""
+    clerk_user_id = f"clerk_fuzz_user_{uuid4()}"
     fuzz_user = User(
-        clerk_user_id="clerk_fuzz_user",
+        id=uuid4(),
+        clerk_user_id=clerk_user_id,
         email="fuzz@example.com",
         plan_tier="premium",
         subscription_status="active",
     )
+    user_context = User(
+        id=fuzz_user.id,
+        clerk_user_id=fuzz_user.clerk_user_id,
+        email=fuzz_user.email,
+        plan_tier=fuzz_user.plan_tier,
+        subscription_status=fuzz_user.subscription_status,
+        subscription_current_period_end=None,
+        cancel_at_period_end=False,
+    )
 
-    def override_current_user() -> User:
-        return fuzz_user
+    def override_current_user():
+        return user_context
+
+    with create_session() as session:
+        existing = session.query(User).filter(User.clerk_user_id == fuzz_user.clerk_user_id).one_or_none()
+        if existing is None:
+            session.add(fuzz_user)
+            session.commit()
+        else:
+            fuzz_user = existing
 
     def fake_build_forecast(self, *, user: User, symbol: str, strategy_type: str | None, horizon_days: int) -> ForecastEnvelopeResponse:
         return ForecastEnvelopeResponse(
@@ -78,9 +101,16 @@ def authed_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
             expected_move_abs_pct=Decimal("1"),
         )
 
+    def fake_dispatch_celery_task(**kwargs):
+        job = kwargs["job"]
+        if getattr(job, "celery_task_id", None) is None:
+            job.celery_task_id = f"fuzz-{uuid4()}"
+        return dispatch_module.DispatchResult.SENT
+
     app.dependency_overrides[get_current_user] = override_current_user
     app.dependency_overrides[get_current_user_readonly] = override_current_user
     monkeypatch.setattr(ScanService, "build_forecast", fake_build_forecast)
+    monkeypatch.setattr(dispatch_module, "dispatch_celery_task", fake_dispatch_celery_task)
     with TestClient(app, base_url="http://localhost", raise_server_exceptions=False) as tc:
         yield tc
     app.dependency_overrides.clear()
