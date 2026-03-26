@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 import structlog
 from sqlalchemy import desc, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
@@ -28,7 +29,7 @@ from backtestforecast.backtests.types import (
     TradeResult,
 )
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppValidationError, DataUnavailableError, NotFoundError
+from backtestforecast.errors import AppValidationError, DataUnavailableError, ExternalServiceError, NotFoundError
 from backtestforecast.market_data.service import HistoricalDataBundle, MassiveOptionGateway
 from backtestforecast.models import (
     MultiStepEquityPoint,
@@ -52,10 +53,12 @@ from backtestforecast.schemas.multi_step_backtests import (
     WorkflowStepDefinition,
 )
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.backtest_workflow_access import enforce_backtest_workflow_quota
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("services.multi_step_backtests")
 
-_QUEUE = "backtests"
+_QUEUE = "multi_step_backtests"
 
 
 @dataclass(slots=True)
@@ -167,7 +170,7 @@ class MultiStepBacktestService:
             task_kwargs={"run_id": str(run.id)},
             queue=_QUEUE,
             log_event="multi_step_backtest",
-            logger=dispatch_logger,
+            logger=dispatch_logger or logger,
             request_id=request_id,
             traceparent=traceparent,
         )
@@ -175,6 +178,27 @@ class MultiStepBacktestService:
         return run
 
     def enqueue(self, user: User, request: CreateMultiStepRunRequest) -> MultiStepRun:
+        if request.idempotency_key:
+            existing = self.session.scalar(
+                select(MultiStepRun).where(
+                    MultiStepRun.user_id == user.id,
+                    MultiStepRun.idempotency_key == request.idempotency_key,
+                )
+            )
+            if existing is not None:
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="MultiStepRun",
+                    task_name="multi_step_backtests.run",
+                    task_kwargs={"run_id": str(existing.id)},
+                    queue=_QUEUE,
+                    log_event="multi_step_backtest",
+                    logger=logger,
+                )
+
+        enforce_backtest_workflow_quota(self.session, user)
+
         run = MultiStepRun(
             id=uuid4(),
             user_id=user.id,
@@ -195,7 +219,20 @@ class MultiStepBacktestService:
             ending_equity=request.account_size,
         )
         self.session.add(run)
-        self.session.flush()
+        try:
+            self.session.flush()
+        except IntegrityError:
+            self.session.rollback()
+            if request.idempotency_key:
+                existing = self.session.scalar(
+                    select(MultiStepRun).where(
+                        MultiStepRun.user_id == user.id,
+                        MultiStepRun.idempotency_key == request.idempotency_key,
+                    )
+                )
+                if existing is not None:
+                    return existing
+            raise
 
         for step in request.steps:
             self.session.add(
@@ -209,8 +246,6 @@ class MultiStepBacktestService:
                     failure_policy=step.failure_policy,
                 )
             )
-        self.session.commit()
-        self.session.refresh(run)
         return run
 
     def execute_run_by_id(self, run_id: UUID) -> MultiStepRun:
@@ -236,6 +271,9 @@ class MultiStepBacktestService:
             request = CreateMultiStepRunRequest.model_validate(run.input_snapshot_json or {})
             result = self._execute_request(request)
             self._persist_success(run, result)
+        except ExternalServiceError:
+            self.session.rollback()
+            raise
         except Exception as exc:
             logger.exception("multi_step_backtest.execution_failed", run_id=str(run_id))
             run.status = "failed"

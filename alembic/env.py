@@ -64,20 +64,17 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        use_pg_advisory_lock = connection.dialect.name == "postgresql"
-        if use_pg_advisory_lock:
-            # Lock ID 2817513 derived from CRC32("backtestforecast-alembic") & 0x7FFFFFFF.
-            # Must not collide with any other pg_advisory_lock in this database.
-            connection.execute(text("SELECT pg_advisory_lock(2817513)"))
-        try:
-            context.configure(connection=connection, target_metadata=target_metadata, compare_type=True, compare_server_default=True)
+    with connectable.begin() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True, compare_server_default=True)
 
-            with context.begin_transaction():
-                context.run_migrations()
-        finally:
-            if use_pg_advisory_lock:
-                connection.execute(text("SELECT pg_advisory_unlock(2817513)"))
+        with context.begin_transaction():
+            if connection.dialect.name == "postgresql":
+                # Acquire a transaction-scoped advisory lock only after Alembic's
+                # transaction starts. Acquiring a session lock beforehand causes
+                # SQLAlchemy 2 to open an outer implicit transaction that later
+                # rolls back the migration work on connection close.
+                connection.execute(text("SELECT pg_advisory_xact_lock(2817513)"))
+            context.run_migrations()
 
 
 def run_migrations_online_autocommit() -> None:
@@ -98,11 +95,11 @@ def run_migrations_online_autocommit() -> None:
     )
 
     with connectable.connect() as connection:
+        connection = connection.execution_options(isolation_level="AUTOCOMMIT")
         use_pg_advisory_lock = connection.dialect.name == "postgresql"
         if use_pg_advisory_lock:
             connection.execute(text("SELECT pg_advisory_lock(2817513)"))
         try:
-            connection = connection.execution_options(isolation_level="AUTOCOMMIT")
             context.configure(
                 connection=connection,
                 target_metadata=target_metadata,

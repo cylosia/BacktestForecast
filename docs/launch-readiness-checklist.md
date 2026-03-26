@@ -22,6 +22,8 @@
 ## Core features — smoke tests
 - [ ] One manual backtest succeeds end-to-end in staging (POST → queued → running → succeeded)
 - [ ] Backtest detail page renders with trades, equity curve, and summary metrics
+- [ ] Multi-symbol backtest list/detail/status routes return 200 for an authenticated user
+- [ ] Multi-step backtest list/detail/status routes return 200 for an authenticated user
 - [ ] One scanner job succeeds end-to-end in staging (POST → Celery → recommendations)
 - [ ] Scanner recommendations page renders with scores and forecasts
 - [ ] One CSV export downloads successfully
@@ -69,6 +71,8 @@
 
 ## CI
 - [ ] `pytest -q` passes
+- [ ] `postgres-integration` runs with `TEST_DATABASE_URL` and executes route-level Postgres integration tests
+- [ ] Playwright full-stack workflow runs authenticated live-API checks
 - [ ] Python compile smoke check passes
 - [ ] Web lint + typecheck pass
 - [ ] API app import smoke check passes

@@ -43,4 +43,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 
 EXPOSE 9090
 
-CMD ["sh", "-c", "exec celery -A apps.worker.app.celery_app.celery_app worker --loglevel=INFO --queues=backtests,scans,sweeps,analysis,exports,maintenance,recovery,research --concurrency=${CELERY_CONCURRENCY:-4}"]
+CMD ["sh", "-c", "exec celery -A apps.worker.app.celery_app.celery_app worker --loglevel=INFO --queues=backtests,multi_symbol_backtests,multi_step_backtests,scans,sweeps,analysis,exports,maintenance,recovery,research --concurrency=${CELERY_CONCURRENCY:-4}"]

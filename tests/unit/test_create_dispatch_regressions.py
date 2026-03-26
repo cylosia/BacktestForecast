@@ -12,16 +12,21 @@ from sqlalchemy.pool import StaticPool
 
 from backtestforecast.billing.entitlements import ExportFormat
 from backtestforecast.db.base import Base
-from backtestforecast.models import BacktestRun, OutboxMessage, ScannerJob, User
+from backtestforecast.errors import QuotaExceededError
+from backtestforecast.models import BacktestRun, MultiStepRun, MultiSymbolRun, OutboxMessage, ScannerJob, User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.schemas.analysis import CreateAnalysisRequest
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.schemas.exports import CreateExportRequest
+from backtestforecast.schemas.multi_step_backtests import CreateMultiStepRunRequest, StepContractSelection, StepTriggerDefinition, WorkflowStepDefinition
+from backtestforecast.schemas.multi_symbol_backtests import CreateMultiSymbolRunRequest, MultiSymbolDefinition, MultiSymbolLegDefinition, MultiSymbolPriceRule, MultiSymbolStrategyGroup
 from backtestforecast.schemas.scans import CreateScannerJobRequest
 from backtestforecast.schemas.sweeps import CreateSweepRequest
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.dispatch_recovery import repair_stranded_jobs
 from backtestforecast.services.exports import ExportService
+from backtestforecast.services.multi_step_backtests import MultiStepBacktestService
+from backtestforecast.services.multi_symbol_backtests import MultiSymbolBacktestService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
 from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
@@ -250,6 +255,83 @@ def test_scan_create_and_dispatch_preserves_pending_outbox_on_send_failure(
     _assert_pending_outbox(db_session, job.id, task_name="scans.run_job", model_type=ScannerJob)
 
 
+def test_multi_symbol_create_and_dispatch_preserves_pending_outbox_on_send_failure(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="premium")
+    service = MultiSymbolBacktestService(db_session)
+    payload = CreateMultiSymbolRunRequest(
+        name="Dispatch regression multi-symbol",
+        symbols=[
+            MultiSymbolDefinition(symbol="AAPL", risk_per_trade_pct=Decimal("2")),
+            MultiSymbolDefinition(symbol="MSFT", risk_per_trade_pct=Decimal("2")),
+        ],
+        strategy_groups=[
+            MultiSymbolStrategyGroup(
+                name="pair",
+                synchronous_entry=True,
+                legs=[
+                    MultiSymbolLegDefinition(symbol="AAPL", strategy_type="long_call", target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                    MultiSymbolLegDefinition(symbol="MSFT", strategy_type="long_call", target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                ],
+            )
+        ],
+        entry_rules=[MultiSymbolPriceRule(left_symbol="AAPL", left_indicator="close", operator="gt", threshold=Decimal("99"))],
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        account_size=Decimal("10000"),
+        commission_per_contract=Decimal("0.65"),
+        idempotency_key="multi-symbol-send-failure",
+    )
+    _mock_celery_module.send_task.side_effect = ConnectionError("broker down")
+
+    run = service.create_and_dispatch(user, payload, dispatch_logger=MagicMock())
+
+    _assert_pending_outbox(db_session, run.id, task_name="multi_symbol_backtests.run", model_type=MultiSymbolRun)
+
+
+def test_multi_step_create_and_dispatch_preserves_pending_outbox_on_send_failure(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="premium")
+    service = MultiStepBacktestService(db_session)
+    payload = CreateMultiStepRunRequest(
+        name="Dispatch regression multi-step",
+        symbol="SPY",
+        workflow_type="sequential",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("2"),
+        commission_per_contract=Decimal("0.65"),
+        initial_entry_rules=[{"type": "rsi", "operator": "gt", "threshold": Decimal("0"), "period": 2}],
+        steps=[
+            WorkflowStepDefinition(
+                step_number=1,
+                name="Open calendar",
+                action="open_position",
+                trigger=StepTriggerDefinition(mode="rule_match", rules=[{"type": "rsi", "operator": "gt", "threshold": Decimal("0"), "period": 2}]),
+                contract_selection=StepContractSelection(strategy_type="calendar_spread", target_dte=7, dte_tolerance_days=3, max_holding_days=10),
+            ),
+            WorkflowStepDefinition(
+                step_number=2,
+                name="Resell weekly premium",
+                action="sell_premium",
+                trigger=StepTriggerDefinition(mode="after_expiration", require_prior_step_status="expired"),
+                contract_selection=StepContractSelection(strategy_type="calendar_spread", target_dte=7, dte_tolerance_days=3, max_holding_days=10),
+            ),
+        ],
+        idempotency_key="multi-step-send-failure",
+    )
+    _mock_celery_module.send_task.side_effect = ConnectionError("broker down")
+
+    run = service.create_and_dispatch(user, payload, dispatch_logger=MagicMock())
+
+    _assert_pending_outbox(db_session, run.id, task_name="multi_step_backtests.run", model_type=MultiStepRun)
+
+
 def test_repair_stranded_jobs_requeues_missing_dispatch_state(
     db_session: Session,
     _mock_celery_module: MagicMock,
@@ -281,6 +363,61 @@ def test_repair_stranded_jobs_requeues_missing_dispatch_state(
     assert counts["found"] == 1
     assert counts["requeued"] == 1
     _assert_sent_outbox(db_session, job.id, task_name="scans.run_job", model_type=ScannerJob)
+
+
+def test_repair_stranded_jobs_requeues_missing_multi_workflow_dispatch_state(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="premium")
+    multi_symbol = MultiSymbolRun(
+        user_id=user.id,
+        name="Stranded multi-symbol",
+        status="queued",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 3, 1),
+        account_size=Decimal("10000"),
+        capital_allocation_mode="equal_weight",
+        commission_per_contract=Decimal("0.65"),
+        slippage_pct=Decimal("0"),
+        input_snapshot_json={},
+        warnings_json=[],
+        starting_equity=Decimal("10000"),
+        ending_equity=Decimal("10000"),
+        created_at=datetime.now(UTC) - timedelta(minutes=20),
+    )
+    multi_step = MultiStepRun(
+        user_id=user.id,
+        name="Stranded multi-step",
+        symbol="SPY",
+        workflow_type="sequential",
+        status="queued",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 3, 1),
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("2"),
+        commission_per_contract=Decimal("0.65"),
+        slippage_pct=Decimal("0"),
+        input_snapshot_json={},
+        warnings_json=[],
+        starting_equity=Decimal("10000"),
+        ending_equity=Decimal("10000"),
+        created_at=datetime.now(UTC) - timedelta(minutes=20),
+    )
+    db_session.add_all([multi_symbol, multi_step])
+    db_session.commit()
+
+    counts = repair_stranded_jobs(
+        db_session,
+        logger=MagicMock(),
+        action="requeue",
+        older_than=timedelta(minutes=5),
+    )
+
+    assert counts["found"] == 2
+    assert counts["requeued"] == 2
+    _assert_sent_outbox(db_session, multi_symbol.id, task_name="multi_symbol_backtests.run", model_type=MultiSymbolRun)
+    _assert_sent_outbox(db_session, multi_step.id, task_name="multi_step_backtests.run", model_type=MultiStepRun)
 
 
 def test_sweep_create_and_dispatch_preserves_pending_outbox_on_send_failure(
@@ -364,6 +501,196 @@ def test_export_create_and_dispatch_preserves_pending_outbox_on_send_failure(
     )
 
 
+def test_multi_symbol_create_and_dispatch_enforces_backtest_quota(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="free")
+    service = MultiSymbolBacktestService(db_session)
+    for _ in range(5):
+        _create_succeeded_backtest(db_session, user.id)
+
+    payload = CreateMultiSymbolRunRequest(
+        name="Quota limited multi-symbol",
+        symbols=[
+            MultiSymbolDefinition(symbol="AAPL", risk_per_trade_pct=Decimal("2")),
+            MultiSymbolDefinition(symbol="MSFT", risk_per_trade_pct=Decimal("2")),
+        ],
+        strategy_groups=[
+            MultiSymbolStrategyGroup(
+                name="pair",
+                synchronous_entry=True,
+                legs=[
+                    MultiSymbolLegDefinition(symbol="AAPL", strategy_type="long_call", target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                    MultiSymbolLegDefinition(symbol="MSFT", strategy_type="long_call", target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                ],
+            )
+        ],
+        entry_rules=[MultiSymbolPriceRule(left_symbol="AAPL", left_indicator="close", operator="gt", threshold=Decimal("99"))],
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        account_size=Decimal("10000"),
+        commission_per_contract=Decimal("0.65"),
+    )
+
+    with pytest.raises(QuotaExceededError):
+        service.create_and_dispatch(user, payload, dispatch_logger=MagicMock())
+
+
+def test_multi_step_create_and_dispatch_enforces_backtest_quota(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="free")
+    service = MultiStepBacktestService(db_session)
+    for _ in range(5):
+        _create_succeeded_backtest(db_session, user.id)
+
+    payload = CreateMultiStepRunRequest(
+        name="Quota limited multi-step",
+        symbol="SPY",
+        workflow_type="sequential",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("2"),
+        commission_per_contract=Decimal("0.65"),
+        initial_entry_rules=[{"type": "rsi", "operator": "gt", "threshold": Decimal("0"), "period": 2}],
+        steps=[
+            WorkflowStepDefinition(
+                step_number=1,
+                name="Open calendar",
+                action="open_position",
+                trigger=StepTriggerDefinition(mode="rule_match", rules=[{"type": "rsi", "operator": "gt", "threshold": Decimal("0"), "period": 2}]),
+                contract_selection=StepContractSelection(strategy_type="calendar_spread", target_dte=7, dte_tolerance_days=3, max_holding_days=10),
+            ),
+            WorkflowStepDefinition(
+                step_number=2,
+                name="Resell weekly premium",
+                action="sell_premium",
+                trigger=StepTriggerDefinition(mode="after_expiration", require_prior_step_status="expired"),
+                contract_selection=StepContractSelection(strategy_type="calendar_spread", target_dte=7, dte_tolerance_days=3, max_holding_days=10),
+            ),
+        ],
+    )
+
+    with pytest.raises(QuotaExceededError):
+        service.create_and_dispatch(user, payload, dispatch_logger=MagicMock())
+
+
+def test_multi_symbol_quota_counts_prior_multi_symbol_runs(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="free")
+    service = MultiSymbolBacktestService(db_session)
+    for idx in range(5):
+        db_session.add(
+            MultiSymbolRun(
+                user_id=user.id,
+                name=f"Prior multi-symbol {idx}",
+                status="succeeded",
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 3, 1),
+                account_size=Decimal("10000"),
+                capital_allocation_mode="equal_weight",
+                commission_per_contract=Decimal("0.65"),
+                slippage_pct=Decimal("0"),
+                input_snapshot_json={},
+                warnings_json=[],
+                starting_equity=Decimal("10000"),
+                ending_equity=Decimal("10000"),
+            )
+        )
+    db_session.commit()
+
+    payload = CreateMultiSymbolRunRequest(
+        name="Quota limited multi-symbol",
+        symbols=[
+            MultiSymbolDefinition(symbol="AAPL", risk_per_trade_pct=Decimal("2")),
+            MultiSymbolDefinition(symbol="MSFT", risk_per_trade_pct=Decimal("2")),
+        ],
+        strategy_groups=[
+            MultiSymbolStrategyGroup(
+                name="pair",
+                synchronous_entry=True,
+                legs=[
+                    MultiSymbolLegDefinition(symbol="AAPL", strategy_type="long_call", target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                    MultiSymbolLegDefinition(symbol="MSFT", strategy_type="long_call", target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                ],
+            )
+        ],
+        entry_rules=[MultiSymbolPriceRule(left_symbol="AAPL", left_indicator="close", operator="gt", threshold=Decimal("99"))],
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        account_size=Decimal("10000"),
+        commission_per_contract=Decimal("0.65"),
+    )
+
+    with pytest.raises(QuotaExceededError):
+        service.create_and_dispatch(user, payload, dispatch_logger=MagicMock())
+
+
+def test_multi_step_quota_counts_prior_multi_step_runs(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="free")
+    service = MultiStepBacktestService(db_session)
+    for idx in range(5):
+        db_session.add(
+            MultiStepRun(
+                user_id=user.id,
+                name=f"Prior multi-step {idx}",
+                symbol="SPY",
+                workflow_type="sequential",
+                status="succeeded",
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 3, 1),
+                account_size=Decimal("10000"),
+                risk_per_trade_pct=Decimal("2"),
+                commission_per_contract=Decimal("0.65"),
+                slippage_pct=Decimal("0"),
+                input_snapshot_json={},
+                warnings_json=[],
+                starting_equity=Decimal("10000"),
+                ending_equity=Decimal("10000"),
+            )
+        )
+    db_session.commit()
+
+    payload = CreateMultiStepRunRequest(
+        name="Quota limited multi-step",
+        symbol="SPY",
+        workflow_type="sequential",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("2"),
+        commission_per_contract=Decimal("0.65"),
+        initial_entry_rules=[{"type": "rsi", "operator": "gt", "threshold": Decimal("0"), "period": 2}],
+        steps=[
+            WorkflowStepDefinition(
+                step_number=1,
+                name="Open calendar",
+                action="open_position",
+                trigger=StepTriggerDefinition(mode="rule_match", rules=[{"type": "rsi", "operator": "gt", "threshold": Decimal("0"), "period": 2}]),
+                contract_selection=StepContractSelection(strategy_type="calendar_spread", target_dte=7, dte_tolerance_days=3, max_holding_days=10),
+            ),
+            WorkflowStepDefinition(
+                step_number=2,
+                name="Roll premium",
+                action="sell_premium",
+                trigger=StepTriggerDefinition(mode="after_expiration", require_prior_step_status="expired"),
+                contract_selection=StepContractSelection(strategy_type="calendar_spread", target_dte=7, dte_tolerance_days=3, max_holding_days=10),
+            ),
+        ],
+    )
+
+    with pytest.raises(QuotaExceededError):
+        service.create_and_dispatch(user, payload, dispatch_logger=MagicMock())
+
+
 def test_backtest_idempotency_reuse_redispatches_stale_queued_job(
     db_session: Session,
     _mock_celery_module: MagicMock,
@@ -431,6 +758,93 @@ def test_scan_idempotency_reuse_redispatches_stale_queued_job(
 
     assert reused.id == job.id
     _assert_stale_job_redispatched(db_session, job.id, task_name="scans.run_job", model_type=ScannerJob)
+
+
+def test_multi_symbol_idempotency_reuse_redispatches_stale_queued_job(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="premium")
+    service = MultiSymbolBacktestService(db_session)
+    payload = CreateMultiSymbolRunRequest(
+        name="Dispatch regression multi-symbol",
+        symbols=[
+            MultiSymbolDefinition(symbol="AAPL", risk_per_trade_pct=Decimal("2")),
+            MultiSymbolDefinition(symbol="MSFT", risk_per_trade_pct=Decimal("2")),
+        ],
+        strategy_groups=[
+            MultiSymbolStrategyGroup(
+                name="pair",
+                synchronous_entry=True,
+                legs=[
+                    MultiSymbolLegDefinition(symbol="AAPL", strategy_type="long_call", target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                    MultiSymbolLegDefinition(symbol="MSFT", strategy_type="long_call", target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                ],
+            )
+        ],
+        entry_rules=[MultiSymbolPriceRule(left_symbol="AAPL", left_indicator="close", operator="gt", threshold=Decimal("99"))],
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        account_size=Decimal("10000"),
+        commission_per_contract=Decimal("0.65"),
+        idempotency_key="multi-symbol-stale-idem",
+    )
+
+    run = service.enqueue(user, payload)
+    db_session.commit()
+    _mark_job_stale(db_session, run)
+    _mock_celery_module.send_task.return_value = MagicMock(id="fresh-task-id")
+
+    reused = service.create_and_dispatch(user, payload)
+
+    assert reused.id == run.id
+    _assert_stale_job_redispatched(db_session, run.id, task_name="multi_symbol_backtests.run", model_type=MultiSymbolRun)
+
+
+def test_multi_step_idempotency_reuse_redispatches_stale_queued_job(
+    db_session: Session,
+    _mock_celery_module: MagicMock,
+) -> None:
+    user = _create_user(db_session, plan_tier="premium")
+    service = MultiStepBacktestService(db_session)
+    payload = CreateMultiStepRunRequest(
+        name="Dispatch regression multi-step",
+        symbol="SPY",
+        workflow_type="sequential",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 1),
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("2"),
+        commission_per_contract=Decimal("0.65"),
+        initial_entry_rules=[{"type": "rsi", "operator": "gt", "threshold": Decimal("0"), "period": 2}],
+        steps=[
+            WorkflowStepDefinition(
+                step_number=1,
+                name="Open calendar",
+                action="open_position",
+                trigger=StepTriggerDefinition(mode="rule_match", rules=[{"type": "rsi", "operator": "gt", "threshold": Decimal("0"), "period": 2}]),
+                contract_selection=StepContractSelection(strategy_type="calendar_spread", target_dte=7, dte_tolerance_days=3, max_holding_days=10),
+            ),
+            WorkflowStepDefinition(
+                step_number=2,
+                name="Resell weekly premium",
+                action="sell_premium",
+                trigger=StepTriggerDefinition(mode="after_expiration", require_prior_step_status="expired"),
+                contract_selection=StepContractSelection(strategy_type="calendar_spread", target_dte=7, dte_tolerance_days=3, max_holding_days=10),
+            ),
+        ],
+        idempotency_key="multi-step-stale-idem",
+    )
+
+    run = service.enqueue(user, payload)
+    db_session.commit()
+    _mark_job_stale(db_session, run)
+    _mock_celery_module.send_task.return_value = MagicMock(id="fresh-task-id")
+
+    reused = service.create_and_dispatch(user, payload)
+
+    assert reused.id == run.id
+    _assert_stale_job_redispatched(db_session, run.id, task_name="multi_step_backtests.run", model_type=MultiStepRun)
 
 
 def test_sweep_idempotency_reuse_redispatches_stale_queued_job(

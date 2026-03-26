@@ -618,6 +618,8 @@ class BillingService:
 
     _JOB_TYPE_FOR_MODEL: dict[str, str] = {
         "BacktestRun": "backtest",
+        "MultiSymbolRun": "multi_symbol_backtest",
+        "MultiStepRun": "multi_step_backtest",
         "ScannerJob": "scan",
         "ExportJob": "export",
         "SymbolAnalysis": "analysis",
@@ -637,14 +639,22 @@ class BillingService:
         """
         from sqlalchemy import update as sa_update
 
-        from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis
+        from backtestforecast.models import (
+            BacktestRun,
+            ExportJob,
+            MultiStepRun,
+            MultiSymbolRun,
+            ScannerJob,
+            SweepJob,
+            SymbolAnalysis,
+        )
 
         _ACTIVE = ("queued", "running")
         task_ids: list[str] = []
         cancelled = 0
         cancelled_job_ids: list[tuple[str, UUID]] = []
         now = datetime.now(UTC)
-        for model_cls in (BacktestRun, ScannerJob, ExportJob, SymbolAnalysis, SweepJob):
+        for model_cls in (BacktestRun, MultiSymbolRun, MultiStepRun, ScannerJob, ExportJob, SymbolAnalysis, SweepJob):
             cancel_values: dict[str, object] = {
                 "status": "cancelled",
                 "completed_at": now,

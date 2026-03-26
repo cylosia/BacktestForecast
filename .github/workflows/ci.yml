@@ -217,6 +217,7 @@ jobs:
       APP_ENV: test
       LOG_JSON: false
       DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
+      TEST_DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
     services:
       postgres:
         image: postgres:16-alpine

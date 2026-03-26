@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { isClerkEnabled } from "@/lib/clerk";
 
 const isProtectedRoute = createRouteMatcher(["/app(.*)"]);
 
@@ -42,11 +43,7 @@ function buildCSP(nonce: string): string {
   return directives.join("; ");
 }
 
-export default clerkMiddleware(async (auth, req) => {
-  if (isProtectedRoute(req)) {
-    await auth.protect();
-  }
-
+function buildResponse(req: Request): NextResponse {
   const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("base64");
   const csp = buildCSP(nonce);
 
@@ -62,7 +59,20 @@ export default clerkMiddleware(async (auth, req) => {
   response.headers.set("Content-Security-Policy", csp);
 
   return response;
-});
+}
+
+const middleware = isClerkEnabled()
+  ? clerkMiddleware(async (auth, req) => {
+      if (isProtectedRoute(req)) {
+        await auth.protect();
+      }
+      return buildResponse(req);
+    })
+  : async function middlewareWithoutClerk(req: Request) {
+      return buildResponse(req);
+    };
+
+export default middleware;
 
 export const config = {
   matcher: [

@@ -69,6 +69,44 @@ def test_admin_remediation_can_cancel_active_job(monkeypatch):
     assert published == [("backtest", str(job_id), "cancelled_by_support")]
 
 
+def test_admin_remediation_can_cancel_multi_symbol_job(monkeypatch):
+    from apps.api.app import main
+
+    job_id = uuid4()
+    job = SimpleNamespace(id=job_id, status="queued", celery_task_id="task-2", completed_at=None, updated_at=None, error_code=None, error_message=None)
+    session = SimpleNamespace(job=job, audit_events=[], commit=lambda: None, get=lambda model, lookup_id: job if lookup_id == job_id else None)
+
+    @contextmanager
+    def fake_create_session():
+        yield session
+
+    revoked: list[tuple[str | None, str, str]] = []
+    published: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(main, "get_settings", lambda: SimpleNamespace(admin_token="admin-secret", metrics_token=None))
+    monkeypatch.setattr(main, "get_rate_limiter", lambda: _FakeRateLimiter())
+    monkeypatch.setattr("backtestforecast.db.session.create_session", fake_create_session)
+    monkeypatch.setattr("backtestforecast.services.audit.AuditService", _FakeAuditService)
+    monkeypatch.setattr(
+        "backtestforecast.services.job_cancellation.revoke_celery_task",
+        lambda task_id, *, job_type, job_id: revoked.append((task_id, job_type, str(job_id))),
+    )
+    monkeypatch.setattr(
+        "backtestforecast.services.job_cancellation.publish_cancellation_event",
+        lambda *, job_type, job_id, error_code="cancelled_by_support": published.append((job_type, str(job_id), error_code)),
+    )
+
+    response = main.admin_remediation(
+        _request_with_token("admin-secret"),
+        main._AdminRemediationRequest(action="cancel_job", job_type="multi_symbol_backtest", job_id=str(job_id)),
+    )
+
+    assert response.status_code == 200
+    assert job.status == "cancelled"
+    assert revoked == [("task-2", "multi_symbol_backtest", str(job_id))]
+    assert published == [("multi_symbol_backtest", str(job_id), "cancelled_by_support")]
+
+
 def test_admin_remediation_can_dispatch_stripe_cleanup(monkeypatch):
     from apps.api.app import main
 

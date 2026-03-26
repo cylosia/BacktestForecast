@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -161,6 +162,74 @@ def test_subscription_updated_handles_status_change(db_session, test_user, monke
     db_session.expire_all()
     db_session.refresh(test_user)
     assert test_user.subscription_status == "past_due"
+
+
+def test_subscription_updated_multi_item_uses_known_plan_price_without_metadata(
+    db_session, test_user, monkeypatch
+):
+    """Multi-item subscriptions should resolve the known plan item even when
+    requested_tier metadata is absent."""
+    import backtestforecast.services.billing as billing_mod
+
+    event = {
+        "id": "evt_sub_multi_item_001",
+        "type": "customer.subscription.updated",
+        "livemode": False,
+        "created": int(datetime(2026, 3, 20, 18, 0, tzinfo=UTC).timestamp()),
+        "data": {
+            "object": {
+                "id": "sub_multi_item_001",
+                "customer": "cus_multi_item_001",
+                "status": "active",
+                "cancel_at_period_end": False,
+                "current_period_end": int(datetime(2027, 3, 20, tzinfo=UTC).timestamp()),
+                "metadata": {"user_id": str(test_user.id)},
+                "items": {
+                    "data": [
+                        {
+                            "price": {
+                                "id": "price_addon_metered",
+                                "recurring": {"interval": "month"},
+                            },
+                        },
+                        {
+                            "price": {
+                                "id": "price_premium_yearly",
+                                "recurring": {"interval": "year"},
+                            },
+                        },
+                    ],
+                },
+            },
+        },
+    }
+
+    def fake_get_client(self, **kwargs):
+        return SimpleNamespace(construct_event=lambda p, s, sec: event)
+
+    monkeypatch.setattr(billing_mod.BillingService, "_get_stripe_client", fake_get_client)
+
+    settings = MagicMock()
+    settings.stripe_webhook_secret = "whsec_test"
+    settings.stripe_price_lookup = {("premium", "yearly"): "price_premium_yearly"}
+
+    service = BillingService(db_session, settings=settings)
+    result = service.handle_webhook(
+        b"{}",
+        "sig_sub_multi_item",
+        request_id="req-sub-multi-item-001",
+        ip_address="10.0.0.4",
+    )
+
+    assert result["status"] == "ok"
+    assert result["event_type"] == "customer.subscription.updated"
+
+    db_session.expire_all()
+    db_session.refresh(test_user)
+    assert test_user.plan_tier == "premium"
+    assert test_user.subscription_status == "active"
+    assert test_user.subscription_billing_interval == "yearly"
+    assert test_user.stripe_price_id == "price_premium_yearly"
 
 
 def test_unknown_event_type_returns_200(db_session, test_user, monkeypatch):

@@ -3,6 +3,7 @@ import { UserButton } from "@clerk/nextjs";
 import { Activity, BarChart3, Bookmark, CreditCard, GitBranch, History, Microscope, PlusCircle, ScanSearch, TrendingUp, Zap } from "lucide-react";
 import { AppNavLink } from "@/components/app-nav-link";
 import { MobileNav, type NavItem } from "@/components/mobile-nav";
+import { isClerkEnabled } from "@/lib/clerk";
 import { getCurrentUser } from "@/lib/api/server";
 
 const NAV_ITEMS: NavItem[] = [
@@ -53,7 +54,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
 
           <div className="flex items-center gap-2">
-            <UserButton showName />
+            {isClerkEnabled() ? <UserButton showName /> : null}
             <MobileNav items={NAV_ITEMS} />
           </div>
         </div>

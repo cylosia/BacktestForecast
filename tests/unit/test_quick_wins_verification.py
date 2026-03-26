@@ -13,6 +13,8 @@ def test_create_flows_keep_job_and_dispatch_state_in_service_transaction() -> No
     source = _read("tests/unit/test_create_dispatch_regressions.py")
     for expected in (
         "test_backtest_create_and_dispatch_preserves_pending_outbox_on_send_failure",
+        "test_multi_symbol_create_and_dispatch_preserves_pending_outbox_on_send_failure",
+        "test_multi_step_create_and_dispatch_preserves_pending_outbox_on_send_failure",
         "test_scan_create_and_dispatch_preserves_pending_outbox_on_send_failure",
         "test_sweep_create_and_dispatch_preserves_pending_outbox_on_send_failure",
         "test_analysis_create_and_dispatch_preserves_pending_outbox_on_send_failure",
@@ -27,6 +29,8 @@ def test_stale_queued_idempotency_recovery_is_covered_for_all_async_flows() -> N
     source = _read("tests/unit/test_create_dispatch_regressions.py")
     for expected in (
         "test_backtest_idempotency_reuse_redispatches_stale_queued_job",
+        "test_multi_symbol_idempotency_reuse_redispatches_stale_queued_job",
+        "test_multi_step_idempotency_reuse_redispatches_stale_queued_job",
         "test_scan_idempotency_reuse_redispatches_stale_queued_job",
         "test_sweep_idempotency_reuse_redispatches_stale_queued_job",
         "test_analysis_idempotency_reuse_redispatches_stale_queued_job",
@@ -95,3 +99,13 @@ def test_shared_version_constant_and_live_sse_path_have_explicit_coverage() -> N
     assert "pollers/SSE subscribers can update job progress in near real time" in events_source
     assert "SSE proxy forwards authenticated requests to the API backend" in e2e_source
     assert 'fetch("/api/events/backtests/00000000-0000-0000-0000-000000000000"' in e2e_source
+
+
+def test_multi_workflow_worker_entrypoints_subscribe_to_their_queues() -> None:
+    worker_script = _read("scripts/dev-worker.sh")
+    worker_dockerfile = _read("apps/worker/Dockerfile")
+
+    assert "multi_symbol_backtests" in worker_script
+    assert "multi_step_backtests" in worker_script
+    assert "multi_symbol_backtests" in worker_dockerfile
+    assert "multi_step_backtests" in worker_dockerfile

@@ -766,7 +766,15 @@ def admin_remediation(request: Request, payload: _AdminRemediationRequest) -> Re
 
         from apps.api.app.routers.account import _dispatch_stripe_cleanup_retry
         from backtestforecast.db.session import create_session as _create_session
-        from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis
+        from backtestforecast.models import (
+            BacktestRun,
+            ExportJob,
+            MultiStepRun,
+            MultiSymbolRun,
+            ScannerJob,
+            SweepJob,
+            SymbolAnalysis,
+        )
         from backtestforecast.services.audit import AuditService
         from backtestforecast.services.job_cancellation import (
             mark_job_cancelled,
@@ -777,6 +785,8 @@ def admin_remediation(request: Request, payload: _AdminRemediationRequest) -> Re
         if payload.action == "cancel_job":
             model_map = {
                 "backtest": (BacktestRun, "backtest"),
+                "multi_symbol_backtest": (MultiSymbolRun, "multi_symbol_backtest"),
+                "multi_step_backtest": (MultiStepRun, "multi_step_backtest"),
                 "export": (ExportJob, "export"),
                 "scan": (ScannerJob, "scan"),
                 "sweep": (SweepJob, "sweep"),

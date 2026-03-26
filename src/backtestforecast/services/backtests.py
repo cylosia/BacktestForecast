@@ -63,6 +63,10 @@ from backtestforecast.services.dispatch_recovery import (
     observe_job_create_to_running_latency,
     redispatch_if_stale_queued,
 )
+from backtestforecast.services.backtest_workflow_access import (
+    count_backtest_family_runs_for_current_month,
+    enforce_backtest_workflow_quota,
+)
 from backtestforecast.services.job_cancellation import (
     mark_job_cancelled,
     publish_cancellation_event,
@@ -888,38 +892,10 @@ class BacktestService:
         )
 
     def _enforce_backtest_quota(self, user: User) -> None:
-        locked_user = self.session.execute(
-            select(User).where(User.id == user.id).with_for_update()
-        ).scalar_one_or_none()
-        if locked_user is None:
-            raise NotFoundError("User not found.")
-
-        feature_policy = resolve_feature_policy(
-            locked_user.plan_tier, locked_user.subscription_status, locked_user.subscription_current_period_end,
-        )
-        if feature_policy.monthly_backtest_quota is None:
-            return
-        used_this_month = self._current_month_backtest_count(locked_user)
-        if used_this_month >= feature_policy.monthly_backtest_quota:
-            raise QuotaExceededError(
-                f"The {feature_policy.tier.value} plan allows "
-                f"{feature_policy.monthly_backtest_quota} backtests per month. "
-                f"You have used {used_this_month}. Upgrade your plan for more.",
-                current_tier=feature_policy.tier.value,
-            )
+        enforce_backtest_workflow_quota(self.session, user)
 
     def _current_month_backtest_count(self, user: User) -> int:
-        now = datetime.now(UTC)
-        month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
-        if now.month == 12:
-            next_month_start = datetime(now.year + 1, 1, 1, tzinfo=UTC)
-        else:
-            next_month_start = datetime(now.year, now.month + 1, 1, tzinfo=UTC)
-        return self.run_repository.count_for_user_created_between(
-            user.id,
-            start_inclusive=month_start,
-            end_exclusive=next_month_start,
-        )
+        return count_backtest_family_runs_for_current_month(self.session, user.id)
 
     def _apply_execution_result(self, run: BacktestRun, execution_result: BacktestExecutionResult) -> None:
         summary = execution_result.summary

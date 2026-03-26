@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import structlog
 from sqlalchemy import desc, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
@@ -17,7 +18,7 @@ from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import BacktestConfig, EquityPointResult, OpenMultiLegPosition, TradeResult
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppValidationError, DataUnavailableError, NotFoundError
+from backtestforecast.errors import AppValidationError, DataUnavailableError, ExternalServiceError, NotFoundError
 from backtestforecast.indicators.calculations import ema, rsi, sma
 from backtestforecast.market_data.service import HistoricalDataBundle, MassiveOptionGateway
 from backtestforecast.market_data.types import DailyBar
@@ -45,10 +46,12 @@ from backtestforecast.schemas.multi_symbol_backtests import (
     MultiSymbolTradeResponse,
 )
 from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.backtest_workflow_access import enforce_backtest_workflow_quota
+from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 
 logger = structlog.get_logger("services.multi_symbol_backtests")
 
-_QUEUE = "backtests"
+_QUEUE = "multi_symbol_backtests"
 
 
 def _zero_summary() -> BacktestSummaryResponse:
@@ -268,7 +271,7 @@ class MultiSymbolBacktestService:
             task_kwargs={"run_id": str(run.id)},
             queue=_QUEUE,
             log_event="multi_symbol_backtest",
-            logger=dispatch_logger,
+            logger=dispatch_logger or logger,
             request_id=request_id,
             traceparent=traceparent,
         )
@@ -276,6 +279,27 @@ class MultiSymbolBacktestService:
         return run
 
     def enqueue(self, user: User, request: CreateMultiSymbolRunRequest) -> MultiSymbolRun:
+        if request.idempotency_key:
+            existing = self.session.scalar(
+                select(MultiSymbolRun).where(
+                    MultiSymbolRun.user_id == user.id,
+                    MultiSymbolRun.idempotency_key == request.idempotency_key,
+                )
+            )
+            if existing is not None:
+                return redispatch_if_stale_queued(
+                    self.session,
+                    existing,
+                    model_name="MultiSymbolRun",
+                    task_name="multi_symbol_backtests.run",
+                    task_kwargs={"run_id": str(existing.id)},
+                    queue=_QUEUE,
+                    log_event="multi_symbol_backtest",
+                    logger=logger,
+                )
+
+        enforce_backtest_workflow_quota(self.session, user)
+
         run = MultiSymbolRun(
             id=uuid4(),
             user_id=user.id,
@@ -294,7 +318,20 @@ class MultiSymbolBacktestService:
             ending_equity=request.account_size,
         )
         self.session.add(run)
-        self.session.flush()
+        try:
+            self.session.flush()
+        except IntegrityError:
+            self.session.rollback()
+            if request.idempotency_key:
+                existing = self.session.scalar(
+                    select(MultiSymbolRun).where(
+                        MultiSymbolRun.user_id == user.id,
+                        MultiSymbolRun.idempotency_key == request.idempotency_key,
+                    )
+                )
+                if existing is not None:
+                    return existing
+            raise
 
         for symbol_def in request.symbols:
             allocated_cash = self._allocated_cash_for_symbol(request, symbol_def)
@@ -309,8 +346,6 @@ class MultiSymbolBacktestService:
                     ending_equity=allocated_cash,
                 )
             )
-        self.session.commit()
-        self.session.refresh(run)
         return run
 
     def execute_run_by_id(self, run_id: UUID) -> MultiSymbolRun:
@@ -337,6 +372,9 @@ class MultiSymbolBacktestService:
             prepared = self._prepare_symbol_data(request)
             result = self._execute_request(request, prepared)
             self._persist_success(run, request, prepared, result)
+        except ExternalServiceError:
+            self.session.rollback()
+            raise
         except Exception as exc:
             logger.exception("multi_symbol_backtest.execution_failed", run_id=str(run_id))
             run.status = "failed"

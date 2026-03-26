@@ -55,6 +55,7 @@ from backtestforecast.observability.metrics import (
     SWEEP_JOBS_TOTAL,
 )
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.backtest_workflow_access import count_backtest_family_runs_for_current_month
 from backtestforecast.services.dispatch_recovery import DISPATCH_SLA, repair_stranded_jobs
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.multi_step_backtests import MultiStepBacktestService
@@ -269,16 +270,10 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 run_obj.error_message = "Your plan no longer supports this operation."
                 _commit_then_publish(session, "backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
                 return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
-            from datetime import datetime
-
-            from backtestforecast.repositories.backtest_runs import BacktestRunRepository
-            repo = BacktestRunRepository(session)
-            now = datetime.now(UTC)
-            month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
-            next_month_start = datetime(now.year + 1, 1, 1, tzinfo=UTC) if now.month == 12 else datetime(now.year, now.month + 1, 1, tzinfo=UTC)
-            used = repo.count_for_user_created_between(
-                user.id, start_inclusive=month_start, end_exclusive=next_month_start,
-                exclude_id=UUID(run_id),
+            used = count_backtest_family_runs_for_current_month(
+                session,
+                user.id,
+                exclude_run_id=UUID(run_id),
             )
             if used >= policy.monthly_backtest_quota:
                 run_obj.status = "failed"
@@ -421,11 +416,99 @@ def run_multi_symbol_backtest(self, run_id: str) -> dict[str, str]:
         if run_obj is None:
             CELERY_TASKS_TOTAL.labels(task_name="multi_symbol_backtests.run", status="failed").inc()
             return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
+        user = session.get(User, run_obj.user_id)
+        if user is None:
+            run_obj.status = "failed"
+            run_obj.error_code = "entitlement_revoked"
+            run_obj.error_message = "User account not found."
+            _commit_then_publish(session, "multi_symbol_backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
+        policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        if policy.monthly_backtest_quota is not None:
+            if policy.monthly_backtest_quota <= 0:
+                run_obj.status = "failed"
+                run_obj.error_code = "entitlement_revoked"
+                run_obj.error_message = "Your plan no longer supports this operation."
+                _commit_then_publish(session, "multi_symbol_backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
+            used = count_backtest_family_runs_for_current_month(
+                session,
+                user.id,
+                exclude_run_id=UUID(run_id),
+            )
+            if used >= policy.monthly_backtest_quota:
+                run_obj.status = "failed"
+                run_obj.error_code = "quota_exceeded"
+                run_obj.error_message = f"Monthly backtest quota ({policy.monthly_backtest_quota}) reached. Used: {used}."
+                _commit_then_publish(session, "multi_symbol_backtest", UUID(run_id), "failed", metadata={"error_code": "quota_exceeded"})
+                return {"status": "failed", "run_id": run_id, "error_code": "quota_exceeded"}
         publish_job_status("multi_symbol_backtest", UUID(run_id), "running")
         _update_heartbeat(session, MultiSymbolRun, UUID(run_id))
         service = MultiSymbolBacktestService(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
+        except AppError as exc:
+            if isinstance(exc, ExternalServiceError):
+                session.rollback()
+                session.expire_all()
+                delay = _compute_retry_delay(60, self.request.retries)
+                try:
+                    raise self.retry(exc=exc, countdown=delay)
+                except self.MaxRetriesExceededError:
+                    pass
+            session.rollback()
+            session.expire_all()
+            from datetime import datetime as _dt_multi_symbol_app
+
+            run_obj = session.get(MultiSymbolRun, UUID(run_id))
+            if run_obj is not None and run_obj.status in ("queued", "running"):
+                run_obj.status = "failed"
+                run_obj.error_code = exc.code
+                run_obj.error_message = str(exc.message)[:500] if exc.message else None
+                run_obj.completed_at = _dt_multi_symbol_app.now(UTC)
+                try:
+                    session.commit()
+                except Exception:
+                    session.rollback()
+            CELERY_TASKS_TOTAL.labels(task_name="multi_symbol_backtests.run", status="failed").inc()
+            _publish_job_status_safe(
+                "multi_symbol_backtest",
+                UUID(run_id),
+                "failed",
+                metadata={"error_code": exc.code},
+                log_event="multi_symbol_backtest.publish_status_failed",
+                run_id=run_id,
+            )
+            return {"status": "failed", "run_id": run_id, "error_code": exc.code}
+        except Exception as exc:
+            session.rollback()
+            session.expire_all()
+            try:
+                delay = _compute_retry_delay(60, self.request.retries)
+                raise self.retry(exc=exc, countdown=delay)
+            except self.MaxRetriesExceededError:
+                from datetime import datetime as _dt_multi_symbol_retry
+
+                run_obj = session.get(MultiSymbolRun, UUID(run_id))
+                if run_obj is not None and run_obj.status in ("queued", "running"):
+                    run_obj.status = "failed"
+                    run_obj.error_code = "max_retries_exceeded"
+                    run_obj.error_message = "Multi-symbol backtest failed after exhausting retries."
+                    run_obj.completed_at = _dt_multi_symbol_retry.now(UTC)
+                    try:
+                        session.commit()
+                    except Exception:
+                        session.rollback()
+                CELERY_TASKS_TOTAL.labels(task_name="multi_symbol_backtests.run", status="failed").inc()
+                _publish_job_status_safe(
+                    "multi_symbol_backtest",
+                    UUID(run_id),
+                    "failed",
+                    metadata={"error_code": "max_retries_exceeded"},
+                    log_event="multi_symbol_backtest.publish_status_failed",
+                    run_id=run_id,
+                )
+                raise
         finally:
             _close_owned_resource(service, label="multi_symbol_backtests.run.service")
         _publish_job_status_safe(
@@ -453,11 +536,99 @@ def run_multi_step_backtest(self, run_id: str) -> dict[str, str]:
         if run_obj is None:
             CELERY_TASKS_TOTAL.labels(task_name="multi_step_backtests.run", status="failed").inc()
             return {"status": "failed", "run_id": run_id, "error_code": "not_found"}
+        user = session.get(User, run_obj.user_id)
+        if user is None:
+            run_obj.status = "failed"
+            run_obj.error_code = "entitlement_revoked"
+            run_obj.error_message = "User account not found."
+            _commit_then_publish(session, "multi_step_backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
+            return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
+        policy = resolve_feature_policy(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
+        if policy.monthly_backtest_quota is not None:
+            if policy.monthly_backtest_quota <= 0:
+                run_obj.status = "failed"
+                run_obj.error_code = "entitlement_revoked"
+                run_obj.error_message = "Your plan no longer supports this operation."
+                _commit_then_publish(session, "multi_step_backtest", UUID(run_id), "failed", metadata={"error_code": "entitlement_revoked"})
+                return {"status": "failed", "run_id": run_id, "error_code": "entitlement_revoked"}
+            used = count_backtest_family_runs_for_current_month(
+                session,
+                user.id,
+                exclude_run_id=UUID(run_id),
+            )
+            if used >= policy.monthly_backtest_quota:
+                run_obj.status = "failed"
+                run_obj.error_code = "quota_exceeded"
+                run_obj.error_message = f"Monthly backtest quota ({policy.monthly_backtest_quota}) reached. Used: {used}."
+                _commit_then_publish(session, "multi_step_backtest", UUID(run_id), "failed", metadata={"error_code": "quota_exceeded"})
+                return {"status": "failed", "run_id": run_id, "error_code": "quota_exceeded"}
         publish_job_status("multi_step_backtest", UUID(run_id), "running")
         _update_heartbeat(session, MultiStepRun, UUID(run_id))
         service = MultiStepBacktestService(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
+        except AppError as exc:
+            if isinstance(exc, ExternalServiceError):
+                session.rollback()
+                session.expire_all()
+                delay = _compute_retry_delay(60, self.request.retries)
+                try:
+                    raise self.retry(exc=exc, countdown=delay)
+                except self.MaxRetriesExceededError:
+                    pass
+            session.rollback()
+            session.expire_all()
+            from datetime import datetime as _dt_multi_step_app
+
+            run_obj = session.get(MultiStepRun, UUID(run_id))
+            if run_obj is not None and run_obj.status in ("queued", "running"):
+                run_obj.status = "failed"
+                run_obj.error_code = exc.code
+                run_obj.error_message = str(exc.message)[:500] if exc.message else None
+                run_obj.completed_at = _dt_multi_step_app.now(UTC)
+                try:
+                    session.commit()
+                except Exception:
+                    session.rollback()
+            CELERY_TASKS_TOTAL.labels(task_name="multi_step_backtests.run", status="failed").inc()
+            _publish_job_status_safe(
+                "multi_step_backtest",
+                UUID(run_id),
+                "failed",
+                metadata={"error_code": exc.code},
+                log_event="multi_step_backtest.publish_status_failed",
+                run_id=run_id,
+            )
+            return {"status": "failed", "run_id": run_id, "error_code": exc.code}
+        except Exception as exc:
+            session.rollback()
+            session.expire_all()
+            try:
+                delay = _compute_retry_delay(60, self.request.retries)
+                raise self.retry(exc=exc, countdown=delay)
+            except self.MaxRetriesExceededError:
+                from datetime import datetime as _dt_multi_step_retry
+
+                run_obj = session.get(MultiStepRun, UUID(run_id))
+                if run_obj is not None and run_obj.status in ("queued", "running"):
+                    run_obj.status = "failed"
+                    run_obj.error_code = "max_retries_exceeded"
+                    run_obj.error_message = "Multi-step backtest failed after exhausting retries."
+                    run_obj.completed_at = _dt_multi_step_retry.now(UTC)
+                    try:
+                        session.commit()
+                    except Exception:
+                        session.rollback()
+                CELERY_TASKS_TOTAL.labels(task_name="multi_step_backtests.run", status="failed").inc()
+                _publish_job_status_safe(
+                    "multi_step_backtest",
+                    UUID(run_id),
+                    "failed",
+                    metadata={"error_code": "max_retries_exceeded"},
+                    log_event="multi_step_backtest.publish_status_failed",
+                    run_id=run_id,
+                )
+                raise
         finally:
             _close_owned_resource(service, label="multi_step_backtests.run.service")
         _publish_job_status_safe(
@@ -1483,6 +1654,8 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     from backtestforecast.models import (
         BacktestRun,
         ExportJob,
+        MultiStepRun,
+        MultiSymbolRun,
         NightlyPipelineRun,
         ScannerJob,
         SweepJob,
@@ -1509,7 +1682,19 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
         _broker_r = _Redis.from_url(_gs().redis_url, decode_responses=True, socket_timeout=5)
         try:
-            for q_name in ("backtests", "scans", "sweeps", "analysis", "research", "exports", "maintenance", "recovery", "pipeline"):
+            for q_name in (
+                "backtests",
+                "multi_symbol_backtests",
+                "multi_step_backtests",
+                "scans",
+                "sweeps",
+                "analysis",
+                "research",
+                "exports",
+                "maintenance",
+                "recovery",
+                "pipeline",
+            ):
                 depth = _broker_r.llen(q_name)
                 QUEUE_DEPTH.labels(queue=q_name).set(depth)
         finally:
@@ -1531,6 +1716,8 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
 
     _reap_models = [
         (BacktestRun, "BacktestRun", "backtests.run", "run_id", "backtest", cutoff),
+        (MultiSymbolRun, "MultiSymbolRun", "multi_symbol_backtests.run", "run_id", "multi_symbol_backtest", cutoff),
+        (MultiStepRun, "MultiStepRun", "multi_step_backtests.run", "run_id", "multi_step_backtest", cutoff),
         (ExportJob, "ExportJob", "exports.generate", "export_job_id", "export", cutoff),
         (ScannerJob, "ScannerJob", "scans.run_job", "job_id", "scan", cutoff),
         (SymbolAnalysis, "SymbolAnalysis", "analysis.deep_symbol", "analysis_id", "analysis", analysis_cutoff),
@@ -1542,6 +1729,8 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
                 try:
                     queue_name = {
                         "BacktestRun": "backtests",
+                        "MultiSymbolRun": "multi_symbol_backtests",
+                        "MultiStepRun": "multi_step_backtests",
                         "ExportJob": "exports",
                         "ScannerJob": "scans",
                         "SymbolAnalysis": "analysis",
@@ -1605,6 +1794,8 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
     result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=_result_expires)
     for model_cls, model_name in [
         (BacktestRun, "BacktestRun"),
+        (MultiSymbolRun, "MultiSymbolRun"),
+        (MultiStepRun, "MultiStepRun"),
         (ExportJob, "ExportJob"),
         (ScannerJob, "ScannerJob"),
         (SymbolAnalysis, "SymbolAnalysis"),
@@ -1930,6 +2121,8 @@ def cleanup_daily_recommendations(self, retention_days: int = 90, dry_run: bool 
 
 _OUTBOX_TASK_MODEL_MAP: dict[str, str] = {
     "backtests.run": "BacktestRun",
+    "multi_symbol_backtests.run": "MultiSymbolRun",
+    "multi_step_backtests.run": "MultiStepRun",
     "exports.generate": "ExportJob",
     "scans.run_job": "ScannerJob",
     "sweeps.run": "SweepJob",
@@ -1938,6 +2131,8 @@ _OUTBOX_TASK_MODEL_MAP: dict[str, str] = {
 
 _OUTBOX_TASK_ID_KWARG: dict[str, str] = {
     "backtests.run": "run_id",
+    "multi_symbol_backtests.run": "run_id",
+    "multi_step_backtests.run": "run_id",
     "exports.generate": "export_job_id",
     "scans.run_job": "job_id",
     "sweeps.run": "job_id",

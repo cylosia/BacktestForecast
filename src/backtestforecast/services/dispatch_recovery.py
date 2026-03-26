@@ -9,7 +9,16 @@ from sqlalchemy import Select, exists, func, select, update
 from sqlalchemy.orm import Session
 
 from apps.api.app.dispatch import dispatch_celery_task
-from backtestforecast.models import BacktestRun, ExportJob, OutboxMessage, ScannerJob, SweepJob, SymbolAnalysis
+from backtestforecast.models import (
+    BacktestRun,
+    ExportJob,
+    MultiStepRun,
+    MultiSymbolRun,
+    OutboxMessage,
+    ScannerJob,
+    SweepJob,
+    SymbolAnalysis,
+)
 from backtestforecast.observability.metrics import (
     IDEMPOTENT_DUPLICATE_RETURNS_TOTAL,
     JOB_CREATE_TO_RUNNING_LATENCY_SECONDS,
@@ -37,6 +46,22 @@ class DispatchTarget:
 
 DISPATCH_TARGETS: tuple[DispatchTarget, ...] = (
     DispatchTarget(BacktestRun, "BacktestRun", "backtests.run", "run_id", "backtests", "backtest"),
+    DispatchTarget(
+        MultiSymbolRun,
+        "MultiSymbolRun",
+        "multi_symbol_backtests.run",
+        "run_id",
+        "multi_symbol_backtests",
+        "multi_symbol_backtest",
+    ),
+    DispatchTarget(
+        MultiStepRun,
+        "MultiStepRun",
+        "multi_step_backtests.run",
+        "run_id",
+        "multi_step_backtests",
+        "multi_step_backtest",
+    ),
     DispatchTarget(ScannerJob, "ScannerJob", "scans.run_job", "job_id", "scans", "scan"),
     DispatchTarget(SweepJob, "SweepJob", "sweeps.run", "job_id", "sweeps", "sweep"),
     DispatchTarget(ExportJob, "ExportJob", "exports.generate", "export_job_id", "exports", "export"),

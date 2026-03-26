@@ -164,7 +164,7 @@ celery -A apps.worker.app.celery_app.celery_app call maintenance.reap_stale_jobs
    SET celery_task_id = NULL, updated_at = NOW()
    WHERE id = '<job_uuid>' AND status = 'queued';
    ```
-   Replace `backtest_runs` with the relevant table (`scanner_jobs`, `sweep_jobs`, `symbol_analyses`, `export_jobs`) as needed.
+   Replace `backtest_runs` with the relevant table (`multi_symbol_runs`, `multi_step_runs`, `scanner_jobs`, `sweep_jobs`, `symbol_analyses`, `export_jobs`) as needed.
 
 #### Admin checklist
 

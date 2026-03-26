@@ -142,3 +142,47 @@ alembic upgrade head
 - Roll back web and API images independently.
 - If a migration is non-breaking, keep schema and roll back code first.
 - If the provider layer is failing, disable scanner launch from the UI and keep history/read routes available.
+
+### Recommended production migration sequence
+
+1. Record the current Alembic revision:
+   ```bash
+   alembic current
+   ```
+2. Apply the new revision before shifting traffic:
+   ```bash
+   alembic upgrade head
+   ```
+3. Verify:
+   - `GET /health/live`
+   - `GET /health/ready`
+   - one authenticated `GET /v1/me`
+   - one async create flow reaches `queued` and is claimed by a worker
+4. Shift traffic only after the checks above pass.
+
+### Rollback decision tree
+
+- **Code regression, schema still compatible**
+  - Roll back API/web/worker images first.
+  - Keep the migrated schema in place.
+- **Migration regression and the new revision is reversible**
+  - Drain or pause write traffic first.
+  - Confirm no long-running migration is still executing.
+  - Downgrade exactly one revision:
+    ```bash
+    alembic downgrade -1
+    ```
+  - Re-run `/health/ready` and one authenticated smoke test before reopening traffic.
+- **Migration regression and the revision is not safely reversible**
+  - Keep the database at the new revision.
+  - Roll back application images to the newest schema-compatible build.
+  - Open an incident and use a forward-fix migration rather than ad hoc SQL.
+
+### Pre-rollback checklist
+
+- Capture the failing revision from `alembic current`.
+- Snapshot logs from API, worker, and beat around the failure window.
+- Check for queued backlog before recycling workers:
+  - `maintenance.poll_outbox`
+  - `maintenance.reap_stale_jobs`
+- Confirm Stripe webhook delivery is not currently backing up before restarting API instances.

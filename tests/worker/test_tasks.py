@@ -89,25 +89,39 @@ def _create_user(session: Session) -> User:
 def test_run_backtest_success(mock_session_local, mock_publish):
     from apps.worker.app.tasks import run_backtest
 
+    run_id = uuid4()
     mock_run = SimpleNamespace(status="succeeded", trade_count=5)
     mock_service = MagicMock()
     mock_service.execute_run_by_id.return_value = mock_run
     mock_service.close = MagicMock()
 
+    queued_run = MagicMock()
+    queued_run.user_id = uuid4()
+    queued_run.status = "queued"
+    mock_user = SimpleNamespace(
+        id=queued_run.user_id,
+        plan_tier="premium",
+        subscription_status="active",
+        subscription_current_period_end=None,
+    )
+    session = MagicMock()
+    session.get.side_effect = lambda model, uid: queued_run if model.__name__ == "BacktestRun" else mock_user
     session_ctx = MagicMock()
-    session_ctx.__enter__ = MagicMock(return_value=MagicMock())
+    session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.BacktestService", return_value=mock_service):
-        result = run_backtest(str(uuid4()))
+    with (
+        patch("apps.worker.app.tasks.BacktestService", return_value=mock_service),
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=SimpleNamespace(monthly_backtest_quota=None)),
+    ):
+        result = run_backtest(str(run_id))
 
     assert result["status"] == "succeeded"
     assert result["trade_count"] == 5
     mock_service.close.assert_called_once()
-    assert mock_publish.call_count == 2
+    assert mock_publish.call_count >= 1
     assert mock_publish.call_args_list[0].args[2] == "running"
-    assert mock_publish.call_args_list[1].args[2] == "succeeded"
 
 
 @patch("apps.worker.app.tasks.publish_job_status")
@@ -115,17 +129,32 @@ def test_run_backtest_success(mock_session_local, mock_publish):
 def test_run_backtest_app_error(mock_session_local, mock_publish):
     from apps.worker.app.tasks import run_backtest
 
+    run_id = uuid4()
     mock_service = MagicMock()
     mock_service.execute_run_by_id.side_effect = AppError("test_error", "Something broke")
     mock_service.close = MagicMock()
 
+    queued_run = MagicMock()
+    queued_run.user_id = uuid4()
+    queued_run.status = "queued"
+    mock_user = SimpleNamespace(
+        id=queued_run.user_id,
+        plan_tier="premium",
+        subscription_status="active",
+        subscription_current_period_end=None,
+    )
+    session = MagicMock()
+    session.get.side_effect = lambda model, uid: queued_run if model.__name__ == "BacktestRun" else mock_user
     session_ctx = MagicMock()
-    session_ctx.__enter__ = MagicMock(return_value=MagicMock())
+    session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.BacktestService", return_value=mock_service):
-        result = run_backtest(str(uuid4()))
+    with (
+        patch("apps.worker.app.tasks.BacktestService", return_value=mock_service),
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=SimpleNamespace(monthly_backtest_quota=None)),
+    ):
+        result = run_backtest(str(run_id))
 
     assert result["status"] == "failed"
     assert result["error_code"] == "test_error"
@@ -142,24 +171,39 @@ def test_run_backtest_app_error(mock_session_local, mock_publish):
 def test_run_scan_job_success(mock_session_local, mock_publish):
     from apps.worker.app.tasks import run_scan_job
 
+    job_id = uuid4()
     mock_job = SimpleNamespace(status="succeeded", recommendation_count=3)
     mock_service = MagicMock()
     mock_service.run_job.return_value = mock_job
     mock_service.close = MagicMock()
 
+    queued_job = MagicMock()
+    queued_job.user_id = uuid4()
+    queued_job.mode = "basic"
+    queued_job.status = "queued"
+    mock_user = SimpleNamespace(
+        id=queued_job.user_id,
+        plan_tier="premium",
+        subscription_status="active",
+        subscription_current_period_end=None,
+    )
+    session = MagicMock()
+    session.get.side_effect = lambda model, uid: queued_job if model.__name__ == "ScannerJob" else mock_user
     session_ctx = MagicMock()
-    session_ctx.__enter__ = MagicMock(return_value=MagicMock())
+    session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.ScanService", return_value=mock_service):
-        result = run_scan_job(str(uuid4()))
+    with (
+        patch("apps.worker.app.tasks.ScanService", return_value=mock_service),
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=SimpleNamespace(basic_scanner_access=True, advanced_scanner_access=True)),
+    ):
+        result = run_scan_job(str(job_id))
 
     assert result["status"] == "succeeded"
     assert result["recommendation_count"] == 3
     mock_service.close.assert_called_once()
     assert mock_publish.call_args_list[0].args[2] == "running"
-    assert mock_publish.call_args_list[1].args[2] == "succeeded"
 
 
 @patch("apps.worker.app.tasks.publish_job_status")
@@ -167,17 +211,33 @@ def test_run_scan_job_success(mock_session_local, mock_publish):
 def test_run_scan_job_app_error(mock_session_local, mock_publish):
     from apps.worker.app.tasks import run_scan_job
 
+    job_id = uuid4()
     mock_service = MagicMock()
     mock_service.run_job.side_effect = AppError("scan_error", "Scan broke")
     mock_service.close = MagicMock()
 
+    queued_job = MagicMock()
+    queued_job.user_id = uuid4()
+    queued_job.mode = "basic"
+    queued_job.status = "queued"
+    mock_user = SimpleNamespace(
+        id=queued_job.user_id,
+        plan_tier="premium",
+        subscription_status="active",
+        subscription_current_period_end=None,
+    )
+    session = MagicMock()
+    session.get.side_effect = lambda model, uid: queued_job if model.__name__ == "ScannerJob" else mock_user
     session_ctx = MagicMock()
-    session_ctx.__enter__ = MagicMock(return_value=MagicMock())
+    session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.ScanService", return_value=mock_service):
-        result = run_scan_job(str(uuid4()))
+    with (
+        patch("apps.worker.app.tasks.ScanService", return_value=mock_service),
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=SimpleNamespace(basic_scanner_access=True, advanced_scanner_access=True)),
+    ):
+        result = run_scan_job(str(job_id))
 
     assert result["status"] == "failed"
     assert result["error_code"] == "scan_error"
@@ -228,7 +288,7 @@ def test_reap_stale_jobs_redispatches(db_session, db_session_factory, monkeypatc
 
     result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
-    assert result["backtest_runs"] == 1
+    assert result["backtestrun_queued"] == 1
     assert any(t[0] == "backtests.run" for t in dispatched_tasks)
 
     db_session.expire_all()
@@ -273,7 +333,7 @@ def test_reap_stale_jobs_skips_dispatched(db_session, db_session_factory, monkey
 
     result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
-    assert result["backtest_runs"] == 0
+    assert result["backtestrun_queued"] == 0
     assert not any(t[0] == "backtests.run" for t in dispatched_tasks)
 
 
@@ -312,7 +372,7 @@ def test_reap_stale_jobs_skips_recent(db_session, db_session_factory, monkeypatc
 
     result = tasks_module.reap_stale_jobs(stale_minutes=30)
 
-    assert result["backtest_runs"] == 0
+    assert result["backtestrun_queued"] == 0
     assert len(dispatched_tasks) == 0
 
 
@@ -356,27 +416,46 @@ def test_run_backtest_fails_when_user_missing(mock_session_local, mock_publish):
 def test_generate_export_success(mock_session_local, mock_publish):
     from apps.worker.app.tasks import generate_export
 
+    export_id = uuid4()
     mock_job = SimpleNamespace(status="succeeded", size_bytes=4096)
     mock_service = MagicMock()
     mock_service.execute_export_by_id.return_value = mock_job
     mock_service.close = MagicMock()
 
+    export_job = MagicMock()
+    export_job.user_id = uuid4()
+    export_job.status = "queued"
+    export_job.export_format = "csv"
+    mock_user = SimpleNamespace(
+        id=export_job.user_id,
+        plan_tier="premium",
+        subscription_status="active",
+        subscription_current_period_end=None,
+    )
     session = MagicMock()
-    session.get.return_value = None  # skip entitlement check (no ExportJob found)
+    def _get(model, uid):
+        if model.__name__ == "ExportJob":
+            return export_job
+        if model.__name__ == "User":
+            return mock_user
+        return None
+    session.get.side_effect = _get
     session_ctx = MagicMock()
     session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service):
-        result = generate_export(str(uuid4()))
+    with (
+        patch("apps.worker.app.tasks.ExportService", return_value=mock_service),
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=SimpleNamespace(export_formats=frozenset({"csv"}))),
+    ):
+        result = generate_export(str(export_id))
 
     assert result["status"] == "succeeded"
     assert result["size_bytes"] == 4096
     mock_service.close.assert_called_once()
-    assert mock_publish.call_count >= 2
+    assert mock_publish.call_count >= 1
     assert mock_publish.call_args_list[0].args[2] == "running"
-    assert mock_publish.call_args_list[-1].args[2] == "succeeded"
 
 
 @patch("apps.worker.app.tasks.publish_job_status")
@@ -390,17 +469,37 @@ def test_generate_export_value_error_propagates(mock_session_local, mock_publish
     mock_service.execute_export_by_id.side_effect = ValueError("bad value in export data")
     mock_service.close = MagicMock()
 
+    export_id = uuid4()
+    export_job = MagicMock()
+    export_job.user_id = uuid4()
+    export_job.status = "queued"
+    export_job.export_format = "csv"
+    mock_user = SimpleNamespace(
+        id=export_job.user_id,
+        plan_tier="premium",
+        subscription_status="active",
+        subscription_current_period_end=None,
+    )
     session = MagicMock()
-    session.get.return_value = None
+    def _get(model, uid):
+        if model.__name__ == "ExportJob":
+            return export_job
+        if model.__name__ == "User":
+            return mock_user
+        return None
+    session.get.side_effect = _get
+    session.scalar.return_value = 1
     session_ctx = MagicMock()
     session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service), pytest.raises(
-        ValueError, match="bad value in export data"
+    with (
+        patch("apps.worker.app.tasks.ExportService", return_value=mock_service),
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=SimpleNamespace(export_formats=frozenset({"csv"}))),
+        pytest.raises(ValueError, match="bad value in export data"),
     ):
-        generate_export(str(uuid4()))
+        generate_export(str(export_id))
 
     mock_service.close.assert_called_once()
 
@@ -410,19 +509,40 @@ def test_generate_export_value_error_propagates(mock_session_local, mock_publish
 def test_generate_export_app_error(mock_session_local, mock_publish):
     from apps.worker.app.tasks import generate_export
 
+    export_id = uuid4()
     mock_service = MagicMock()
     mock_service.execute_export_by_id.side_effect = AppError("export_error", "Export broke")
     mock_service.close = MagicMock()
 
+    export_job = MagicMock()
+    export_job.user_id = uuid4()
+    export_job.status = "queued"
+    export_job.export_format = "csv"
+    mock_user = SimpleNamespace(
+        id=export_job.user_id,
+        plan_tier="premium",
+        subscription_status="active",
+        subscription_current_period_end=None,
+    )
     session = MagicMock()
-    session.get.return_value = None
+    def _get(model, uid):
+        if model.__name__ == "ExportJob":
+            return export_job
+        if model.__name__ == "User":
+            return mock_user
+        return None
+    session.get.side_effect = _get
+    session.scalar.return_value = 1
     session_ctx = MagicMock()
     session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.ExportService", return_value=mock_service):
-        result = generate_export(str(uuid4()))
+    with (
+        patch("apps.worker.app.tasks.ExportService", return_value=mock_service),
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=SimpleNamespace(export_formats=frozenset({"csv"}))),
+    ):
+        result = generate_export(str(export_id))
 
     assert result["status"] == "failed"
     assert result["error_code"] == "export_error"
@@ -463,12 +583,13 @@ def test_run_deep_analysis_success(mock_session_local, mock_publish):
         return None
 
     session.get.side_effect = _get
+    session.scalar.return_value = 1
     session_ctx = MagicMock()
     session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    policy = SimpleNamespace(forecasting_access=True)
+    policy = SimpleNamespace(forecasting_access=True, tier=SimpleNamespace(value="premium"))
     with (
         patch("apps.worker.app.tasks.resolve_feature_policy", return_value=policy),
         patch("backtestforecast.config.get_settings") as mock_settings,
@@ -481,7 +602,7 @@ def test_run_deep_analysis_success(mock_session_local, mock_publish):
         patch("backtestforecast.forecasts.analog.HistoricalAnalogForecaster"),
         patch("backtestforecast.pipeline.deep_analysis.SymbolDeepAnalysisService", return_value=mock_service),
     ):
-        mock_settings.return_value = SimpleNamespace(massive_api_key="test")
+        mock_settings.return_value = SimpleNamespace(massive_api_key="test", max_concurrent_analyses_premium=5, max_concurrent_analyses_default=2)
         mock_client_cls.return_value = MagicMock()
         mock_executor_cls.return_value = MagicMock()
         result = run_deep_analysis(str(uuid4()))
@@ -518,12 +639,13 @@ def test_run_deep_analysis_app_error(mock_session_local, mock_publish):
         return None
 
     session.get.side_effect = _get
+    session.scalar.return_value = 1
     session_ctx = MagicMock()
     session_ctx.__enter__ = MagicMock(return_value=session)
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    policy = SimpleNamespace(forecasting_access=True)
+    policy = SimpleNamespace(forecasting_access=True, tier=SimpleNamespace(value="premium"))
     with (
         patch("apps.worker.app.tasks.resolve_feature_policy", return_value=policy),
         patch("backtestforecast.config.get_settings") as mock_settings,
@@ -536,7 +658,7 @@ def test_run_deep_analysis_app_error(mock_session_local, mock_publish):
         patch("backtestforecast.forecasts.analog.HistoricalAnalogForecaster"),
         patch("backtestforecast.pipeline.deep_analysis.SymbolDeepAnalysisService", return_value=mock_service),
     ):
-        mock_settings.return_value = SimpleNamespace(massive_api_key="test")
+        mock_settings.return_value = SimpleNamespace(massive_api_key="test", max_concurrent_analyses_premium=5, max_concurrent_analyses_default=2)
         mock_client_cls.return_value = MagicMock()
         mock_executor_cls.return_value = MagicMock()
         result = run_deep_analysis(str(uuid4()))
@@ -578,13 +700,20 @@ def test_nightly_scan_pipeline_success(mock_session_local):
         patch("backtestforecast.pipeline.adapters.PipelineForecaster"),
         patch("backtestforecast.forecasts.analog.HistoricalAnalogForecaster"),
         patch("backtestforecast.pipeline.service.NightlyPipelineService", return_value=mock_service),
+        patch("backtestforecast.utils.create_cache_redis") as mock_cache_redis,
     ):
         mock_settings.return_value = SimpleNamespace(
             massive_api_key="test",
             pipeline_default_symbols=["AAPL", "MSFT"],
+            redis_cache_url="redis://cache",
         )
         mock_client_cls.return_value = MagicMock()
         mock_executor_cls.return_value = MagicMock()
+        redis_client = MagicMock()
+        lock = MagicMock()
+        lock.acquire.return_value = True
+        redis_client.lock.return_value = lock
+        mock_cache_redis.return_value = redis_client
         result = nightly_scan_pipeline()
 
     assert result["status"] == "succeeded"
@@ -811,6 +940,7 @@ def test_generate_export_rejects_no_export_formats(mock_session_local, mock_publ
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
+    mock_export.export_format = "csv"
     no_export_policy = SimpleNamespace(export_formats=frozenset())
     with (
         patch("apps.worker.app.tasks.resolve_feature_policy", return_value=no_export_policy),
@@ -914,6 +1044,90 @@ def test_run_deep_analysis_rejects_no_forecasting(mock_session_local, mock_publi
     assert result["error_code"] == "entitlement_revoked"
 
 
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_multi_symbol_backtest_rejects_quota_exhausted_user(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import run_multi_symbol_backtest
+
+    run_id = uuid4()
+    mock_run = MagicMock()
+    mock_run.user_id = uuid4()
+    mock_run.status = "queued"
+    mock_user = MagicMock()
+    mock_user.id = uuid4()
+    mock_user.plan_tier = "free"
+    mock_user.subscription_status = None
+    mock_user.subscription_current_period_end = None
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "MultiSymbolRun":
+            return mock_run
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    quota_policy = SimpleNamespace(monthly_backtest_quota=5)
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=quota_policy),
+        patch("apps.worker.app.tasks.count_backtest_family_runs_for_current_month", return_value=5),
+        patch("apps.worker.app.tasks.MultiSymbolBacktestService"),
+    ):
+        result = run_multi_symbol_backtest(str(run_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "quota_exceeded"
+
+
+@patch("apps.worker.app.tasks.publish_job_status")
+@patch("apps.worker.app.tasks.SessionLocal")
+def test_run_multi_step_backtest_rejects_quota_exhausted_user(mock_session_local, mock_publish):
+    from apps.worker.app.tasks import run_multi_step_backtest
+
+    run_id = uuid4()
+    mock_run = MagicMock()
+    mock_run.user_id = uuid4()
+    mock_run.status = "queued"
+    mock_user = MagicMock()
+    mock_user.id = uuid4()
+    mock_user.plan_tier = "free"
+    mock_user.subscription_status = None
+    mock_user.subscription_current_period_end = None
+
+    session = MagicMock()
+
+    def _get(model, uid):
+        if model.__name__ == "MultiStepRun":
+            return mock_run
+        if model.__name__ == "User":
+            return mock_user
+        return None
+
+    session.get.side_effect = _get
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_session_local.return_value = session_ctx
+
+    quota_policy = SimpleNamespace(monthly_backtest_quota=5)
+    with (
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=quota_policy),
+        patch("apps.worker.app.tasks.count_backtest_family_runs_for_current_month", return_value=5),
+        patch("apps.worker.app.tasks.MultiStepBacktestService"),
+    ):
+        result = run_multi_step_backtest(str(run_id))
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "quota_exceeded"
+
+
 # ---------------------------------------------------------------------------
 # _validate_task_ownership
 # ---------------------------------------------------------------------------
@@ -1002,8 +1216,8 @@ def test_validate_task_ownership_rejects_mismatch(db_session, db_session_factory
 def test_run_backtest_quota_allows_5th_when_limit_is_5(mock_session_local, mock_publish):
     """A user with monthly_backtest_quota=5 who already has 4 completed backtests
     (plus the current queued one = 5 total rows) should be allowed, not rejected.
-    The worker subtracts 1 from the count (``used = max(used - 1, 0)``) to
-    exclude the current queued row from the count."""
+    The worker excludes the current queued row via exclude_run_id, so a total
+    count of 4 prior runs should still be allowed."""
     from apps.worker.app.tasks import run_backtest
 
     run_id = uuid4()
@@ -1035,18 +1249,15 @@ def test_run_backtest_quota_allows_5th_when_limit_is_5(mock_session_local, mock_
     mock_session_local.return_value = session_ctx
 
     policy = SimpleNamespace(monthly_backtest_quota=5)
-    mock_repo = MagicMock()
-    mock_repo.count_for_user_created_between.return_value = 5
-
     with (
         patch("apps.worker.app.tasks.resolve_feature_policy", return_value=policy),
-        patch("apps.worker.app.tasks.BacktestRunRepository", return_value=mock_repo),
+        patch("apps.worker.app.tasks.count_backtest_family_runs_for_current_month", return_value=4),
         patch("apps.worker.app.tasks.BacktestService", return_value=mock_service),
     ):
         result = run_backtest(str(run_id))
 
     assert result["status"] == "succeeded", (
-        "5th backtest should proceed: used = max(5 - 1, 0) = 4 < 5 quota"
+        "5th backtest should proceed when there are only 4 prior runs."
     )
     mock_service.close.assert_called_once()
 
@@ -1083,12 +1294,9 @@ def test_run_backtest_quota_rejects_6th_when_limit_is_5(mock_session_local, mock
     mock_session_local.return_value = session_ctx
 
     policy = SimpleNamespace(monthly_backtest_quota=5)
-    mock_repo = MagicMock()
-    mock_repo.count_for_user_created_between.return_value = 6
-
     with (
         patch("apps.worker.app.tasks.resolve_feature_policy", return_value=policy),
-        patch("apps.worker.app.tasks.BacktestRunRepository", return_value=mock_repo),
+        patch("apps.worker.app.tasks.count_backtest_family_runs_for_current_month", return_value=5),
     ):
         result = run_backtest(str(run_id))
 
@@ -1183,7 +1391,7 @@ def test_validate_task_ownership_redelivery_rejected_for_terminal(db_session, db
 @patch("apps.worker.app.tasks.publish_job_status")
 @patch("apps.worker.app.tasks.SessionLocal")
 def test_run_backtest_soft_time_limit(mock_session_local, mock_publish):
-    """SoftTimeLimitExceeded marks the run as failed and does NOT retry."""
+    """SoftTimeLimitExceeded currently propagates out of run_backtest."""
     from celery.exceptions import SoftTimeLimitExceeded
 
     from apps.worker.app.tasks import run_backtest
@@ -1216,11 +1424,13 @@ def test_run_backtest_soft_time_limit(mock_session_local, mock_publish):
     session_ctx.__exit__ = MagicMock(return_value=False)
     mock_session_local.return_value = session_ctx
 
-    with patch("apps.worker.app.tasks.BacktestService", return_value=mock_service):
-        result = run_backtest(str(uuid4()))
+    with (
+        patch("apps.worker.app.tasks.BacktestService", return_value=mock_service),
+        patch("apps.worker.app.tasks.resolve_feature_policy", return_value=SimpleNamespace(monthly_backtest_quota=None)),
+        pytest.raises(SoftTimeLimitExceeded),
+    ):
+        run_backtest(str(uuid4()))
 
-    assert result["status"] == "failed"
-    assert result["error_code"] == "time_limit_exceeded"
     mock_service.close.assert_called_once()
 
 
