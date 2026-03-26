@@ -5,7 +5,6 @@ from collections.abc import Generator
 from urllib.parse import urlparse
 
 import pytest
-from alembic.command import downgrade as alembic_downgrade
 from alembic.command import upgrade as alembic_upgrade
 from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
@@ -16,6 +15,7 @@ from apps.api.app.dependencies import get_db
 from apps.api.app.dependencies import get_token_verifier as _get_token_verifier
 from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
+from backtestforecast.db.base import Base
 from backtestforecast.db.session import get_readonly_db
 from backtestforecast.security.rate_limits import get_rate_limiter
 
@@ -86,7 +86,8 @@ def session_factory() -> Generator[sessionmaker[Session], None, None]:
     try:
         yield testing_session_factory
     finally:
-        alembic_downgrade(alembic_cfg, "base")
+        with engine.begin() as conn:
+            Base.metadata.drop_all(bind=conn)
         engine.dispose()
 
 
@@ -168,10 +169,10 @@ class _FakeCeleryApp:
 
 @pytest.fixture()
 def _fake_celery(monkeypatch: pytest.MonkeyPatch) -> _FakeCeleryApp:
-    import apps.api.app.dispatch as dispatch_mod
+    import apps.worker.app.celery_app as worker_celery_mod
 
     fake = _FakeCeleryApp()
-    monkeypatch.setattr(dispatch_mod, "celery_app", fake)
+    monkeypatch.setattr(worker_celery_mod, "celery_app", fake)
     return fake
 
 

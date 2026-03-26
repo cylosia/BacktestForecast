@@ -8,6 +8,7 @@ Create Date: 2026-03-25 00:02:00.000000
 from __future__ import annotations
 
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 from alembic import op
 from backtestforecast.db.types import GUID, JSON_DEFAULT_EMPTY_ARRAY, JSON_DEFAULT_EMPTY_OBJECT, JSON_VARIANT
@@ -19,6 +20,15 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    existing_tables = set(inspector.get_table_names())
+    # The consolidated baseline revision creates tables from current metadata.
+    # On a fresh database upgraded from that baseline, these workflow tables
+    # already exist and this follow-up migration should become a no-op.
+    if {"multi_symbol_runs", "multi_step_runs"}.issubset(existing_tables):
+        return
+
     op.create_table(
         "multi_symbol_runs",
         sa.Column("id", GUID(), primary_key=True, nullable=False),
@@ -300,6 +310,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    export_foreign_key_targets = {
+        tuple(foreign_key.get("referred_columns") or ()): foreign_key.get("referred_table")
+        for foreign_key in inspector.get_foreign_keys("export_jobs")
+        if foreign_key.get("referred_table")
+    }
+    # If upgrade was skipped because the consolidated baseline already had this
+    # schema, the export-job foreign keys may still be present with baseline /
+    # metadata-derived names. In that case this migration should no-op here and
+    # let the baseline downgrade drop the full schema in dependency order.
+    if {"multi_symbol_runs", "multi_step_runs"} & set(export_foreign_key_targets.values()):
+        return
+
     for table in (
         "multi_step_equity_points",
         "multi_step_trades",

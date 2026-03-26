@@ -19,7 +19,7 @@ def test_webhook_multi_item_subscription_uses_configured_plan_price(
     settings = get_settings()
     settings.stripe_premium_yearly_price_id = "price_premium_yearly"
 
-    def fake_stripe(self):
+    def fake_stripe(self, **kwargs):
         return SimpleNamespace(
             construct_event=lambda p, s, sec: {
                 "id": "evt_multi_item_route_001",

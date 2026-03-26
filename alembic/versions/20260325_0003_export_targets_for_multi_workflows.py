@@ -7,8 +7,10 @@ Create Date: 2026-03-25 16:50:00.000000
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
+
+from alembic import op
 
 
 revision = "20260325_0003"
@@ -18,6 +20,15 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    existing_columns = {column["name"] for column in inspector.get_columns("export_jobs")}
+    # The consolidated baseline revision creates tables from current metadata.
+    # On a fresh database upgraded from that baseline, these columns and
+    # supporting objects already exist, so this follow-up migration becomes a no-op.
+    if {"multi_symbol_run_id", "multi_step_run_id", "export_target_kind"}.issubset(existing_columns):
+        return
+
     op.add_column("export_jobs", sa.Column("multi_symbol_run_id", sa.Uuid(), nullable=True))
     op.add_column("export_jobs", sa.Column("multi_step_run_id", sa.Uuid(), nullable=True))
     op.add_column("export_jobs", sa.Column("export_target_kind", sa.String(length=24), nullable=False, server_default="backtest"))
@@ -61,6 +72,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    foreign_key_names = {
+        foreign_key["name"]
+        for foreign_key in inspector.get_foreign_keys("export_jobs")
+        if foreign_key.get("name")
+    }
+    # If upgrade was skipped because the consolidated baseline already had the
+    # export target columns, this migration also did not create the named
+    # constraints below. In that case downgrade should no-op here and let the
+    # baseline/base teardown own the cleanup.
+    if "fk_export_jobs_multi_step_run_id" not in foreign_key_names:
+        return
+
     op.drop_constraint("ck_export_jobs_exactly_one_target", "export_jobs", type_="check")
     op.drop_constraint("ck_export_jobs_valid_target_kind", "export_jobs", type_="check")
     op.drop_constraint("fk_export_jobs_multi_step_run_id", "export_jobs", type_="foreignkey")
