@@ -77,6 +77,13 @@ class Settings(BaseSettings):
 
     massive_api_key: str | None = Field(default=None, repr=False)
     massive_base_url: str = "https://api.massive.com"
+    massive_flatfiles_base_url: str = "https://files.massive.com"
+    massive_flatfiles_bucket: str | None = None
+    massive_flatfiles_use_s3: bool = False
+    historical_data_local_preferred: bool = True
+    historical_data_t_minus_one_only: bool = True
+    historical_data_start_year: int = Field(default=2022, ge=2000, le=2100)
+    historical_data_sync_symbols_csv: str = ""
     massive_timeout_seconds: float = 60.0
     massive_max_retries: int = 4
     massive_retry_backoff_seconds: float = 1.0
@@ -444,6 +451,17 @@ class Settings(BaseSettings):
             )
         return value
 
+    @property
+    def historical_data_sync_symbols(self) -> list[str]:
+        if not self.historical_data_sync_symbols_csv.strip():
+            return []
+        symbols: list[str] = []
+        for raw in self.historical_data_sync_symbols_csv.split(","):
+            normalized = raw.strip().upper()
+            if normalized:
+                symbols.append(normalized)
+        return symbols
+
     @field_validator("trusted_proxy_cidrs")
     @classmethod
     def validate_trusted_proxy_cidrs(cls, value: str) -> str:
@@ -771,6 +789,8 @@ class Settings(BaseSettings):
                 )
             if not self.massive_base_url.startswith("https://"):
                 raise ValueError("MASSIVE_BASE_URL must use HTTPS in production.")
+            if self.massive_flatfiles_base_url and not self.massive_flatfiles_base_url.startswith("https://"):
+                raise ValueError("MASSIVE_FLATFILES_BASE_URL must use HTTPS in production.")
             if "backtestforecast:backtestforecast" in self.database_url:
                 raise ValueError(
                     "DATABASE_URL contains the default password 'backtestforecast:backtestforecast'. "

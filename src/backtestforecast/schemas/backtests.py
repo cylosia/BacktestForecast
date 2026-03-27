@@ -756,7 +756,7 @@ class BacktestRunDetailResponse(BaseModel):
     risk_per_trade_pct: Decimal
     commission_per_contract: Decimal
     engine_version: Literal[ENGINE_VERSION_CHOICES[0], ENGINE_VERSION_CHOICES[1]] = DEFAULT_ENGINE_VERSION
-    data_source: Literal["massive", "manual"] = "massive"
+    data_source: Literal["massive", "manual", "historical_flatfile"] = "massive"
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None

@@ -102,6 +102,9 @@ class BacktestExecutionService:
             ex_dividend_dates=resolved_bundle.ex_dividend_dates,
             option_gateway=resolved_bundle.option_gateway,
         )
+        if resolved_bundle.warnings:
+            result.warnings.extend(resolved_bundle.warnings)
+        object.__setattr__(result, "data_source", resolved_bundle.data_source)
         self._check_data_staleness(request.symbol, result, settings)
         return result
 

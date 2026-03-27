@@ -20,7 +20,7 @@ from backtestforecast.backtests.types import BacktestConfig, EquityPointResult, 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppValidationError, DataUnavailableError, ExternalServiceError, NotFoundError
 from backtestforecast.indicators.calculations import ema, rsi, sma
-from backtestforecast.market_data.service import HistoricalDataBundle, MassiveOptionGateway
+from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.market_data.types import DailyBar
 from backtestforecast.models import (
     MultiSymbolEquityPoint,
@@ -462,17 +462,15 @@ class MultiSymbolBacktestService:
             if not bars:
                 raise DataUnavailableError(f"No daily bar data was returned for {symbol}.")
             ex_dividend_dates = market_data_service._load_ex_dividend_dates(symbol, start_date=bars[0].trade_date, end_date=bars[-1].trade_date)
-            option_gateway = MassiveOptionGateway(
-                market_data_service.client,
-                symbol,
-                redis_cache=getattr(market_data_service, "_redis_cache", None),
-            )
+            prefer_local = market_data_service._prefer_local_history(request.end_date)
+            option_gateway = market_data_service.build_option_gateway(symbol, prefer_local=prefer_local)
             option_gateway.set_ex_dividend_dates(ex_dividend_dates)
             bundle = HistoricalDataBundle(
                 bars=bars,
                 earnings_dates=set(),
                 ex_dividend_dates=ex_dividend_dates,
                 option_gateway=option_gateway,
+                data_source="historical_flatfile" if prefer_local else "massive",
             )
             prepared[symbol] = _PreparedSymbolData(
                 definition=symbol_def,

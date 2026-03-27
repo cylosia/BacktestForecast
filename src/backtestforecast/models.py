@@ -127,7 +127,7 @@ class BacktestRun(Base):
             name="ck_backtest_runs_valid_engine_version",
         ),
         CheckConstraint(
-            "data_source IN ('massive', 'manual')",
+            "data_source IN ('massive', 'manual', 'historical_flatfile')",
             name="ck_backtest_runs_valid_data_source",
         ),
         CheckConstraint("length(symbol) > 0", name="ck_backtest_runs_symbol_not_empty"),
@@ -1147,6 +1147,119 @@ class OptionContractCatalogSnapshot(Base):
     )
     contract_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class HistoricalUnderlyingDayBar(Base):
+    __tablename__ = "historical_underlying_day_bars"
+    __table_args__ = (
+        UniqueConstraint("symbol", "trade_date", name="uq_historical_underlying_day_bars_symbol_date"),
+        Index("ix_historical_underlying_day_bars_symbol_date", "symbol", "trade_date"),
+        CheckConstraint("length(symbol) > 0", name="ck_historical_underlying_day_bars_symbol_not_empty"),
+        CheckConstraint("open_price > 0", name="ck_historical_underlying_day_bars_open_positive"),
+        CheckConstraint("high_price > 0", name="ck_historical_underlying_day_bars_high_positive"),
+        CheckConstraint("low_price > 0", name="ck_historical_underlying_day_bars_low_positive"),
+        CheckConstraint("close_price > 0", name="ck_historical_underlying_day_bars_close_positive"),
+        CheckConstraint("volume >= 0", name="ck_historical_underlying_day_bars_volume_nonneg"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    open_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    high_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    low_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    close_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    volume: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False, default="flatfile_day_aggs", server_default="flatfile_day_aggs")
+    source_file_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class HistoricalOptionDayBar(Base):
+    __tablename__ = "historical_option_day_bars"
+    __table_args__ = (
+        UniqueConstraint("option_ticker", "trade_date", name="uq_historical_option_day_bars_ticker_date"),
+        Index("ix_historical_option_day_bars_underlying_date", "underlying_symbol", "trade_date"),
+        Index(
+            "ix_historical_option_day_bars_lookup",
+            "underlying_symbol",
+            "trade_date",
+            "contract_type",
+            "expiration_date",
+            "strike_price",
+        ),
+        CheckConstraint("length(option_ticker) > 0", name="ck_historical_option_day_bars_ticker_not_empty"),
+        CheckConstraint("length(underlying_symbol) > 0", name="ck_historical_option_day_bars_symbol_not_empty"),
+        CheckConstraint("contract_type IN ('call', 'put')", name="ck_historical_option_day_bars_contract_type"),
+        CheckConstraint("strike_price > 0", name="ck_historical_option_day_bars_strike_positive"),
+        CheckConstraint("open_price >= 0", name="ck_historical_option_day_bars_open_nonneg"),
+        CheckConstraint("high_price >= 0", name="ck_historical_option_day_bars_high_nonneg"),
+        CheckConstraint("low_price >= 0", name="ck_historical_option_day_bars_low_nonneg"),
+        CheckConstraint("close_price >= 0", name="ck_historical_option_day_bars_close_nonneg"),
+        CheckConstraint("volume >= 0", name="ck_historical_option_day_bars_volume_nonneg"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    option_ticker: Mapped[str] = mapped_column(String(64), nullable=False)
+    underlying_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
+    contract_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    strike_price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    open_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    high_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    low_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    close_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    volume: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False, default="flatfile_day_aggs", server_default="flatfile_day_aggs")
+    source_file_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class HistoricalExDividendDate(Base):
+    __tablename__ = "historical_ex_dividend_dates"
+    __table_args__ = (
+        UniqueConstraint("symbol", "ex_dividend_date", name="uq_historical_ex_dividend_dates_symbol_date"),
+        Index("ix_historical_ex_dividend_dates_symbol_date", "symbol", "ex_dividend_date"),
+        CheckConstraint("length(symbol) > 0", name="ck_historical_ex_dividend_dates_symbol_not_empty"),
+        CheckConstraint("cash_amount IS NULL OR cash_amount >= 0", name="ck_historical_ex_dividend_dates_cash_nonneg"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    ex_dividend_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cash_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False, default="rest_dividends", server_default="rest_dividends")
+    source_file_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class HistoricalTreasuryYield(Base):
+    __tablename__ = "historical_treasury_yields"
+    __table_args__ = (
+        UniqueConstraint("trade_date", name="uq_historical_treasury_yields_trade_date"),
+        Index("ix_historical_treasury_yields_trade_date", "trade_date"),
+        CheckConstraint("yield_3_month >= 0 AND yield_3_month <= 1", name="ck_historical_treasury_yields_3m_range"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    yield_3_month: Mapped[Decimal] = mapped_column(Numeric(10, 6), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False, default="rest_treasury", server_default="rest_treasury")
+    source_file_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

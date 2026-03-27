@@ -478,6 +478,7 @@ class MassiveClient(_MassiveClientCore):
         )
         self._http = httpx.Client(
             timeout=transport_timeout,
+            trust_env=False,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=30),
         )
 
@@ -777,6 +778,7 @@ class AsyncMassiveClient(_MassiveClientCore):
         )
         self._http = httpx.AsyncClient(
             timeout=transport_timeout,
+            trust_env=False,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=30),
         )
 

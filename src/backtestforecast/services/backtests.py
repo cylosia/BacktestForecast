@@ -950,6 +950,7 @@ class BacktestService:
         summary = execution_result.summary
 
         run.warnings_json = merge_warnings(run.warnings_json, execution_result.warnings)
+        run.data_source = execution_result.data_source
         run.trade_count = summary.trade_count
         run.win_rate = to_decimal(summary.win_rate) or Decimal("0")
         run.total_roi_pct = to_decimal(summary.total_roi_pct) or Decimal("0")

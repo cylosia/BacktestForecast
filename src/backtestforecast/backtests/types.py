@@ -220,6 +220,7 @@ class BacktestExecutionResult:
     trades: list[TradeResult]
     equity_curve: list[EquityPointResult]
     warnings: list[dict[str, Any]] = field(default_factory=list)
+    data_source: str = "massive"
 
 
 @dataclass(slots=True)

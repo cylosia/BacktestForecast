@@ -7,7 +7,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -16,7 +16,10 @@ from backtestforecast.backtests.strategies.common import preferred_expiration_da
 from backtestforecast.db.session import create_readonly_session, create_session
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.contract_catalog import OptionContractCatalogStore
+from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
+from backtestforecast.models import HistoricalExDividendDate
 from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
 from backtestforecast.schemas.backtests import (
     AvoidEarningsRule,
@@ -30,6 +33,7 @@ from backtestforecast.schemas.backtests import (
     SupportResistanceRule,
     VolumeSpikeRule,
 )
+from backtestforecast.utils.dates import market_date_today
 
 logger = structlog.get_logger("market_data")
 
@@ -42,7 +46,9 @@ class HistoricalDataBundle:
     bars: list[DailyBar]
     earnings_dates: set[date]
     ex_dividend_dates: set[date]
-    option_gateway: MassiveOptionGateway
+    option_gateway: Any
+    data_source: str = "massive"
+    warnings: list[dict[str, Any]] | None = None
 
 
 _GATEWAY_CONTRACT_CACHE_MAX = 2_000
@@ -526,6 +532,7 @@ class MarketDataService:
         self._bars_errors: dict[tuple[str, date, date], tuple[Exception, float]] = {}
         self._redis_cache: OptionDataRedisCache | None = self._build_redis_cache()
         self._contract_catalog: OptionContractCatalogStore | None = self._build_contract_catalog()
+        self._historical_store: HistoricalMarketDataStore | None = self._build_historical_store()
 
     def close(self) -> None:
         """Release Redis cache resources."""
@@ -561,6 +568,31 @@ class MarketDataService:
             logger.warning("market_data.contract_catalog_init_failed", exc_info=True)
             return None
 
+    @staticmethod
+    def _build_historical_store() -> HistoricalMarketDataStore | None:
+        try:
+            return HistoricalMarketDataStore(
+                session_factory=create_session,
+                readonly_session_factory=create_readonly_session,
+            )
+        except Exception:
+            logger.warning("market_data.historical_store_init_failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def _local_availability_cutoff() -> date:
+        return market_date_today() - timedelta(days=1)
+
+    def _prefer_local_history(self, end_date: date) -> bool:
+        from backtestforecast.config import get_settings
+
+        settings = get_settings()
+        if not settings.historical_data_local_preferred or self._historical_store is None:
+            return False
+        if not settings.historical_data_t_minus_one_only:
+            return True
+        return end_date <= self._local_availability_cutoff()
+
     def _fetch_bars_coalesced(self, symbol: str, start: date, end: date) -> list[DailyBar]:
         """Fetch bars with request coalescing: only one thread fetches per key."""
         cache_key = (symbol, start, end)
@@ -578,6 +610,15 @@ class MarketDataService:
                 am_fetcher = True
             else:
                 am_fetcher = False
+
+            if self._prefer_local_history(end):
+                local_cached = self._historical_store.get_underlying_day_bars(symbol, start, end) if self._historical_store is not None else []
+                if local_cached and self._historical_store is not None and self._historical_store.has_underlying_coverage(symbol, start, end):
+                    if len(self._bars_cache) >= self._MAX_BARS_CACHE_SIZE:
+                        self._bars_cache.popitem(last=False)
+                    self._bars_cache[cache_key] = local_cached
+                    self._bars_cache.move_to_end(cache_key)
+                    return local_cached
 
         try:
             if not am_fetcher:
@@ -634,7 +675,6 @@ class MarketDataService:
                     self._bars_inflight.pop(cache_key, None)
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
-
         warmup_trading_days = self._resolve_warmup_trading_days(request)
         extended_start = request.start_date - timedelta(days=(warmup_trading_days * 3))
         extended_end = request.end_date + timedelta(
@@ -661,16 +701,15 @@ class MarketDataService:
             )
 
         earnings_dates = self._load_earnings_dates_if_required(request)
+        data_source = "historical_flatfile" if self._prefer_local_history(request.end_date) and self._historical_store is not None and self._historical_store.has_underlying_coverage(request.symbol, extended_start, min(extended_end, self._local_availability_cutoff())) else "massive"
         ex_dividend_dates = self._load_ex_dividend_dates(
             request.symbol,
             start_date=bars[0].trade_date,
             end_date=bars[-1].trade_date,
         )
-        option_gateway = MassiveOptionGateway(
-            self.client,
+        option_gateway = self.build_option_gateway(
             request.symbol,
-            redis_cache=self._redis_cache,
-            contract_catalog=self._contract_catalog,
+            prefer_local=(data_source == "historical_flatfile"),
         )
         option_gateway.set_ex_dividend_dates(ex_dividend_dates)
 
@@ -679,6 +718,13 @@ class MarketDataService:
             earnings_dates=earnings_dates,
             ex_dividend_dates=ex_dividend_dates,
             option_gateway=option_gateway,
+            data_source=data_source,
+            warnings=[
+                {
+                    "code": "historical_aggregate_close_pricing",
+                    "message": "Historical flat-file mode uses option daily aggregate close as a quote proxy instead of REST quote-mid pricing.",
+                }
+            ] if data_source == "historical_flatfile" else [],
         )
 
     def _load_earnings_dates_if_required(self, request: CreateBacktestRunRequest) -> set[date]:
@@ -714,8 +760,24 @@ class MarketDataService:
         start_date: date,
         end_date: date,
     ) -> set[date]:
+        if self._prefer_local_history(end_date) and self._historical_store is not None:
+            local = self._historical_store.list_ex_dividend_dates(symbol, start_date, end_date)
+            if local:
+                return local
         try:
-            return self.client.list_ex_dividend_dates(symbol, start_date, end_date)
+            result = self.client.list_ex_dividend_dates(symbol, start_date, end_date)
+            if result and self._historical_store is not None:
+                self._historical_store.upsert_ex_dividend_dates(
+                    [
+                        HistoricalExDividendDate(
+                            symbol=symbol,
+                            ex_dividend_date=item,
+                            source_file_date=item,
+                        )
+                        for item in sorted(result)
+                    ]
+                )
+            return result
         except ExternalServiceError:
             logger.warning(
                 "market_data.ex_dividend_dates_unavailable",
@@ -725,6 +787,16 @@ class MarketDataService:
                 exc_info=True,
             )
             return set()
+
+    def build_option_gateway(self, symbol: str, *, prefer_local: bool = False) -> MassiveOptionGateway | HistoricalOptionGateway:
+        if prefer_local and self._historical_store is not None:
+            return HistoricalOptionGateway(self._historical_store, symbol)
+        return MassiveOptionGateway(
+            self.client,
+            symbol,
+            redis_cache=self._redis_cache,
+            contract_catalog=self._contract_catalog,
+        )
 
     @staticmethod
     def _validate_bars(raw_bars: list[DailyBar], symbol: str) -> list[DailyBar]:
