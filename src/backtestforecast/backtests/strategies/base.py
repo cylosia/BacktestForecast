@@ -17,3 +17,9 @@ class StrategyDefinition(Protocol):
         bar_index: int,
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None: ...
+
+    def estimate_minimum_capital_required_per_unit(
+        self,
+        config: BacktestConfig,
+        bar: DailyBar,
+    ) -> float | None: ...

@@ -72,6 +72,9 @@ class OptionDataPrefetcher:
         target_dte: int,
         dte_tolerance_days: int,
         option_gateway: object,
+        *,
+        include_quotes: bool = True,
+        max_dates: int | None = None,
     ) -> PrefetchSummary:
         from backtestforecast.market_data.service import MassiveOptionGateway
 
@@ -83,6 +86,8 @@ class OptionDataPrefetcher:
             for bar in bars
             if start_date <= bar.trade_date <= end_date
         ]
+        if max_dates is not None:
+            trade_dates = trade_dates[:max_dates]
 
         if not trade_dates:
             return PrefetchSummary()
@@ -110,10 +115,11 @@ class OptionDataPrefetcher:
                             dte_tolerance_days=dte_tolerance_days,
                         )
                     result.contracts_fetched += len(contracts)
-                    for contract in contracts:
-                        with self._api_concurrency:
-                            option_gateway.get_quote(contract.ticker, trade_date)
-                        result.quotes_fetched += 1
+                    if include_quotes:
+                        for contract in contracts:
+                            with self._api_concurrency:
+                                option_gateway.get_quote(contract.ticker, trade_date)
+                            result.quotes_fetched += 1
                 except Exception as exc:
                     import re
                     sanitized = re.sub(
@@ -175,7 +181,7 @@ class OptionDataPrefetcher:
                 )
                 summary.errors.append(f"{symbol}: prefetch timed out after {self._timeout}s")
         finally:
-            pool.shutdown(wait=not timed_out, cancel_futures=timed_out)
+            pool.shutdown(wait=True, cancel_futures=timed_out)
 
         logger.info(
             "prefetch.completed",

@@ -7,6 +7,7 @@ from backtestforecast.backtests.types import BacktestConfig, BacktestExecutionRe
 from backtestforecast.config import get_settings
 from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
 from backtestforecast.integrations.massive_client import MassiveClient
+from backtestforecast.market_data.prefetch import OptionDataPrefetcher
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.services.risk_free_rate import (
@@ -57,6 +58,7 @@ class BacktestExecutionService:
             raise RuntimeError("BacktestExecutionService has been closed and cannot be reused.")
         settings = get_settings()
         resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
+        self._maybe_prefetch_option_data(request, resolved_bundle, settings)
         parameters = resolved_parameters
         if parameters is None:
             resolved_risk_free_rate = resolve_backtest_risk_free_rate(
@@ -102,6 +104,42 @@ class BacktestExecutionService:
         )
         self._check_data_staleness(request.symbol, result, settings)
         return result
+
+    def _maybe_prefetch_option_data(
+        self,
+        request: CreateBacktestRunRequest,
+        bundle: HistoricalDataBundle,
+        settings: object,
+    ) -> None:
+        if not getattr(settings, "backtest_option_prefetch_enabled", True):
+            return
+        trade_dates = [
+            bar.trade_date for bar in bundle.bars
+            if request.start_date <= bar.trade_date <= request.end_date
+        ]
+        if len(trade_dates) < getattr(settings, "backtest_prefetch_min_trade_dates", 10):
+            return
+        try:
+            summary = OptionDataPrefetcher(
+                timeout_seconds=getattr(settings, "backtest_prefetch_timeout_seconds", 180),
+            ).prefetch_for_symbol(
+                request.symbol,
+                bundle.bars,
+                request.start_date,
+                request.end_date,
+                request.target_dte,
+                request.dte_tolerance_days,
+                bundle.option_gateway,
+                include_quotes=False,
+                max_dates=getattr(settings, "backtest_prefetch_max_dates", 6),
+            )
+            _logger.info(
+                "backtest.option_prefetch_completed",
+                symbol=request.symbol,
+                summary=summary.to_dict(),
+            )
+        except Exception:
+            _logger.warning("backtest.option_prefetch_failed", symbol=request.symbol, exc_info=True)
 
     def _check_data_staleness(
         self,

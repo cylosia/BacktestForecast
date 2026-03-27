@@ -50,6 +50,7 @@ class Settings(BaseSettings):
 
     audit_cleanup_enabled: bool = True
     audit_cleanup_retention_days: int = Field(default=90, ge=7, le=730)
+    task_result_cleanup_retention_days: int = Field(default=30, ge=7, le=365)
 
     clerk_secret_key: str | None = Field(default=None, repr=False)
     clerk_issuer: str | None = None
@@ -76,18 +77,20 @@ class Settings(BaseSettings):
 
     massive_api_key: str | None = Field(default=None, repr=False)
     massive_base_url: str = "https://api.massive.com"
-    massive_timeout_seconds: float = 30.0
-    massive_max_retries: int = 2
-    massive_retry_backoff_seconds: float = 0.5
-    earnings_api_key: str | None = Field(default=None, repr=False)
-
+    massive_timeout_seconds: float = 60.0
+    massive_max_retries: int = 4
+    massive_retry_backoff_seconds: float = 1.0
     option_cache_enabled: bool = True
-    option_cache_ttl_seconds: int = 604_800  # 7 days
+    option_cache_ttl_seconds: int = 2_592_000  # 30 days
     option_cache_warn_age_seconds: int = Field(
         default=259_200, ge=3600,
         description="Log a warning when cached option data is older than this (default 3 days).",
     )
     prefetch_max_workers: int = Field(default=10, ge=1, le=32)
+    backtest_option_prefetch_enabled: bool = True
+    backtest_prefetch_min_trade_dates: int = Field(default=5, ge=1, le=252)
+    backtest_prefetch_max_dates: int = Field(default=6, ge=1, le=252)
+    backtest_prefetch_timeout_seconds: int = Field(default=45, ge=10, le=3600)
 
     # Nightly pipeline - override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
     pipeline_default_symbols_csv: str | None = None

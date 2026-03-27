@@ -28,6 +28,13 @@ class CoveredCallStrategy(StrategyDefinition):
     strategy_type: str = "covered_call"
     margin_warning_message: str | None = "Covered call sizing is constrained by 100-share stock ownership per contract."
 
+    def estimate_minimum_capital_required_per_unit(
+        self,
+        config: BacktestConfig,
+        bar: DailyBar,
+    ) -> float | None:
+        return covered_call_margin(bar.close_price)
+
     def build_position(
         self,
         config: BacktestConfig,

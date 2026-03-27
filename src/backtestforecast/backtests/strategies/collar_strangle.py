@@ -29,6 +29,13 @@ class CollarStrategy(StrategyDefinition):
     strategy_type: str = "collar"
     margin_warning_message: str | None = "Collar sizing is constrained by 100-share stock ownership per contract."
 
+    def estimate_minimum_capital_required_per_unit(
+        self,
+        config: BacktestConfig,
+        bar: DailyBar,
+    ) -> float | None:
+        return collar_margin(bar.close_price)
+
     def build_position(
         self, config: BacktestConfig, bar: DailyBar, bar_index: int, option_gateway: OptionDataGateway
     ) -> OpenMultiLegPosition | None:
@@ -151,6 +158,13 @@ class CollarStrategy(StrategyDefinition):
 class CoveredStrangleStrategy(StrategyDefinition):
     strategy_type: str = "covered_strangle"
     margin_warning_message: str | None = "Covered strangle requires 100-share ownership and margin for the short put."
+
+    def estimate_minimum_capital_required_per_unit(
+        self,
+        config: BacktestConfig,
+        bar: DailyBar,
+    ) -> float | None:
+        return bar.close_price * 100.0
 
     def build_position(
         self, config: BacktestConfig, bar: DailyBar, bar_index: int, option_gateway: OptionDataGateway

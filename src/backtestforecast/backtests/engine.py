@@ -72,6 +72,40 @@ class OptionsBacktestEngine:
             self._wheel_engine = WheelStrategyBacktestEngine()
         return self._wheel_engine
 
+    @staticmethod
+    def _can_afford_minimum_strategy_package(
+        strategy: object,
+        config: BacktestConfig,
+        bar: DailyBar,
+        available_cash: Decimal,
+    ) -> bool:
+        estimator = getattr(strategy, "estimate_minimum_capital_required_per_unit", None)
+        if estimator is None:
+            return True
+        try:
+            minimum_capital = estimator(config, bar)
+        except Exception:
+            logger.warning(
+                "engine.minimum_capital_estimate_failed",
+                strategy=getattr(strategy, "strategy_type", None),
+                exc_info=True,
+            )
+            return True
+        if minimum_capital is None:
+            return True
+        quantity = OptionsBacktestEngine._resolve_position_size(
+            available_cash=available_cash,
+            account_size=float(config.account_size),
+            risk_per_trade_pct=float(config.risk_per_trade_pct),
+            capital_required_per_unit=minimum_capital,
+            max_loss_per_unit=minimum_capital,
+            entry_cost_per_unit=minimum_capital,
+            commission_per_unit=float(config.commission_per_contract),
+            slippage_pct=config.slippage_pct,
+            gross_notional_per_unit=minimum_capital,
+        )
+        return quantity > 0
+
     def run(
         self,
         config: BacktestConfig,
@@ -244,13 +278,21 @@ class OptionsBacktestEngine:
                         "One or more entry rule evaluations failed and were treated as not-allowed.",
                     )
             if entry_allowed:
+                if not self._can_afford_minimum_strategy_package(strategy, config, bar, cash):
+                    self._add_warning_once(
+                        warnings,
+                        warning_codes,
+                        "capital_requirement_exceeded",
+                        "One or more signals were skipped because available cash or"
+                        " configured risk budget could not support the strategy package.",
+                    )
+                    entry_allowed = False
+            if entry_allowed:
                 try:
                     build_kwargs: dict = {}
                     build_position_params = inspect.signature(strategy.build_position).parameters
                     if config.custom_legs is not None and "custom_legs" in build_position_params:
                         build_kwargs["custom_legs"] = list(config.custom_legs)
-                    if realized_vol is not None and "realized_vol" in build_position_params:
-                        build_kwargs["realized_vol"] = realized_vol
                     candidate = strategy.build_position(
                         config,
                         bar,
