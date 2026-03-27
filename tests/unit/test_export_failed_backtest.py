@@ -8,36 +8,20 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat
-from backtestforecast.db.base import Base
 from backtestforecast.errors import AppValidationError
 from backtestforecast.models import BacktestRun, User
 from backtestforecast.schemas.exports import CreateExportRequest
 from backtestforecast.services.exports import ExportService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-    session = factory()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _create_user(session: Session) -> User:

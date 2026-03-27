@@ -244,7 +244,9 @@ def test_stomper_does_not_fail_recent_run(db_session, smoke_uses_sqlite) -> None
     db_session.expire_all()
     original = db_session.get(NightlyPipelineRun, recent_run.id)
     assert original is not None
-    assert run.status == "succeeded"
+    assert run.id == recent_run.id
+    assert run.status == "running"
+    assert original.status == "running"
 
 
 @pytest.mark.smoke

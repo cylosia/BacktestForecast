@@ -11,41 +11,11 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.postgres
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, User
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
-
-
-@pytest.fixture()
-def db_engine():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    try:
-        yield engine
-    finally:
-        Base.metadata.drop_all(engine)
-        engine.dispose()
-
-
-@pytest.fixture()
-def db_session(db_engine) -> Session:
-    factory = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
-    session = factory()
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 def _create_user(session: Session) -> User:
@@ -56,16 +26,12 @@ def _create_user(session: Session) -> User:
     return user
 
 
-def test_concurrent_validate_task_ownership(db_session):
+def test_concurrent_validate_task_ownership(postgres_db_session: Session):
     """Two calls to _validate_task_ownership with the same job but different
     task IDs: only the first should succeed."""
-    # NOTE: This test uses SQLite which does not support FOR UPDATE row-level
-    # locking. It validates the basic UPDATE WHERE celery_task_id IS NULL
-    # ownership claim pattern, not the locking behavior. Integration tests
-    # against PostgreSQL are needed for full concurrency coverage.
     import apps.worker.app.tasks as tasks_module
 
-    user = _create_user(db_session)
+    user = _create_user(postgres_db_session)
     run = BacktestRun(
         user_id=user.id,
         symbol="SPY",
@@ -82,13 +48,13 @@ def test_concurrent_validate_task_ownership(db_session):
         commission_per_contract=Decimal("1"),
         input_snapshot_json={},
     )
-    db_session.add(run)
-    db_session.commit()
-    db_session.refresh(run)
+    postgres_db_session.add(run)
+    postgres_db_session.commit()
+    postgres_db_session.refresh(run)
     run_id = run.id
 
-    first = tasks_module._validate_task_ownership(db_session, BacktestRun, run_id, "task-1")
-    second = tasks_module._validate_task_ownership(db_session, BacktestRun, run_id, "task-2")
+    first = tasks_module._validate_task_ownership(postgres_db_session, BacktestRun, run_id, "task-1")
+    second = tasks_module._validate_task_ownership(postgres_db_session, BacktestRun, run_id, "task-2")
 
     assert first is True, "First caller should claim ownership"
     assert second is False, "Second caller should be rejected"

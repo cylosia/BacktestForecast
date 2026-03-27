@@ -7,43 +7,20 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, User
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
+
+@pytest.fixture()
+def db_session_factory(postgres_session_factory: sessionmaker[Session]):
+    return postgres_session_factory
 
 
 @pytest.fixture()
-def db_engine():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    try:
-        yield engine
-    finally:
-        Base.metadata.drop_all(engine)
-        engine.dispose()
-
-
-@pytest.fixture()
-def db_session_factory(db_engine):
-    return sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
-
-
-@pytest.fixture()
-def db_session(db_session_factory) -> Session:
-    session = db_session_factory()
-    try:
-        yield session
-    finally:
-        session.close()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _create_user(session: Session) -> User:

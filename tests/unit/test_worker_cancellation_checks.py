@@ -5,32 +5,21 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis, User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
 from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _create_user(session: Session) -> User:

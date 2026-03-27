@@ -1,6 +1,9 @@
 ﻿"""Integration tests for GET /v1/forecasts/{ticker}."""
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
+
 from backtestforecast.errors import NotFoundError
 from backtestforecast.models import User
 
@@ -61,7 +64,47 @@ class TestForecastEndpoint:
         client.get("/v1/me", headers=auth_headers)
         _set_user_plan(db_session, tier="pro", subscription_status="active")
 
-        # Ticker must start with letter; "123" is invalid
+        # Symbols must match the shared ticker validator; "123" is invalid
         resp = client.get("/v1/forecasts/123", headers=auth_headers)
         assert resp.status_code == 422
         assert resp.json()["error"]["code"] == "validation_error"
+
+    def test_caret_prefixed_ticker_uses_shared_symbol_validator(
+        self, client, auth_headers, db_session, monkeypatch
+    ):
+        """GET /v1/forecasts/{ticker} should accept ^-prefixed symbols like other routes."""
+        client.get("/v1/me", headers=auth_headers)
+        _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+        from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
+        from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
+        from backtestforecast.services.scans import ScanService
+
+        def mock_build_forecast(self, *, user, symbol, strategy_type, horizon_days):
+            assert symbol == "^VIX"
+            return ForecastEnvelopeResponse(
+                forecast=HistoricalAnalogForecastResponse(
+                    symbol="^VIX",
+                    strategy_type=strategy_type,
+                    as_of_date=date(2026, 3, 26),
+                    horizon_days=horizon_days,
+                    trading_days_used=20,
+                    analog_count=12,
+                    analogs_used=12,
+                    expected_return_low_pct=Decimal("-5.0"),
+                    expected_return_median_pct=Decimal("1.0"),
+                    expected_return_high_pct=Decimal("7.5"),
+                    positive_outcome_rate_pct=Decimal("58.0"),
+                    summary="Synthetic forecast for validation coverage.",
+                    disclaimer="Test fixture only.",
+                    analog_dates=[],
+                    analog_dates_shown=0,
+                ),
+                expected_move_abs_pct=Decimal("7.5"),
+            )
+
+        monkeypatch.setattr(ScanService, "build_forecast", mock_build_forecast)
+
+        resp = client.get("/v1/forecasts/^VIX", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["forecast"]["symbol"] == "^VIX"

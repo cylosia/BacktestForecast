@@ -3,23 +3,14 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+import pytest
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, ExportJob, User
 from backtestforecast.repositories.backtest_runs import BacktestRunRepository
 from backtestforecast.repositories.export_jobs import ExportJobRepository
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
-
-def _build_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
-    return session, engine
+pytestmark = pytest.mark.postgres
 
 
 def _create_user(session) -> User:
@@ -69,50 +60,38 @@ def _create_export_job(session, user: User, run: BacktestRun, *, created_at: dat
     return job
 
 
-def test_backtest_run_cursor_total_ignores_cursor_filter():
-    session, engine = _build_session()
-    try:
-        user = _create_user(session)
-        repo = BacktestRunRepository(session)
-        newest = _create_run(session, user, created_at=datetime(2024, 1, 3, tzinfo=UTC))
-        middle = _create_run(session, user, created_at=datetime(2024, 1, 2, tzinfo=UTC))
-        oldest = _create_run(session, user, created_at=datetime(2024, 1, 1, tzinfo=UTC))
+def test_backtest_run_cursor_total_ignores_cursor_filter(postgres_db_session: Session):
+    user = _create_user(postgres_db_session)
+    repo = BacktestRunRepository(postgres_db_session)
+    newest = _create_run(postgres_db_session, user, created_at=datetime(2024, 1, 3, tzinfo=UTC))
+    middle = _create_run(postgres_db_session, user, created_at=datetime(2024, 1, 2, tzinfo=UTC))
+    oldest = _create_run(postgres_db_session, user, created_at=datetime(2024, 1, 1, tzinfo=UTC))
 
-        runs, total = repo.list_for_user_with_count(
-            user.id,
-            limit=10,
-            cursor_before=(middle.created_at, middle.id),
-        )
+    runs, total = repo.list_for_user_with_count(
+        user.id,
+        limit=10,
+        cursor_before=(middle.created_at, middle.id),
+    )
 
-        assert [run.id for run in runs] == [oldest.id]
-        assert total == 3
-        assert newest.id not in [run.id for run in runs]
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+    assert [run.id for run in runs] == [oldest.id]
+    assert total == 3
+    assert newest.id not in [run.id for run in runs]
 
 
-def test_export_job_cursor_total_ignores_cursor_filter():
-    session, engine = _build_session()
-    try:
-        user = _create_user(session)
-        run = _create_run(session, user, created_at=datetime(2024, 1, 1, tzinfo=UTC))
-        repo = ExportJobRepository(session)
-        newest = _create_export_job(session, user, run, created_at=datetime(2024, 1, 3, tzinfo=UTC))
-        middle = _create_export_job(session, user, run, created_at=datetime(2024, 1, 2, tzinfo=UTC))
-        oldest = _create_export_job(session, user, run, created_at=datetime(2024, 1, 1, tzinfo=UTC))
+def test_export_job_cursor_total_ignores_cursor_filter(postgres_db_session: Session):
+    user = _create_user(postgres_db_session)
+    run = _create_run(postgres_db_session, user, created_at=datetime(2024, 1, 1, tzinfo=UTC))
+    repo = ExportJobRepository(postgres_db_session)
+    newest = _create_export_job(postgres_db_session, user, run, created_at=datetime(2024, 1, 3, tzinfo=UTC))
+    middle = _create_export_job(postgres_db_session, user, run, created_at=datetime(2024, 1, 2, tzinfo=UTC))
+    oldest = _create_export_job(postgres_db_session, user, run, created_at=datetime(2024, 1, 1, tzinfo=UTC))
 
-        jobs, total = repo.list_for_user_with_count(
-            user.id,
-            limit=10,
-            cursor_before=(middle.created_at, middle.id),
-        )
+    jobs, total = repo.list_for_user_with_count(
+        user.id,
+        limit=10,
+        cursor_before=(middle.created_at, middle.id),
+    )
 
-        assert [job.id for job in jobs] == [oldest.id]
-        assert total == 3
-        assert newest.id not in [job.id for job in jobs]
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+    assert [job.id for job in jobs] == [oldest.id]
+    assert total == 3
+    assert newest.id not in [job.id for job in jobs]

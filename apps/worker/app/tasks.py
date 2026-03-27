@@ -2050,6 +2050,59 @@ def cleanup_outbox(self) -> dict:  # type: ignore[override]
 
 
 @celery_app.task(
+    name="maintenance.cleanup_task_results",
+    base=BaseTaskWithDLQ,
+    bind=True,
+    ignore_result=True,
+    max_retries=0,
+    soft_time_limit=300,
+    time_limit=360,
+)
+def cleanup_task_results(self) -> dict:  # type: ignore[override]
+    """Remove old TaskResult rows in batches to bound telemetry growth."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import delete, select
+
+    from backtestforecast.config import get_settings
+    from backtestforecast.models import TaskResult
+
+    settings = get_settings()
+    cutoff = datetime.now(UTC) - timedelta(days=settings.task_result_cleanup_retention_days)
+    deleted = 0
+    batch_size = 2000
+    max_batches = 200
+    batches_run = 0
+    limit_reached = False
+
+    with create_worker_session() as session:
+        while batches_run < max_batches:
+            batch_ids = list(session.scalars(
+                select(TaskResult.id)
+                .where(TaskResult.created_at < cutoff)
+                .limit(batch_size)
+            ))
+            if not batch_ids:
+                break
+            result = session.execute(delete(TaskResult).where(TaskResult.id.in_(batch_ids)))
+            deleted += result.rowcount
+            batches_run += 1
+            session.commit()
+        if batches_run >= max_batches:
+            limit_reached = True
+
+    logger.info(
+        "task_results.cleanup",
+        deleted=deleted,
+        batches_run=batches_run,
+        limit_reached=limit_reached,
+        cutoff=cutoff.isoformat(),
+    )
+    CELERY_TASKS_TOTAL.labels(task_name="maintenance.cleanup_task_results", status="succeeded").inc()
+    return {"deleted": deleted, "batches_run": batches_run, "limit_reached": limit_reached}
+
+
+@celery_app.task(
     name="maintenance.cleanup_daily_recommendations",
     base=BaseTaskWithDLQ,
     bind=True,
@@ -2516,25 +2569,14 @@ def cleanup_stripe_orphan(
 
 @celery_app.task(name="maintenance.expire_old_exports", base=BaseTaskWithDLQ, max_retries=1)
 def expire_old_exports(self):
-    """Transition succeeded exports past their expires_at to 'expired' status."""
-    from datetime import datetime
-
-    from sqlalchemy import update as sa_update
+    """Expire old exports and clean up any persisted payload storage."""
 
     CELERY_TASKS_TOTAL.labels(task_name="maintenance.expire_old_exports", status="started").inc()
     with create_worker_session() as session:
-        now = datetime.now(UTC)
-        result = session.execute(
-            sa_update(ExportJobModel)
-            .where(
-                ExportJobModel.status == "succeeded",
-                ExportJobModel.expires_at.isnot(None),
-                ExportJobModel.expires_at < now,
-            )
-            .values(status="expired", updated_at=now)
-        )
-        expired_count = result.rowcount
-        session.commit()
+        from backtestforecast.services.exports import ExportService
+
+        service = ExportService(session)
+        expired_count = service.cleanup_expired_exports()
         logger.info("expire_old_exports.completed", expired_count=expired_count)
         CELERY_TASKS_TOTAL.labels(task_name="maintenance.expire_old_exports", status="succeeded").inc()
         return {"expired_count": expired_count}

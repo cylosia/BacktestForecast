@@ -12,35 +12,22 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session, sessionmaker
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, User
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+from tests.postgres_support import reset_database
+
+pytestmark = pytest.mark.postgres
+
+@pytest.fixture()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
-    session = factory()
-    yield session
-    session.close()
-    engine.dispose()
-
-
-@pytest.fixture()
-def db_session_factory(db_session):
-    engine = db_session.get_bind()
-    factory = sessionmaker(bind=engine)
-
-    def create():
-        return factory()
-    return create
+def db_session_factory(postgres_session_factory: sessionmaker[Session]):
+    reset_database(postgres_session_factory)
+    return postgres_session_factory
 
 
 def test_reaper_skips_when_lock_already_held(monkeypatch):

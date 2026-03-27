@@ -9,25 +9,15 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import NightlyPipelineRun
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
+pytestmark = pytest.mark.postgres
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
-    session = factory()
-    yield session
-    session.close()
-    engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def test_duplicate_pipeline_run_same_date_rejected(db_session):
@@ -60,27 +50,17 @@ def test_duplicate_pipeline_run_same_date_rejected(db_session):
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
 
-    try:
+    with pytest.raises(IntegrityError):
         db_session.commit()
-        existing = db_session.scalars(
-            select(NightlyPipelineRun).where(
-                NightlyPipelineRun.trade_date == today,
-                NightlyPipelineRun.status == "succeeded",
-            )
-        ).all()
-        assert len(existing) == 2, (
-            "This SQLite harness strips partial indexes for portability, so duplicate "
-            "succeeded rows are allowed here; Postgres should reject this with IntegrityError."
+
+    db_session.rollback()
+    existing = db_session.scalars(
+        select(NightlyPipelineRun).where(
+            NightlyPipelineRun.trade_date == today,
+            NightlyPipelineRun.status == "succeeded",
         )
-    except IntegrityError:
-        db_session.rollback()
-        existing = db_session.scalars(
-            select(NightlyPipelineRun).where(
-                NightlyPipelineRun.trade_date == today,
-                NightlyPipelineRun.status == "succeeded",
-            )
-        ).all()
-        assert len(existing) == 1
+    ).all()
+    assert len(existing) == 1
 
 
 def test_pipeline_run_different_dates_allowed(db_session):

@@ -470,8 +470,14 @@ class _MassiveClientCore:
 class MassiveClient(_MassiveClientCore):
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
         super().__init__(api_key=api_key, base_url=base_url)
+        transport_timeout = httpx.Timeout(
+            connect=min(10.0, self.timeout),
+            read=self.timeout,
+            write=self.timeout,
+            pool=min(10.0, self.timeout),
+        )
         self._http = httpx.Client(
-            timeout=self.timeout,
+            timeout=transport_timeout,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=30),
         )
 
@@ -507,10 +513,13 @@ class MassiveClient(_MassiveClientCore):
                 "underlying_ticker": symbol,
                 "contract_type": contract_type,
                 "as_of": as_of_date.isoformat(),
-                "expired": "true",
+                # For historical backtests we need contracts that were active as of
+                # the entry date and expire in the requested forward window.
+                "expired": "false",
                 "expiration_date.gte": expiration_gte.isoformat(),
                 "expiration_date.lte": expiration_lte.isoformat(),
-                "sort": "expiration_date.asc",
+                "sort": "expiration_date",
+                "order": "asc",
                 "limit": 1000,
             },
         )
@@ -576,7 +585,8 @@ class MassiveClient(_MassiveClientCore):
                 "ticker": symbol,
                 "ex_dividend_date.gte": start_date.isoformat(),
                 "ex_dividend_date.lte": end_date.isoformat(),
-                "sort": "ex_dividend_date.asc",
+                "sort": "ex_dividend_date",
+                "order": "asc",
                 "limit": 1000,
             },
         )
@@ -728,8 +738,14 @@ class AsyncMassiveClient(_MassiveClientCore):
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
         super().__init__(api_key=api_key, base_url=base_url)
+        transport_timeout = httpx.Timeout(
+            connect=min(10.0, self.timeout),
+            read=self.timeout,
+            write=self.timeout,
+            pool=min(10.0, self.timeout),
+        )
         self._http = httpx.AsyncClient(
-            timeout=self.timeout,
+            timeout=transport_timeout,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=30),
         )
 
@@ -765,10 +781,12 @@ class AsyncMassiveClient(_MassiveClientCore):
                 "underlying_ticker": symbol,
                 "contract_type": contract_type,
                 "as_of": as_of_date.isoformat(),
-                "expired": "true",
+                # Mirror the sync client semantics for historical backtests.
+                "expired": "false",
                 "expiration_date.gte": expiration_gte.isoformat(),
                 "expiration_date.lte": expiration_lte.isoformat(),
-                "sort": "expiration_date.asc",
+                "sort": "expiration_date",
+                "order": "asc",
                 "limit": 1000,
             },
         )
@@ -834,7 +852,8 @@ class AsyncMassiveClient(_MassiveClientCore):
                 "ticker": symbol,
                 "ex_dividend_date.gte": start_date.isoformat(),
                 "ex_dividend_date.lte": end_date.isoformat(),
-                "sort": "ex_dividend_date.asc",
+                "sort": "ex_dividend_date",
+                "order": "asc",
                 "limit": 1000,
             },
         )

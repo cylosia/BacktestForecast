@@ -37,14 +37,12 @@ def test_env_docs_describe_data_fetching_preconditions() -> None:
     ):
         assert feature in source
     assert "MASSIVE_API_KEY" in source
-    assert "EARNINGS_API_KEY" in source
 
 
 
 def test_test_bootstrap_seeds_optional_provider_env_defaults() -> None:
     source = _read("tests/conftest.py")
     assert 'os.environ.setdefault("MASSIVE_API_KEY", "test-massive-api-key")' in source
-    assert 'os.environ.setdefault("EARNINGS_API_KEY", "test-earnings-api-key")' in source
 
 
 

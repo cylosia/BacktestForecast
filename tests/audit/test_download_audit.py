@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backtestforecast.models import AuditEvent
+from backtestforecast.models import AuditEvent, User
 from backtestforecast.services.audit import AuditService
 
 
@@ -17,9 +17,17 @@ def audit(db_session: Session) -> AuditService:
     return AuditService(db_session)
 
 
+def _create_user(db_session: Session) -> User:
+    user = User(clerk_user_id=f"audit-download-{uuid4()}", email="audit-download@test.com")
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
 def test_record_always_creates_multiple_events(audit: AuditService, db_session: Session) -> None:
     """record_always creates a new event each time; subject_id gets UUID suffix."""
-    user_id = uuid4()
+    user_id = _create_user(db_session).id
     audit.record_always(
         event_type="export.downloaded",
         subject_type="export_job",
@@ -44,7 +52,7 @@ def test_record_always_creates_multiple_events(audit: AuditService, db_session: 
 
 def test_record_deduplicates_same_event(audit: AuditService, db_session: Session) -> None:
     """record() deduplicates identical events; only one row is stored."""
-    user_id = uuid4()
+    user_id = _create_user(db_session).id
     audit.record(
         event_type="export.created",
         subject_type="export_job",
@@ -66,7 +74,7 @@ def test_record_deduplicates_same_event(audit: AuditService, db_session: Session
 
 def test_record_always_vs_record_independence(audit: AuditService, db_session: Session) -> None:
     """record() and record_always() are independent; total count is correct."""
-    user_id = uuid4()
+    user_id = _create_user(db_session).id
     audit.record(
         event_type="billing.sync",
         subject_type="billing",

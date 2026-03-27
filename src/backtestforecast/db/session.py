@@ -85,20 +85,6 @@ def create_worker_session() -> Session:
     return _get_worker_session_factory()()
 
 
-def get_worker_db() -> Generator[Session, None, None]:
-    """Yield a worker session with guaranteed cleanup on exit."""
-    db = create_worker_session()
-    try:
-        yield db
-    except BaseException:
-        with suppress(Exception):
-            db.rollback()
-        raise
-    finally:
-        with suppress(Exception):
-            db.close()
-
-
 @lru_cache
 def _get_readonly_engine() -> Engine | None:
     settings = get_settings()

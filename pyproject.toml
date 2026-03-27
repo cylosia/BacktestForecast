@@ -119,8 +119,12 @@ addopts = "--strict-markers"
 markers = [
     "smoke: full-stack smoke tests (run with pytest -m smoke)",
     "integration: tests that require a running database",
+    "postgres: tests that require real Postgres semantics or an isolated Postgres test database",
+    "sqlite_only: tests intentionally kept on SQLite because they are storage-agnostic",
     "e2e: end-to-end tests",
     "real_worker: tests that require a live Redis broker and a real Celery worker",
+    "live_provider: tests that exercise a real upstream market-data provider",
+    "load: load or performance-oriented tests, typically scheduled or manually run",
     "slow: long-running tests",
     "asyncio: async tests (registered by pytest-asyncio)",
     "target_assertion: critical regression tests that must explicitly mark when they reach the business assertion they are intended to protect",

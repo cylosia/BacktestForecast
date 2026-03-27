@@ -61,6 +61,13 @@ logger = structlog.get_logger("services.multi_step_backtests")
 _QUEUE = "multi_step_backtests"
 
 
+def _persistable_ratio_metric(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    metric = Decimal(str(value))
+    return metric if metric.is_finite() else None
+
+
 @dataclass(slots=True)
 class _WorkflowLot:
     step_number: int
@@ -146,7 +153,7 @@ class MultiStepBacktestService:
     def __enter__(self) -> MultiStepBacktestService:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type, exc, _tb) -> None:
         if exc:
             self.session.rollback()
         self.close()
@@ -1266,15 +1273,15 @@ class MultiStepBacktestService:
         run.total_net_pnl = Decimal(str(summary.total_net_pnl))
         run.ending_equity = Decimal(str(summary.ending_equity))
         run.expectancy = Decimal(str(summary.expectancy))
-        run.profit_factor = None if summary.profit_factor is None else Decimal(str(summary.profit_factor))
-        run.payoff_ratio = None if summary.payoff_ratio is None else Decimal(str(summary.payoff_ratio))
-        run.sharpe_ratio = None if summary.sharpe_ratio is None else Decimal(str(summary.sharpe_ratio))
-        run.sortino_ratio = None if summary.sortino_ratio is None else Decimal(str(summary.sortino_ratio))
-        run.cagr_pct = None if summary.cagr_pct is None else Decimal(str(summary.cagr_pct))
-        run.calmar_ratio = None if summary.calmar_ratio is None else Decimal(str(summary.calmar_ratio))
+        run.profit_factor = _persistable_ratio_metric(summary.profit_factor)
+        run.payoff_ratio = _persistable_ratio_metric(summary.payoff_ratio)
+        run.sharpe_ratio = _persistable_ratio_metric(summary.sharpe_ratio)
+        run.sortino_ratio = _persistable_ratio_metric(summary.sortino_ratio)
+        run.cagr_pct = _persistable_ratio_metric(summary.cagr_pct)
+        run.calmar_ratio = _persistable_ratio_metric(summary.calmar_ratio)
         run.max_consecutive_wins = summary.max_consecutive_wins
         run.max_consecutive_losses = summary.max_consecutive_losses
-        run.recovery_factor = None if summary.recovery_factor is None else Decimal(str(summary.recovery_factor))
+        run.recovery_factor = _persistable_ratio_metric(summary.recovery_factor)
 
         step_rows = list(
             self.session.scalars(select(MultiStepRunStep).where(MultiStepRunStep.run_id == run.id).order_by(MultiStepRunStep.step_number))

@@ -6,12 +6,10 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat
-from backtestforecast.db.base import Base
 from backtestforecast.errors import QuotaExceededError
 from backtestforecast.models import BacktestRun, MultiStepRun, MultiSymbolRun, OutboxMessage, ScannerJob, User
 from backtestforecast.pipeline.deep_analysis import SymbolDeepAnalysisService
@@ -29,9 +27,9 @@ from backtestforecast.services.multi_step_backtests import MultiStepBacktestServ
 from backtestforecast.services.multi_symbol_backtests import MultiSymbolBacktestService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 UTC = UTC
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture(autouse=True)
@@ -48,21 +46,8 @@ def _mock_celery_module(monkeypatch):
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _create_user(session: Session, *, plan_tier: str = "premium") -> User:

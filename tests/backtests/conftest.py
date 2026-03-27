@@ -6,18 +6,15 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from apps.api.app.dependencies import get_token_verifier
 from apps.api.app.main import app
 from backtestforecast.auth.verification import AuthenticatedPrincipal
-from backtestforecast.db.base import Base
 from backtestforecast.db.session import get_db
 from backtestforecast.models import User
 from backtestforecast.security.rate_limits import get_rate_limiter
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+from tests.postgres_support import reset_database
 
 
 @pytest.fixture()
@@ -26,15 +23,12 @@ def auth_headers() -> dict[str, str]:
 
 
 @pytest.fixture()
-def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+def client(
+    monkeypatch: pytest.MonkeyPatch,
+    postgres_session_factory: sessionmaker[Session],
+) -> Generator[TestClient, None, None]:
+    reset_database(postgres_session_factory)
+    factory = postgres_session_factory
 
     with factory() as seed_session:
         user = User(
@@ -72,4 +66,3 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]
     finally:
         get_rate_limiter().reset()
         app.dependency_overrides.clear()
-        engine.dispose()

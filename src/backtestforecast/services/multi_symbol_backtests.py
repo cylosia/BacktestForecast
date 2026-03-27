@@ -54,6 +54,13 @@ logger = structlog.get_logger("services.multi_symbol_backtests")
 _QUEUE = "multi_symbol_backtests"
 
 
+def _persistable_ratio_metric(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    metric = Decimal(str(value))
+    return metric if metric.is_finite() else None
+
+
 def _zero_summary() -> BacktestSummaryResponse:
     zero = Decimal("0")
     return BacktestSummaryResponse(
@@ -247,7 +254,7 @@ class MultiSymbolBacktestService:
     def __enter__(self) -> MultiSymbolBacktestService:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type, exc, _tb) -> None:
         if exc:
             self.session.rollback()
         self.close()
@@ -738,9 +745,6 @@ class MultiSymbolBacktestService:
                 params = inspect.signature(strategy.build_position).parameters
                 if leg.custom_legs is not None and "custom_legs" in params:
                     build_kwargs["custom_legs"] = list(leg.custom_legs)
-                realized_vol = self._engine._estimate_realized_vol(data.bars[: data.bar_index_by_date[trade_date] + 1])
-                if realized_vol is not None and "realized_vol" in params:
-                    build_kwargs["realized_vol"] = realized_vol
                 candidate = strategy.build_position(
                     config,
                     bar,
@@ -959,16 +963,16 @@ class MultiSymbolBacktestService:
         run.total_net_pnl = Decimal(str(summary.total_net_pnl))
         run.starting_equity = starting_equity
         run.ending_equity = Decimal(str(summary.ending_equity))
-        run.profit_factor = None if summary.profit_factor is None else Decimal(str(summary.profit_factor))
-        run.payoff_ratio = None if summary.payoff_ratio is None else Decimal(str(summary.payoff_ratio))
+        run.profit_factor = _persistable_ratio_metric(summary.profit_factor)
+        run.payoff_ratio = _persistable_ratio_metric(summary.payoff_ratio)
         run.expectancy = Decimal(str(summary.expectancy))
-        run.sharpe_ratio = None if summary.sharpe_ratio is None else Decimal(str(summary.sharpe_ratio))
-        run.sortino_ratio = None if summary.sortino_ratio is None else Decimal(str(summary.sortino_ratio))
-        run.cagr_pct = None if summary.cagr_pct is None else Decimal(str(summary.cagr_pct))
-        run.calmar_ratio = None if summary.calmar_ratio is None else Decimal(str(summary.calmar_ratio))
+        run.sharpe_ratio = _persistable_ratio_metric(summary.sharpe_ratio)
+        run.sortino_ratio = _persistable_ratio_metric(summary.sortino_ratio)
+        run.cagr_pct = _persistable_ratio_metric(summary.cagr_pct)
+        run.calmar_ratio = _persistable_ratio_metric(summary.calmar_ratio)
         run.max_consecutive_wins = summary.max_consecutive_wins
         run.max_consecutive_losses = summary.max_consecutive_losses
-        run.recovery_factor = None if summary.recovery_factor is None else Decimal(str(summary.recovery_factor))
+        run.recovery_factor = _persistable_ratio_metric(summary.recovery_factor)
 
     def _to_history_item(self, run: MultiSymbolRun) -> MultiSymbolRunHistoryItemResponse:
         symbol_rows = list(

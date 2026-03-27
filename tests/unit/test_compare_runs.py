@@ -9,30 +9,19 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.errors import AppValidationError
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade, User
 from backtestforecast.schemas.backtests import CompareBacktestsRequest
 from backtestforecast.services.backtests import BacktestService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _create_user(session: Session) -> User:
@@ -213,7 +202,6 @@ def test_summary_response_preserves_infinite_ratio_metrics(db_session):
     run.profit_factor = Decimal("Infinity")
     run.payoff_ratio = Decimal("-Infinity")
     run.recovery_factor = Decimal("Infinity")
-    db_session.commit()
 
     service = BacktestService(db_session)
     summary = service._summary_response(run, decided_trades=1)
@@ -242,6 +230,7 @@ def test_get_run_for_owner_marks_equity_curve_truncated_when_db_has_extra_point(
             )
         )
     db_session.commit()
+    db_session.expire_all()
 
     response = service.get_run_for_owner(user_id=user.id, run_id=run.id)
 
@@ -398,14 +387,15 @@ def test_compare_runs_marks_truncated_when_any_run_exceeds_trade_limit(db_sessio
     request = CompareBacktestsRequest(run_ids=[run.id for run in runs])
 
     result = service.compare_runs(user, request)
+    large_run_item = next(item for item in result.items if item.id == runs[0].id)
 
     target_assertion()
     assert result.trade_limit_per_run == 1600
     assert result.trades_truncated is True
-    assert len(result.items[0].trades) == result.trade_limit_per_run
-    assert result.items[0].summary.trade_count == 1601
-    assert result.items[0].trade_items_omitted == 1
-    assert all(len(item.trades) == 10 for item in result.items[1:])
+    assert len(large_run_item.trades) == result.trade_limit_per_run
+    assert large_run_item.summary.trade_count == 1601
+    assert large_run_item.trade_items_omitted == 1
+    assert all(len(item.trades) == 10 for item in result.items if item.id != runs[0].id)
 
 
 @pytest.mark.target_assertion
@@ -424,14 +414,16 @@ def test_compare_runs_uses_full_run_decided_trade_count(db_session, target_asser
             _create_trade(db_session, run, idx)
         run.trade_count = 10
     db_session.commit()
+    db_session.expire_all()
 
     service = BacktestService(db_session)
     request = CompareBacktestsRequest(run_ids=[run.id for run in runs])
 
     result = service.compare_runs(user, request)
+    large_run_item = next(item for item in result.items if item.id == runs[0].id)
 
     target_assertion()
-    assert result.items[0].summary.decided_trades == 800
+    assert large_run_item.summary.decided_trades == 800
 
 
 def test_compare_runs_warn_when_summary_trade_count_mismatches_persisted_trade_rows(db_session):

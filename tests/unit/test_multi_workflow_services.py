@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
-from backtestforecast.models import Base, User
+from backtestforecast.models import User
 from backtestforecast.schemas.backtests import RsiRule, StrategyType
 from backtestforecast.schemas.multi_step_backtests import (
     CreateMultiStepRunRequest,
@@ -25,7 +25,8 @@ from backtestforecast.schemas.multi_symbol_backtests import (
 )
 from backtestforecast.services.multi_step_backtests import MultiStepBacktestService
 from backtestforecast.services.multi_symbol_backtests import MultiSymbolBacktestService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 class _FakeClient:
@@ -78,11 +79,9 @@ class _FakeExecutionService:
         return None
 
 
-def _session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+@pytest.fixture()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _bars(start: date, count: int, close_start: float) -> list[DailyBar]:
@@ -99,11 +98,14 @@ def _bars(start: date, count: int, close_start: float) -> list[DailyBar]:
     ]
 
 
-def test_multi_symbol_service_executes_grouped_trades() -> None:
-    session = _session()
+def test_multi_symbol_service_executes_grouped_trades(db_session: Session) -> None:
+    session = db_session
     user = User(clerk_user_id="user_ms", email="multi@example.com")
     session.add(user)
     session.commit()
+    session.refresh(user)
+    user = session.scalar(select(User).where(User.id == user.id))
+    assert user is not None
 
     bars_by_symbol = {
         "AAA": _bars(date(2024, 1, 2), 40, 100.0),
@@ -133,6 +135,8 @@ def test_multi_symbol_service_executes_grouped_trades() -> None:
         commission_per_contract=Decimal("0.65"),
     )
     run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
     run = service.execute_run_by_id(run.id)
     assert run.status == "succeeded"
     detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
@@ -140,11 +144,12 @@ def test_multi_symbol_service_executes_grouped_trades() -> None:
     assert len(detail.trade_groups[0].trades) == 2
 
 
-def test_multi_step_service_executes_multiple_steps() -> None:
-    session = _session()
+def test_multi_step_service_executes_multiple_steps(db_session: Session) -> None:
+    session = db_session
     user = User(clerk_user_id="user_mt", email="step@example.com")
     session.add(user)
     session.commit()
+    session.refresh(user)
 
     bars_by_symbol = {"SPY": _bars(date(2024, 1, 2), 50, 100.0)}
     service = MultiStepBacktestService(session, execution_service=_FakeExecutionService(bars_by_symbol))
@@ -176,6 +181,8 @@ def test_multi_step_service_executes_multiple_steps() -> None:
         ],
     )
     run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
     run = service.execute_run_by_id(run.id)
     assert run.status == "succeeded"
     detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
@@ -183,11 +190,12 @@ def test_multi_step_service_executes_multiple_steps() -> None:
     assert any(event.step_number == 2 for event in detail.events)
 
 
-def test_multi_step_close_position_triggers_from_prior_step_execution() -> None:
-    session = _session()
+def test_multi_step_close_position_triggers_from_prior_step_execution(db_session: Session) -> None:
+    session = db_session
     user = User(clerk_user_id="user_close", email="close@example.com")
     session.add(user)
     session.commit()
+    session.refresh(user)
 
     bars_by_symbol = {"SPY": _bars(date(2024, 1, 2), 30, 100.0)}
     service = MultiStepBacktestService(session, execution_service=_FakeExecutionService(bars_by_symbol))
@@ -219,6 +227,8 @@ def test_multi_step_close_position_triggers_from_prior_step_execution() -> None:
         ],
     )
     run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
     run = service.execute_run_by_id(run.id)
     assert run.status == "succeeded"
     detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
@@ -226,11 +236,12 @@ def test_multi_step_close_position_triggers_from_prior_step_execution() -> None:
     assert detail.trades
 
 
-def test_multi_step_roll_transition_executes() -> None:
-    session = _session()
+def test_multi_step_roll_transition_executes(db_session: Session) -> None:
+    session = db_session
     user = User(clerk_user_id="user_roll", email="roll@example.com")
     session.add(user)
     session.commit()
+    session.refresh(user)
 
     bars_by_symbol = {"SPY": _bars(date(2024, 1, 2), 40, 100.0)}
     service = MultiStepBacktestService(session, execution_service=_FakeExecutionService(bars_by_symbol))
@@ -262,6 +273,8 @@ def test_multi_step_roll_transition_executes() -> None:
         ],
     )
     run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
     run = service.execute_run_by_id(run.id)
     assert run.status == "succeeded"
     detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
@@ -269,11 +282,12 @@ def test_multi_step_roll_transition_executes() -> None:
     assert len(detail.trades) >= 1
 
 
-def test_multi_step_hedge_transition_executes_overlay() -> None:
-    session = _session()
+def test_multi_step_hedge_transition_executes_overlay(db_session: Session) -> None:
+    session = db_session
     user = User(clerk_user_id="user_hedge", email="hedge@example.com")
     session.add(user)
     session.commit()
+    session.refresh(user)
 
     bars_by_symbol = {"SPY": _bars(date(2024, 1, 2), 40, 100.0)}
     service = MultiStepBacktestService(session, execution_service=_FakeExecutionService(bars_by_symbol))
@@ -305,6 +319,8 @@ def test_multi_step_hedge_transition_executes_overlay() -> None:
         ],
     )
     run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
     run = service.execute_run_by_id(run.id)
     assert run.status == "succeeded"
     detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)

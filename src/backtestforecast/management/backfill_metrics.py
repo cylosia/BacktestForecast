@@ -32,7 +32,10 @@ BATCH_SIZE = 100
 
 
 def _to_decimal(v: float | None) -> Decimal | None:
-    return to_decimal(v, allow_infinite=True)
+    value = to_decimal(v, allow_infinite=True)
+    if value is None:
+        return None
+    return value if value.is_finite() else None
 
 
 def _build_risk_free_inputs(run: BacktestRun) -> tuple[float, object | None]:

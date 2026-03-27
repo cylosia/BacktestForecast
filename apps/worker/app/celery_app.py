@@ -116,6 +116,7 @@ celery_app.conf.task_routes = {
     "analysis.deep_symbol": {"queue": "analysis"},
     "maintenance.cleanup_audit_events": {"queue": "maintenance"},
     "maintenance.cleanup_daily_recommendations": {"queue": "maintenance"},
+    "maintenance.cleanup_task_results": {"queue": "maintenance"},
     "maintenance.refresh_market_holidays": {"queue": "maintenance"},
     "maintenance.cleanup_outbox": {"queue": "maintenance"},
     "maintenance.poll_outbox": {"queue": "recovery"},
@@ -163,6 +164,10 @@ celery_app.conf.beat_schedule = {
     "cleanup-daily-recommendations-weekly": {
         "task": "maintenance.cleanup_daily_recommendations",
         "schedule": crontab(hour=2, minute=30, day_of_week=0),
+    },
+    "cleanup-task-results-daily": {
+        "task": "maintenance.cleanup_task_results",
+        "schedule": crontab(hour=4, minute=30),
     },
     "cleanup-outbox-daily": {
         "task": "maintenance.cleanup_outbox",

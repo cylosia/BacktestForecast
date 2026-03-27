@@ -48,7 +48,7 @@ class TestSecretFieldsNotLeaked:
         secret_fields = [
             "clerk_secret_key", "clerk_jwt_key",
             "stripe_secret_key", "stripe_webhook_secret",
-            "massive_api_key", "earnings_api_key",
+            "massive_api_key",
             "aws_secret_access_key",
         ]
         for field_name in secret_fields:

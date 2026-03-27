@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backtestforecast.models import AuditEvent
+from backtestforecast.models import AuditEvent, User
 from backtestforecast.services.audit import AuditService
 
 pytestmark = pytest.mark.filterwarnings("ignore::UserWarning")
@@ -23,8 +23,16 @@ def audit(db_session: Session) -> AuditService:
     return AuditService(db_session)
 
 
+def _create_user(db_session: Session) -> User:
+    user = User(clerk_user_id=f"audit-ip-{uuid4()}", email="audit-ip@test.com")
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
 def test_record_always_preserves_ip_hash(audit: AuditService, db_session: Session) -> None:
-    user_id = uuid4()
+    user_id = _create_user(db_session).id
     audit.record_always(
         event_type="export.downloaded",
         subject_type="export_job",
@@ -42,7 +50,7 @@ def test_record_always_preserves_ip_hash(audit: AuditService, db_session: Sessio
 
 
 def test_record_always_ip_hash_none_when_no_ip(audit: AuditService, db_session: Session) -> None:
-    user_id = uuid4()
+    user_id = _create_user(db_session).id
     audit.record_always(
         event_type="export.downloaded",
         subject_type="export_job",
@@ -60,7 +68,7 @@ def test_record_always_ip_hash_none_when_no_ip(audit: AuditService, db_session: 
 def test_record_always_multiple_calls_all_preserve_ip_hash(
     audit: AuditService, db_session: Session,
 ) -> None:
-    user_id = uuid4()
+    user_id = _create_user(db_session).id
     for _ in range(3):
         audit.record_always(
             event_type="export.downloaded",

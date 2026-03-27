@@ -8,13 +8,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import User
 from backtestforecast.repositories.users import UserRepository
-from tests.conftest import strip_partial_indexes_for_sqlite
 
 # ---- Mock-based tests (original) ----------------------------------------
 
@@ -53,13 +50,8 @@ class TestUserRepositoryMocked:
 
 
 @pytest.fixture
-def db_session():
-    engine = create_engine("sqlite:///:memory:")
-    strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 class TestGetByStripeCustomerId:

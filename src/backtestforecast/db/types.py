@@ -24,12 +24,12 @@ class _JsonDefault(ClauseElement):
 
 
 @compiles(_JsonDefault, "postgresql")
-def _compile_json_default_pg(element: _JsonDefault, compiler: Any, **kw: Any) -> str:
+def _compile_json_default_pg(element: _JsonDefault, *_args: Any, **_kwargs: Any) -> str:
     return f"'{element.value}'::jsonb"
 
 
 @compiles(_JsonDefault, "sqlite")
-def _compile_json_default_sqlite(element: _JsonDefault, compiler: Any, **kw: Any) -> str:
+def _compile_json_default_sqlite(element: _JsonDefault, *_args: Any, **_kwargs: Any) -> str:
     return f"'{element.value}'"
 
 

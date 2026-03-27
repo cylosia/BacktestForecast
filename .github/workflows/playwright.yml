@@ -113,7 +113,21 @@ jobs:
         run: |
           pnpm --filter @backtestforecast/web start &
           npx wait-on http://localhost:3000 --timeout 60000
-          pnpm --filter @backtestforecast/web test:e2e
+          pnpm --filter @backtestforecast/web test:e2e:smoke
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          API_BASE_URL: http://localhost:8000
+          NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
+          NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: /app/dashboard
+          NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: /app/dashboard
+          CLERK_TEST_EMAIL: ${{ secrets.CLERK_TEST_EMAIL }}
+          CLERK_TEST_PASSWORD: ${{ secrets.CLERK_TEST_PASSWORD }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_dummy' }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_dummy' }}
+
+      - name: Run authenticated full-stack Playwright subset
+        if: ${{ secrets.CLERK_TEST_EMAIL != '' && secrets.CLERK_TEST_PASSWORD != '' }}
+        run: pnpm --filter @backtestforecast/web test:e2e:fullstack
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
           API_BASE_URL: http://localhost:8000

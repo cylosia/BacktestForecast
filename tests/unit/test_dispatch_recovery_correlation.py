@@ -4,40 +4,17 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, OutboxMessage, User
 from backtestforecast.services.dispatch_recovery import DISPATCH_SLA, get_dispatch_target, get_queue_diagnostics
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_engine():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    try:
-        yield engine
-    finally:
-        Base.metadata.drop_all(engine)
-        engine.dispose()
-
-
-@pytest.fixture()
-def db_session(db_engine) -> Session:
-    factory = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
-    session = factory()
-    try:
-        yield session
-    finally:
-        session.close()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def test_queue_diagnostics_ignore_outbox_rows_for_other_task_types(db_session) -> None:

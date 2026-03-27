@@ -11,25 +11,16 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestEquityPoint, BacktestRun, BacktestTrade, User
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
-    session = factory()
-    yield session
-    session.close()
-    engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _seed_user(session) -> User:
@@ -261,6 +252,6 @@ def test_backfill_preserves_infinite_profit_factor_and_uses_rebuilt_curve_inputs
     assert captured["default_rate"] == 0.031
     assert captured["risk_free_rate"] == 0.031
     assert captured["risk_free_rate_curve"] == "curve"
-    assert run.profit_factor == Decimal("Infinity")
-    assert run.payoff_ratio == Decimal("Infinity")
-    assert run.recovery_factor == Decimal("Infinity")
+    assert run.profit_factor is None
+    assert run.payoff_ratio is None
+    assert run.recovery_factor is None

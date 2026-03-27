@@ -37,13 +37,10 @@ def _build_real_worker_env() -> dict[str, str]:
         pytest.skip("Real worker lifecycle tests require a reachable Redis broker.")
 
     worker_env = os.environ.copy()
-    worker_env.setdefault("DATABASE_URL", database_url)
-    worker_env.setdefault("REDIS_URL", redis_url)
-    worker_env.setdefault(
-        "REDIS_CACHE_URL",
-        os.environ.get("TEST_REDIS_URL") or settings.redis_cache_url or redis_url,
-    )
-    worker_env.setdefault("CELERY_RESULT_BACKEND_URL", settings.celery_result_backend_url or redis_url)
+    worker_env["DATABASE_URL"] = database_url
+    worker_env["REDIS_URL"] = redis_url
+    worker_env["REDIS_CACHE_URL"] = os.environ.get("TEST_REDIS_URL") or settings.redis_cache_url or redis_url
+    worker_env["CELERY_RESULT_BACKEND_URL"] = settings.celery_result_backend_url or redis_url
     worker_env["S3_BUCKET"] = os.environ.get("TEST_S3_BUCKET", "")
     return worker_env
 

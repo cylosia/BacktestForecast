@@ -16,6 +16,7 @@ EXPECTED_BEAT_ENTRIES = {
     "cleanup-audit-events-weekly",
     "refresh-market-holidays-weekly",
     "cleanup-daily-recommendations-weekly",
+    "cleanup-task-results-daily",
     "cleanup-outbox-daily",
     "poll-outbox",
     "drain-billing-audit-fallback",

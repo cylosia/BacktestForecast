@@ -66,30 +66,3 @@ def validate_transition(
 def is_terminal(status: str) -> bool:
     """Return True if *status* is a terminal (non-retriable) state."""
     return status in TERMINAL_STATUSES
-
-
-def safe_transition(
-    current: str,
-    target: str,
-    *,
-    context: str = "",
-    logger: object | None = None,
-) -> bool:
-    """Validate and log a status transition. Returns True if allowed.
-
-    Unlike ``validate_transition(strict=True)`` which raises, this function
-    logs a warning and returns False for invalid transitions, making it safe
-    to use in worker code where crashing is worse than skipping a write.
-    """
-    if validate_transition(current, target):
-        return True
-    msg = f"Blocked invalid status transition: {current} -> {target}"
-    if context:
-        msg += f" ({context})"
-    if logger is not None:
-        import structlog
-        if hasattr(logger, "warning"):
-            logger.warning("job_state.invalid_transition", current=current, target=target, context=context)
-        else:
-            structlog.get_logger("job_states").warning(msg)
-    return False

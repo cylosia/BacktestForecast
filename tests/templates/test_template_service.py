@@ -5,11 +5,8 @@ import uuid
 
 import pytest
 import sqlalchemy
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.errors import NotFoundError, QuotaExceededError
 from backtestforecast.models import User
 from backtestforecast.schemas.templates import (
@@ -18,28 +15,13 @@ from backtestforecast.schemas.templates import (
     UpdateTemplateRequest,
 )
 from backtestforecast.services.templates import BacktestTemplateService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-
-    @sqlalchemy.event.listens_for(engine, "connect")
-    def _register_pg_functions(dbapi_conn, connection_record):
-        if isinstance(dbapi_conn, sqlite3.Connection):
-            dbapi_conn.create_function("hashtext", 1, lambda x: hash(x))
-            dbapi_conn.create_function("pg_advisory_xact_lock", 1, lambda _: None)
-
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 @pytest.fixture()

@@ -10,25 +10,18 @@ import threading
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+import pytest
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.models import BacktestRun, User
 from backtestforecast.services.billing import BillingService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
 
-def _make_session() -> Session:
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+pytestmark = pytest.mark.postgres
 
 
-def test_revoke_uses_terminate_false():
-    session = _make_session()
+def test_revoke_uses_terminate_false(postgres_db_session: Session):
+    session = postgres_db_session
     user = User(clerk_user_id="test_user", plan_tier="pro", subscription_status="active")
     session.add(user)
     session.flush()

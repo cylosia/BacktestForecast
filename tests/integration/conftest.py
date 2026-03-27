@@ -2,11 +2,8 @@
 
 import os
 from collections.abc import Generator
-from urllib.parse import urlparse
 
 import pytest
-from alembic.command import upgrade as alembic_upgrade
-from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session, sessionmaker
@@ -19,39 +16,7 @@ from backtestforecast.db.base import Base
 from backtestforecast.db.session import get_readonly_db
 from backtestforecast.models import User
 from backtestforecast.security.rate_limits import get_rate_limiter
-
-
-def _assert_safe_test_database_url(url: str) -> str:
-    parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-    if not scheme.startswith("postgres"):
-        raise RuntimeError("TEST_DATABASE_URL must use a Postgres driver.")
-
-    database_name = parsed.path.rsplit("/", 1)[-1].lower()
-    if not database_name or database_name == "/":
-        raise RuntimeError("TEST_DATABASE_URL must include a concrete database name.")
-
-    safe_markers = (
-        "_test",
-        "-test",
-        "test_",
-        "_pytest",
-        "-pytest",
-        "pytest_",
-        "_ci",
-        "-ci",
-        "ci_",
-        "_e2e",
-        "-e2e",
-        "e2e_",
-    )
-    if not (database_name in {"test", "pytest", "ci", "e2e"} or any(marker in database_name for marker in safe_markers)):
-        raise RuntimeError(
-            "TEST_DATABASE_URL must point to an isolated test database "
-            "(database name should include one of: test, pytest, ci, e2e)."
-        )
-
-    return url
+from tests.postgres_support import apply_test_schema, assert_safe_test_database_url as _assert_safe_test_database_url
 
 
 def _resolve_database_url() -> str:
@@ -77,19 +42,10 @@ def _make_engine():
     return engine
 
 
-def _apply_test_schema(engine) -> None:
-    with engine.begin() as conn:
-        conn.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
-        conn.exec_driver_sql("CREATE SCHEMA public")
-    alembic_cfg = AlembicConfig("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
-    alembic_upgrade(alembic_cfg, "head")
-
-
 @pytest.fixture(scope="session")
 def session_factory() -> Generator[sessionmaker[Session], None, None]:
     engine = _make_engine()
-    _apply_test_schema(engine)
+    apply_test_schema(engine)
     testing_session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     with testing_session_factory() as session:
         existing_user = session.query(User).filter(User.clerk_user_id == "clerk_test_user").first()
@@ -128,7 +84,7 @@ def _reset_integration_state(session_factory: sessionmaker[Session]) -> Generato
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     if "users" not in existing_tables:
-        _apply_test_schema(engine)
+        apply_test_schema(engine)
         existing_tables = set(inspect(engine).get_table_names())
 
     with session_factory() as session:

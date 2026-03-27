@@ -13,6 +13,8 @@
     "test:watch:native": "vitest --configLoader native --pool threads",
     "test:watch": "vitest --configLoader native --pool threads",
     "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --grep-invert @fullstack",
+    "test:e2e:fullstack": "playwright test --grep @fullstack",
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {

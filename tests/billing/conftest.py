@@ -1,41 +1,16 @@
 ﻿from __future__ import annotations
 
-import os
 from collections.abc import Generator
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
-
-from backtestforecast.db.base import Base
-
-
-def _make_engine():
-    url = os.environ.get("DATABASE_URL")
-    if url:
-        return create_engine(url)
-    return create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+from tests.postgres_support import reset_database
 
 
 @pytest.fixture()
-def session_factory() -> Generator[sessionmaker[Session], None, None]:
-    engine = _make_engine()
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-    try:
-        yield factory
-    finally:
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def session_factory(postgres_session_factory: sessionmaker[Session]) -> Generator[sessionmaker[Session], None, None]:
+    reset_database(postgres_session_factory)
+    yield postgres_session_factory
 
 
 @pytest.fixture()

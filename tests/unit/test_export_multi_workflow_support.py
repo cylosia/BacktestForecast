@@ -4,11 +4,8 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.exports.storage import DatabaseStorage
 from backtestforecast.models import (
     MultiStepEquityPoint,
@@ -22,21 +19,13 @@ from backtestforecast.models import (
 )
 from backtestforecast.schemas.exports import CreateExportRequest
 from backtestforecast.services.exports import ExportService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _create_user(session) -> User:
@@ -210,6 +199,7 @@ def _create_multi_step_run(session, user: User) -> MultiStepRun:
 def test_create_export_supports_multi_symbol_runs(db_session):
     user = _create_user(db_session)
     run = _create_multi_symbol_run(db_session, user)
+    db_session.refresh(user)
     service = ExportService(db_session, storage=DatabaseStorage())
 
     response = service.create_export(
@@ -228,6 +218,7 @@ def test_create_export_supports_multi_symbol_runs(db_session):
 def test_create_export_supports_multi_step_runs(db_session):
     user = _create_user(db_session)
     run = _create_multi_step_run(db_session, user)
+    db_session.refresh(user)
     service = ExportService(db_session, storage=DatabaseStorage())
 
     response = service.create_export(

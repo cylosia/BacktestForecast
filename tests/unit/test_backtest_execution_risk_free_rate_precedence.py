@@ -5,19 +5,17 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import BacktestExecutionResult, EquityPointResult, TradeResult
-from backtestforecast.db.base import Base
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.backtests import BacktestService
-from tests.conftest import strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 class _StubMarketDataService:
@@ -70,17 +68,8 @@ class _CapturingEngine:
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 @pytest.fixture()

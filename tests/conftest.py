@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from sqlalchemy.orm import Session, sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
@@ -30,9 +31,9 @@ _load_env_file(ROOT / ".env")
 
 # Keep test bootstrap resilient when optional provider credentials are absent.
 os.environ.setdefault("MASSIVE_API_KEY", "test-massive-api-key")
-os.environ.setdefault("EARNINGS_API_KEY", "test-earnings-api-key")
 
 from backtestforecast.db.base import Base
+from tests.postgres_support import build_postgres_session_factory, reset_database
 
 _TARGET_ASSERTION_REACHED = pytest.StashKey[bool]()
 _CALL_REPORT = pytest.StashKey[pytest.TestReport]()
@@ -96,3 +97,18 @@ def pytest_runtest_teardown(item: pytest.Item) -> None:
             "This regression test passed without reaching its target assertion. "
             "Call the target_assertion fixture immediately before the business-behavior assertion it is meant to protect."
         )
+
+
+@pytest.fixture(scope="session")
+def postgres_session_factory() -> sessionmaker[Session]:
+    yield from build_postgres_session_factory()
+
+
+@pytest.fixture()
+def postgres_db_session(postgres_session_factory: sessionmaker[Session]) -> Session:
+    reset_database(postgres_session_factory)
+    session = postgres_session_factory()
+    try:
+        yield session
+    finally:
+        session.close()

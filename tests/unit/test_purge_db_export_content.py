@@ -5,24 +5,17 @@ import uuid
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from backtestforecast.db.base import Base
 from backtestforecast.management.purge_db_export_content import purge_db_export_content
 from backtestforecast.models import BacktestRun, ExportJob, User
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite:///:memory:")
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
-    session = factory()
-    yield session
-    session.close()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _make_user(session: Session) -> User:

@@ -25,7 +25,7 @@ jobs:
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
-          POSTGRES_DB: backtest_unit
+          POSTGRES_DB: backtest_unit_pytest
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready
@@ -44,7 +44,8 @@ jobs:
       PYTHONPATH: src:.
       APP_ENV: test
       LOG_JSON: false
-      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_unit
+      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_unit_pytest
+      TEST_DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_unit_pytest
       REDIS_URL: redis://localhost:6379/0
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
@@ -89,8 +90,17 @@ jobs:
       - name: Run Alembic migrations (for unit tests needing Postgres)
         run: alembic upgrade head
 
-      - name: Run Python tests
-        run: pytest -q -m "not integration" --ignore=tests/integration --cov=src --cov-report=term --cov-fail-under=80
+      - name: Run fast Python tests with coverage
+        env:
+          COVERAGE_FILE: .coverage.unit
+        run: >
+          pytest -q
+          -m "not integration and not postgres and not live_provider and not load"
+          --ignore=tests/integration
+          --cov=src
+          --cov-report=term
+          --cov-report=xml:coverage-unit.xml
+          --cov-fail-under=0
 
       - name: Guard critical regression tests reach target assertions
         run: pytest -q -m target_assertion
@@ -123,6 +133,14 @@ jobs:
 
       - name: Python compile smoke check
         run: python -m compileall src apps tests scripts
+
+      - name: Upload fast Python coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: |
+            .coverage.unit
+            coverage-unit.xml
 
 
       - name: Load-test contract checks
@@ -216,15 +234,15 @@ jobs:
       PYTHONPATH: src:.
       APP_ENV: test
       LOG_JSON: false
-      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
-      TEST_DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
+      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test_pytest
+      TEST_DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test_pytest
     services:
       postgres:
         image: postgres:16-alpine
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
-          POSTGRES_DB: backtest_test
+          POSTGRES_DB: backtest_test_pytest
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready
@@ -271,19 +289,87 @@ jobs:
           print(f'OK: DB and head both at {head}')
           "
 
-      - name: Run integration tests against Postgres
-        run: pytest tests/integration/ -q
+      - name: Run integration tests against Postgres with coverage
+        env:
+          COVERAGE_FILE: .coverage.postgres
+        run: >
+          pytest tests/integration/ -q
+          --cov=src
+          --cov-report=
+          --cov-fail-under=0
+
+      - name: Run Postgres-marked tests with coverage
+        env:
+          COVERAGE_FILE: .coverage.postgres
+        run: >
+          pytest -q -m postgres --ignore=tests/integration
+          --cov=src
+          --cov-append
+          --cov-report=term
+          --cov-report=xml:coverage-postgres.xml
+          --cov-fail-under=0
 
       - name: Run billing/audit/backtest tests against Postgres
         run: pytest tests/billing/ tests/audit/ tests/backtests/ -q --ignore=tests/backtests/conftest.py
         env:
-          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test
+          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test_pytest
+          TEST_DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/backtest_test_pytest
 
       - name: Check duplicate updated_at triggers
         run: python scripts/check_duplicate_triggers.py
 
       - name: Worker task registration smoke check
         run: python scripts/check_worker_tasks.py
+
+      - name: Upload Postgres coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-postgres
+          path: |
+            .coverage.postgres
+            coverage-postgres.xml
+
+  python-coverage:
+    runs-on: ubuntu-latest
+    needs: [backend-and-web, postgres-integration]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install coverage tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install coverage[toml]
+
+      - name: Download fast coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage-artifacts/unit
+
+      - name: Download Postgres coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-postgres
+          path: coverage-artifacts/postgres
+
+      - name: Combine Python coverage and enforce threshold
+        run: |
+          coverage combine coverage-artifacts/unit/.coverage.unit coverage-artifacts/postgres/.coverage.postgres
+          coverage report --fail-under=80
+          coverage xml -o coverage-combined.xml
+
+      - name: Upload combined coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-combined
+          path: coverage-combined.xml
 
   real-worker-lifecycle:
     runs-on: ubuntu-latest
@@ -456,7 +542,6 @@ jobs:
   e2e-tests:
     # E2E tests run by default. To disable, set DISABLE_E2E_TESTS=true
     # as a repository variable in GitHub > Settings > Variables > Actions.
-    # Requires CLERK_TESTING_TOKEN repository secret for Clerk-authenticated E2E flows.
     if: ${{ vars.DISABLE_E2E_TESTS != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -489,20 +574,12 @@ jobs:
       CLERK_TESTING_TOKEN: ${{ secrets.CLERK_TESTING_TOKEN }}
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
-      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_dummy' }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_dummy' }}
       NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
       NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: /app/dashboard
       NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: /app/dashboard
     steps:
-      - name: Verify Clerk secrets are configured
-        run: |
-          if [ -z "$CLERK_SECRET_KEY" ] || [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then
-            echo "::error::E2E tests require CLERK_SECRET_KEY and NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY secrets. Configure them in repository settings."
-            exit 1
-          fi
-        shell: bash
-
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
@@ -540,7 +617,7 @@ jobs:
       - name: Run database migrations
         run: alembic upgrade head
 
-      - name: Start API and web servers, run E2E tests
+      - name: Start API and web servers, run Playwright smoke
         env:
           PYTHONPATH: src:.
           APP_ENV: test
@@ -549,10 +626,17 @@ jobs:
           npx wait-on http://localhost:8000/health/live --timeout 60000
           pnpm --filter @backtestforecast/web start &
           npx wait-on http://localhost:3000 --timeout 60000
-          pnpm --filter @backtestforecast/web test:e2e
+          pnpm --filter @backtestforecast/web test:e2e:smoke
+
+      - name: Run authenticated full-stack Playwright subset
+        if: ${{ secrets.CLERK_SECRET_KEY != '' && secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY != '' && secrets.CLERK_TESTING_TOKEN != '' }}
+        env:
+          PYTHONPATH: src:.
+          APP_ENV: test
+        run: pnpm --filter @backtestforecast/web test:e2e:fullstack
 
       - name: Upload Playwright report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: playwright-report-ci

@@ -222,16 +222,6 @@ class OptionDataRedisCache:
         except Exception:
             logger.debug("redis_cache.set_quote_failed", ticker=option_ticker, exc_info=True)
 
-    def get_cache_age_seconds(self, key: str) -> int | None:
-        """Return the age of a cached entry in seconds, or None if no timestamp found."""
-        try:
-            ts_raw = self._conn().get(f"{key}:ts")
-            if ts_raw is None:
-                return None
-            return int(time.time()) - int(ts_raw)
-        except Exception:
-            return None
-
     def _symbol_meta_key(self, symbol: str) -> str:
         return f"{_KEY_PREFIX}:meta:{symbol}"
 

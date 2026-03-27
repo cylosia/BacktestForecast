@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -11,7 +9,7 @@ from backtestforecast.config import Settings, get_settings
 from backtestforecast.db.session import get_db
 from backtestforecast.errors import AppValidationError, FeatureLockedError
 from backtestforecast.models import User
-from backtestforecast.schemas.backtests import StrategyType
+from backtestforecast.schemas.backtests import SYMBOL_ALLOWED_CHARS, StrategyType
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
 from backtestforecast.security import get_rate_limiter
 from backtestforecast.services.scans import ScanService
@@ -22,8 +20,6 @@ router = APIRouter(prefix="/forecasts", tags=["forecasts"])
 def _require_forecasts_enabled(settings: Settings = Depends(get_settings)) -> None:
     if not settings.feature_forecasts_enabled:
         raise FeatureLockedError("Forecasts are temporarily disabled.", required_tier="free")
-
-_TICKER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9./^-]{0,15}$")
 
 
 @router.get("/{ticker}", response_model=ForecastEnvelopeResponse)
@@ -36,8 +32,9 @@ def get_forecast(
     horizon_days: int = Query(default=20, ge=5, le=90),
     settings: Settings = Depends(get_settings),
 ) -> ForecastEnvelopeResponse:
-    if not _TICKER_RE.match(ticker):
-        raise AppValidationError("Ticker must be 1-16 alphanumeric characters (letters, digits, ., /, ^).")
+    symbol = ticker.strip().upper()
+    if not SYMBOL_ALLOWED_CHARS.match(symbol):
+        raise AppValidationError("Ticker must be 1-16 characters starting with A-Z or ^ and may include digits, ., /, or -.")
     get_rate_limiter().check(
         bucket="forecasts:get",
         actor_key=str(user.id),
@@ -45,7 +42,6 @@ def get_forecast(
         window_seconds=settings.rate_limit_window_seconds,
     )
     ensure_forecasting_access(user.plan_tier, user.subscription_status, user.subscription_current_period_end)
-    symbol = ticker.upper()
     with ScanService(db) as service:
         return service.build_forecast(
             user=user,

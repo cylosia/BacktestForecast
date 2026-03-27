@@ -1,7 +1,6 @@
 ﻿"""Unit tests for Celery worker tasks."""
 from __future__ import annotations
 
-import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -9,19 +8,16 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from backtestforecast.db.base import Base
 from backtestforecast.errors import AppError
 from backtestforecast.models import (
     BacktestRun,
     User,
 )
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
+from tests.postgres_support import reset_database
 
-_sqlite_warning_logged = False
+pytestmark = pytest.mark.postgres
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -29,37 +25,9 @@ _sqlite_warning_logged = False
 
 
 @pytest.fixture()
-def db_engine():
-    """SQLite in-memory engine for unit-level isolation.
-
-    NOTE: SQLite silently ignores Postgres-specific features (skip_locked,
-    FOR UPDATE, partial indexes, check constraints with function calls).
-    For full coverage run these tests against Postgres in CI using the
-    ``postgres-integration`` job configuration.
-    """
-    global _sqlite_warning_logged
-    if not _sqlite_warning_logged:
-        logging.getLogger("tests.worker.sqlite").warning(
-            "Worker tests use SQLite which silently ignores Postgres-specific features like skip_locked and FOR UPDATE. Run with DATABASE_URL pointing to Postgres for full coverage.",
-        )
-        _sqlite_warning_logged = True
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    try:
-        yield engine
-    finally:
-        Base.metadata.drop_all(engine)
-        engine.dispose()
-
-
-@pytest.fixture()
-def db_session_factory(db_engine):
-    return sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
+def db_session_factory(postgres_session_factory: sessionmaker[Session]):
+    reset_database(postgres_session_factory)
+    return postgres_session_factory
 
 
 @pytest.fixture()

@@ -5,12 +5,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 from backtestforecast.billing.entitlements import ExportFormat
-from backtestforecast.db.base import Base
 from backtestforecast.models import (
     BacktestEquityPoint,
     BacktestRun,
@@ -24,9 +21,11 @@ from backtestforecast.services.backtests import BacktestService
 from backtestforecast.services.exports import ExportService
 from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
-from tests.conftest import strip_partial_indexes_for_sqlite as _strip_partial_indexes_for_sqlite
 
-pytestmark = pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+pytestmark = [
+    pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning"),
+    pytest.mark.postgres,
+]
 
 
 @pytest.fixture(autouse=True)
@@ -43,17 +42,8 @@ def _close_leaked_event_loop() -> None:
 
 
 @pytest.fixture()
-def db_session() -> Session:
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    _strip_partial_indexes_for_sqlite(engine)
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def db_session(postgres_db_session: Session) -> Session:
+    return postgres_db_session
 
 
 def _create_user(session: Session) -> User:

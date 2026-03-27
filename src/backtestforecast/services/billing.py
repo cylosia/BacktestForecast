@@ -81,7 +81,7 @@ class BillingService:
     def __enter__(self) -> BillingService:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, _tb) -> bool:
         if exc_type is not None:
             try:
                 self.session.rollback()

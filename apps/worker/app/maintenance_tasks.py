@@ -15,6 +15,7 @@ from apps.worker.app.tasks import (  # noqa: F401
     cleanup_audit_events,
     cleanup_daily_recommendations,
     cleanup_outbox,
+    cleanup_task_results,
     cleanup_stripe_orphan,
     expire_old_exports,
     ping,
