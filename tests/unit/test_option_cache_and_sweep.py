@@ -276,6 +276,36 @@ class TestGatewayThreeTierLookup:
         assert len(results) == 2
         assert gw.client.list_option_contracts.call_count == 1
 
+    def test_preferred_expiration_queries_exact_dates_in_priority_order(self):
+        gw = self._make_gateway(redis_cache=None)
+        target_contracts = [
+            OptionContractRecord("O:API", "call", date(2025, 4, 7), 250.0, 100.0),
+        ]
+
+        def fetch_exact(**kwargs):
+            if kwargs["expiration_date"] == date(2025, 4, 8):
+                return []
+            if kwargs["expiration_date"] == date(2025, 4, 9):
+                return []
+            if kwargs["expiration_date"] == date(2025, 4, 7):
+                return target_contracts
+            raise AssertionError(f"unexpected expiration probe {kwargs['expiration_date']}")
+
+        gw.client.list_option_contracts_for_expiration.side_effect = fetch_exact
+
+        result = gw.list_contracts_for_preferred_expiration(
+            entry_date=date(2025, 4, 1),
+            contract_type="call",
+            target_dte=7,
+            dte_tolerance_days=2,
+        )
+
+        assert result == target_contracts
+        assert [
+            call.kwargs["expiration_date"]
+            for call in gw.client.list_option_contracts_for_expiration.call_args_list
+        ] == [date(2025, 4, 8), date(2025, 4, 9), date(2025, 4, 7)]
+
     def test_concurrent_get_quote_coalesces_provider_calls(self):
         gw = self._make_gateway(redis_cache=None)
         quote = OptionQuoteRecord(date(2025, 3, 14), 3.0, 3.2, None)

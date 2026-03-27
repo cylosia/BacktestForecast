@@ -525,6 +525,37 @@ class MassiveClient(_MassiveClientCore):
         )
         return self.parse_contracts(rows)
 
+    def list_option_contracts_for_expiration(
+        self,
+        symbol: str,
+        as_of_date: date,
+        contract_type: str,
+        expiration_date: date,
+        *,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[OptionContractRecord]:
+        narrowed = strike_price_gte is not None or strike_price_lte is not None
+        params: dict[str, Any] = {
+            "underlying_ticker": symbol,
+            "contract_type": contract_type,
+            "as_of": as_of_date.isoformat(),
+            "expired": "false",
+            "expiration_date": expiration_date.isoformat(),
+            "sort": "strike_price",
+            "order": "asc",
+            "limit": 250 if narrowed else 1000,
+        }
+        if strike_price_gte is not None:
+            params["strike_price.gte"] = strike_price_gte
+        if strike_price_lte is not None:
+            params["strike_price.lte"] = strike_price_lte
+        rows = self._get_paginated_json(
+            "/v3/reference/options/contracts",
+            params=params,
+        )
+        return self.parse_contracts(rows)
+
     def get_option_quote_for_date(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         payload = self._get_json(
             f"/v3/quotes/{quote(option_ticker, safe='')}",
@@ -789,6 +820,37 @@ class AsyncMassiveClient(_MassiveClientCore):
                 "order": "asc",
                 "limit": 1000,
             },
+        )
+        return self.parse_contracts(rows)
+
+    async def list_option_contracts_for_expiration(
+        self,
+        symbol: str,
+        as_of_date: date,
+        contract_type: str,
+        expiration_date: date,
+        *,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[OptionContractRecord]:
+        narrowed = strike_price_gte is not None or strike_price_lte is not None
+        params: dict[str, Any] = {
+            "underlying_ticker": symbol,
+            "contract_type": contract_type,
+            "as_of": as_of_date.isoformat(),
+            "expired": "false",
+            "expiration_date": expiration_date.isoformat(),
+            "sort": "strike_price",
+            "order": "asc",
+            "limit": 250 if narrowed else 1000,
+        }
+        if strike_price_gte is not None:
+            params["strike_price.gte"] = strike_price_gte
+        if strike_price_lte is not None:
+            params["strike_price.lte"] = strike_price_lte
+        rows = await self._get_paginated_json(
+            "/v3/reference/options/contracts",
+            params=params,
         )
         return self.parse_contracts(rows)
 

@@ -26,6 +26,29 @@ class LongOptionStrategy(StrategyDefinition):
     contract_type: str = "call"
     margin_warning_message: str | None = None
 
+    @staticmethod
+    def _preferred_strike_band(
+        underlying_close: float,
+        strike_override: object | None,
+    ) -> tuple[float, float] | None:
+        if strike_override is None:
+            buffer = max(25.0, underlying_close * 0.15)
+            return (max(0.5, underlying_close - buffer), underlying_close + buffer)
+
+        mode = getattr(strike_override, "mode", None)
+        value = float(getattr(strike_override, "value", 0) or 0)
+        mode_value = getattr(mode, "value", mode)
+
+        if mode_value == "nearest_otm":
+            buffer = max(25.0, underlying_close * 0.15)
+            return (max(0.5, underlying_close - buffer), underlying_close + buffer)
+
+        if mode_value == "atm_offset_steps" and value <= 5:
+            buffer = max(30.0, underlying_close * 0.15 + value * 10.0)
+            return (max(0.5, underlying_close - buffer), underlying_close + buffer)
+
+        return None
+
     def build_position(
         self,
         config: BacktestConfig,
@@ -34,19 +57,31 @@ class LongOptionStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        all_contracts = option_gateway.list_contracts(
-            entry_date=bar.trade_date,
-            contract_type=self.contract_type,
-            target_dte=config.target_dte,
-            dte_tolerance_days=config.dte_tolerance_days,
-        )
-        primary_expiration = choose_primary_expiration(all_contracts, bar.trade_date, config.target_dte)
-        exp_contracts = contracts_for_expiration(all_contracts, primary_expiration)
-        dte = (primary_expiration - bar.trade_date).days
-
         strike_override = (
             overrides.long_call_strike if self.contract_type == "call" else overrides.long_put_strike
         )
+        strike_band = self._preferred_strike_band(bar.close_price, strike_override)
+        exact_expiration_fetch = getattr(option_gateway, "list_contracts_for_preferred_expiration", None)
+        if callable(exact_expiration_fetch):
+            exp_contracts = exact_expiration_fetch(
+                entry_date=bar.trade_date,
+                contract_type=self.contract_type,
+                target_dte=config.target_dte,
+                dte_tolerance_days=config.dte_tolerance_days,
+                strike_price_gte=strike_band[0] if strike_band is not None else None,
+                strike_price_lte=strike_band[1] if strike_band is not None else None,
+            )
+            primary_expiration = exp_contracts[0].expiration_date
+        else:
+            all_contracts = option_gateway.list_contracts(
+                entry_date=bar.trade_date,
+                contract_type=self.contract_type,
+                target_dte=config.target_dte,
+                dte_tolerance_days=config.dte_tolerance_days,
+            )
+            primary_expiration = choose_primary_expiration(all_contracts, bar.trade_date, config.target_dte)
+            exp_contracts = contracts_for_expiration(all_contracts, primary_expiration)
+        dte = (primary_expiration - bar.trade_date).days
         strike = resolve_strike(
             [c.strike_price for c in exp_contracts],
             bar.close_price,

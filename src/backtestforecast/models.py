@@ -1090,6 +1090,68 @@ class StripeEvent(Base):
     user: Mapped[User | None] = relationship(back_populates="stripe_events", lazy="raise")
 
 
+class OptionContractCatalogSnapshot(Base):
+    __tablename__ = "option_contract_catalog_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol",
+            "as_of_date",
+            "contract_type",
+            "expiration_date",
+            "strike_price_gte",
+            "strike_price_lte",
+            name="uq_option_contract_catalog_snapshots_query",
+        ),
+        Index(
+            "ix_option_contract_catalog_snapshots_lookup",
+            "symbol",
+            "as_of_date",
+            "contract_type",
+            "expiration_date",
+        ),
+        CheckConstraint("length(symbol) > 0", name="ck_option_contract_catalog_snapshots_symbol_not_empty"),
+        CheckConstraint(
+            "contract_type IN ('call', 'put')",
+            name="ck_option_contract_catalog_snapshots_contract_type",
+        ),
+        CheckConstraint(
+            "strike_price_gte IS NULL OR strike_price_gte >= 0",
+            name="ck_option_contract_catalog_snapshots_strike_gte_nonneg",
+        ),
+        CheckConstraint(
+            "strike_price_lte IS NULL OR strike_price_lte >= 0",
+            name="ck_option_contract_catalog_snapshots_strike_lte_nonneg",
+        ),
+        CheckConstraint(
+            "strike_price_gte IS NULL OR strike_price_lte IS NULL OR strike_price_gte <= strike_price_lte",
+            name="ck_option_contract_catalog_snapshots_strike_bounds",
+        ),
+        CheckConstraint(
+            "contract_count >= 0",
+            name="ck_option_contract_catalog_snapshots_contract_count_nonneg",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    contract_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
+    strike_price_gte: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    strike_price_lte: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    contracts_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON_VARIANT,
+        nullable=False,
+        default=list,
+        server_default=JSON_DEFAULT_EMPTY_ARRAY,
+    )
+    contract_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class SymbolAnalysis(Base):
     __tablename__ = "symbol_analyses"
     __table_args__ = (

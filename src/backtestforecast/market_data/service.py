@@ -12,7 +12,10 @@ from typing import TYPE_CHECKING
 import structlog
 
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError
+from backtestforecast.backtests.strategies.common import preferred_expiration_dates
+from backtestforecast.db.session import create_readonly_session, create_session
 from backtestforecast.integrations.massive_client import MassiveClient
+from backtestforecast.market_data.contract_catalog import OptionContractCatalogStore
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
 from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
 from backtestforecast.schemas.backtests import (
@@ -63,11 +66,17 @@ class MassiveOptionGateway:
         client: MassiveClient,
         symbol: str,
         redis_cache: OptionDataRedisCache | None = None,
+        contract_catalog: OptionContractCatalogStore | None = None,
     ) -> None:
         self.client = client
         self.symbol = symbol
         self._redis_cache = redis_cache
+        self._contract_catalog = contract_catalog
         self._contract_cache: OrderedDict[tuple[date, str, int, int], list[OptionContractRecord]] = OrderedDict()
+        self._exact_contract_cache: OrderedDict[
+            tuple[date, str, date, float | None, float | None],
+            list[OptionContractRecord],
+        ] = OrderedDict()
         self._quote_cache: OrderedDict[tuple[str, date], OptionQuoteRecord | None] = OrderedDict()
         self._snapshot_cache: OrderedDict[str, OptionSnapshotRecord | None] = OrderedDict()
         self._iv_cache: OrderedDict[tuple[str, date], float | None] = OrderedDict()
@@ -100,11 +109,13 @@ class MassiveOptionGateway:
         """Release all in-memory cache entries for this gateway."""
         with self._lock:
             contract_items = sum(max(len(v), 1) for v in self._contract_cache.values())
+            exact_contract_items = sum(max(len(v), 1) for v in self._exact_contract_cache.values())
             total = (
-                contract_items + len(self._quote_cache)
+                contract_items + exact_contract_items + len(self._quote_cache)
                 + len(self._snapshot_cache) + len(self._iv_cache)
             )
             self._contract_cache.clear()
+            self._exact_contract_cache.clear()
             self._quote_cache.clear()
             self._snapshot_cache.clear()
             self._iv_cache.clear()
@@ -218,6 +229,107 @@ class MassiveOptionGateway:
                 self._contracts_inflight.pop(cache_key, None)
                 inflight_event.set()
 
+    def list_contracts_for_preferred_expiration(
+        self,
+        entry_date: date,
+        contract_type: str,
+        target_dte: int,
+        dte_tolerance_days: int,
+        *,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[OptionContractRecord]:
+        for expiration_date in preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days):
+            contracts = self._list_contracts_for_exact_expiration(
+                entry_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_price_gte=strike_price_gte,
+                strike_price_lte=strike_price_lte,
+            )
+            if contracts:
+                return contracts
+        raise DataUnavailableError("No eligible option expirations were available.")
+
+    def _list_contracts_for_exact_expiration(
+        self,
+        *,
+        entry_date: date,
+        contract_type: str,
+        expiration_date: date,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[OptionContractRecord]:
+        strike_floor = round(strike_price_gte, 4) if strike_price_gte is not None else None
+        strike_ceiling = round(strike_price_lte, 4) if strike_price_lte is not None else None
+        cache_key = (entry_date, contract_type, expiration_date, strike_floor, strike_ceiling)
+        with self._lock:
+            contracts = self._exact_contract_cache.get(cache_key)
+            if contracts is not None:
+                self._exact_contract_cache.move_to_end(cache_key)
+                return contracts
+
+        use_redis = self._redis_cache is not None and strike_floor is None and strike_ceiling is None
+        if self._contract_catalog is not None:
+            cached = self._contract_catalog.get_contracts(
+                symbol=self.symbol,
+                as_of_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_price_gte=strike_floor,
+                strike_price_lte=strike_ceiling,
+            )
+            if cached is not None:
+                self._store_exact_contracts_in_memory(cache_key, cached)
+                return cached
+        if use_redis:
+            cached = self._redis_cache.get_contracts(
+                self.symbol, entry_date, contract_type, expiration_date, expiration_date,
+            )
+            if cached is not None:
+                MARKET_DATA_CACHE_HITS.labels(cache_type="contracts").inc()
+                contracts = [c for c in cached if c.shares_per_contract == 100]
+                self._store_exact_contracts_in_memory(cache_key, contracts)
+                return contracts
+            MARKET_DATA_CACHE_MISSES.labels(cache_type="contracts").inc()
+
+        contracts = self.client.list_option_contracts_for_expiration(
+            symbol=self.symbol,
+            as_of_date=entry_date,
+            contract_type=contract_type,
+            expiration_date=expiration_date,
+            strike_price_gte=strike_floor,
+            strike_price_lte=strike_ceiling,
+        )
+        contracts = [contract for contract in contracts if contract.shares_per_contract == 100]
+
+        if self._contract_catalog is not None:
+            self._contract_catalog.upsert_contracts(
+                symbol=self.symbol,
+                as_of_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_price_gte=strike_floor,
+                strike_price_lte=strike_ceiling,
+                contracts=contracts,
+            )
+
+        if use_redis:
+            from backtestforecast.market_data.redis_cache import _NEGATIVE_CACHE_TTL_SECONDS
+
+            self._redis_cache.set_contracts(
+                self.symbol,
+                entry_date,
+                contract_type,
+                expiration_date,
+                expiration_date,
+                contracts,
+                ttl_seconds=_NEGATIVE_CACHE_TTL_SECONDS if not contracts else None,
+            )
+
+        self._store_exact_contracts_in_memory(cache_key, contracts)
+        return contracts
+
     def _store_contracts_in_memory(
         self,
         cache_key: tuple[date, str, int, int],
@@ -232,6 +344,22 @@ class MassiveOptionGateway:
                     evicted_items += max(len(evicted_list), 1)
                 self._track_remove(evicted_items)
             self._contract_cache[cache_key] = contracts
+            self._track_add(item_count)
+
+    def _store_exact_contracts_in_memory(
+        self,
+        cache_key: tuple[date, str, date, float | None, float | None],
+        contracts: list[OptionContractRecord],
+    ) -> None:
+        item_count = max(len(contracts), 1)
+        with self._lock:
+            if len(self._exact_contract_cache) >= _GATEWAY_CONTRACT_CACHE_MAX or self._is_over_budget():
+                evicted_items = 0
+                for _ in range(max(1, len(self._exact_contract_cache) // 4)):
+                    _, evicted_list = self._exact_contract_cache.popitem(last=False)
+                    evicted_items += max(len(evicted_list), 1)
+                self._track_remove(evicted_items)
+            self._exact_contract_cache[cache_key] = contracts
             self._track_add(item_count)
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
@@ -397,6 +525,7 @@ class MarketDataService:
         self._bars_inflight: dict[tuple[str, date, date], threading.Event] = {}
         self._bars_errors: dict[tuple[str, date, date], tuple[Exception, float]] = {}
         self._redis_cache: OptionDataRedisCache | None = self._build_redis_cache()
+        self._contract_catalog: OptionContractCatalogStore | None = self._build_contract_catalog()
 
     def close(self) -> None:
         """Release Redis cache resources."""
@@ -419,6 +548,17 @@ class MarketDataService:
             return OptionDataRedisCache(redis_url, ttl_seconds=settings.option_cache_ttl_seconds)
         except Exception:
             logger.warning("market_data.redis_cache_init_failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def _build_contract_catalog() -> OptionContractCatalogStore | None:
+        try:
+            return OptionContractCatalogStore(
+                session_factory=create_session,
+                readonly_session_factory=create_readonly_session,
+            )
+        except Exception:
+            logger.warning("market_data.contract_catalog_init_failed", exc_info=True)
             return None
 
     def _fetch_bars_coalesced(self, symbol: str, start: date, end: date) -> list[DailyBar]:
@@ -527,7 +667,10 @@ class MarketDataService:
             end_date=bars[-1].trade_date,
         )
         option_gateway = MassiveOptionGateway(
-            self.client, request.symbol, redis_cache=self._redis_cache,
+            self.client,
+            request.symbol,
+            redis_cache=self._redis_cache,
+            contract_catalog=self._contract_catalog,
         )
         option_gateway.set_ex_dividend_dates(ex_dividend_dates)
 

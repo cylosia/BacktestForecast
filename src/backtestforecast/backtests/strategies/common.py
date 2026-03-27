@@ -4,7 +4,7 @@ import bisect
 import math
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import structlog
@@ -42,6 +42,25 @@ def choose_primary_expiration(
         raise DataUnavailableError("No eligible option expirations were available.")
     return min(
         expirations,
+        key=lambda expiration: (
+            abs((expiration - entry_date).days - target_dte),
+            0 if (expiration - entry_date).days >= target_dte else 1,
+            (expiration - entry_date).days,
+        ),
+    )
+
+
+def preferred_expiration_dates(
+    entry_date: date,
+    target_dte: int,
+    dte_tolerance_days: int,
+) -> list[date]:
+    """Return exact expiration dates ordered by choose_primary_expiration priority."""
+    lower = max(1, target_dte - dte_tolerance_days)
+    upper = target_dte + dte_tolerance_days
+    offsets = range(lower, upper + 1)
+    return sorted(
+        (entry_date + timedelta(days=offset) for offset in offsets),
         key=lambda expiration: (
             abs((expiration - entry_date).days - target_dte),
             0 if (expiration - entry_date).days >= target_dte else 1,
