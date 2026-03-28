@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 
 from apps.api.app.main import app
+import backtestforecast.db.session as db_session
 from backtestforecast.config import get_settings, invalidate_settings
 
 
@@ -33,6 +34,12 @@ def test_runtime_config_invalidation_updates_health_version_visibility(monkeypat
     original_feature_billing_enabled = settings.feature_billing_enabled
     original_rate_limit_fail_closed = settings.rate_limit_fail_closed
     try:
+        monkeypatch.setattr(db_session, "get_missing_schema_tables", lambda: ())
+        monkeypatch.setattr(
+            db_session,
+            "get_database_timezones",
+            lambda: {"session_timezone": "UTC", "server_timezone": "UTC"},
+        )
         monkeypatch.setenv("APP_ENV", "development")
         invalidate_settings()
         with TestClient(app, base_url="http://localhost") as client:

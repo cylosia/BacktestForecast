@@ -7,7 +7,9 @@ from decimal import Decimal
 from typing import Callable
 
 import structlog
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
@@ -80,14 +82,27 @@ class HistoricalMarketDataStore:
             for row in rows
         ]
 
+    def _get_underlying_trade_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        with self._session(readonly=True) as session:
+            rows = list(
+                session.scalars(
+                    select(HistoricalUnderlyingDayBar.trade_date)
+                    .where(
+                        HistoricalUnderlyingDayBar.symbol == symbol,
+                        HistoricalUnderlyingDayBar.trade_date >= start_date,
+                        HistoricalUnderlyingDayBar.trade_date <= end_date,
+                    )
+                )
+            )
+        return set(rows)
+
     def has_underlying_coverage(self, symbol: str, start_date: date, end_date: date) -> bool:
-        bars = self.get_underlying_day_bars(symbol, start_date, end_date)
-        if not bars:
+        trade_dates = self._get_underlying_trade_dates(symbol, start_date, end_date)
+        if not trade_dates:
             return False
-        by_date = {bar.trade_date for bar in bars}
         current = start_date
         while current <= end_date:
-            if is_trading_day(current) and current not in by_date:
+            if is_trading_day(current) and current not in trade_dates:
                 return False
             current = current.fromordinal(current.toordinal() + 1)
         return True
@@ -238,21 +253,40 @@ class HistoricalMarketDataStore:
     def upsert_treasury_yields(self, rows: list[HistoricalTreasuryYield]) -> int:
         return self._bulk_upsert(rows, HistoricalTreasuryYield, ("trade_date",))
 
+    def upsert_underlying_day_bar_payloads(self, rows: list[dict[str, object]]) -> int:
+        return self._bulk_upsert_payloads(rows, HistoricalUnderlyingDayBar, ("symbol", "trade_date"))
+
+    def upsert_option_day_bar_payloads(self, rows: list[dict[str, object]]) -> int:
+        return self._bulk_upsert_payloads(rows, HistoricalOptionDayBar, ("option_ticker", "trade_date"))
+
+    def upsert_ex_dividend_payloads(self, rows: list[dict[str, object]]) -> int:
+        return self._bulk_upsert_payloads(rows, HistoricalExDividendDate, ("symbol", "ex_dividend_date"))
+
+    def upsert_treasury_yield_payloads(self, rows: list[dict[str, object]]) -> int:
+        return self._bulk_upsert_payloads(rows, HistoricalTreasuryYield, ("trade_date",))
+
     def _bulk_upsert(self, rows: list[object], model: type[object], key_fields: tuple[str, ...]) -> int:
         if not rows:
             return 0
+        payloads = [self._normalize_payload(self._row_payload(row, model), model) for row in rows]
+        return self._bulk_upsert_payloads(payloads, model, key_fields)
+
+    def _bulk_upsert_payloads(
+        self,
+        rows: list[dict[str, object]],
+        model: type[object],
+        key_fields: tuple[str, ...],
+    ) -> int:
+        if not rows:
+            return 0
+        rows = [self._normalize_payload(row, model) for row in rows]
         session = self._session(readonly=False)
         try:
-            for row in rows:
-                filters = [getattr(model, field) == getattr(row, field) for field in key_fields]
-                existing = session.scalar(select(model).where(*filters))
-                if existing is None:
-                    session.add(row)
-                    continue
-                for field, value in row.__dict__.items():
-                    if field.startswith("_") or field == "id":
-                        continue
-                    setattr(existing, field, value)
+            bind = session.get_bind()
+            if bind is not None and bind.dialect.name == "postgresql":
+                self._bulk_upsert_postgres(session, rows, model, key_fields)
+            else:
+                self._bulk_upsert_fallback(session, rows, model, key_fields)
             session.commit()
             return len(rows)
         except Exception:
@@ -263,3 +297,80 @@ class HistoricalMarketDataStore:
         finally:
             with suppress(Exception):
                 session.close()
+
+    def _bulk_upsert_postgres(
+        self,
+        session: Session,
+        rows: list[dict[str, object]],
+        model: type[object],
+        key_fields: tuple[str, ...],
+    ) -> None:
+        table = model.__table__
+        stmt = pg_insert(table).values(rows)
+        update_columns = {
+            column.name: stmt.excluded[column.name]
+            for column in table.columns
+            if column.name not in {"id", *key_fields}
+        }
+        session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[getattr(table.c, field) for field in key_fields],
+                set_=update_columns,
+            )
+        )
+
+    def _bulk_upsert_fallback(
+        self,
+        session: Session,
+        rows: list[dict[str, object]],
+        model: type[object],
+        key_fields: tuple[str, ...],
+    ) -> None:
+        for payload in rows:
+            filters = [getattr(model, field) == payload[field] for field in key_fields]
+            existing = session.scalar(select(model).where(*filters))
+            if existing is None:
+                session.add(model(**payload))
+                continue
+            for field, value in payload.items():
+                if field == "id":
+                    continue
+                setattr(existing, field, value)
+
+    @staticmethod
+    def _row_payload(row: object, model: type[object]) -> dict[str, object]:
+        mapper = sa_inspect(model)
+        return {
+            attr.key: getattr(row, attr.key)
+            for attr in mapper.column_attrs
+        }
+
+    @staticmethod
+    def _normalize_payload(payload: dict[str, object], model: type[object]) -> dict[str, object]:
+        mapper = sa_inspect(model)
+        normalized: dict[str, object] = {}
+        for column in mapper.columns:
+            key = column.key
+            value = payload.get(key)
+            if value is not None:
+                normalized[key] = value
+                continue
+            if column.default is not None:
+                default_value = HistoricalMarketDataStore._resolve_column_default(column.default.arg)
+                if default_value is not None:
+                    normalized[key] = default_value
+                    continue
+            if column.server_default is not None:
+                continue
+            if key in payload:
+                normalized[key] = value
+        return normalized
+
+    @staticmethod
+    def _resolve_column_default(default_arg: object) -> object | None:
+        if callable(default_arg):
+            try:
+                return default_arg()
+            except TypeError:
+                return default_arg(None)
+        return default_arg

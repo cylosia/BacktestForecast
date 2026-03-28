@@ -70,5 +70,5 @@ class TestSettingsValidation:
         assert lookup[("pro", "yearly")] == "price_pro_y"
 
     def test_redis_cache_url_defaults_to_redis_url(self):
-        settings = Settings(redis_url="redis://localhost:6379/0")
-        assert settings.redis_cache_url == "redis://localhost:6379/0"
+        settings = Settings(redis_url="redis://localhost:6379/0", redis_password=None)
+        assert settings.redis_cache_url == settings.redis_url == "redis://localhost:6379/0"

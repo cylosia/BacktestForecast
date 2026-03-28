@@ -22,6 +22,27 @@ _shutdown_logger = structlog.get_logger("worker.lifecycle")
 settings = get_settings()
 configure_logging(settings)
 
+
+def _build_broker_transport_options(broker_url: str) -> dict[str, object]:
+    if broker_url.startswith("sqla+sqlite:///"):
+        return {}
+    options: dict[str, object] = {"visibility_timeout": 4200}
+    if broker_url.startswith("filesystem://"):
+        data_in = os.environ.get("CELERY_FS_DATA_IN")
+        data_out = os.environ.get("CELERY_FS_DATA_OUT")
+        data_processed = os.environ.get("CELERY_FS_DATA_PROCESSED")
+        control_folder = os.environ.get("CELERY_FS_CONTROL")
+        if data_in:
+            options["data_folder_in"] = data_in
+        if data_out:
+            options["data_folder_out"] = data_out
+        if data_processed:
+            options["processed_folder"] = data_processed
+            options["store_processed"] = True
+        if control_folder:
+            options["control_folder"] = control_folder
+    return options
+
 if settings.sentry_dsn:
     try:
         import sentry_sdk
@@ -73,16 +94,17 @@ celery_app.conf.update(
     # running.  Current longest task_time_limit = 3900s (65 min), so we set
     # visibility_timeout = 4200s (70 min).  If you increase task_time_limit,
     # you MUST increase visibility_timeout proportionally.
-    broker_transport_options={"visibility_timeout": 4200},
+    broker_transport_options=_build_broker_transport_options(settings.redis_url),
 )
 
 _visibility_timeout = celery_app.conf.broker_transport_options.get("visibility_timeout", 3600)
 _hard_limit = celery_app.conf.task_time_limit or 3900
-if _visibility_timeout <= _hard_limit:
-    raise RuntimeError(
-        f"visibility_timeout ({_visibility_timeout}s) must exceed task_time_limit ({_hard_limit}s) "
-        f"to prevent premature task redelivery"
-    )
+if settings.redis_url.startswith("redis://") or settings.redis_url.startswith("rediss://"):
+    if _visibility_timeout <= _hard_limit:
+        raise RuntimeError(
+            f"visibility_timeout ({_visibility_timeout}s) must exceed task_time_limit ({_hard_limit}s) "
+            f"to prevent premature task redelivery"
+        )
 
 celery_app.conf.task_queues = (
     Queue("backtests"),

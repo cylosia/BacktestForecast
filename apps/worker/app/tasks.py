@@ -2,6 +2,7 @@
 
 from contextlib import suppress
 from datetime import UTC
+import os
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -68,6 +69,14 @@ SessionLocal = create_worker_session
 
 def create_worker_session():
     return SessionLocal()
+
+
+def _build_backtest_service(session):
+    if os.environ.get("BFF_TEST_FAKE_BACKTEST_EXECUTION") == "1":
+        from tests.integration.fakes import FakeExecutionService
+
+        return BacktestService(session, execution_service=FakeExecutionService())
+    return BacktestService(session)
 
 
 @celery_app.task(name="maintenance.ping", ignore_result=True)
@@ -283,7 +292,7 @@ def run_backtest(self, run_id: str) -> dict[str, str]:
                 return {"status": "failed", "run_id": run_id, "error_code": "quota_exceeded"}
         publish_job_status("backtest", UUID(run_id), "running")
         _update_heartbeat(session, BacktestRun, UUID(run_id))
-        service = BacktestService(session)
+        service = _build_backtest_service(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
         except AppError as exc:

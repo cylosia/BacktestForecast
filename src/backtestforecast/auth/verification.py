@@ -62,18 +62,12 @@ class ClerkTokenVerifier:
         # and issuer verification are disabled. In production, the lifespan
         # handler in main.py enforces that these are set. In development, tokens
         # from other Clerk applications using the same key pair will be accepted.
-        if audience:
-            decode_options["verify_aud"] = True
-        else:
-            decode_options["verify_aud"] = False
-        if issuer:
-            decode_options["verify_iss"] = True
-        else:
-            decode_options["verify_iss"] = False
+        verify_aud_and_iss = bool(audience and issuer)
+        decode_options["verify_aud"] = verify_aud_and_iss
+        decode_options["verify_iss"] = verify_aud_and_iss
 
-        if not audience or not issuer:
-            from backtestforecast.config import get_settings as _get_settings
-            if _get_settings().app_env in ("production", "staging"):
+        if not verify_aud_and_iss:
+            if is_prod:
                 raise ConfigurationError(
                     "CLERK_AUDIENCE and CLERK_ISSUER must be set in production/staging."
                 )

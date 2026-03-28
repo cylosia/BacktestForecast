@@ -42,12 +42,24 @@ def _make_engine():
     return engine
 
 
+def _ensure_schema(engine) -> None:
+    apply_test_schema(engine)
+    existing_tables = set(inspect(engine).get_table_names())
+    if "users" not in existing_tables:
+        apply_test_schema(engine)
+        existing_tables = set(inspect(engine).get_table_names())
+    if "users" not in existing_tables:
+        raise RuntimeError("Test schema bootstrap did not create the users table.")
+
+
 @pytest.fixture(scope="session")
 def session_factory() -> Generator[sessionmaker[Session], None, None]:
     engine = _make_engine()
-    apply_test_schema(engine)
+    _ensure_schema(engine)
     testing_session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     with testing_session_factory() as session:
+        if "users" not in set(inspect(session.connection()).get_table_names()):
+            _ensure_schema(engine)
         existing_user = session.query(User).filter(User.clerk_user_id == "clerk_test_user").first()
         if existing_user is None:
             session.add(
@@ -69,6 +81,9 @@ def session_factory() -> Generator[sessionmaker[Session], None, None]:
 
 @pytest.fixture()
 def db_session(session_factory: sessionmaker[Session]) -> Generator[Session, None, None]:
+    engine = session_factory.kw["bind"]
+    if "users" not in set(inspect(engine).get_table_names()):
+        _ensure_schema(engine)
     session = session_factory()
     session.begin_nested()
     try:

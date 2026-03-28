@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy import CheckConstraint, Index
 
-from backtestforecast.models import ExportJob, SymbolAnalysis
+from backtestforecast.models import ExportJob, MultiStepRun, MultiSymbolRun, SweepJob, SymbolAnalysis
 
 
 def _extract_index_names(model_cls) -> set[str]:
@@ -70,6 +70,27 @@ def test_symbol_analysis_indexes_present_in_model():
     assert "ix_symbol_analyses_user_id" in index_names
     assert "ix_symbol_analyses_user_created" in index_names
     assert "ix_symbol_analyses_celery_task_id" in index_names
+
+
+def test_multi_workflow_operational_indexes_present_in_model():
+    multi_symbol_indexes = _extract_index_names(MultiSymbolRun)
+    multi_step_indexes = _extract_index_names(MultiStepRun)
+
+    assert "ix_multi_symbol_runs_celery_task_id" in multi_symbol_indexes
+    assert "ix_multi_symbol_runs_status_celery_created" in multi_symbol_indexes
+    assert "ix_multi_symbol_runs_dispatch_started_at" in multi_symbol_indexes
+    assert "ix_multi_symbol_runs_queued" in multi_symbol_indexes
+
+    assert "ix_multi_step_runs_status" in multi_step_indexes
+    assert "ix_multi_step_runs_celery_task_id" in multi_step_indexes
+    assert "ix_multi_step_runs_status_celery_created" in multi_step_indexes
+    assert "ix_multi_step_runs_dispatch_started_at" in multi_step_indexes
+    assert "ix_multi_step_runs_queued" in multi_step_indexes
+
+
+def test_sweep_dedup_index_present_in_model():
+    index_names = _extract_index_names(SweepJob)
+    assert "ix_sweep_jobs_active_dedup_lookup" in index_names
 
 
 def test_model_indexes_not_absent_from_migrations():

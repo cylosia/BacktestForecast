@@ -35,7 +35,11 @@ def _make_bars(count: int = 5, base_date: date | None = None) -> list[DailyBar]:
 def _make_service(bars: list[DailyBar] | None = None) -> MarketDataService:
     client = MagicMock()
     client.get_stock_daily_bars.return_value = bars or _make_bars()
-    with patch.object(MarketDataService, "_build_redis_cache", return_value=None):
+    with (
+        patch.object(MarketDataService, "_build_redis_cache", return_value=None),
+        patch.object(MarketDataService, "_build_contract_catalog", return_value=None),
+        patch.object(MarketDataService, "_build_historical_store", return_value=None),
+    ):
         svc = MarketDataService(client)
     return svc
 

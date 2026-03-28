@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    desc,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
@@ -209,7 +210,6 @@ class BacktestRun(Base):
 class BacktestTrade(Base):
     __tablename__ = "backtest_trades"
     __table_args__ = (
-        Index("ix_backtest_trades_run_id", "run_id"),
         Index("ix_backtest_trades_run_entry_date", "run_id", "entry_date"),
         UniqueConstraint("run_id", "entry_date", "option_ticker", name="uq_backtest_trades_dedup"),
         CheckConstraint("quantity > 0", name="ck_backtest_trades_quantity_positive"),
@@ -250,7 +250,6 @@ class BacktestTrade(Base):
 class BacktestEquityPoint(Base):
     __tablename__ = "backtest_equity_points"
     __table_args__ = (
-        Index("ix_backtest_equity_points_run_id", "run_id"),
         Index("ix_backtest_equity_points_trade_date", "trade_date"),
         UniqueConstraint("run_id", "trade_date", name="uq_backtest_equity_points_run_date"),
     )
@@ -274,6 +273,10 @@ class MultiSymbolRun(Base):
         Index("ix_multi_symbol_runs_user_id", "user_id"),
         Index("ix_multi_symbol_runs_user_created_at", "user_id", "created_at"),
         Index("ix_multi_symbol_runs_status", "status"),
+        Index("ix_multi_symbol_runs_celery_task_id", "celery_task_id"),
+        Index("ix_multi_symbol_runs_status_celery_created", "status", "celery_task_id", "created_at"),
+        Index("ix_multi_symbol_runs_dispatch_started_at", "dispatch_started_at"),
+        Index("ix_multi_symbol_runs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         UniqueConstraint("user_id", "idempotency_key", name="uq_multi_symbol_runs_user_idempotency_key"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
@@ -340,7 +343,6 @@ class MultiSymbolRun(Base):
 class MultiSymbolRunSymbol(Base):
     __tablename__ = "multi_symbol_run_symbols"
     __table_args__ = (
-        Index("ix_multi_symbol_run_symbols_run_id", "run_id"),
         UniqueConstraint("run_id", "symbol", name="uq_multi_symbol_run_symbols_run_symbol"),
         CheckConstraint("risk_per_trade_pct > 0 AND risk_per_trade_pct <= 100", name="ck_multi_symbol_run_symbols_risk_pct_range"),
         CheckConstraint("max_open_positions >= 1", name="ck_multi_symbol_run_symbols_max_open_positions_positive"),
@@ -368,7 +370,7 @@ class MultiSymbolRunSymbol(Base):
 class MultiSymbolTradeGroup(Base):
     __tablename__ = "multi_symbol_trade_groups"
     __table_args__ = (
-        Index("ix_multi_symbol_trade_groups_run_id", "run_id"),
+        Index("ix_multi_symbol_trade_groups_run_entry_date", "run_id", "entry_date"),
         CheckConstraint("status IN ('open', 'closed', 'cancelled')", name="ck_multi_symbol_trade_groups_status"),
     )
 
@@ -386,7 +388,7 @@ class MultiSymbolTradeGroup(Base):
 class MultiSymbolTrade(Base):
     __tablename__ = "multi_symbol_trades"
     __table_args__ = (
-        Index("ix_multi_symbol_trades_run_id", "run_id"),
+        Index("ix_multi_symbol_trades_run_entry_date", "run_id", "entry_date"),
         Index("ix_multi_symbol_trades_trade_group_id", "trade_group_id"),
         CheckConstraint("quantity > 0", name="ck_multi_symbol_trades_quantity_positive"),
         CheckConstraint("entry_date <= exit_date", name="ck_multi_symbol_trades_date_order"),
@@ -422,7 +424,6 @@ class MultiSymbolTrade(Base):
 class MultiSymbolEquityPoint(Base):
     __tablename__ = "multi_symbol_equity_points"
     __table_args__ = (
-        Index("ix_multi_symbol_equity_points_run_id", "run_id"),
         UniqueConstraint("run_id", "trade_date", name="uq_multi_symbol_equity_points_run_date"),
     )
 
@@ -460,6 +461,11 @@ class MultiStepRun(Base):
     __table_args__ = (
         Index("ix_multi_step_runs_user_id", "user_id"),
         Index("ix_multi_step_runs_user_created_at", "user_id", "created_at"),
+        Index("ix_multi_step_runs_status", "status"),
+        Index("ix_multi_step_runs_celery_task_id", "celery_task_id"),
+        Index("ix_multi_step_runs_status_celery_created", "status", "celery_task_id", "created_at"),
+        Index("ix_multi_step_runs_dispatch_started_at", "dispatch_started_at"),
+        Index("ix_multi_step_runs_queued", "created_at", postgresql_where=text("status = 'queued'")),
         UniqueConstraint("user_id", "idempotency_key", name="uq_multi_step_runs_user_idempotency_key"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
@@ -529,7 +535,6 @@ class MultiStepRun(Base):
 class MultiStepRunStep(Base):
     __tablename__ = "multi_step_run_steps"
     __table_args__ = (
-        Index("ix_multi_step_run_steps_run_id", "run_id"),
         UniqueConstraint("run_id", "step_number", name="uq_multi_step_run_steps_run_step_number"),
     )
 
@@ -552,7 +557,7 @@ class MultiStepRunStep(Base):
 class MultiStepStepEvent(Base):
     __tablename__ = "multi_step_step_events"
     __table_args__ = (
-        Index("ix_multi_step_step_events_run_id", "run_id"),
+        Index("ix_multi_step_step_events_run_event_at", "run_id", "event_at"),
         Index("ix_multi_step_step_events_step_number", "step_number"),
     )
 
@@ -571,7 +576,7 @@ class MultiStepStepEvent(Base):
 class MultiStepTrade(Base):
     __tablename__ = "multi_step_trades"
     __table_args__ = (
-        Index("ix_multi_step_trades_run_id", "run_id"),
+        Index("ix_multi_step_trades_run_entry_date", "run_id", "entry_date"),
         CheckConstraint("quantity > 0", name="ck_multi_step_trades_quantity_positive"),
         CheckConstraint("entry_date <= exit_date", name="ck_multi_step_trades_date_order"),
     )
@@ -604,7 +609,6 @@ class MultiStepTrade(Base):
 class MultiStepEquityPoint(Base):
     __tablename__ = "multi_step_equity_points"
     __table_args__ = (
-        Index("ix_multi_step_equity_points_run_id", "run_id"),
         UniqueConstraint("run_id", "trade_date", name="uq_multi_step_equity_points_run_date"),
     )
 
@@ -659,6 +663,14 @@ class ScannerJob(Base):
         Index("ix_scanner_jobs_parent_job_id", "parent_job_id"),
         Index("ix_scanner_jobs_pipeline_run_id", "pipeline_run_id"),
         Index("ix_scanner_jobs_refresh_sources", "refresh_daily", "status"),
+        Index(
+            "ix_scanner_jobs_refresh_sources_lookup",
+            "user_id",
+            "request_hash",
+            "mode",
+            desc("completed_at"),
+            postgresql_where=text("refresh_daily = true AND status = 'succeeded' AND completed_at IS NOT NULL"),
+        ),
         Index(
             "uq_scanner_jobs_active_dedup",
             "user_id", "request_hash", "mode",
@@ -1020,6 +1032,7 @@ class DailyRecommendation(Base):
         UniqueConstraint("pipeline_run_id", "rank", name="uq_daily_recs_pipeline_rank"),
         Index("ix_daily_recs_trade_date", "trade_date"),
         Index("ix_daily_recs_symbol_strategy", "symbol", "strategy_type"),
+        Index("ix_daily_recs_created_at", "created_at"),
         CheckConstraint("rank >= 1", name="ck_daily_recommendations_rank_positive"),
         CheckConstraint("length(symbol) > 0", name="ck_daily_recommendations_symbol_not_empty"),
     )
@@ -1156,7 +1169,6 @@ class HistoricalUnderlyingDayBar(Base):
     __tablename__ = "historical_underlying_day_bars"
     __table_args__ = (
         UniqueConstraint("symbol", "trade_date", name="uq_historical_underlying_day_bars_symbol_date"),
-        Index("ix_historical_underlying_day_bars_symbol_date", "symbol", "trade_date"),
         CheckConstraint("length(symbol) > 0", name="ck_historical_underlying_day_bars_symbol_not_empty"),
         CheckConstraint("open_price > 0", name="ck_historical_underlying_day_bars_open_positive"),
         CheckConstraint("high_price > 0", name="ck_historical_underlying_day_bars_high_positive"),
@@ -1229,7 +1241,6 @@ class HistoricalExDividendDate(Base):
     __tablename__ = "historical_ex_dividend_dates"
     __table_args__ = (
         UniqueConstraint("symbol", "ex_dividend_date", name="uq_historical_ex_dividend_dates_symbol_date"),
-        Index("ix_historical_ex_dividend_dates_symbol_date", "symbol", "ex_dividend_date"),
         CheckConstraint("length(symbol) > 0", name="ck_historical_ex_dividend_dates_symbol_not_empty"),
         CheckConstraint("cash_amount IS NULL OR cash_amount >= 0", name="ck_historical_ex_dividend_dates_cash_nonneg"),
     )
@@ -1250,7 +1261,6 @@ class HistoricalTreasuryYield(Base):
     __tablename__ = "historical_treasury_yields"
     __table_args__ = (
         UniqueConstraint("trade_date", name="uq_historical_treasury_yields_trade_date"),
-        Index("ix_historical_treasury_yields_trade_date", "trade_date"),
         CheckConstraint("yield_3_month >= 0 AND yield_3_month <= 1", name="ck_historical_treasury_yields_3m_range"),
     )
 
@@ -1334,6 +1344,14 @@ class SweepJob(Base):
         Index("ix_sweep_jobs_status_celery_created", "status", "celery_task_id", "created_at"),
         Index("ix_sweep_jobs_user_symbol_created", "user_id", "symbol", "created_at"),
         Index("ix_sweep_jobs_request_hash", "request_hash"),
+        Index(
+            "ix_sweep_jobs_active_dedup_lookup",
+            "user_id",
+            "symbol",
+            "request_hash",
+            "created_at",
+            postgresql_where=text("status IN ('queued', 'running') AND request_hash IS NOT NULL"),
+        ),
         Index("ix_sweep_jobs_dispatch_started_at", "dispatch_started_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_sweep_jobs_user_idempotency_key"),
         Index("ix_sweep_jobs_queued", "created_at", postgresql_where=text("status = 'queued'")),
@@ -1440,7 +1458,6 @@ class SweepResult(Base):
     __tablename__ = "sweep_results"
     __table_args__ = (
         UniqueConstraint("sweep_job_id", "rank", name="uq_sweep_results_job_rank"),
-        Index("ix_sweep_results_job_id", "sweep_job_id"),
         Index("ix_sweep_results_summary_gin", "summary_json", postgresql_using="gin", postgresql_ops={"summary_json": "jsonb_path_ops"}),
         CheckConstraint("rank >= 1", name="ck_sweep_results_rank_positive"),
     )
@@ -1471,6 +1488,7 @@ class TaskResult(Base):
         Index("ix_task_results_task_name_created", "task_name", "created_at"),
         Index("ix_task_results_correlation_id", "correlation_id"),
         Index("ix_task_results_status_created", "status", "created_at"),
+        Index("ix_task_results_created_at", "created_at"),
         CheckConstraint(
             "status IN ('succeeded', 'failed', 'retried', 'timeout')",
             name="ck_task_results_valid_status",

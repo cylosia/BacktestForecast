@@ -23,8 +23,8 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = inspect(bind)
     existing_columns = {column["name"] for column in inspector.get_columns("export_jobs")}
-    # The consolidated baseline revision creates tables from current metadata.
-    # On a fresh database upgraded from that baseline, these columns and
+    # The consolidated baseline revision now materializes a fixed schema
+    # snapshot. On a fresh database upgraded from that baseline, these columns and
     # supporting objects already exist, so this follow-up migration becomes a no-op.
     if {"multi_symbol_run_id", "multi_step_run_id", "export_target_kind"}.issubset(existing_columns):
         return

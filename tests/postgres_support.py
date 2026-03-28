@@ -56,7 +56,13 @@ def resolve_test_database_url() -> str:
 
 def make_postgres_engine() -> Engine:
     url = resolve_test_database_url()
-    engine = create_engine(url, connect_args={"connect_timeout": 2})
+    engine = create_engine(
+        url,
+        connect_args={
+            "connect_timeout": 2,
+            "options": "-c timezone=UTC",
+        },
+    )
     try:
         with engine.connect() as conn:
             conn.exec_driver_sql("SELECT 1")
@@ -76,6 +82,14 @@ def apply_test_schema(engine: Engine) -> None:
     alembic_cfg = AlembicConfig("alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
     alembic_upgrade(alembic_cfg, "head")
+    existing_tables = set(inspect(engine).get_table_names())
+    expected_tables = {table.name for table in Base.metadata.sorted_tables}
+    missing_tables = sorted(expected_tables - existing_tables)
+    if missing_tables:
+        raise RuntimeError(
+            "Alembic upgrade did not materialize the full schema. Missing tables: "
+            + ", ".join(missing_tables)
+        )
     engine.dispose()
 
 

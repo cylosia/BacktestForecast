@@ -5,7 +5,7 @@ from contextlib import suppress
 from functools import lru_cache
 
 import structlog
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect as sa_inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -21,6 +21,7 @@ def build_engine(
     *,
     database_url: str | None = None,
     statement_timeout_ms: int = 30_000,
+    pin_timezone: bool = True,
 ) -> Engine:
     cfg = settings or get_settings()
     url = database_url or cfg.database_url
@@ -42,7 +43,15 @@ def build_engine(
         # connections that the DB may have already closed.
         engine_kwargs["pool_recycle"] = cfg.db_pool_recycle
         engine_kwargs["pool_timeout"] = cfg.db_pool_timeout
-        engine_kwargs["connect_args"] = {"options": f"-c statement_timeout={statement_timeout_ms}"}
+        # Pin every Postgres session to UTC so timestamptz values round-trip in
+        # a canonical timezone and time-based business logic never depends on
+        # the database server's local timezone.
+        options = [f"-c statement_timeout={statement_timeout_ms}"]
+        if pin_timezone:
+            options.append("-c timezone=UTC")
+        engine_kwargs["connect_args"] = {
+            "options": " ".join(options),
+        }
     return create_engine(url, **engine_kwargs)
 
 
@@ -169,6 +178,54 @@ def ping_database() -> None:
     with _get_engine().connect() as connection, connection.begin():
         connection.execute(text("SET LOCAL statement_timeout = '2s'"))
         connection.execute(text("SELECT 1"))
+
+
+@lru_cache
+def expected_schema_tables() -> tuple[str, ...]:
+    import backtestforecast.models  # noqa: F401
+    from backtestforecast.db.base import Base
+
+    return tuple(sorted(table.name for table in Base.metadata.sorted_tables))
+
+
+def get_missing_schema_tables() -> tuple[str, ...]:
+    with _get_engine().connect() as connection, connection.begin():
+        connection.execute(text("SET LOCAL statement_timeout = '2s'"))
+        existing_tables = set(sa_inspect(connection).get_table_names())
+    return tuple(sorted(set(expected_schema_tables()) - existing_tables))
+
+
+def get_database_timezones() -> dict[str, str | None]:
+    """Return the effective app session timezone and the server/database default timezone.
+
+    The app intentionally pins request/worker sessions to UTC. The server-facing
+    timezone helps operators spot drift in ad hoc tooling or scripts that bypass
+    the session builder.
+    """
+    if _get_engine().dialect.name != "postgresql":
+        return {"session_timezone": None, "server_timezone": None}
+
+    session_timezone: str | None = None
+    server_timezone: str | None = None
+
+    with _get_engine().connect() as connection, connection.begin():
+        connection.execute(text("SET LOCAL statement_timeout = '2s'"))
+        session_timezone = connection.scalar(text("SHOW TIME ZONE"))
+
+    cfg = get_settings()
+    raw_engine = build_engine(cfg, statement_timeout_ms=2_000, pin_timezone=False)
+    try:
+        with raw_engine.connect() as connection, connection.begin():
+            connection.execute(text("SET LOCAL statement_timeout = '2s'"))
+            server_timezone = connection.scalar(text("SHOW TIME ZONE"))
+    finally:
+        with suppress(Exception):
+            raw_engine.dispose()
+
+    return {
+        "session_timezone": session_timezone,
+        "server_timezone": server_timezone,
+    }
 
 
 def _invalidate_db_caches() -> None:

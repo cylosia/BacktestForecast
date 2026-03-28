@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 
@@ -9,6 +10,7 @@ def test_ready_reports_operations_status_only_in_detailed_mode(monkeypatch) -> N
     calls = {"ops": 0}
 
     monkeypatch.setattr(health, "ping_database", lambda: None)
+    monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
@@ -44,6 +46,7 @@ def test_ready_stays_degraded_but_available_when_migrations_drift(monkeypatch) -
     from apps.api.app.routers import health
 
     monkeypatch.setattr(health, "ping_database", lambda: None)
+    monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
@@ -71,6 +74,7 @@ def test_ready_skips_migration_check_without_detailed_access(monkeypatch) -> Non
     from apps.api.app.routers import health
 
     monkeypatch.setattr(health, "ping_database", lambda: None)
+    monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
@@ -124,3 +128,70 @@ def test_queue_health_includes_broker_recovery_depth(monkeypatch) -> None:
 
     assert payload["broker_queue_depths"] == {"maintenance": 0, "recovery": 3}
     assert payload["status"] == "recovery_backlog"
+
+
+def test_ready_fails_when_required_tables_are_missing(monkeypatch) -> None:
+    from apps.api.app.routers import health
+
+    monkeypatch.setattr(health, "ping_database", lambda: None)
+    monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ("users", "backtest_runs"))
+    monkeypatch.setattr(health, "ping_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
+    monkeypatch.setattr(
+        health,
+        "get_settings",
+        lambda: SimpleNamespace(
+            metrics_token=None,
+            app_env="test",
+            rate_limit_fail_closed=False,
+            rate_limit_degraded_memory_fallback=False,
+            sentry_dsn=None,
+            option_cache_enabled=False,
+            redis_cache_url=None,
+        ),
+    )
+
+    response = health.ready(SimpleNamespace(headers={}))
+
+    assert response.status_code == 503
+
+
+def test_ready_reports_db_timezone_and_export_storage_mode_in_detailed_payload(monkeypatch) -> None:
+    from apps.api.app.routers import health
+
+    monkeypatch.setattr(health, "ping_database", lambda: None)
+    monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
+    monkeypatch.setattr(health, "ping_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
+    monkeypatch.setattr(health, "_check_migration_drift", lambda: True)
+    monkeypatch.setattr(health, "_get_operations_status", lambda **kwargs: {})
+    monkeypatch.setattr(
+        health,
+        "get_database_timezones",
+        lambda: {"session_timezone": "UTC", "server_timezone": "Asia/Jerusalem"},
+    )
+    monkeypatch.setattr(
+        health,
+        "get_settings",
+        lambda: SimpleNamespace(
+            metrics_token="secret",
+            app_env="production",
+            rate_limit_fail_closed=True,
+            rate_limit_degraded_memory_fallback=False,
+            sentry_dsn=None,
+            option_cache_enabled=False,
+            redis_cache_url=None,
+            s3_bucket=None,
+        ),
+    )
+
+    response = health.ready(SimpleNamespace(headers={"x-metrics-token": "secret"}))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload["database_session_timezone"] == "UTC"
+    assert payload["database_server_timezone"] == "Asia/Jerusalem"
+    assert payload["database_server_timezone_aligned"] is False
+    assert payload["export_storage_mode"] == "database"

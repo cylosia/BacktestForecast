@@ -54,12 +54,12 @@ def test_user_model_check_constraints_cover_billing_fields() -> None:
 def test_baseline_migration_is_consolidated_snapshot() -> None:
     text = BASELINE_MIGRATION.read_text(encoding="utf-8")
 
-    assert "Base.metadata.create_all" in text
-    assert "backtestforecast.models" in text
+    assert "POSTGRESQL_DDL_STATEMENTS" in text
+    assert "BASELINE_TABLE_NAMES" in text
 
 
 def test_consolidated_baseline_is_present() -> None:
     text = BASELINE_MIGRATION.read_text(encoding="utf-8")
 
-    assert "Base.metadata.create_all" in text
+    assert "POSTGRESQL_DDL_STATEMENTS" in text
     assert "_TRIGGER_TABLES" in text

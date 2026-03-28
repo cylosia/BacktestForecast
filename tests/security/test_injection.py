@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session, sessionmaker
 
 from datetime import date
 from decimal import Decimal
@@ -18,11 +19,12 @@ from decimal import Decimal
 from apps.api.app import dispatch as dispatch_module
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly
 from apps.api.app.main import app
-from backtestforecast.db.session import create_session
+from backtestforecast.db.session import get_db, get_readonly_db
 from backtestforecast.models import User
 from backtestforecast.schemas.forecasts import ForecastEnvelopeResponse
 from backtestforecast.schemas.scans import HistoricalAnalogForecastResponse
 from backtestforecast.services.scans import ScanService
+from tests.postgres_support import reset_database
 
 INJECTION_PAYLOADS = [
     "'; DROP TABLE users; --",
@@ -51,8 +53,12 @@ def unauthed_client() -> TestClient:
 
 
 @pytest.fixture()
-def authed_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def authed_client(
+    monkeypatch: pytest.MonkeyPatch,
+    postgres_session_factory: sessionmaker[Session],
+) -> TestClient:
     """Client with auth bypass for testing input handling."""
+    reset_database(postgres_session_factory)
     clerk_user_id = f"clerk_fuzz_user_{uuid4()}"
     fuzz_user = User(
         id=uuid4(),
@@ -74,13 +80,20 @@ def authed_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     def override_current_user():
         return user_context
 
-    with create_session() as session:
+    with postgres_session_factory() as session:
         existing = session.query(User).filter(User.clerk_user_id == fuzz_user.clerk_user_id).one_or_none()
         if existing is None:
             session.add(fuzz_user)
             session.commit()
         else:
             fuzz_user = existing
+
+    def override_get_db():
+        db = postgres_session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
 
     def fake_build_forecast(self, *, user: User, symbol: str, strategy_type: str | None, horizon_days: int) -> ForecastEnvelopeResponse:
         return ForecastEnvelopeResponse(
@@ -109,6 +122,8 @@ def authed_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     app.dependency_overrides[get_current_user] = override_current_user
     app.dependency_overrides[get_current_user_readonly] = override_current_user
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_readonly_db] = override_get_db
     monkeypatch.setattr(ScanService, "build_forecast", fake_build_forecast)
     monkeypatch.setattr(dispatch_module, "dispatch_celery_task", fake_dispatch_celery_task)
     with TestClient(app, base_url="http://localhost", raise_server_exceptions=False) as tc:

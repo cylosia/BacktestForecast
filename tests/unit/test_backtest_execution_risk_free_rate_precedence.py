@@ -67,6 +67,25 @@ class _CapturingEngine:
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve)
 
 
+class _EmptyHistoricalStore:
+    def get_average_treasury_yield(self, *args, **kwargs):
+        return None
+
+    def get_treasury_yield_series(self, *args, **kwargs):
+        return {}
+
+    def upsert_treasury_yields(self, *args, **kwargs):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _disable_persisted_treasury_cache(monkeypatch):
+    monkeypatch.setattr(
+        "backtestforecast.services.risk_free_rate._historical_store",
+        lambda: _EmptyHistoricalStore(),
+    )
+
+
 @pytest.fixture()
 def db_session(postgres_db_session: Session) -> Session:
     return postgres_db_session

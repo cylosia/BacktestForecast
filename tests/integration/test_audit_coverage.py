@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backtestforecast.auth.verification import AuthenticatedPrincipal
+from tests.integration.test_endpoint_coverage import _set_user_plan
 
 
 def _create_backtest(client: TestClient, auth_headers: dict[str, str]) -> dict:
@@ -245,7 +246,15 @@ class TestMetaEndpoint:
 class TestSweepCrossUserIsolation:
     """Verify sweeps cannot be accessed by another user."""
 
-    def test_get_sweep_cross_user(self, client: TestClient, auth_headers: dict, _fake_celery, monkeypatch):
+    def test_get_sweep_cross_user(
+        self,
+        client: TestClient,
+        auth_headers: dict,
+        db_session,
+        _fake_celery,
+        monkeypatch,
+    ):
+        _set_user_plan(db_session, tier="pro", subscription_status="active")
         resp = client.post(
             "/v1/sweeps",
             headers=auth_headers,
@@ -264,11 +273,17 @@ class TestSweepCrossUserIsolation:
                 "entry_rule_sets": [{"name": "no_filter", "entry_rules": []}],
             },
         )
-        if resp.status_code not in (200, 201, 202):
-            pytest.skip(f"Sweep creation returned {resp.status_code}: feature may be locked")
+        assert resp.status_code in (200, 201, 202), resp.text
         job_id = resp.json()["id"]
 
         with _as_other_user(client, monkeypatch):
+            client.get("/v1/me", headers=auth_headers)
+            _set_user_plan(
+                db_session,
+                clerk_id="clerk_other_user",
+                tier="pro",
+                subscription_status="active",
+            )
             resp2 = client.get(f"/v1/sweeps/{job_id}", headers=auth_headers)
             assert resp2.status_code == 404
 
@@ -281,17 +296,31 @@ class TestSweepCrossUserIsolation:
 class TestAnalysisCrossUserIsolation:
     """Verify analyses cannot be accessed by another user."""
 
-    def test_get_analysis_cross_user(self, client: TestClient, auth_headers: dict, _fake_celery, monkeypatch):
+    def test_get_analysis_cross_user(
+        self,
+        client: TestClient,
+        auth_headers: dict,
+        db_session,
+        _fake_celery,
+        monkeypatch,
+    ):
+        _set_user_plan(db_session, tier="pro", subscription_status="active")
         resp = client.post(
             "/v1/analysis",
             headers=auth_headers,
             json={"symbol": "AAPL"},
         )
-        if resp.status_code not in (200, 201, 202):
-            pytest.skip(f"Analysis creation returned {resp.status_code}: feature may be locked")
+        assert resp.status_code in (200, 201, 202), resp.text
         analysis_id = resp.json()["id"]
 
         with _as_other_user(client, monkeypatch):
+            client.get("/v1/me", headers=auth_headers)
+            _set_user_plan(
+                db_session,
+                clerk_id="clerk_other_user",
+                tier="pro",
+                subscription_status="active",
+            )
             resp2 = client.get(f"/v1/analysis/{analysis_id}", headers=auth_headers)
             assert resp2.status_code == 404
 

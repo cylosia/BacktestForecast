@@ -176,6 +176,7 @@ def test_ready_stays_healthy_when_broker_is_down_if_database_is_up(monkeypatch) 
     from apps.api.app.routers import health
 
     monkeypatch.setattr(health, "ping_database", lambda: None)
+    monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: False)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")

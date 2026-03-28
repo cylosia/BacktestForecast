@@ -28,6 +28,14 @@ def _load_env_file(path: Path) -> None:
 _load_env_file(ROOT / "apps" / "api" / ".env")
 _load_env_file(ROOT / ".env")
 
+# Force all test-time create_session()/engine caches onto the isolated Postgres
+# database when TEST_DATABASE_URL is configured. Many integration/security
+# paths open ad-hoc sessions outside fixture overrides, so leaving DATABASE_URL
+# pointed at the developer database causes false failures and unsafe coupling.
+if os.environ.get("TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+    os.environ.pop("DATABASE_READ_REPLICA_URL", None)
+
 
 # Keep test bootstrap resilient when optional provider credentials are absent.
 os.environ.setdefault("MASSIVE_API_KEY", "test-massive-api-key")

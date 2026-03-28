@@ -236,5 +236,5 @@ class TestStartupSideEffects:
     def test_worker_sqlite_warning_is_not_logged_at_import_time(self):
         source = Path("tests/worker/test_tasks.py").read_text()
 
-        assert "_sqlite_warning_logged = False" in source
-        assert "def db_engine():" in source
+        assert "create_worker_session" in source
+        assert "def db_session_factory" in source

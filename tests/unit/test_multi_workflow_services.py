@@ -46,6 +46,30 @@ class _FakeClient:
             for expiration in expirations
         ]
 
+    def list_option_contracts_for_expiration(
+        self,
+        symbol: str,
+        as_of_date: date,
+        contract_type: str,
+        expiration_date: date,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ):
+        strike_price = 100.0
+        if strike_price_gte is not None:
+            strike_price = max(strike_price, strike_price_gte)
+        if strike_price_lte is not None:
+            strike_price = min(strike_price, strike_price_lte)
+        return [
+            OptionContractRecord(
+                ticker=f"O:{symbol}{expiration_date.strftime('%y%m%d')}{contract_type[0].upper()}00100000",
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_price=strike_price,
+                shares_per_contract=100,
+            )
+        ]
+
     def get_option_quote_for_date(self, option_ticker: str, trade_date: date):
         day_offset = max((trade_date - date(2024, 1, 2)).days, 0)
         mid = 2.0 + (day_offset * 0.05)
@@ -69,6 +93,14 @@ class _FakeMarketDataService:
 
     def _load_ex_dividend_dates(self, symbol: str, *, start_date: date, end_date: date):
         return set()
+
+    def _prefer_local_history(self, end_date: date) -> bool:
+        return False
+
+    def build_option_gateway(self, symbol: str, *, prefer_local: bool = False):
+        from backtestforecast.market_data.service import MassiveOptionGateway
+
+        return MassiveOptionGateway(self.client, symbol)
 
 
 class _FakeExecutionService:

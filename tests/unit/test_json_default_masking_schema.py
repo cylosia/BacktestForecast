@@ -31,7 +31,7 @@ def test_scan_and_sweep_result_json_fields_no_longer_hide_missing_writes() -> No
 def test_alembic_removes_masking_json_server_defaults() -> None:
     source = _read("alembic/versions/20260324_0001_consolidated_baseline.py")
 
-    assert "Base.metadata.create_all" in source
-    assert '"scanner_recommendations"' in source
-    assert '"sweep_results"' in source
-    assert '"symbol_analyses"' in source
+    assert "POSTGRESQL_DDL_STATEMENTS" in source
+    assert "scanner_recommendations" in source
+    assert "sweep_results" in source
+    assert "symbol_analyses" in source

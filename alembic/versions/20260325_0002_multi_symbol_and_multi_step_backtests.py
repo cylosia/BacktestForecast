@@ -23,8 +23,8 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = inspect(bind)
     existing_tables = set(inspector.get_table_names())
-    # The consolidated baseline revision creates tables from current metadata.
-    # On a fresh database upgraded from that baseline, these workflow tables
+    # The consolidated baseline revision now materializes a fixed schema
+    # snapshot. On a fresh database upgraded from that baseline, these workflow tables
     # already exist and this follow-up migration should become a no-op.
     if {"multi_symbol_runs", "multi_step_runs"}.issubset(existing_tables):
         return

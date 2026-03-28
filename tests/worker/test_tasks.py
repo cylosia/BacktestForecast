@@ -689,7 +689,7 @@ def test_nightly_scan_pipeline_success(mock_session_local):
         lock.acquire.return_value = True
         redis_client.lock.return_value = lock
         mock_cache_redis.return_value = redis_client
-        result = nightly_scan_pipeline()
+        result = nightly_scan_pipeline(trade_date_iso="2026-03-27")
 
     assert result["status"] == "succeeded"
     assert result["recommendations"] == 5

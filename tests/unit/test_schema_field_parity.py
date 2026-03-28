@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import AliasChoices
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_SNAPSHOT = PROJECT_ROOT / "openapi.snapshot.json"
@@ -28,12 +29,20 @@ def openapi_schemas() -> dict[str, dict]:
     return data.get("components", {}).get("schemas", {})
 
 
-def _get_pydantic_fields(model_cls) -> set[str]:
-    """Return the set of field names from a Pydantic model (using aliases where defined)."""
-    fields = set()
+def _missing_openapi_fields(model_cls, openapi_fields: set[str]) -> set[str]:
+    """Return canonical field names with no acceptable OpenAPI representation."""
+
+    missing: set[str] = set()
     for name, info in model_cls.model_fields.items():
-        fields.add(info.alias if info.alias else name)
-    return fields
+        accepted = {info.alias if info.alias else name}
+        validation_alias = getattr(info, "validation_alias", None)
+        if isinstance(validation_alias, str):
+            accepted.add(validation_alias)
+        elif isinstance(validation_alias, AliasChoices):
+            accepted.update(choice for choice in validation_alias.choices if isinstance(choice, str))
+        if not accepted & openapi_fields:
+            missing.add(name)
+    return missing
 
 
 def _get_openapi_fields(schema: dict) -> set[str]:
@@ -44,11 +53,10 @@ def _get_openapi_fields(schema: dict) -> set[str]:
 class TestBacktestSchemas:
     def test_backtest_run_detail_response(self, openapi_schemas):
         from backtestforecast.schemas.backtests import BacktestRunDetailResponse
-        pydantic_fields = _get_pydantic_fields(BacktestRunDetailResponse)
         openapi_fields = _get_openapi_fields(openapi_schemas.get("BacktestRunDetailResponse", {}))
         if not openapi_fields:
             pytest.skip("BacktestRunDetailResponse not in OpenAPI snapshot")
-        missing_from_openapi = pydantic_fields - openapi_fields
+        missing_from_openapi = _missing_openapi_fields(BacktestRunDetailResponse, openapi_fields)
         assert not missing_from_openapi, (
             f"Fields in Pydantic but missing from OpenAPI snapshot: {missing_from_openapi}. "
             "Regenerate: python scripts/export_openapi.py > openapi.snapshot.json"
@@ -56,44 +64,40 @@ class TestBacktestSchemas:
 
     def test_backtest_summary_response(self, openapi_schemas):
         from backtestforecast.schemas.backtests import BacktestSummaryResponse
-        pydantic_fields = _get_pydantic_fields(BacktestSummaryResponse)
         openapi_fields = _get_openapi_fields(openapi_schemas.get("BacktestSummaryResponse", {}))
         if not openapi_fields:
             pytest.skip("BacktestSummaryResponse not in OpenAPI snapshot")
-        missing = pydantic_fields - openapi_fields
+        missing = _missing_openapi_fields(BacktestSummaryResponse, openapi_fields)
         assert not missing, f"Missing from OpenAPI: {missing}"
 
 
 class TestExportSchemas:
     def test_export_job_response(self, openapi_schemas):
         from backtestforecast.schemas.exports import ExportJobResponse
-        pydantic_fields = _get_pydantic_fields(ExportJobResponse)
         openapi_fields = _get_openapi_fields(openapi_schemas.get("ExportJobResponse", {}))
         if not openapi_fields:
             pytest.skip("ExportJobResponse not in OpenAPI snapshot")
-        missing = pydantic_fields - openapi_fields
+        missing = _missing_openapi_fields(ExportJobResponse, openapi_fields)
         assert not missing, f"Missing from OpenAPI: {missing}"
 
 
 class TestScannerSchemas:
     def test_scanner_job_response(self, openapi_schemas):
         from backtestforecast.schemas.scans import ScannerJobResponse
-        pydantic_fields = _get_pydantic_fields(ScannerJobResponse)
         openapi_fields = _get_openapi_fields(openapi_schemas.get("ScannerJobResponse", {}))
         if not openapi_fields:
             pytest.skip("ScannerJobResponse not in OpenAPI snapshot")
-        missing = pydantic_fields - openapi_fields
+        missing = _missing_openapi_fields(ScannerJobResponse, openapi_fields)
         assert not missing, f"Missing from OpenAPI: {missing}"
 
 
 class TestBillingSchemas:
     def test_checkout_session_response(self, openapi_schemas):
         from backtestforecast.schemas.billing import CheckoutSessionResponse
-        pydantic_fields = _get_pydantic_fields(CheckoutSessionResponse)
         openapi_fields = _get_openapi_fields(openapi_schemas.get("CheckoutSessionResponse", {}))
         if not openapi_fields:
             pytest.skip("CheckoutSessionResponse not in OpenAPI snapshot")
-        missing = pydantic_fields - openapi_fields
+        missing = _missing_openapi_fields(CheckoutSessionResponse, openapi_fields)
         assert not missing, f"Missing from OpenAPI: {missing}"
 
 

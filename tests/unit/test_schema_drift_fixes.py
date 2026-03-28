@@ -29,6 +29,11 @@ def test_d1_consolidated_baseline_is_only_revision_file():
         "20260325_0003_export_targets_for_multi_workflows.py",
         "20260326_0004_scanner_dispatch_started_at.py",
         "20260326_0005_dispatch_started_at_backfill.py",
+        "20260326_0006_ensure_updated_at_triggers.py",
+        "20260327_0007_option_contract_catalog_snapshots.py",
+        "20260327_0008_historical_flatfile_market_data.py",
+        "20260328_0009_async_job_operational_indexes.py",
+        "20260328_0010_db_index_hygiene_and_ops_guards.py",
     ]
 
 
@@ -93,7 +98,8 @@ def test_d4_summary_required_keys_defined():
 
 def test_d5_consolidated_baseline_creates_current_schema():
     content = (VERSIONS_DIR / "20260324_0001_consolidated_baseline.py").read_text()
-    assert "Base.metadata.create_all" in content
+    assert "POSTGRESQL_DDL_STATEMENTS" in content
+    assert "SQLITE_DDL_STATEMENTS" in content
     assert "_TRIGGER_TABLES" in content
 
 

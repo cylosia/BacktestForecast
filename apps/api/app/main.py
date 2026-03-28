@@ -91,6 +91,8 @@ if _startup_settings.sentry_dsn:
 
 @asynccontextmanager
 async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
+    from backtestforecast.db.session import get_database_timezones, get_missing_schema_tables
+
     if _startup_settings.app_env in ("production", "staging"):
         if not _startup_settings.clerk_audience or not _startup_settings.clerk_audience.strip():
             raise RuntimeError(
@@ -130,6 +132,44 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
                 "startup.clerk_authorized_parties_missing",
                 hint="CLERK_AUTHORIZED_PARTIES is empty; the azp claim will not be checked.",
             )
+
+    missing_schema_tables = get_missing_schema_tables()
+    if missing_schema_tables:
+        if _startup_settings.app_env in ("production", "staging"):
+            raise RuntimeError(
+                "DATABASE_URL points to an incomplete schema. Missing tables: "
+                + ", ".join(missing_schema_tables)
+            )
+        logger.warning(
+            "startup.schema_incomplete",
+            missing_tables=list(missing_schema_tables),
+            hint="Run Alembic migrations against the configured DATABASE_URL before serving traffic.",
+        )
+
+    db_timezones = get_database_timezones()
+    server_timezone = db_timezones.get("server_timezone")
+    if server_timezone and server_timezone.upper() != "UTC":
+        logger.warning(
+            "startup.database_server_timezone_not_utc",
+            database_server_timezone=server_timezone,
+            database_session_timezone=db_timezones.get("session_timezone"),
+            hint=(
+                "App sessions are pinned to UTC, but the database default timezone is not. "
+                "Set the database/server timezone to UTC so ad hoc SQL, admin tools, and "
+                "non-app scripts do not observe timezone-shifted timestamps."
+            ),
+        )
+
+    if _startup_settings.feature_exports_enabled and not _startup_settings.s3_bucket:
+        logger.warning(
+            "startup.export_storage_using_database",
+            export_storage_mode="database",
+            hint=(
+                "FEATURE_EXPORTS_ENABLED is true but S3_BUCKET is not configured, so exports "
+                "will store content_bytes in Postgres. This is acceptable for small workloads "
+                "but increases database bloat and memory-heavy download paths at scale."
+            ),
+        )
 
     if "*" in _startup_settings.web_cors_origins and _startup_settings.app_env in ("production", "staging"):
         raise RuntimeError(

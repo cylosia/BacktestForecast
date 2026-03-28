@@ -4,20 +4,66 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy.orm import Session, sessionmaker
 
 from backtestforecast.config import get_settings
+from backtestforecast.models import User
 from tests.integration import conftest as integration_conftest
+from tests.integration.conftest import _fake_celery  # noqa: F401
 from tests.integration.conftest import *  # noqa: F403
+from tests.integration.test_endpoint_coverage import _set_user_plan
+from tests.postgres_support import reset_database
 
 ROOT = Path(__file__).resolve().parents[2]
+_LOCAL_FALLBACK_BROKER = "celery-broker-e2e.sqlite3"
+
+
+@pytest.fixture(scope="session")
+def session_factory(postgres_session_factory: sessionmaker[Session]):
+    reset_database(postgres_session_factory)
+    with postgres_session_factory() as session:
+        existing_user = session.query(User).filter(User.clerk_user_id == "clerk_test_user").first()
+        if existing_user is None:
+            session.add(
+                User(
+                    clerk_user_id="clerk_test_user",
+                    email="test@example.com",
+                    plan_tier="free",
+                    subscription_status=None,
+                )
+            )
+            session.commit()
+    yield postgres_session_factory
+
+
+@pytest.fixture()
+def db_session(session_factory: sessionmaker[Session]):
+    reset_database(session_factory)
+    with session_factory() as session:
+        session.add(
+            User(
+                clerk_user_id="clerk_test_user",
+                email="test@example.com",
+                plan_tier="free",
+                subscription_status=None,
+            )
+        )
+        session.commit()
+    session = session_factory()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def _build_real_worker_env() -> dict[str, str]:
@@ -33,22 +79,48 @@ def _build_real_worker_env() -> dict[str, str]:
             redis_client.ping()
         finally:
             redis_client.close()
+        cache_url = os.environ.get("TEST_REDIS_URL") or settings.redis_cache_url or redis_url
+        backend_url = settings.celery_result_backend_url or redis_url
     except Exception:
-        pytest.skip("Real worker lifecycle tests require a reachable Redis broker.")
+        redis_url = f"sqla+sqlite:///{_LOCAL_FALLBACK_BROKER}"
+        cache_url = "redis://localhost:0/0"
+        backend_url = "cache+memory://"
 
     worker_env = os.environ.copy()
+    repo_pythonpath = os.pathsep.join([str(ROOT), str(ROOT / "src")])
+    existing_pythonpath = worker_env.get("PYTHONPATH")
+    worker_env["PYTHONPATH"] = (
+        repo_pythonpath
+        if not existing_pythonpath
+        else os.pathsep.join([repo_pythonpath, existing_pythonpath])
+    )
     worker_env["DATABASE_URL"] = database_url
     worker_env["REDIS_URL"] = redis_url
-    worker_env["REDIS_CACHE_URL"] = os.environ.get("TEST_REDIS_URL") or settings.redis_cache_url or redis_url
-    worker_env["CELERY_RESULT_BACKEND_URL"] = settings.celery_result_backend_url or redis_url
+    worker_env["REDIS_CACHE_URL"] = cache_url
+    worker_env["CELERY_RESULT_BACKEND_URL"] = backend_url
     worker_env["S3_BUCKET"] = os.environ.get("TEST_S3_BUCKET", "")
+    worker_env["BFF_TEST_FAKE_BACKTEST_EXECUTION"] = "1"
+    if redis_url.startswith("sqla+sqlite:///"):
+        worker_env["REDIS_PASSWORD"] = ""
     return worker_env
 
 
 @contextmanager
 def _launch_real_worker() -> None:
     worker_env = _build_real_worker_env()
+    using_local_fallback_broker = worker_env["REDIS_URL"].startswith("sqla+sqlite:///")
     hostname = f"pytest-real-worker-{int(time.time())}@%h"
+    from apps.worker.app.celery_app import celery_app
+    log_path = Path(tempfile.mkstemp(prefix="bff-real-worker-", suffix=".log")[1])
+    log_handle = log_path.open("w", encoding="utf-8")
+
+    original_broker_url = celery_app.conf.broker_url
+    original_result_backend = celery_app.conf.result_backend
+    original_transport_options = dict(celery_app.conf.broker_transport_options or {})
+    if using_local_fallback_broker:
+        celery_app.conf.broker_url = worker_env["REDIS_URL"]
+        celery_app.conf.result_backend = worker_env["CELERY_RESULT_BACKEND_URL"]
+        celery_app.conf.broker_transport_options = {}
     try:
         worker = subprocess.Popen(
             [
@@ -61,36 +133,49 @@ def _launch_real_worker() -> None:
                 "-P",
                 "solo",
                 "-Q",
-                "research,exports,pipeline,maintenance",
+                "backtests,exports,research,pipeline,maintenance",
                 "--loglevel=WARNING",
                 f"--hostname={hostname}",
             ],
             cwd=str(ROOT),
             env=worker_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
         )
     except Exception as exc:
+        log_handle.close()
+        celery_app.conf.broker_url = original_broker_url
+        celery_app.conf.result_backend = original_result_backend
+        celery_app.conf.broker_transport_options = original_transport_options
         pytest.skip(f"Unable to start a real Celery worker: {exc}")
-
-    from apps.worker.app.celery_app import celery_app
 
     deadline = time.time() + 20
     ready = False
-    while time.time() < deadline:
-        try:
-            response = celery_app.control.inspect(timeout=1).ping()
-            if response:
-                ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(1)
+    if using_local_fallback_broker:
+        time.sleep(3)
+        ready = worker.poll() is None
+    else:
+        while time.time() < deadline:
+            try:
+                response = celery_app.control.inspect(timeout=1).ping()
+                if response:
+                    ready = True
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
 
     if not ready:
         worker.terminate()
         worker.wait(timeout=10)
-        pytest.skip("Timed out waiting for the real Celery worker to come online.")
+        log_handle.close()
+        celery_app.conf.broker_url = original_broker_url
+        celery_app.conf.result_backend = original_result_backend
+        celery_app.conf.broker_transport_options = original_transport_options
+        log_excerpt = ""
+        with suppress(Exception):
+            log_excerpt = log_path.read_text(encoding="utf-8")[-4000:]
+        pytest.skip(f"Timed out waiting for the real Celery worker to come online. Worker log tail:\n{log_excerpt}")
 
     try:
         yield
@@ -101,6 +186,10 @@ def _launch_real_worker() -> None:
         except subprocess.TimeoutExpired:
             worker.kill()
             worker.wait(timeout=10)
+        log_handle.close()
+        celery_app.conf.broker_url = original_broker_url
+        celery_app.conf.result_backend = original_result_backend
+        celery_app.conf.broker_transport_options = original_transport_options
 
 
 @pytest.fixture()
@@ -153,6 +242,8 @@ def prod_like_backtest_run(
     prod_like_backtest_payload,
 ) -> Callable[..., dict[str, Any]]:
     def _create(symbol: str = "AAPL", **overrides: Any) -> dict[str, Any]:
+        me_response = client.get("/v1/me", headers=auth_headers)
+        assert me_response.status_code == 200
         response = client.post(
             "/v1/backtests",
             json=prod_like_backtest_payload(symbol=symbol, **overrides),
@@ -171,8 +262,11 @@ def prod_like_export_job(
     client,
     auth_headers,
     immediate_export_execution,
+    session_factory,
 ) -> Callable[[str, str], dict[str, Any]]:
     def _create(run_id: str, export_format: str = "csv") -> dict[str, Any]:
+        with session_factory() as session:
+            _set_user_plan(session, tier="pro", subscription_status="active")
         response = client.post(
             "/v1/exports",
             json={"run_id": run_id, "format": export_format},

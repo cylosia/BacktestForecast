@@ -1,4 +1,4 @@
-"""Development-only consolidated baseline for the current schema.
+"""Static consolidated baseline for the current schema.
 
 This repository is not in production yet, so the historical Alembic chain has
 been squashed into a single baseline to reduce maintenance overhead. Future
@@ -10,9 +10,12 @@ Create Date: 2026-03-24
 """
 from __future__ import annotations
 
-import backtestforecast.models  # noqa: F401
 from alembic import op
-from backtestforecast.db.base import Base
+from backtestforecast.db.baseline_20260324_schema import (
+    BASELINE_TABLE_NAMES,
+    POSTGRESQL_DDL_STATEMENTS,
+    SQLITE_DDL_STATEMENTS,
+)
 
 revision = "20260324_0001"
 down_revision = None
@@ -39,7 +42,9 @@ _TRIGGER_TABLES = [
 
 def upgrade() -> None:
     bind = op.get_bind()
-    Base.metadata.create_all(bind=bind)
+    statements = POSTGRESQL_DDL_STATEMENTS if bind.dialect.name == "postgresql" else SQLITE_DDL_STATEMENTS
+    for statement in statements:
+        op.execute(statement)
 
     if bind.dialect.name != "postgresql":
         return
@@ -74,4 +79,8 @@ def downgrade() -> None:
             op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_updated_at ON {table};")
         op.execute("DROP FUNCTION IF EXISTS set_updated_at();")
 
-    Base.metadata.drop_all(bind=bind)
+    for table_name in reversed(BASELINE_TABLE_NAMES):
+        if bind.dialect.name == "postgresql":
+            op.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE;")
+        else:
+            op.execute(f"DROP TABLE IF EXISTS {table_name};")

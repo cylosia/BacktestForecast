@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from backtestforecast.config import get_settings, register_invalidation_callback
-from backtestforecast.db.session import ping_database
+from backtestforecast.db.session import get_database_timezones, get_missing_schema_tables, ping_database
 from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
 from backtestforecast.services.dispatch_recovery import get_queue_diagnostics
 from backtestforecast.version import API_SERVICE_NAME, get_public_version
@@ -199,8 +199,10 @@ def ready(request: Request) -> JSONResponse:
     broker_up = _ping_broker_redis()
 
     db_up = True
+    missing_schema_tables: tuple[str, ...] = ()
     try:
         ping_database()
+        missing_schema_tables = get_missing_schema_tables()
     except (SQLAlchemyError, OSError):
         db_up = False
 
@@ -214,6 +216,18 @@ def ready(request: Request) -> JSONResponse:
             content["redis"] = "up" if redis_up else "degraded"
             content["broker"] = "up" if broker_up else "down"
         return JSONResponse(status_code=503, content=content)
+
+    if missing_schema_tables:
+        payload: dict[str, object] = {"status": "unavailable"}
+        if _show_version_in_health():
+            payload["version"] = get_public_version()
+        if show_details:
+            payload["environment"] = settings.app_env
+            payload["database"] = "schema_incomplete"
+            payload["redis"] = "up" if redis_up else "degraded"
+            payload["broker"] = "up" if broker_up else "down"
+            payload["missing_tables"] = list(missing_schema_tables)
+        return JSONResponse(status_code=503, content=payload)
 
     degraded_memory_fallback = bool(
         getattr(settings, "rate_limit_degraded_memory_fallback", False)
@@ -291,6 +305,14 @@ def ready(request: Request) -> JSONResponse:
                 payload["sentry"] = "initialized" if sentry_sdk.is_initialized() else "not_initialized"
             except Exception:
                 payload["sentry"] = "unavailable"
+        with suppress(Exception):
+            timezones = get_database_timezones()
+            payload["database_session_timezone"] = timezones.get("session_timezone")
+            payload["database_server_timezone"] = timezones.get("server_timezone")
+            payload["database_server_timezone_aligned"] = (
+                timezones.get("server_timezone") or ""
+            ).upper() == "UTC"
+        payload["export_storage_mode"] = "s3" if getattr(settings, "s3_bucket", None) else "database"
         if show_details and settings.app_env not in ("development",):
             payload["migration_aligned"] = migration_aligned
         payload.update(_get_operations_status())

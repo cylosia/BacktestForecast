@@ -15,6 +15,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _bootstrap import bootstrap_repo
+
+_ROOT = bootstrap_repo(load_api_env=True)
+
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
@@ -25,7 +33,14 @@ from alembic import command
 from backtestforecast.config import get_settings
 from backtestforecast.db.base import Base
 
-_ROOT = Path(__file__).resolve().parent.parent
+
+def _render_server_default(default, dialect) -> str:
+    candidate = getattr(default, "arg", default)
+    try:
+        compiled = candidate.compile(dialect=dialect, compile_kwargs={"literal_binds": True})
+        return str(compiled)
+    except Exception:
+        return repr(candidate)
 
 
 def _check_server_defaults(engine) -> list[str]:
@@ -40,7 +55,7 @@ def _check_server_defaults(engine) -> list[str]:
             db_col = db_columns.get(col.name)
             if db_col is None:
                 continue
-            orm_default = str(col.server_default.arg) if hasattr(col.server_default, "arg") else str(col.server_default)
+            orm_default = _render_server_default(col.server_default, engine.dialect)
             db_default = db_col.get("default")
             if db_default is None:
                 issues.append(
@@ -96,8 +111,36 @@ def _check_trigger_tables_completeness() -> list[str]:
     import re
     for migration in sorted(baseline.glob("*.py")):
         source = migration.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            tree = None
+
+        constant_bindings: dict[str, str] = {}
+        if tree is not None:
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                    target = node.targets[0]
+                    if (
+                        isinstance(target, ast.Name)
+                        and isinstance(node.value, ast.Constant)
+                        and isinstance(node.value.value, str)
+                    ):
+                        constant_bindings[target.id] = node.value.value
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "_create_updated_at_trigger"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    trigger_tables.add(node.args[0].value)
+
         for match in re.finditer(r"CREATE\s+TRIGGER\b.*?\bON\s+(\w+)", source, re.IGNORECASE | re.DOTALL):
             trigger_tables.add(match.group(1))
+        if "_TABLE_NAME" in constant_bindings and "CREATE TRIGGER trg_{_TABLE_NAME}_updated_at" in source:
+            trigger_tables.add(constant_bindings["_TABLE_NAME"])
 
     if not trigger_tables:
         return []

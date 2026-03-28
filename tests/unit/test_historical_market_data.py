@@ -7,7 +7,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from backtestforecast.db.base import Base
-from backtestforecast.integrations.massive_flatfiles import option_day_dataset, stock_day_dataset
+from backtestforecast.integrations.massive_flatfiles import (
+    chunked,
+    iter_option_day_bar_payloads,
+    iter_stock_day_bar_payloads,
+    option_day_dataset,
+    stock_day_dataset,
+)
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore, parse_option_ticker_metadata
 from backtestforecast.market_data.service import MarketDataService
@@ -136,3 +142,47 @@ def test_market_data_service_fetches_local_bars_first() -> None:
     bars = service._fetch_bars_coalesced("AAPL", start, end)
     assert len(bars) == 3
     assert [bar.trade_date for bar in bars] == [date(2025, 1, 2), date(2025, 1, 3), date(2025, 1, 6)]
+
+
+def test_streaming_stock_payloads_can_be_chunked_and_upserted() -> None:
+    store = _store()
+    rows = [
+        {"ticker": "AAPL", "open": "100", "high": "101", "low": "99", "close": "100", "volume": "1000"},
+        {"ticker": "MSFT", "open": "200", "high": "201", "low": "199", "close": "200", "volume": "2000"},
+    ]
+
+    payload_iter = iter_stock_day_bar_payloads(rows, date(2025, 4, 1))
+    batches = list(chunked(payload_iter, 1))
+
+    assert len(batches) == 2
+    assert store.upsert_underlying_day_bar_payloads(batches[0]) == 1
+    assert store.upsert_underlying_day_bar_payloads(batches[1]) == 1
+
+    aapl = store.get_underlying_day_bars("AAPL", date(2025, 4, 1), date(2025, 4, 1))
+    msft = store.get_underlying_day_bars("MSFT", date(2025, 4, 1), date(2025, 4, 1))
+    assert len(aapl) == 1
+    assert len(msft) == 1
+    assert aapl[0].close_price == 100.0
+    assert msft[0].close_price == 200.0
+
+
+def test_streaming_option_payloads_can_be_upserted() -> None:
+    store = _store()
+    rows = [
+        {
+            "ticker": "O:AAPL250418C00190000",
+            "open": "5.10",
+            "high": "5.40",
+            "low": "4.80",
+            "close": "5.25",
+            "volume": "10",
+        }
+    ]
+
+    payloads = list(iter_option_day_bar_payloads(rows, date(2025, 4, 1)))
+    assert store.upsert_option_day_bar_payloads(payloads) == 1
+
+    gateway = HistoricalOptionGateway(store, "AAPL")
+    quote = gateway.get_quote("O:AAPL250418C00190000", date(2025, 4, 1))
+    assert quote is not None
+    assert quote.mid_price == 5.25

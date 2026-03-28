@@ -130,8 +130,8 @@ class TestBaselineMigrationServerDefaults:
         from pathlib import Path
         source = Path("alembic/versions/20260324_0001_consolidated_baseline.py").read_text(encoding="utf-8")
 
-        assert "Base.metadata.create_all" in source
-        assert '"users"' in source
+        assert "POSTGRESQL_DDL_STATEMENTS" in source
+        assert "BASELINE_TABLE_NAMES" in source
 
 
 class TestFetchBarsCoalescedRaisesOnTimeout:

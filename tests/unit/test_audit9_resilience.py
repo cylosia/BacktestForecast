@@ -101,12 +101,14 @@ class TestWorkerMetricsBind:
 
 
 class TestBacktestTradeIndex:
-    """Fix #18: backtest_trades has index on run_id."""
+    """Fix #18: backtest_trades retains a left-prefix lookup on run_id."""
 
-    def test_run_id_index_exists(self):
+    def test_run_id_lookup_is_backed_by_composite_index(self):
         from backtestforecast.models import BacktestTrade
 
         index_names = [
             idx.name for idx in BacktestTrade.__table_args__ if hasattr(idx, "name")
         ]
-        assert "ix_backtest_trades_run_id" in index_names
+        assert "ix_backtest_trades_run_id" not in index_names
+        assert "ix_backtest_trades_run_entry_date" in index_names
+        assert "uq_backtest_trades_dedup" in index_names
