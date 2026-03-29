@@ -22,6 +22,7 @@ from backtestforecast.models import (
 from backtestforecast.utils.dates import is_trading_day
 
 logger = structlog.get_logger("market_data.historical_store")
+_POSTGRES_MAX_BIND_PARAMS = 65_000
 
 
 def parse_option_ticker_metadata(option_ticker: str) -> tuple[str, date, str, float] | None:
@@ -280,6 +281,7 @@ class HistoricalMarketDataStore:
         if not rows:
             return 0
         rows = [self._normalize_payload(row, model) for row in rows]
+        rows = self._dedupe_payloads(rows, key_fields)
         session = self._session(readonly=False)
         try:
             bind = session.get_bind()
@@ -306,18 +308,21 @@ class HistoricalMarketDataStore:
         key_fields: tuple[str, ...],
     ) -> None:
         table = model.__table__
-        stmt = pg_insert(table).values(rows)
-        update_columns = {
-            column.name: stmt.excluded[column.name]
-            for column in table.columns
-            if column.name not in {"id", *key_fields}
-        }
-        session.execute(
-            stmt.on_conflict_do_update(
-                index_elements=[getattr(table.c, field) for field in key_fields],
-                set_=update_columns,
+        batch_size = self._postgres_bulk_batch_size(table, rows)
+        for offset in range(0, len(rows), batch_size):
+            batch = rows[offset:offset + batch_size]
+            stmt = pg_insert(table).values(batch)
+            update_columns = {
+                column.name: stmt.excluded[column.name]
+                for column in table.columns
+                if column.name not in {"id", *key_fields}
+            }
+            session.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=[getattr(table.c, field) for field in key_fields],
+                    set_=update_columns,
+                )
             )
-        )
 
     def _bulk_upsert_fallback(
         self,
@@ -336,6 +341,16 @@ class HistoricalMarketDataStore:
                 if field == "id":
                     continue
                 setattr(existing, field, value)
+
+    @staticmethod
+    def _dedupe_payloads(rows: list[dict[str, object]], key_fields: tuple[str, ...]) -> list[dict[str, object]]:
+        if not rows:
+            return rows
+        deduped: dict[tuple[object, ...], dict[str, object]] = {}
+        for row in rows:
+            key = tuple(row[field] for field in key_fields)
+            deduped[key] = row
+        return list(deduped.values())
 
     @staticmethod
     def _row_payload(row: object, model: type[object]) -> dict[str, object]:
@@ -374,3 +389,11 @@ class HistoricalMarketDataStore:
             except TypeError:
                 return default_arg(None)
         return default_arg
+
+    @staticmethod
+    def _postgres_bulk_batch_size(table: object, rows: list[dict[str, object]]) -> int:
+        if not rows:
+            return 1
+        sample = rows[0]
+        bind_columns = max(1, sum(1 for column in table.columns if column.name in sample))
+        return max(1, min(len(rows), _POSTGRES_MAX_BIND_PARAMS // bind_columns))

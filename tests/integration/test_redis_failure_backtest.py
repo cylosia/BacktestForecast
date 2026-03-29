@@ -12,6 +12,7 @@ from redis.exceptions import RedisError
 
 from backtestforecast.errors import ServiceUnavailableError
 from backtestforecast.security.rate_limits import RateLimiter, get_rate_limiter
+from backtestforecast.utils.dates import market_date_today
 
 
 def test_rate_limiter_raises_service_unavailable_when_redis_fails_and_fail_closed():
@@ -47,10 +48,10 @@ def test_backtest_create_returns_503_when_redis_unavailable(
     _fake_celery,
 ):
     """When Redis is unavailable, the default degraded in-memory fallback still allows creation."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
-    today = datetime.now(UTC).date()
-    start = today - timedelta(days=90)
+    trade_date = market_date_today()
+    start = trade_date - timedelta(days=90)
 
     # Mock Redis to fail - the default app settings degrade to in-memory fallback.
     rl = get_rate_limiter()
@@ -66,7 +67,7 @@ def test_backtest_create_returns_503_when_redis_unavailable(
             "symbol": "AAPL",
             "strategy_type": "long_call",
             "start_date": str(start),
-            "end_date": str(today - timedelta(days=1)),
+            "end_date": str(trade_date),
             "target_dte": 30,
             "dte_tolerance_days": 5,
             "max_holding_days": 10,

@@ -3,10 +3,11 @@ from __future__ import annotations
 import csv
 import gzip
 import io
+import threading
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Iterable, Iterator
+from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
 import httpx
@@ -39,6 +40,38 @@ def _first(row: dict[str, str], *candidates: str) -> str | None:
     return None
 
 
+class _IteratorBytesIO(io.RawIOBase):
+    """Adapt an iterator of byte chunks into a file-like object for gzip streaming."""
+
+    def __init__(self, chunks: Iterator[bytes]) -> None:
+        super().__init__()
+        self._chunks = iter(chunks)
+        self._buffer = bytearray()
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b) -> int:  # type: ignore[no-untyped-def]
+        if self.closed:
+            return 0
+        view = memoryview(b).cast("B")
+        if not view:
+            return 0
+        while len(self._buffer) < len(view):
+            try:
+                chunk = next(self._chunks)
+            except StopIteration:
+                break
+            if chunk:
+                self._buffer.extend(chunk)
+        count = min(len(view), len(self._buffer))
+        if count <= 0:
+            return 0
+        view[:count] = self._buffer[:count]
+        del self._buffer[:count]
+        return count
+
+
 @dataclass(slots=True)
 class MassiveFlatFilesClient:
     base_url: str
@@ -46,14 +79,19 @@ class MassiveFlatFilesClient:
     bucket: str | None = None
     use_s3: bool = False
     _http_client: httpx.Client | None = field(init=False, default=None, repr=False)
+    _s3_client: Any | None = field(init=False, default=None, repr=False)
+    _client_lock: threading.Lock = field(init=False, default_factory=threading.Lock, repr=False)
 
     @classmethod
     def from_settings(cls) -> MassiveFlatFilesClient:
         settings = get_settings()
         if not settings.massive_api_key:
             raise ConfigurationError("MASSIVE_API_KEY is required for flat-file sync.")
+        base_url = settings.massive_flatfiles_base_url.rstrip("/")
+        if settings.massive_flatfiles_use_s3 and settings.s3_endpoint_url:
+            base_url = settings.s3_endpoint_url.rstrip("/")
         return cls(
-            base_url=settings.massive_flatfiles_base_url.rstrip("/"),
+            base_url=base_url,
             api_key=settings.massive_api_key,
             bucket=settings.massive_flatfiles_bucket,
             use_s3=settings.massive_flatfiles_use_s3,
@@ -72,6 +110,11 @@ class MassiveFlatFilesClient:
         if self._http_client is not None:
             self._http_client.close()
             self._http_client = None
+        if self._s3_client is not None:
+            close = getattr(self._s3_client, "close", None)
+            if callable(close):
+                close()
+            self._s3_client = None
 
     def __enter__(self) -> MassiveFlatFilesClient:
         return self
@@ -104,66 +147,36 @@ class MassiveFlatFilesClient:
                 raise ExternalServiceError(f"Massive flat file not found for {trade_date.isoformat()}: {dataset}")
             if response.status_code >= 400:
                 raise ExternalServiceError(f"Massive flat file download failed with {response.status_code}.")
-            raw = response.raw
-            raw.decode_content = False
-            with gzip.GzipFile(fileobj=raw) as gz:
-                text_stream = io.TextIOWrapper(gz, encoding="utf-8", newline="")
+            raw = io.BufferedReader(_IteratorBytesIO(response.iter_bytes()))
+            with gzip.GzipFile(fileobj=raw) as gz, io.TextIOWrapper(gz, encoding="utf-8", newline="") as text_stream:
                 yield from csv.DictReader(text_stream)
 
     def _download_gzip_s3(self, dataset: str, trade_date: date) -> bytes:
-        if not self.bucket:
-            raise ConfigurationError("massive_flatfiles_bucket is required when using S3 mode.")
-        try:
-            import boto3  # type: ignore[import-untyped]
-            from botocore.config import Config as BotoConfig
-        except ImportError as exc:
-            raise ConfigurationError("boto3 is required for S3 flat-file sync.") from exc
-        settings = get_settings()
-        client = boto3.client(
-            "s3",
-            endpoint_url=self.base_url,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-            region_name=settings.s3_region,
-            config=BotoConfig(
-                signature_version="s3v4",
-                s3={"addressing_style": "path"},
-                connect_timeout=10,
-                read_timeout=120,
-                retries={"max_attempts": 2, "mode": "standard"},
-                proxies={},
-            ),
-        )
+        from botocore.exceptions import ClientError
+
+        client = self._get_s3_client()
         key = _day_key(dataset, trade_date)
-        response = client.get_object(Bucket=self.bucket, Key=key)
+        try:
+            response = client.get_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code in {"NoSuchKey", "404", "NotFound"}:
+                raise ExternalServiceError(f"Massive flat file not found for {trade_date.isoformat()}: {dataset}") from exc
+            raise
         return response["Body"].read()
 
     def _iter_csv_rows_s3(self, dataset: str, trade_date: date) -> Iterator[dict[str, str]]:
-        if not self.bucket:
-            raise ConfigurationError("massive_flatfiles_bucket is required when using S3 mode.")
-        try:
-            import boto3  # type: ignore[import-untyped]
-            from botocore.config import Config as BotoConfig
-        except ImportError as exc:
-            raise ConfigurationError("boto3 is required for S3 flat-file sync.") from exc
-        settings = get_settings()
-        client = boto3.client(
-            "s3",
-            endpoint_url=self.base_url,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-            region_name=settings.s3_region,
-            config=BotoConfig(
-                signature_version="s3v4",
-                s3={"addressing_style": "path"},
-                connect_timeout=10,
-                read_timeout=120,
-                retries={"max_attempts": 2, "mode": "standard"},
-                proxies={},
-            ),
-        )
+        from botocore.exceptions import ClientError
+
+        client = self._get_s3_client()
         key = _day_key(dataset, trade_date)
-        response = client.get_object(Bucket=self.bucket, Key=key)
+        try:
+            response = client.get_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code in {"NoSuchKey", "404", "NotFound"}:
+                raise ExternalServiceError(f"Massive flat file not found for {trade_date.isoformat()}: {dataset}") from exc
+            raise
         body = response["Body"]
         try:
             with gzip.GzipFile(fileobj=body) as gz:
@@ -174,11 +187,42 @@ class MassiveFlatFilesClient:
 
     def _get_http_client(self) -> httpx.Client:
         if self._http_client is None:
-            self._http_client = httpx.Client(
-                timeout=httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=10.0),
-                trust_env=False,
-            )
+            with self._client_lock:
+                if self._http_client is None:
+                    self._http_client = httpx.Client(
+                        timeout=httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=10.0),
+                        trust_env=False,
+                    )
         return self._http_client
+
+    def _get_s3_client(self):
+        if not self.bucket:
+            raise ConfigurationError("massive_flatfiles_bucket is required when using S3 mode.")
+        if self._s3_client is None:
+            with self._client_lock:
+                if self._s3_client is None:
+                    try:
+                        import boto3  # type: ignore[import-untyped]
+                        from botocore.config import Config as BotoConfig
+                    except ImportError as exc:
+                        raise ConfigurationError("boto3 is required for S3 flat-file sync.") from exc
+                    settings = get_settings()
+                    self._s3_client = boto3.client(
+                        "s3",
+                        endpoint_url=self.base_url,
+                        aws_access_key_id=settings.aws_access_key_id,
+                        aws_secret_access_key=settings.aws_secret_access_key,
+                        region_name=settings.s3_region,
+                        config=BotoConfig(
+                            signature_version="s3v4",
+                            s3={"addressing_style": "path"},
+                            connect_timeout=10,
+                            read_timeout=120,
+                            retries={"max_attempts": 2, "mode": "standard"},
+                            proxies={},
+                        ),
+                    )
+        return self._s3_client
 
 
 def parse_stock_day_rows(rows: list[dict[str, str]], trade_date: date, *, symbols: set[str] | None = None) -> list[HistoricalUnderlyingDayBar]:

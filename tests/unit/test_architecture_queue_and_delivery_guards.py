@@ -180,8 +180,16 @@ def test_ready_stays_healthy_when_broker_is_down_if_database_is_up(monkeypatch) 
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: False)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
-    monkeypatch.setattr(health, "_check_migration_drift", lambda: True)
-    monkeypatch.setattr(health, "_get_operations_status", lambda **kwargs: (_ for _ in ()).throw(AssertionError("deep checks should not run")))
+    monkeypatch.setattr(
+        health,
+        "_get_migration_status",
+        lambda: {"aligned": True, "applied_revision": "20260328_0010", "expected_revision": "20260328_0010"},
+    )
+    monkeypatch.setattr(
+        health,
+        "_get_operations_status",
+        lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "ok"}},
+    )
     monkeypatch.setattr(
         health,
         "get_settings",

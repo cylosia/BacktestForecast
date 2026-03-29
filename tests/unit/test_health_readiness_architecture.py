@@ -14,7 +14,11 @@ def test_ready_reports_operations_status_only_in_detailed_mode(monkeypatch) -> N
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
-    monkeypatch.setattr(health, "_check_migration_drift", lambda: True)
+    monkeypatch.setattr(
+        health,
+        "_get_migration_status",
+        lambda: {"aligned": True, "applied_revision": "20260328_0010", "expected_revision": "20260328_0010"},
+    )
     monkeypatch.setattr(
         health,
         "_get_operations_status",
@@ -39,10 +43,12 @@ def test_ready_reports_operations_status_only_in_detailed_mode(monkeypatch) -> N
 
     assert no_details.status_code == 200
     assert with_details.status_code == 200
-    assert calls["ops"] == 1
+    assert calls["ops"] == 2
+    assert "outbox" not in json.loads(no_details.body)
+    assert json.loads(with_details.body)["outbox"]["status"] == "ok"
 
 
-def test_ready_stays_degraded_but_available_when_migrations_drift(monkeypatch) -> None:
+def test_ready_returns_503_when_migrations_drift_even_without_detailed_access(monkeypatch) -> None:
     from apps.api.app.routers import health
 
     monkeypatch.setattr(health, "ping_database", lambda: None)
@@ -50,7 +56,16 @@ def test_ready_stays_degraded_but_available_when_migrations_drift(monkeypatch) -
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
-    monkeypatch.setattr(health, "_check_migration_drift", lambda: False)
+    monkeypatch.setattr(
+        health,
+        "_get_migration_status",
+        lambda: {"aligned": False, "applied_revision": "20260328_0009", "expected_revision": "20260328_0010"},
+    )
+    monkeypatch.setattr(
+        health,
+        "_get_operations_status",
+        lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "ok"}},
+    )
     monkeypatch.setattr(
         health,
         "get_settings",
@@ -67,11 +82,16 @@ def test_ready_stays_degraded_but_available_when_migrations_drift(monkeypatch) -
 
     response = health.ready(SimpleNamespace(headers={}))
 
-    assert response.status_code == 200
+    assert response.status_code == 503
+    payload = json.loads(response.body)
+    assert payload["status"] == "degraded"
+    assert "migration_aligned" not in payload
 
 
-def test_ready_skips_migration_check_without_detailed_access(monkeypatch) -> None:
+def test_ready_checks_migration_status_without_detailed_access(monkeypatch) -> None:
     from apps.api.app.routers import health
+
+    calls = {"migration": 0}
 
     monkeypatch.setattr(health, "ping_database", lambda: None)
     monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
@@ -80,8 +100,17 @@ def test_ready_skips_migration_check_without_detailed_access(monkeypatch) -> Non
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
     monkeypatch.setattr(
         health,
-        "_check_migration_drift",
-        lambda: (_ for _ in ()).throw(AssertionError("migration drift should not be checked without detailed access")),
+        "_get_migration_status",
+        lambda: calls.__setitem__("migration", calls["migration"] + 1) or {
+            "aligned": True,
+            "applied_revision": "20260328_0010",
+            "expected_revision": "20260328_0010",
+        },
+    )
+    monkeypatch.setattr(
+        health,
+        "_get_operations_status",
+        lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "ok"}},
     )
     monkeypatch.setattr(
         health,
@@ -100,6 +129,7 @@ def test_ready_skips_migration_check_without_detailed_access(monkeypatch) -> Non
     response = health.ready(SimpleNamespace(headers={}))
 
     assert response.status_code == 200
+    assert calls["migration"] == 1
 
 
 def test_queue_health_includes_broker_recovery_depth(monkeypatch) -> None:
@@ -165,8 +195,16 @@ def test_ready_reports_db_timezone_and_export_storage_mode_in_detailed_payload(m
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
-    monkeypatch.setattr(health, "_check_migration_drift", lambda: True)
-    monkeypatch.setattr(health, "_get_operations_status", lambda **kwargs: {})
+    monkeypatch.setattr(
+        health,
+        "_get_migration_status",
+        lambda: {"aligned": True, "applied_revision": "20260328_0010", "expected_revision": "20260328_0010"},
+    )
+    monkeypatch.setattr(
+        health,
+        "_get_operations_status",
+        lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "ok"}},
+    )
     monkeypatch.setattr(
         health,
         "get_database_timezones",
@@ -195,3 +233,40 @@ def test_ready_reports_db_timezone_and_export_storage_mode_in_detailed_payload(m
     assert payload["database_server_timezone"] == "Asia/Jerusalem"
     assert payload["database_server_timezone_aligned"] is False
     assert payload["export_storage_mode"] == "database"
+
+
+def test_ready_returns_503_when_queue_diagnostics_are_not_ok(monkeypatch) -> None:
+    from apps.api.app.routers import health
+
+    monkeypatch.setattr(health, "ping_database", lambda: None)
+    monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
+    monkeypatch.setattr(health, "ping_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
+    monkeypatch.setattr(
+        health,
+        "_get_migration_status",
+        lambda: {"aligned": True, "applied_revision": "20260328_0010", "expected_revision": "20260328_0010"},
+    )
+    monkeypatch.setattr(
+        health,
+        "_get_operations_status",
+        lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "recovery_backlog"}},
+    )
+    monkeypatch.setattr(
+        health,
+        "get_settings",
+        lambda: SimpleNamespace(
+            metrics_token=None,
+            app_env="test",
+            rate_limit_fail_closed=False,
+            rate_limit_degraded_memory_fallback=False,
+            sentry_dsn=None,
+            option_cache_enabled=False,
+            redis_cache_url=None,
+        ),
+    )
+
+    response = health.ready(SimpleNamespace(headers={}))
+
+    assert response.status_code == 503

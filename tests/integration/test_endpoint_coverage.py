@@ -459,7 +459,15 @@ class TestHealthLive:
 
 
 class TestHealthReady:
-    def test_health_ready_returns_200_when_healthy(self, client):
+    def test_health_ready_returns_200_when_healthy(self, client, monkeypatch):
+        monkeypatch.setattr(
+            "apps.api.app.routers.health._get_migration_status",
+            lambda: {"aligned": True, "applied_revision": "20260328_0010", "expected_revision": "20260328_0010"},
+        )
+        monkeypatch.setattr(
+            "apps.api.app.routers.health._get_operations_status",
+            lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "ok"}},
+        )
         with patch("apps.api.app.routers.health.ping_database"):
             resp = client.get("/health/ready")
         assert resp.status_code == 200

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -20,7 +20,8 @@ def test_scripts_bootstrap_env_files_for_local_defaults() -> None:
     source = _read("scripts/_bootstrap.py")
     assert "apps\" / \"api\" / \".env.example\"" in source
     assert "apps\" / \"web\" / \".env.example\"" in source
-    assert "os.environ.setdefault" in source
+    assert "override=True" in source
+    assert "protected_keys = set(os.environ)" in source
 
 
 def test_repair_script_has_precondition_error_for_missing_database_url() -> None:

@@ -195,6 +195,45 @@ def get_missing_schema_tables() -> tuple[str, ...]:
     return tuple(sorted(set(expected_schema_tables()) - existing_tables))
 
 
+@lru_cache
+def get_expected_revision() -> str | None:
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        config = Config("alembic.ini")
+        script = ScriptDirectory.from_config(config)
+        return script.get_current_head()
+    except Exception:
+        return None
+
+
+def get_applied_revision() -> str | None:
+    try:
+        from alembic.runtime.migration import MigrationContext
+
+        with _get_engine().connect() as connection, connection.begin():
+            connection.execute(text("SET LOCAL statement_timeout = '2s'"))
+            context = MigrationContext.configure(connection)
+            return context.get_current_revision()
+    except Exception:
+        return None
+
+
+def get_migration_status() -> dict[str, str | bool | None]:
+    expected_revision = get_expected_revision()
+    applied_revision = get_applied_revision()
+    return {
+        "expected_revision": expected_revision,
+        "applied_revision": applied_revision,
+        "aligned": bool(expected_revision and applied_revision == expected_revision),
+    }
+
+
+def migrations_aligned() -> bool:
+    return bool(get_migration_status()["aligned"])
+
+
 def get_database_timezones() -> dict[str, str | None]:
     """Return the effective app session timezone and the server/database default timezone.
 
@@ -245,6 +284,7 @@ def _invalidate_db_caches() -> None:
         if engine_ref is not None:
             with suppress(Exception):
                 engine_ref.dispose()
+    get_expected_revision.cache_clear()
 
 
 register_invalidation_callback(_invalidate_db_caches)

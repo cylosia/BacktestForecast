@@ -8,7 +8,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from backtestforecast.config import get_settings, register_invalidation_callback
-from backtestforecast.db.session import get_database_timezones, get_missing_schema_tables, ping_database
+from backtestforecast.db.session import (
+    get_applied_revision,
+    get_database_timezones,
+    get_expected_revision,
+    get_missing_schema_tables,
+    ping_database,
+)
 from backtestforecast.security.rate_limits import get_rate_limiter, ping_redis
 from backtestforecast.services.dispatch_recovery import get_queue_diagnostics
 from backtestforecast.version import API_SERVICE_NAME, get_public_version
@@ -96,51 +102,61 @@ def _check_massive_health(settings) -> str:
     return "ok"
 
 
-def _check_migration_drift() -> bool:
-    """Return True if DB migration version matches the code's Alembic head."""
+def _get_migration_status() -> dict[str, object]:
+    """Return cached migration alignment details for readiness decisions."""
     global _migration_check_cache
 
     now = monotonic()
     if _migration_check_cache is not None:
-        checked_at, cached_match = _migration_check_cache
+        checked_at, cached_status = _migration_check_cache
         if now - checked_at < _MIGRATION_CHECK_TTL_SECONDS:
-            return cached_match
+            return dict(cached_status)
     try:
-        from alembic.config import Config
-        from alembic.runtime.migration import MigrationContext
-        from alembic.script import ScriptDirectory
-
-        from backtestforecast.db.session import _get_engine
         from backtestforecast.observability.metrics import MIGRATION_HEAD_MATCH
 
-        config = Config("alembic.ini")
-        script = ScriptDirectory.from_config(config)
-        head = script.get_current_head()
-        with _get_engine().connect() as conn:
-            context = MigrationContext.configure(conn)
-            current = context.get_current_revision()
-        match = current == head
+        current = get_applied_revision()
+        head = get_expected_revision()
+        match = bool(head and current == head)
         MIGRATION_HEAD_MATCH.set(1 if match else 0)
-        _migration_check_cache = (now, match)
-        return match
+        payload = {
+            "aligned": match,
+            "applied_revision": current,
+            "expected_revision": head,
+        }
+        _migration_check_cache = (now, payload)
+        return dict(payload)
     except (ImportError, FileNotFoundError):
         import structlog
         structlog.get_logger("health").debug("health.migration_check_unavailable", exc_info=True)
-        _migration_check_cache = (now, False)
-        return False
+        payload = {"aligned": False, "applied_revision": None, "expected_revision": None}
+        _migration_check_cache = (now, payload)
+        return dict(payload)
     except Exception:
         import structlog
         structlog.get_logger("health").warning("health.migration_check_failed", exc_info=True)
-        _migration_check_cache = (now, False)
-        return False
+        payload = {"aligned": False, "applied_revision": None, "expected_revision": None}
+        _migration_check_cache = (now, payload)
+        return dict(payload)
+
+
+def _check_migration_drift() -> bool:
+    return bool(_get_migration_status()["aligned"])
 
 
 _MIGRATION_CHECK_TTL_SECONDS = 60.0
-_migration_check_cache: tuple[float, bool] | None = None
+_migration_check_cache: tuple[float, dict[str, object]] | None = None
 
 
 def _show_version_in_health() -> bool:
     return get_settings().app_env not in ("production", "staging")
+
+
+def _operations_block_readiness(operations_status: dict[str, object]) -> bool:
+    outbox = operations_status.get("outbox")
+    queue_diagnostics = operations_status.get("queue_diagnostics")
+    outbox_status = outbox.get("status") if isinstance(outbox, dict) else "unknown"
+    queue_status = queue_diagnostics.get("status") if isinstance(queue_diagnostics, dict) else "unknown"
+    return outbox_status not in {"ok", "pending"} or queue_status != "ok"
 
 
 def _get_broker_queue_depths() -> dict[str, int]:
@@ -253,10 +269,10 @@ def ready(request: Request) -> JSONResponse:
         rl_mode = "in_memory_fallback"
 
     massive_status = _check_massive_health(settings)
-    migration_aligned = True
-    if show_details and settings.app_env not in ("development",):
-        migration_aligned = _check_migration_drift()
-        if not migration_aligned:
+    migration_status = {"aligned": True, "applied_revision": None, "expected_revision": None}
+    if settings.app_env not in ("development",):
+        migration_status = _get_migration_status()
+        if not migration_status["aligned"]:
             payload: dict[str, object] = {"status": "degraded"}
             if _show_version_in_health():
                 payload["version"] = get_public_version()
@@ -268,8 +284,28 @@ def ready(request: Request) -> JSONResponse:
                 payload["rate_limit_mode"] = rl_mode
                 payload["massive_api"] = massive_status
                 payload["migration_aligned"] = False
-                payload.update(_get_operations_status())
-            return JSONResponse(status_code=200, content=payload)
+                payload["migration_applied_revision"] = migration_status["applied_revision"]
+                payload["migration_expected_revision"] = migration_status["expected_revision"]
+            return JSONResponse(status_code=503, content=payload)
+
+    operations_status = _get_operations_status()
+    if _operations_block_readiness(operations_status):
+        payload = {"status": "degraded"}
+        if _show_version_in_health():
+            payload["version"] = get_public_version()
+        if show_details:
+            payload["environment"] = settings.app_env
+            payload["database"] = "up"
+            payload["redis"] = "up" if redis_up else "down"
+            payload["broker"] = "up" if broker_up else "down"
+            payload["rate_limit_mode"] = rl_mode
+            payload["massive_api"] = massive_status
+            if settings.app_env not in ("development",):
+                payload["migration_aligned"] = bool(migration_status["aligned"])
+                payload["migration_applied_revision"] = migration_status["applied_revision"]
+                payload["migration_expected_revision"] = migration_status["expected_revision"]
+            payload.update(operations_status)
+        return JSONResponse(status_code=503, content=payload)
 
     all_ok = redis_up and broker_up and massive_status in ("ok", "unconfigured")
     payload: dict[str, object] = {
@@ -314,8 +350,10 @@ def ready(request: Request) -> JSONResponse:
             ).upper() == "UTC"
         payload["export_storage_mode"] = "s3" if getattr(settings, "s3_bucket", None) else "database"
         if show_details and settings.app_env not in ("development",):
-            payload["migration_aligned"] = migration_aligned
-        payload.update(_get_operations_status())
+            payload["migration_aligned"] = bool(migration_status["aligned"])
+            payload["migration_applied_revision"] = migration_status["applied_revision"]
+            payload["migration_expected_revision"] = migration_status["expected_revision"]
+        payload.update(operations_status)
     return JSONResponse(status_code=200, content=payload)
 
 

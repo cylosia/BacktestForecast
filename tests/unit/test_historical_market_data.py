@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import gzip
 from datetime import date, timedelta
 from decimal import Decimal
 
+import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -13,6 +15,7 @@ from backtestforecast.integrations.massive_flatfiles import (
     iter_stock_day_bar_payloads,
     option_day_dataset,
     stock_day_dataset,
+    MassiveFlatFilesClient,
 )
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore, parse_option_ticker_metadata
@@ -49,6 +52,31 @@ def test_flatfile_day_key_shape() -> None:
 
     assert _day_key(option_day_dataset(), date(2025, 4, 1)) == "us_options_opra/day_aggs_v1/2025/04/2025-04-01.csv.gz"
     assert _day_key(stock_day_dataset(), date(2025, 4, 1)) == "us_stocks_sip/day_aggs_v1/2025/04/2025-04-01.csv.gz"
+
+
+def test_http_flatfile_streaming_iterates_gzip_csv_rows() -> None:
+    compressed = gzip.compress(
+        b"ticker,open,high,low,close,volume\nAAPL,100,101,99,100,1000\nMSFT,200,201,199,200,2000\n"
+    )
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path.endswith("/us_stocks_sip/day_aggs_v1/2025/04/2025-04-01.csv.gz")
+        return httpx.Response(200, content=compressed)
+
+    client = MassiveFlatFilesClient(base_url="https://files.massive.com", api_key="test-key", use_s3=False)
+    http_client = httpx.Client(transport=httpx.MockTransport(_handler), trust_env=False)
+    client._http_client = http_client
+
+    try:
+        rows = list(client.iter_csv_rows(stock_day_dataset(), date(2025, 4, 1)))
+    finally:
+        http_client.close()
+
+    assert rows == [
+        {"ticker": "AAPL", "open": "100", "high": "101", "low": "99", "close": "100", "volume": "1000"},
+        {"ticker": "MSFT", "open": "200", "high": "201", "low": "199", "close": "200", "volume": "2000"},
+    ]
 
 
 def test_historical_option_gateway_uses_close_as_mid() -> None:
@@ -166,6 +194,23 @@ def test_streaming_stock_payloads_can_be_chunked_and_upserted() -> None:
     assert msft[0].close_price == 200.0
 
 
+def test_streaming_stock_payloads_dedupe_duplicate_symbol_trade_date_rows() -> None:
+    store = _store()
+    rows = [
+        {"ticker": "AAPL", "open": "100", "high": "101", "low": "99", "close": "100", "volume": "1000"},
+        {"ticker": "AAPL", "open": "110", "high": "111", "low": "109", "close": "110", "volume": "2000"},
+    ]
+
+    payloads = list(iter_stock_day_bar_payloads(rows, date(2025, 4, 1)))
+    assert store.upsert_underlying_day_bar_payloads(payloads) == 1
+
+    aapl = store.get_underlying_day_bars("AAPL", date(2025, 4, 1), date(2025, 4, 1))
+    assert len(aapl) == 1
+    assert aapl[0].open_price == 110.0
+    assert aapl[0].close_price == 110.0
+    assert aapl[0].volume == 2000.0
+
+
 def test_streaming_option_payloads_can_be_upserted() -> None:
     store = _store()
     rows = [
@@ -186,3 +231,28 @@ def test_streaming_option_payloads_can_be_upserted() -> None:
     quote = gateway.get_quote("O:AAPL250418C00190000", date(2025, 4, 1))
     assert quote is not None
     assert quote.mid_price == 5.25
+
+
+def test_postgres_bulk_batch_size_stays_under_bind_limit_for_option_payloads() -> None:
+    rows = [
+        {
+            "id": "ignored",
+            "option_ticker": "O:AAPL250418C00190000",
+            "underlying_symbol": "AAPL",
+            "trade_date": date(2025, 4, 1),
+            "expiration_date": date(2025, 4, 18),
+            "contract_type": "call",
+            "strike_price": Decimal("190"),
+            "open_price": Decimal("5.10"),
+            "high_price": Decimal("5.40"),
+            "low_price": Decimal("4.80"),
+            "close_price": Decimal("5.25"),
+            "volume": Decimal("10"),
+            "source_dataset": "massive",
+            "source_file_date": date(2025, 4, 1),
+        }
+    ]
+
+    batch_size = HistoricalMarketDataStore._postgres_bulk_batch_size(HistoricalOptionDayBar.__table__, rows)
+    assert batch_size < 5000
+    assert batch_size * len(rows[0]) <= 65000

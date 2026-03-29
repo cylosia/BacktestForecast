@@ -91,7 +91,11 @@ if _startup_settings.sentry_dsn:
 
 @asynccontextmanager
 async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
-    from backtestforecast.db.session import get_database_timezones, get_missing_schema_tables
+    from backtestforecast.db.session import (
+        get_database_timezones,
+        get_migration_status,
+        get_missing_schema_tables,
+    )
 
     if _startup_settings.app_env in ("production", "staging"):
         if not _startup_settings.clerk_audience or not _startup_settings.clerk_audience.strip():
@@ -143,6 +147,22 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning(
             "startup.schema_incomplete",
             missing_tables=list(missing_schema_tables),
+            hint="Run Alembic migrations against the configured DATABASE_URL before serving traffic.",
+        )
+
+    migration_status = get_migration_status()
+    if not migration_status["aligned"]:
+        expected_revision = migration_status["expected_revision"] or "unknown"
+        applied_revision = migration_status["applied_revision"] or "none"
+        if _startup_settings.app_env in ("production", "staging"):
+            raise RuntimeError(
+                "DATABASE_URL points to a schema revision that does not match Alembic head. "
+                f"Applied revision: {applied_revision}; expected revision: {expected_revision}."
+            )
+        logger.warning(
+            "startup.migration_drift",
+            applied_revision=applied_revision,
+            expected_revision=expected_revision,
             hint="Run Alembic migrations against the configured DATABASE_URL before serving traffic.",
         )
 

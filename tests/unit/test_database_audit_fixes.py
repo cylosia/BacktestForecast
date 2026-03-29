@@ -29,8 +29,11 @@ def test_startup_lifespan_blocks_production_when_schema_is_incomplete() -> None:
 
     source = inspect.getsource(_lifespan)
     assert "get_missing_schema_tables" in source
+    assert "get_migration_status" in source
     assert "startup.schema_incomplete" in source
+    assert "startup.migration_drift" in source
     assert "DATABASE_URL points to an incomplete schema" in source
+    assert "DATABASE_URL points to a schema revision that does not match Alembic head" in source
 
 
 def test_consolidated_baseline_is_static_snapshot_not_runtime_create_all() -> None:

@@ -457,7 +457,10 @@ class ScanService:
                     try:
                         elapsed_so_far = _time.monotonic() - scan_start
                         if elapsed_so_far > _scan_timeout - self._CANDIDATE_TIMEOUT_SECONDS:
-                            warnings.append({"type": "timeout", "message": "Scan time limit approaching; remaining candidates were skipped."})
+                            warnings.append({
+                                "code": "timeout",
+                                "message": "Scan time limit approaching; remaining candidates were skipped.",
+                            })
                             _scan_timed_out = True
                             break
                         bundle = bundle_cache.get(symbol)

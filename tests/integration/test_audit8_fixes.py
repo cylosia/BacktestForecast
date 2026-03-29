@@ -12,9 +12,18 @@ from backtestforecast.errors import ConfigurationError
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.services.backtests import to_decimal
 from backtestforecast.services.templates import _resolve_template_limit
+from backtestforecast.utils.dates import market_date_today
 
 
-def test_health_ready_returns_200_when_db_healthy(client):
+def test_health_ready_returns_200_when_db_healthy(client, monkeypatch):
+    monkeypatch.setattr(
+        "apps.api.app.routers.health._get_migration_status",
+        lambda: {"aligned": True, "applied_revision": "20260328_0010", "expected_revision": "20260328_0010"},
+    )
+    monkeypatch.setattr(
+        "apps.api.app.routers.health._get_operations_status",
+        lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "ok"}},
+    )
     with patch("apps.api.app.routers.health.ping_database"):
         resp = client.get("/health/ready")
     assert resp.status_code == 200
@@ -68,6 +77,14 @@ def test_health_ready_reports_degraded_memory_fallback_mode_with_details(client,
     monkeypatch.setattr("apps.api.app.routers.health.ping_redis", lambda: False)
     monkeypatch.setattr("apps.api.app.routers.health._ping_broker_redis", lambda: True)
     monkeypatch.setattr("apps.api.app.routers.health.ping_database", lambda: None)
+    monkeypatch.setattr(
+        "apps.api.app.routers.health._get_migration_status",
+        lambda: {"aligned": True, "applied_revision": "20260328_0010", "expected_revision": "20260328_0010"},
+    )
+    monkeypatch.setattr(
+        "apps.api.app.routers.health._get_operations_status",
+        lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "ok"}},
+    )
     monkeypatch.setattr("apps.api.app.routers.health.get_settings", lambda: settings)
 
     resp = client.get("/health/ready", headers={"x-metrics-token": "secret"})
@@ -85,8 +102,8 @@ def test_quota_counts_queued_and_running_runs(client, auth_headers, db_session, 
     client.get("/v1/me", headers=auth_headers)
     user = db_session.query(User).filter(User.clerk_user_id == "clerk_test_user").one()
 
-    today = datetime.now(UTC).date()
-    start = today - timedelta(days=90)
+    market_today = market_date_today()
+    start = market_today - timedelta(days=90)
     for i, status in enumerate(["queued", "running", "succeeded", "queued", "running"]):
         run = BacktestRun(
             user_id=user.id,
@@ -94,7 +111,7 @@ def test_quota_counts_queued_and_running_runs(client, auth_headers, db_session, 
             symbol=f"Q{i:02d}X",
             strategy_type="long_call",
             date_from=start,
-            date_to=today - timedelta(days=1),
+            date_to=market_today,
             target_dte=30,
             dte_tolerance_days=5,
             max_holding_days=10,
@@ -113,7 +130,7 @@ def test_quota_counts_queued_and_running_runs(client, auth_headers, db_session, 
             "symbol": "OVER",
             "strategy_type": "long_call",
             "start_date": str(start),
-            "end_date": str(today - timedelta(days=1)),
+            "end_date": str(market_today),
             "target_dte": 30,
             "dte_tolerance_days": 5,
             "max_holding_days": 10,
@@ -170,13 +187,12 @@ def test_end_date_rejects_future_date():
 
 
 def test_dte_tolerance_must_be_less_than_target_dte():
-    yesterday = date.today() - timedelta(days=1)
     with pytest.raises(PydanticValidationError, match=r"dte_tolerance_days .* must be less than target_dte"):
         CreateBacktestRunRequest(
             symbol="AAPL",
             strategy_type="long_call",
             start_date=date(2024, 1, 2),
-            end_date=yesterday,
+            end_date=market_date_today(),
             target_dte=30,
             dte_tolerance_days=30,
             max_holding_days=10,
