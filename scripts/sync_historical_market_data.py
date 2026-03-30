@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+import json
+import os
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import TypedDict
 
 from _bootstrap import bootstrap_repo
 
@@ -16,7 +21,7 @@ from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.integrations.massive_flatfiles import (
     MassiveFlatFilesClient,
     chunked,
-    iter_option_day_bar_payloads,
+    iter_option_day_bar_records,
     iter_stock_day_bar_payloads,
     option_day_dataset,
     stock_day_dataset,
@@ -33,16 +38,53 @@ class TradeDateSyncResult:
     option_count: int
     stock_error: str | None = None
     option_error: str | None = None
+    stock_symbols: tuple[str, ...] = ()
+    option_symbols: tuple[str, ...] = ()
 
 
-def _iter_dates(start_date: date, end_date: date):
+class TradeDateResultPayload(TypedDict):
+    trade_date: str
+    stock_count: int
+    option_count: int
+    stock_error: str | None
+    option_error: str | None
+    stock_symbols: list[str]
+    option_symbols: list[str]
+
+
+class ImportStatusSnapshot(TypedDict, total=False):
+    started_at: str
+    command: str
+    launcher_pid: int
+    python_pid: int
+    stdout_log_path: str
+    stderr_log_path: str
+    status_path: str
+    log_path: str
+    status: str
+    updated_at: str
+    window_start: str
+    window_end: str
+    total_trade_dates: int
+    completed_trade_dates: int
+    completed_pct: float
+    completed_stock_rows: int
+    completed_option_rows: int
+    last_completed_trade_date: str | None
+    last_result: TradeDateResultPayload | None
+    completed_at: str | None
+    failed_at: str | None
+    error: str | None
+
+
+def _iter_dates(start_date: date, end_date: date) -> Iterator[date]:
     current = start_date
     while current <= end_date:
         yield current
         current += timedelta(days=1)
 
 
-def _iter_trading_dates(start_date: date, end_date: date):
+def _iter_trading_dates(start_date: date, end_date: date) -> Iterator[date]:
     for trade_date in _iter_dates(start_date, end_date):
         if is_trading_day(trade_date):
             yield trade_date
@@ -57,15 +99,42 @@ def _sync_stock_day(
     batch_size: int,
     dry_run: bool = False,
 ) -> int:
-    inserted = 0
-    payloads = iter_stock_day_bar_payloads(
-        flatfiles.iter_csv_rows(stock_day_dataset(), trade_date),
+    inserted, _symbols = _sync_stock_day_with_symbols(
+        store,
+        flatfiles,
         trade_date,
         symbols=symbols,
+        batch_size=batch_size,
+        dry_run=dry_run,
     )
+    return inserted
+
+
+def _sync_stock_day_with_symbols(
+    store: HistoricalMarketDataStore | None,
+    flatfiles: MassiveFlatFilesClient,
+    trade_date: date,
+    *,
+    symbols: set[str] | None,
+    batch_size: int,
+    dry_run: bool = False,
+) -> tuple[int, tuple[str, ...]]:
+    inserted = 0
+    seen_symbols: set[str] = set()
+
+    def _payloads() -> Iterator[dict[str, object]]:
+        for payload in iter_stock_day_bar_payloads(
+            flatfiles.iter_csv_rows(stock_day_dataset(), trade_date),
+            trade_date,
+            symbols=symbols,
+        ):
+            seen_symbols.add(str(payload["symbol"]))
+            yield payload
+
+    payloads = _payloads()
     for batch in chunked(payloads, batch_size):
         inserted += len(batch) if dry_run else store.upsert_underlying_day_bar_payloads(batch)
-    return inserted
+    return inserted, tuple(sorted(seen_symbols))
 
 
 def _sync_option_day(
@@ -77,15 +146,42 @@ def _sync_option_day(
     batch_size: int,
     dry_run: bool = False,
 ) -> int:
-    inserted = 0
-    payloads = iter_option_day_bar_payloads(
-        flatfiles.iter_csv_rows(option_day_dataset(), trade_date),
+    inserted, _symbols = _sync_option_day_with_symbols(
+        store,
+        flatfiles,
         trade_date,
         symbols=symbols,
+        batch_size=batch_size,
+        dry_run=dry_run,
     )
-    for batch in chunked(payloads, batch_size):
-        inserted += len(batch) if dry_run else store.upsert_option_day_bar_payloads(batch)
     return inserted
+
+
+def _sync_option_day_with_symbols(
+    store: HistoricalMarketDataStore | None,
+    flatfiles: MassiveFlatFilesClient,
+    trade_date: date,
+    *,
+    symbols: set[str] | None,
+    batch_size: int,
+    dry_run: bool = False,
+) -> tuple[int, tuple[str, ...]]:
+    inserted = 0
+    seen_symbols: set[str] = set()
+
+    def _records() -> Iterator[tuple[object, ...]]:
+        for record in iter_option_day_bar_records(
+            flatfiles.iter_csv_rows(option_day_dataset(), trade_date),
+            trade_date,
+            symbols=symbols,
+        ):
+            seen_symbols.add(str(record[2]))
+            yield record
+
+    records = _records()
+    for batch in chunked(records, batch_size):
+        inserted += len(batch) if dry_run else store.upsert_option_day_bar_records(batch)
+    return inserted, tuple(sorted(seen_symbols))
 
 
 def _sync_trade_date(
@@ -99,8 +195,10 @@ def _sync_trade_date(
 ) -> TradeDateSyncResult:
     stock_error: str | None = None
     option_error: str | None = None
+    stock_symbols: tuple[str, ...] = ()
+    option_symbols: tuple[str, ...] = ()
     try:
-        stock_count = _sync_stock_day(
+        stock_count, stock_symbols = _sync_stock_day_with_symbols(
             store,
             flatfiles,
             trade_date,
@@ -112,7 +210,7 @@ def _sync_trade_date(
         stock_count = 0
         stock_error = exc.message
     try:
-        option_count = _sync_option_day(
+        option_count, option_symbols = _sync_option_day_with_symbols(
             store,
             flatfiles,
             trade_date,
@@ -129,6 +227,8 @@ def _sync_trade_date(
         option_count=option_count,
         stock_error=stock_error,
         option_error=option_error,
+        stock_symbols=stock_symbols,
+        option_symbols=option_symbols,
     )
 
 
@@ -142,11 +242,36 @@ def _sync_trade_dates(
     dry_run: bool = False,
     workers: int = 1,
 ) -> list[TradeDateSyncResult]:
+    results_by_date = {
+        result.trade_date: result
+        for result in _iter_sync_trade_dates(
+            store,
+            flatfiles,
+            trade_dates,
+            symbols=symbols,
+            batch_size=batch_size,
+            dry_run=dry_run,
+            workers=workers,
+        )
+    }
+    return [results_by_date[trade_date] for trade_date in trade_dates if trade_date in results_by_date]
+
+
+def _iter_sync_trade_dates(
+    store: HistoricalMarketDataStore | None,
+    flatfiles: MassiveFlatFilesClient,
+    trade_dates: list[date],
+    *,
+    symbols: set[str] | None,
+    batch_size: int,
+    dry_run: bool = False,
+    workers: int = 1,
+) -> Iterator[TradeDateSyncResult]:
     if not trade_dates:
-        return []
+        return
     if workers <= 1 or len(trade_dates) == 1:
-        return [
-            _sync_trade_date(
+        for trade_date in trade_dates:
+            yield _sync_trade_date(
                 store,
                 flatfiles,
                 trade_date,
@@ -154,8 +279,7 @@ def _sync_trade_dates(
                 batch_size=batch_size,
                 dry_run=dry_run,
             )
-            for trade_date in trade_dates
-        ]
+        return
 
     with ThreadPoolExecutor(max_workers=min(workers, len(trade_dates))) as executor:
         futures = [
@@ -170,7 +294,8 @@ def _sync_trade_dates(
             )
             for trade_date in trade_dates
         ]
-        return [future.result() for future in futures]
+        for future in as_completed(futures):
+            yield future.result()
 
 
 def _print_trade_date_result(
@@ -219,7 +344,8 @@ def _maybe_enrich_trade_date(
             )
     except ExternalServiceError:
         pass
-    for symbol in sorted(symbols):
+    effective_symbols = set(symbols) if symbols else set(result.stock_symbols) | set(result.option_symbols)
+    for symbol in sorted(effective_symbols):
         try:
             dividends = rest_client.list_ex_dividend_dates(symbol, trade_date, trade_date)
         except ExternalServiceError:
@@ -238,6 +364,39 @@ def _maybe_enrich_trade_date(
         )
 
 
+def _iso_now() -> str:
+    return datetime.now().astimezone().isoformat()
+
+
+def _result_status_payload(result: TradeDateSyncResult) -> TradeDateResultPayload:
+    return {
+        "trade_date": result.trade_date.isoformat(),
+        "stock_count": result.stock_count,
+        "option_count": result.option_count,
+        "stock_error": result.stock_error,
+        "option_error": result.option_error,
+        "stock_symbols": list(result.stock_symbols),
+        "option_symbols": list(result.option_symbols),
+    }
+
+
+def _write_status_snapshot(status_path: str | None, **fields: object) -> None:
+    if not status_path:
+        return
+    path = Path(status_path)
+    payload: ImportStatusSnapshot = {}
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+    payload.update(fields)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path.replace(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sync historical market data from Massive flat files into Postgres.")
     parser.add_argument("--start-date", required=False)
@@ -247,6 +406,7 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=1, help="Parallel trade-date workers for flat-file sync.")
     parser.add_argument("--skip-rest-enrichment", action="store_true", help="Skip treasury/dividend REST enrichment during bulk backfills.")
     parser.add_argument("--dry-run", action="store_true", help="Parse and count rows without writing to Postgres.")
+    parser.add_argument("--status-path", default="", help="Optional JSON status file to update incrementally during the import.")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -260,16 +420,38 @@ def main() -> int:
         raise ValueError("--batch-size must be >= 1")
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
+    status_path = args.status_path or os.getenv("BACKTESTFORECAST_IMPORT_STATUS_PATH") or os.getenv("HISTORICAL_IMPORT_STATUS_PATH")
 
     store = None if args.dry_run else HistoricalMarketDataStore(create_session, create_readonly_session)
     flatfiles = MassiveFlatFilesClient.from_settings()
     rest_client = None if args.dry_run or args.skip_rest_enrichment else MassiveClient()
     trade_dates = list(_iter_trading_dates(start_date, end_date))
+    total_trade_dates = len(trade_dates)
+    completed_stock_rows = 0
+    completed_option_rows = 0
+    initial_timestamp = _iso_now()
+
+    _write_status_snapshot(
+        status_path,
+        status="running",
+        updated_at=initial_timestamp,
+        window_start=start_date.isoformat(),
+        window_end=end_date.isoformat(),
+        total_trade_dates=total_trade_dates,
+        completed_trade_dates=0,
+        completed_pct=0.0,
+        completed_stock_rows=0,
+        completed_option_rows=0,
+        last_completed_trade_date=None,
+        last_result=None,
+        completed_at=None,
+        failed_at=None,
+        error=None,
+    )
 
     try:
         with flatfiles:
-            total_trade_dates = len(trade_dates)
-            for index, result in enumerate(_sync_trade_dates(
+            for index, result in enumerate(_iter_sync_trade_dates(
                 store,
                 flatfiles,
                 trade_dates,
@@ -291,6 +473,42 @@ def main() -> int:
                     symbols=symbols,
                     skip_rest_enrichment=args.skip_rest_enrichment,
                 )
+                completed_stock_rows += result.stock_count
+                completed_option_rows += result.option_count
+                progress_timestamp = _iso_now()
+                _write_status_snapshot(
+                    status_path,
+                    status="running",
+                    updated_at=progress_timestamp,
+                    completed_trade_dates=index,
+                    completed_pct=round((index / total_trade_dates) * 100, 2) if total_trade_dates else 100.0,
+                    completed_stock_rows=completed_stock_rows,
+                    completed_option_rows=completed_option_rows,
+                    last_completed_trade_date=result.trade_date.isoformat(),
+                    last_result=_result_status_payload(result),
+                )
+        completion_timestamp = _iso_now()
+        _write_status_snapshot(
+            status_path,
+            status="completed",
+            updated_at=completion_timestamp,
+            completed_trade_dates=total_trade_dates,
+            completed_pct=100.0 if total_trade_dates else 0.0,
+            completed_stock_rows=completed_stock_rows,
+            completed_option_rows=completed_option_rows,
+            completed_at=completion_timestamp,
+            error=None,
+        )
+    except Exception as exc:
+        failure_timestamp = _iso_now()
+        _write_status_snapshot(
+            status_path,
+            status="failed",
+            updated_at=failure_timestamp,
+            failed_at=failure_timestamp,
+            error=str(exc),
+        )
+        raise
     finally:
         if rest_client is not None:
             rest_client.close()

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from backtestforecast.backtests.run_warnings import make_warning
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError
 from backtestforecast.backtests.strategies.common import preferred_expiration_dates
 from backtestforecast.db.session import create_readonly_session, create_session
@@ -48,6 +49,12 @@ class HistoricalDataBundle:
     ex_dividend_dates: set[date]
     option_gateway: Any
     data_source: str = "massive"
+    warnings: list[dict[str, Any]] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExDividendLoadResult:
+    dates: set[date]
     warnings: list[dict[str, Any]] | None = None
 
 
@@ -613,7 +620,16 @@ class MarketDataService:
 
             if self._prefer_local_history(end):
                 local_cached = self._historical_store.get_underlying_day_bars(symbol, start, end) if self._historical_store is not None else []
-                if local_cached and self._historical_store is not None and self._historical_store.has_underlying_coverage(symbol, start, end):
+                if (
+                    local_cached
+                    and self._historical_store is not None
+                    # Historical backtests often request a padded warmup window
+                    # that begins before the first locally loaded trade date.
+                    # Accept the local cache as long as coverage is complete from
+                    # the first available local bar onward; prepare_backtest()
+                    # separately enforces that enough pre-start bars exist.
+                    and self._historical_store.has_underlying_coverage(symbol, local_cached[0].trade_date, end)
+                ):
                     if len(self._bars_cache) >= self._MAX_BARS_CACHE_SIZE:
                         self._bars_cache.popitem(last=False)
                     self._bars_cache[cache_key] = local_cached
@@ -701,17 +717,42 @@ class MarketDataService:
             )
 
         earnings_dates = self._load_earnings_dates_if_required(request)
-        data_source = "historical_flatfile" if self._prefer_local_history(request.end_date) and self._historical_store is not None and self._historical_store.has_underlying_coverage(request.symbol, extended_start, min(extended_end, self._local_availability_cutoff())) else "massive"
-        ex_dividend_dates = self._load_ex_dividend_dates(
+        local_coverage_end = min(extended_end, self._local_availability_cutoff())
+        data_source = (
+            "historical_flatfile"
+            if (
+                self._prefer_local_history(request.end_date)
+                and self._historical_store is not None
+                and bars
+                and bars[0].trade_date <= request.start_date
+                and self._historical_store.has_underlying_coverage(
+                    request.symbol,
+                    bars[0].trade_date,
+                    local_coverage_end,
+                )
+            )
+            else "massive"
+        )
+        ex_dividend_result = self._load_ex_dividend_data(
             request.symbol,
             start_date=bars[0].trade_date,
             end_date=bars[-1].trade_date,
         )
+        ex_dividend_dates = ex_dividend_result.dates
         option_gateway = self.build_option_gateway(
             request.symbol,
             prefer_local=(data_source == "historical_flatfile"),
         )
         option_gateway.set_ex_dividend_dates(ex_dividend_dates)
+
+        warnings = list(ex_dividend_result.warnings or [])
+        if data_source == "historical_flatfile":
+            warnings.append(
+                {
+                    "code": "historical_aggregate_close_pricing",
+                    "message": "Historical flat-file mode uses option daily aggregate close as a quote proxy instead of REST quote-mid pricing.",
+                }
+            )
 
         return HistoricalDataBundle(
             bars=bars,
@@ -719,12 +760,7 @@ class MarketDataService:
             ex_dividend_dates=ex_dividend_dates,
             option_gateway=option_gateway,
             data_source=data_source,
-            warnings=[
-                {
-                    "code": "historical_aggregate_close_pricing",
-                    "message": "Historical flat-file mode uses option daily aggregate close as a quote proxy instead of REST quote-mid pricing.",
-                }
-            ] if data_source == "historical_flatfile" else [],
+            warnings=warnings,
         )
 
     def _load_earnings_dates_if_required(self, request: CreateBacktestRunRequest) -> set[date]:
@@ -760,10 +796,23 @@ class MarketDataService:
         start_date: date,
         end_date: date,
     ) -> set[date]:
+        return self._load_ex_dividend_data(
+            symbol,
+            start_date=start_date,
+            end_date=end_date,
+        ).dates
+
+    def _load_ex_dividend_data(
+        self,
+        symbol: str,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> ExDividendLoadResult:
         if self._prefer_local_history(end_date) and self._historical_store is not None:
             local = self._historical_store.list_ex_dividend_dates(symbol, start_date, end_date)
             if local:
-                return local
+                return ExDividendLoadResult(dates=local, warnings=[])
         try:
             result = self.client.list_ex_dividend_dates(symbol, start_date, end_date)
             if result and self._historical_store is not None:
@@ -777,7 +826,7 @@ class MarketDataService:
                         for item in sorted(result)
                     ]
                 )
-            return result
+            return ExDividendLoadResult(dates=result, warnings=[])
         except ExternalServiceError:
             logger.warning(
                 "market_data.ex_dividend_dates_unavailable",
@@ -786,7 +835,24 @@ class MarketDataService:
                 end_date=end_date.isoformat(),
                 exc_info=True,
             )
-            return set()
+            return ExDividendLoadResult(
+                dates=set(),
+                warnings=[
+                    make_warning(
+                        "ex_dividend_dates_unavailable",
+                        (
+                            f"Ex-dividend dates for {symbol} were unavailable for "
+                            f"{start_date.isoformat()} through {end_date.isoformat()}. "
+                            "Early-assignment logic may be incomplete for dividend-sensitive strategies."
+                        ),
+                        metadata={
+                            "symbol": symbol,
+                            "start_date": start_date.isoformat(),
+                            "end_date": end_date.isoformat(),
+                        },
+                    )
+                ],
+            )
 
     def build_option_gateway(self, symbol: str, *, prefer_local: bool = False) -> MassiveOptionGateway | HistoricalOptionGateway:
         if prefer_local and self._historical_store is not None:

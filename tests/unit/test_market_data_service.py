@@ -10,10 +10,18 @@ import time
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from backtestforecast.db.base import Base
 from backtestforecast.errors import ExternalServiceError
+from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data.service import MarketDataService
 from backtestforecast.market_data.types import DailyBar
+from backtestforecast.models import HistoricalUnderlyingDayBar
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+from backtestforecast.utils.dates import is_market_holiday, is_trading_day
 
 
 def _make_bar(offset: int, base_date: date | None = None) -> DailyBar:
@@ -42,6 +50,38 @@ def _make_service(bars: list[DailyBar] | None = None) -> MarketDataService:
     ):
         svc = MarketDataService(client)
     return svc
+
+
+def _make_historical_store(
+    *,
+    symbol: str = "AAPL",
+    start: date = date(2022, 1, 3),
+    end: date = date(2022, 7, 7),
+) -> HistoricalMarketDataStore:
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, class_=Session)
+    store = HistoricalMarketDataStore(factory, factory)
+
+    rows: list[HistoricalUnderlyingDayBar] = []
+    current = start
+    while current <= end:
+        if is_trading_day(current):
+            rows.append(
+                HistoricalUnderlyingDayBar(
+                    symbol=symbol,
+                    trade_date=current,
+                    open_price=100,
+                    high_price=101,
+                    low_price=99,
+                    close_price=100.5,
+                    volume=1_000_000,
+                    source_file_date=current,
+                )
+            )
+        current += timedelta(days=1)
+    store.upsert_underlying_day_bars(rows)
+    return store
 
 
 class TestBarsCacheHit:
@@ -244,7 +284,7 @@ class TestPrepareBacktestExDividendDates:
 
         assert bundle.option_gateway._ex_dividend_dates == {date(2024, 1, 12)}
 
-    def test_prepare_backtest_degrades_gracefully_when_ex_dividend_dates_fail(self):
+    def test_prepare_backtest_surfaces_warning_when_ex_dividend_dates_fail(self):
         bars = _make_bars(60, base_date=date(2023, 12, 1))
         svc = _make_service(bars)
         svc.client.list_ex_dividend_dates.side_effect = ExternalServiceError("provider failed")
@@ -266,3 +306,71 @@ class TestPrepareBacktestExDividendDates:
         bundle = svc.prepare_backtest(request)
 
         assert bundle.ex_dividend_dates == set()
+        assert bundle.warnings is not None
+        warning_codes = {warning["code"] for warning in bundle.warnings}
+        assert "ex_dividend_dates_unavailable" in warning_codes
+
+
+def test_historical_market_holiday_calendar_covers_backfill_years() -> None:
+    assert is_market_holiday(date(2014, 7, 4))
+    assert is_market_holiday(date(2019, 4, 19))
+    assert is_market_holiday(date(2020, 7, 3))
+    assert is_market_holiday(date(2022, 4, 15))
+    assert is_market_holiday(date(2023, 4, 7))
+    assert is_market_holiday(date(2024, 3, 29))
+    assert not is_trading_day(date(2014, 9, 1))
+    assert not is_trading_day(date(2022, 4, 15))
+
+
+def test_fetch_bars_coalesced_uses_local_history_when_padding_precedes_first_loaded_bar() -> None:
+    store = _make_historical_store()
+    client = MagicMock()
+    client.get_stock_daily_bars.side_effect = AssertionError("unexpected live stock fetch")
+
+    with (
+        patch.object(MarketDataService, "_build_redis_cache", return_value=None),
+        patch.object(MarketDataService, "_build_contract_catalog", return_value=None),
+        patch.object(MarketDataService, "_build_historical_store", return_value=store),
+    ):
+        svc = MarketDataService(client)
+
+    with patch.object(MarketDataService, "_prefer_local_history", return_value=True):
+        bars = svc._fetch_bars_coalesced("AAPL", date(2021, 12, 1), date(2022, 7, 7))
+
+    assert bars
+    assert bars[0].trade_date == date(2022, 1, 3)
+    client.get_stock_daily_bars.assert_not_called()
+
+
+def test_prepare_backtest_prefers_local_history_when_warmup_is_satisfied_from_loaded_bars() -> None:
+    store = _make_historical_store()
+    client = MagicMock()
+    client.list_ex_dividend_dates.return_value = set()
+
+    with (
+        patch.object(MarketDataService, "_build_redis_cache", return_value=None),
+        patch.object(MarketDataService, "_build_contract_catalog", return_value=None),
+        patch.object(MarketDataService, "_build_historical_store", return_value=store),
+    ):
+        svc = MarketDataService(client)
+
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=date(2022, 4, 1),
+        end_date=date(2022, 4, 29),
+        target_dte=21,
+        dte_tolerance_days=3,
+        max_holding_days=5,
+        account_size=10000,
+        risk_per_trade_pct=5,
+        commission_per_contract=1,
+        entry_rules=[],
+    )
+
+    with patch.object(MarketDataService, "_prefer_local_history", return_value=True):
+        bundle = svc.prepare_backtest(request)
+
+    assert bundle.data_source == "historical_flatfile"
+    assert isinstance(bundle.option_gateway, HistoricalOptionGateway)
+    client.get_stock_daily_bars.assert_not_called()

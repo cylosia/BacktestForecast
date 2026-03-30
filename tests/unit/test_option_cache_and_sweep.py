@@ -450,6 +450,40 @@ class TestOptionDataPrefetcher:
         assert summary.quotes_fetched == 0
         mock_client.get_option_quote_for_date.assert_not_called()
 
+    def test_prefetch_accepts_historical_option_gateway(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+        from backtestforecast.market_data.prefetch import OptionDataPrefetcher
+
+        store = MagicMock()
+        store.list_option_contracts.return_value = [
+            OptionContractRecord("O:A", "put", date(2025, 3, 21), 250.0, 100.0),
+        ]
+        store.get_option_quote_for_date.return_value = OptionQuoteRecord(
+            date(2025, 3, 14), 2.0, 2.2, None,
+        )
+        gateway = HistoricalOptionGateway(store, "TSLA")
+
+        bars = [
+            DailyBar(date(2025, 3, 14), 250, 255, 248, 252, 1000000),
+            DailyBar(date(2025, 3, 17), 252, 258, 250, 256, 1200000),
+        ]
+
+        summary = OptionDataPrefetcher(max_workers=2).prefetch_for_symbol(
+            symbol="TSLA",
+            bars=bars,
+            start_date=date(2025, 3, 14),
+            end_date=date(2025, 3, 17),
+            target_dte=8,
+            dte_tolerance_days=2,
+            option_gateway=gateway,
+        )
+
+        assert summary.dates_processed == 2
+        assert summary.contracts_fetched == 4
+        assert summary.quotes_fetched == 4
+        assert store.list_option_contracts.call_count == 4
+        assert store.get_option_quote_for_date.call_count == 4
+
 
 # ---------------------------------------------------------------------------
 # Sweep schema validation

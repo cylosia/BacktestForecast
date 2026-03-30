@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Callable
+from uuid import uuid4
 
 import structlog
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -23,6 +25,21 @@ from backtestforecast.utils.dates import is_trading_day
 
 logger = structlog.get_logger("market_data.historical_store")
 _POSTGRES_MAX_BIND_PARAMS = 65_000
+_OPTION_DAY_BAR_COPY_COLUMNS = (
+    "id",
+    "option_ticker",
+    "underlying_symbol",
+    "trade_date",
+    "expiration_date",
+    "contract_type",
+    "strike_price",
+    "open_price",
+    "high_price",
+    "low_price",
+    "close_price",
+    "volume",
+    "source_file_date",
+)
 
 
 def parse_option_ticker_metadata(option_ticker: str) -> tuple[str, date, str, float] | None:
@@ -260,6 +277,38 @@ class HistoricalMarketDataStore:
     def upsert_option_day_bar_payloads(self, rows: list[dict[str, object]]) -> int:
         return self._bulk_upsert_payloads(rows, HistoricalOptionDayBar, ("option_ticker", "trade_date"))
 
+    def upsert_option_day_bar_records(self, rows: list[tuple[object, ...]]) -> int:
+        if not rows:
+            return 0
+        rows = self._dedupe_option_records(rows)
+        session = self._session(readonly=False)
+        try:
+            bind = session.get_bind()
+            if bind is not None and bind.dialect.name == "postgresql" and self._can_use_postgres_copy_fast_path(session, HistoricalOptionDayBar):
+                self._bulk_upsert_postgres_copy_rows(
+                    session,
+                    HistoricalOptionDayBar,
+                    ("option_ticker", "trade_date"),
+                    _OPTION_DAY_BAR_COPY_COLUMNS,
+                    rows,
+                )
+            else:
+                payloads = [
+                    dict(zip(_OPTION_DAY_BAR_COPY_COLUMNS, row, strict=True))
+                    for row in rows
+                ]
+                self._bulk_upsert_fallback(session, payloads, HistoricalOptionDayBar, ("option_ticker", "trade_date"))
+            session.commit()
+            return len(rows)
+        except Exception:
+            with suppress(Exception):
+                session.rollback()
+            logger.warning("historical_store.bulk_upsert_option_records_failed", exc_info=True)
+            raise
+        finally:
+            with suppress(Exception):
+                session.close()
+
     def upsert_ex_dividend_payloads(self, rows: list[dict[str, object]]) -> int:
         return self._bulk_upsert_payloads(rows, HistoricalExDividendDate, ("symbol", "ex_dividend_date"))
 
@@ -307,6 +356,23 @@ class HistoricalMarketDataStore:
         model: type[object],
         key_fields: tuple[str, ...],
     ) -> None:
+        if self._can_use_postgres_copy_fast_path(session, model):
+            self._bulk_upsert_postgres_copy(
+                session,
+                rows,
+                model,
+                key_fields,
+            )
+            return
+        self._bulk_upsert_postgres_insert(session, rows, model, key_fields)
+
+    def _bulk_upsert_postgres_insert(
+        self,
+        session: Session,
+        rows: list[dict[str, object]],
+        model: type[object],
+        key_fields: tuple[str, ...],
+    ) -> None:
         table = model.__table__
         batch_size = self._postgres_bulk_batch_size(table, rows)
         for offset in range(0, len(rows), batch_size):
@@ -323,6 +389,57 @@ class HistoricalMarketDataStore:
                     set_=update_columns,
                 )
             )
+
+    def _bulk_upsert_postgres_copy(
+        self,
+        session: Session,
+        rows: list[dict[str, object]],
+        model: type[object],
+        key_fields: tuple[str, ...],
+    ) -> None:
+        table = model.__table__
+        columns = [column.name for column in table.columns if column.name in rows[0]]
+        copy_rows = [tuple(row.get(column) for column in columns) for row in rows]
+        self._bulk_upsert_postgres_copy_rows(session, model, key_fields, tuple(columns), copy_rows)
+
+    def _bulk_upsert_postgres_copy_rows(
+        self,
+        session: Session,
+        model: type[object],
+        key_fields: tuple[str, ...],
+        columns: tuple[str, ...],
+        rows: list[tuple[object, ...]],
+    ) -> None:
+        table = model.__table__
+        temp_table_name = f"tmp_{table.name}_{uuid4().hex}"
+        column_sql = ", ".join(columns)
+        key_sql = ", ".join(key_fields)
+        update_columns = [column for column in columns if column not in {"id", *key_fields}]
+        update_sql = ", ".join(f"{column} = EXCLUDED.{column}" for column in update_columns)
+
+        session.execute(
+            text(
+                f"CREATE TEMP TABLE {temp_table_name} "
+                f"(LIKE {table.name} INCLUDING DEFAULTS) ON COMMIT DROP"
+            )
+        )
+
+        driver_connection = self._driver_connection(session)
+        if driver_connection is None:
+            raise RuntimeError("Postgres COPY fast path requires a psycopg driver connection.")
+
+        with driver_connection.cursor() as cursor:
+            with cursor.copy(f"COPY {temp_table_name} ({column_sql}) FROM STDIN") as copy:
+                for row in rows:
+                    copy.write_row(row)
+
+        session.execute(
+            text(
+                f"INSERT INTO {table.name} ({column_sql}) "
+                f"SELECT {column_sql} FROM {temp_table_name} "
+                f"ON CONFLICT ({key_sql}) DO UPDATE SET {update_sql}"
+            )
+        )
 
     def _bulk_upsert_fallback(
         self,
@@ -397,3 +514,34 @@ class HistoricalMarketDataStore:
         sample = rows[0]
         bind_columns = max(1, sum(1 for column in table.columns if column.name in sample))
         return max(1, min(len(rows), _POSTGRES_MAX_BIND_PARAMS // bind_columns))
+
+    @staticmethod
+    def _dedupe_option_records(rows: list[tuple[object, ...]]) -> list[tuple[object, ...]]:
+        deduped: dict[tuple[object, object], tuple[object, ...]] = {}
+        option_ticker_index = _OPTION_DAY_BAR_COPY_COLUMNS.index("option_ticker")
+        trade_date_index = _OPTION_DAY_BAR_COPY_COLUMNS.index("trade_date")
+        for row in rows:
+            key = (row[option_ticker_index], row[trade_date_index])
+            deduped[key] = row
+        return list(deduped.values())
+
+    @staticmethod
+    def _driver_connection(session: Session):
+        try:
+            connection = session.connection()
+            return getattr(connection.connection, "driver_connection", None)
+        except Exception:
+            return None
+
+    @classmethod
+    def _can_use_postgres_copy_fast_path(cls, session: Session, model: type[object]) -> bool:
+        if model is not HistoricalOptionDayBar:
+            return False
+        driver_connection = cls._driver_connection(session)
+        if driver_connection is None:
+            return False
+        try:
+            with driver_connection.cursor() as cursor:
+                return callable(getattr(cursor, "copy", None))
+        except Exception:
+            return False

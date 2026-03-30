@@ -2,7 +2,7 @@
 
 Holiday data comes from two sources, merged at runtime:
 
-1. A static fallback set covering 2025-2036 (always available).
+1. A static fallback set covering 2014-2036 (always available).
 2. A dynamic set fetched from the Massive ``/v1/marketstatus/upcoming``
    endpoint and cached in Redis (key ``bff:market_holidays``).  A Celery
    beat task refreshes this cache weekly; processes read from Redis and
@@ -31,6 +31,119 @@ REDIS_HOLIDAYS_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 _MEMORY_CACHE_TTL_SECONDS = 3600.0  # re-read Redis at most once per hour
 
 _US_MARKET_HOLIDAYS: frozenset[date] = frozenset({
+    # 2014
+    date(2014, 1, 1),    # New Year's Day
+    date(2014, 1, 20),   # MLK Day
+    date(2014, 2, 17),   # Presidents' Day
+    date(2014, 4, 18),   # Good Friday
+    date(2014, 5, 26),   # Memorial Day
+    date(2014, 7, 4),    # Independence Day
+    date(2014, 9, 1),    # Labor Day
+    date(2014, 11, 27),  # Thanksgiving
+    date(2014, 12, 25),  # Christmas
+    # 2015
+    date(2015, 1, 1),    # New Year's Day
+    date(2015, 1, 19),   # MLK Day
+    date(2015, 2, 16),   # Presidents' Day
+    date(2015, 4, 3),    # Good Friday
+    date(2015, 5, 25),   # Memorial Day
+    date(2015, 7, 3),    # Independence Day (observed)
+    date(2015, 9, 7),    # Labor Day
+    date(2015, 11, 26),  # Thanksgiving
+    date(2015, 12, 25),  # Christmas
+    # 2016
+    date(2016, 1, 1),    # New Year's Day
+    date(2016, 1, 18),   # MLK Day
+    date(2016, 2, 15),   # Presidents' Day
+    date(2016, 3, 25),   # Good Friday
+    date(2016, 5, 30),   # Memorial Day
+    date(2016, 7, 4),    # Independence Day
+    date(2016, 9, 5),    # Labor Day
+    date(2016, 11, 24),  # Thanksgiving
+    date(2016, 12, 26),  # Christmas (observed)
+    # 2017
+    date(2017, 1, 2),    # New Year's Day (observed)
+    date(2017, 1, 16),   # MLK Day
+    date(2017, 2, 20),   # Presidents' Day
+    date(2017, 4, 14),   # Good Friday
+    date(2017, 5, 29),   # Memorial Day
+    date(2017, 7, 4),    # Independence Day
+    date(2017, 9, 4),    # Labor Day
+    date(2017, 11, 23),  # Thanksgiving
+    date(2017, 12, 25),  # Christmas
+    # 2018
+    date(2018, 1, 1),    # New Year's Day
+    date(2018, 1, 15),   # MLK Day
+    date(2018, 2, 19),   # Presidents' Day
+    date(2018, 3, 30),   # Good Friday
+    date(2018, 5, 28),   # Memorial Day
+    date(2018, 7, 4),    # Independence Day
+    date(2018, 9, 3),    # Labor Day
+    date(2018, 11, 22),  # Thanksgiving
+    date(2018, 12, 25),  # Christmas
+    # 2019
+    date(2019, 1, 1),    # New Year's Day
+    date(2019, 1, 21),   # MLK Day
+    date(2019, 2, 18),   # Presidents' Day
+    date(2019, 4, 19),   # Good Friday
+    date(2019, 5, 27),   # Memorial Day
+    date(2019, 7, 4),    # Independence Day
+    date(2019, 9, 2),    # Labor Day
+    date(2019, 11, 28),  # Thanksgiving
+    date(2019, 12, 25),  # Christmas
+    # 2020
+    date(2020, 1, 1),    # New Year's Day
+    date(2020, 1, 20),   # MLK Day
+    date(2020, 2, 17),   # Presidents' Day
+    date(2020, 4, 10),   # Good Friday
+    date(2020, 5, 25),   # Memorial Day
+    date(2020, 7, 3),    # Independence Day (observed)
+    date(2020, 9, 7),    # Labor Day
+    date(2020, 11, 26),  # Thanksgiving
+    date(2020, 12, 25),  # Christmas
+    # 2021
+    date(2021, 1, 1),    # New Year's Day
+    date(2021, 1, 18),   # MLK Day
+    date(2021, 2, 15),   # Presidents' Day
+    date(2021, 4, 2),    # Good Friday
+    date(2021, 5, 31),   # Memorial Day
+    date(2021, 7, 5),    # Independence Day (observed)
+    date(2021, 9, 6),    # Labor Day
+    date(2021, 11, 25),  # Thanksgiving
+    date(2021, 12, 24),  # Christmas (observed)
+    date(2021, 12, 31),  # New Year 2022 (observed; Jan 1 2022 is Saturday)
+    # 2022
+    date(2022, 1, 17),   # MLK Day
+    date(2022, 2, 21),   # Presidents' Day
+    date(2022, 4, 15),   # Good Friday
+    date(2022, 5, 30),   # Memorial Day
+    date(2022, 6, 20),   # Juneteenth (observed)
+    date(2022, 7, 4),    # Independence Day
+    date(2022, 9, 5),    # Labor Day
+    date(2022, 11, 24),  # Thanksgiving
+    date(2022, 12, 26),  # Christmas (observed)
+    # 2023
+    date(2023, 1, 2),    # New Year's Day (observed)
+    date(2023, 1, 16),   # MLK Day
+    date(2023, 2, 20),   # Presidents' Day
+    date(2023, 4, 7),    # Good Friday
+    date(2023, 5, 29),   # Memorial Day
+    date(2023, 6, 19),   # Juneteenth
+    date(2023, 7, 4),    # Independence Day
+    date(2023, 9, 4),    # Labor Day
+    date(2023, 11, 23),  # Thanksgiving
+    date(2023, 12, 25),  # Christmas
+    # 2024
+    date(2024, 1, 1),    # New Year's Day
+    date(2024, 1, 15),   # MLK Day
+    date(2024, 2, 19),   # Presidents' Day
+    date(2024, 3, 29),   # Good Friday
+    date(2024, 5, 27),   # Memorial Day
+    date(2024, 6, 19),   # Juneteenth
+    date(2024, 7, 4),    # Independence Day
+    date(2024, 9, 2),    # Labor Day
+    date(2024, 11, 28),  # Thanksgiving
+    date(2024, 12, 25),  # Christmas
     # 2025
     date(2025, 1, 1),    # New Year's Day
     date(2025, 1, 20),   # MLK Day

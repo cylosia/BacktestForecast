@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+from backtestforecast.market_data.service import ExDividendLoadResult
 from backtestforecast.models import User
 from backtestforecast.schemas.backtests import RsiRule, StrategyType
 from backtestforecast.schemas.multi_step_backtests import (
@@ -91,8 +92,8 @@ class _FakeMarketDataService:
     def _validate_bars(self, raw_bars, symbol: str):
         return list(raw_bars)
 
-    def _load_ex_dividend_dates(self, symbol: str, *, start_date: date, end_date: date):
-        return set()
+    def _load_ex_dividend_data(self, symbol: str, *, start_date: date, end_date: date):
+        return ExDividendLoadResult(dates=set(), warnings=[])
 
     def _prefer_local_history(self, end_date: date) -> bool:
         return False
@@ -106,6 +107,27 @@ class _FakeMarketDataService:
 class _FakeExecutionService:
     def __init__(self, bars_by_symbol: dict[str, list[DailyBar]]) -> None:
         self.market_data_service = _FakeMarketDataService(bars_by_symbol)
+
+    def close(self) -> None:
+        return None
+
+
+class _WarningMarketDataService(_FakeMarketDataService):
+    def _load_ex_dividend_data(self, symbol: str, *, start_date: date, end_date: date):
+        return ExDividendLoadResult(
+            dates=set(),
+            warnings=[
+                {
+                    "code": "ex_dividend_dates_unavailable",
+                    "message": f"Ex-dividend dates for {symbol} were unavailable.",
+                }
+            ],
+        )
+
+
+class _WarningExecutionService:
+    def __init__(self, bars_by_symbol: dict[str, list[DailyBar]]) -> None:
+        self.market_data_service = _WarningMarketDataService(bars_by_symbol)
 
     def close(self) -> None:
         return None
@@ -176,6 +198,53 @@ def test_multi_symbol_service_executes_grouped_trades(db_session: Session) -> No
     assert len(detail.trade_groups[0].trades) == 2
 
 
+def test_multi_symbol_service_surfaces_bundle_warnings(db_session: Session) -> None:
+    session = db_session
+    user = User(clerk_user_id="user_ms_warn", email="multiwarn@example.com")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    user = session.scalar(select(User).where(User.id == user.id))
+    assert user is not None
+
+    bars_by_symbol = {
+        "AAA": _bars(date(2024, 1, 2), 40, 100.0),
+        "BBB": _bars(date(2024, 1, 2), 40, 105.0),
+    }
+    service = MultiSymbolBacktestService(session, execution_service=_WarningExecutionService(bars_by_symbol))
+    request = CreateMultiSymbolRunRequest(
+        name="alpha-warning",
+        symbols=[
+            MultiSymbolDefinition(symbol="AAA", risk_per_trade_pct=Decimal("2")),
+            MultiSymbolDefinition(symbol="BBB", risk_per_trade_pct=Decimal("2")),
+        ],
+        strategy_groups=[
+            MultiSymbolStrategyGroup(
+                name="pair",
+                synchronous_entry=True,
+                legs=[
+                    MultiSymbolLegDefinition(symbol="AAA", strategy_type=StrategyType.LONG_CALL, target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                    MultiSymbolLegDefinition(symbol="BBB", strategy_type=StrategyType.LONG_CALL, target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                ],
+            )
+        ],
+        entry_rules=[MultiSymbolPriceRule(left_symbol="AAA", left_indicator="close", operator="gt", threshold=Decimal("99"))],
+        start_date=date(2024, 1, 5),
+        end_date=date(2024, 1, 25),
+        account_size=Decimal("100000"),
+        commission_per_contract=Decimal("0.65"),
+    )
+    run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
+    run = service.execute_run_by_id(run.id)
+    assert run.status == "succeeded"
+    detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
+    warning_codes = {warning.code for warning in detail.warnings}
+    assert "multi_symbol_alpha_v1" in warning_codes
+    assert "ex_dividend_dates_unavailable" in warning_codes
+
+
 def test_multi_step_service_executes_multiple_steps(db_session: Session) -> None:
     session = db_session
     user = User(clerk_user_id="user_mt", email="step@example.com")
@@ -220,6 +289,53 @@ def test_multi_step_service_executes_multiple_steps(db_session: Session) -> None
     detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
     assert len(detail.trades) >= 2
     assert any(event.step_number == 2 for event in detail.events)
+
+
+def test_multi_step_service_surfaces_bundle_warnings(db_session: Session) -> None:
+    session = db_session
+    user = User(clerk_user_id="user_mt_warn", email="stepwarn@example.com")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    bars_by_symbol = {"SPY": _bars(date(2024, 1, 2), 40, 100.0)}
+    service = MultiStepBacktestService(session, execution_service=_WarningExecutionService(bars_by_symbol))
+    request = CreateMultiStepRunRequest(
+        name="workflow-warning",
+        symbol="SPY",
+        workflow_type="sequential",
+        start_date=date(2024, 1, 5),
+        end_date=date(2024, 1, 25),
+        account_size=Decimal("100000"),
+        risk_per_trade_pct=Decimal("2"),
+        commission_per_contract=Decimal("0.65"),
+        initial_entry_rules=[RsiRule(type="rsi", operator="gt", threshold=Decimal("0"), period=2)],
+        steps=[
+            WorkflowStepDefinition(
+                step_number=1,
+                name="Open long call",
+                action="open_position",
+                trigger=StepTriggerDefinition(mode="rule_match", rules=[RsiRule(type="rsi", operator="gt", threshold=Decimal("0"), period=2)]),
+                contract_selection=StepContractSelection(strategy_type=StrategyType.LONG_CALL, target_dte=14, dte_tolerance_days=3, max_holding_days=10),
+            ),
+            WorkflowStepDefinition(
+                step_number=2,
+                name="Close position",
+                action="close_position",
+                trigger=StepTriggerDefinition(mode="date_offset", days_after_prior_step=2),
+                contract_selection=StepContractSelection(strategy_type=StrategyType.LONG_CALL, target_dte=14, dte_tolerance_days=3, max_holding_days=10),
+            ),
+        ],
+    )
+    run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
+    run = service.execute_run_by_id(run.id)
+    assert run.status == "succeeded"
+    detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
+    warning_codes = {warning.code for warning in detail.warnings}
+    assert "multi_step_alpha_v1" in warning_codes
+    assert "ex_dividend_dates_unavailable" in warning_codes
 
 
 def test_multi_step_close_position_triggers_from_prior_step_execution(db_session: Session) -> None:

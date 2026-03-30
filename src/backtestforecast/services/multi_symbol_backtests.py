@@ -132,14 +132,13 @@ def _indicator_lookback(name: str, explicit_lookback: int | None) -> int:
 
 def _merge_warnings(*warning_sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for warning_set in warning_sets:
         for warning in warning_set:
-            code = str(warning.get("code") or "")
-            if code and code in seen:
+            key = (str(warning.get("code") or ""), str(warning.get("message") or ""))
+            if key in seen:
                 continue
-            if code:
-                seen.add(code)
+            seen.add(key)
             merged.append(warning)
     return merged
 
@@ -461,7 +460,12 @@ class MultiSymbolBacktestService:
             bars = market_data_service._validate_bars(raw_bars, symbol)
             if not bars:
                 raise DataUnavailableError(f"No daily bar data was returned for {symbol}.")
-            ex_dividend_dates = market_data_service._load_ex_dividend_dates(symbol, start_date=bars[0].trade_date, end_date=bars[-1].trade_date)
+            ex_dividend_result = market_data_service._load_ex_dividend_data(
+                symbol,
+                start_date=bars[0].trade_date,
+                end_date=bars[-1].trade_date,
+            )
+            ex_dividend_dates = ex_dividend_result.dates
             prefer_local = market_data_service._prefer_local_history(request.end_date)
             option_gateway = market_data_service.build_option_gateway(symbol, prefer_local=prefer_local)
             option_gateway.set_ex_dividend_dates(ex_dividend_dates)
@@ -471,6 +475,7 @@ class MultiSymbolBacktestService:
                 ex_dividend_dates=ex_dividend_dates,
                 option_gateway=option_gateway,
                 data_source="historical_flatfile" if prefer_local else "massive",
+                warnings=list(ex_dividend_result.warnings or []),
             )
             prepared[symbol] = _PreparedSymbolData(
                 definition=symbol_def,
@@ -495,6 +500,10 @@ class MultiSymbolBacktestService:
                 severity="warning",
             )
         ]
+        warnings = _merge_warnings(
+            warnings,
+            *[list(data.bundle.warnings or []) for data in prepared.values()],
+        )
         symbol_cash = {symbol: data.starting_cash for symbol, data in prepared.items()}
         symbol_curves: dict[str, list[EquityPointResult]] = {symbol: [] for symbol in prepared}
         symbol_trades: dict[str, list[TradeResult]] = {symbol: [] for symbol in prepared}

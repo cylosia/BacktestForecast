@@ -23,6 +23,9 @@ from backtestforecast.backtests.types import (
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar
 
+CALENDAR_MIN_FAR_LEG_EXTRA_DAYS = 1
+CALENDAR_MIN_DTE_TOLERANCE_DAYS = 8
+
 
 @dataclass(frozen=True, slots=True)
 class CalendarSpreadStrategy(StrategyDefinition):
@@ -38,14 +41,20 @@ class CalendarSpreadStrategy(StrategyDefinition):
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
         contract_type = overrides.calendar_contract_type or "call"
+        effective_tolerance_days = max(config.dte_tolerance_days, CALENDAR_MIN_DTE_TOLERANCE_DAYS)
         contracts = option_gateway.list_contracts(
             bar.trade_date,
             contract_type,
             config.target_dte,
-            config.dte_tolerance_days,
+            effective_tolerance_days,
         )
         near_expiration = choose_primary_expiration(contracts, bar.trade_date, config.target_dte)
-        far_expiration = choose_secondary_expiration(contracts, bar.trade_date, near_expiration, min_extra_days=14)
+        far_expiration = choose_secondary_expiration(
+            contracts,
+            bar.trade_date,
+            near_expiration,
+            min_extra_days=CALENDAR_MIN_FAR_LEG_EXTRA_DAYS,
+        )
         if far_expiration is None:
             raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
 
@@ -113,7 +122,8 @@ class CalendarSpreadStrategy(StrategyDefinition):
             "assumptions": [
                 f"Calendar spread is modeled as a {contract_type} calendar in this slice.",
                 "The short leg uses the expiration nearest target_dte and the long leg uses"
-                " the next later expiration at least 14 days farther out when available.",
+                " the next later expiration at least 1 day farther out when available."
+                f" Expiration search uses at least {CALENDAR_MIN_DTE_TOLERANCE_DAYS} DTE tolerance days.",
                 "The package exits at the near-leg expiration, max_holding_days, or backtest end;"
                 " the far leg is closed at market on that exit date.",
             ],

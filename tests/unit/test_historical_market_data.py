@@ -3,6 +3,8 @@ from __future__ import annotations
 import gzip
 from datetime import date, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import httpx
 from sqlalchemy import create_engine
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from backtestforecast.db.base import Base
 from backtestforecast.integrations.massive_flatfiles import (
     chunked,
+    iter_option_day_bar_records,
     iter_option_day_bar_payloads,
     iter_stock_day_bar_payloads,
     option_day_dataset,
@@ -233,6 +236,28 @@ def test_streaming_option_payloads_can_be_upserted() -> None:
     assert quote.mid_price == 5.25
 
 
+def test_streaming_option_records_can_be_upserted() -> None:
+    store = _store()
+    rows = [
+        {
+            "ticker": "O:AAPL250418C00190000",
+            "open": "5.10",
+            "high": "5.40",
+            "low": "4.80",
+            "close": "5.25",
+            "volume": "10",
+        }
+    ]
+
+    records = list(iter_option_day_bar_records(rows, date(2025, 4, 1)))
+    assert store.upsert_option_day_bar_records(records) == 1
+
+    gateway = HistoricalOptionGateway(store, "AAPL")
+    quote = gateway.get_quote("O:AAPL250418C00190000", date(2025, 4, 1))
+    assert quote is not None
+    assert quote.mid_price == 5.25
+
+
 def test_postgres_bulk_batch_size_stays_under_bind_limit_for_option_payloads() -> None:
     rows = [
         {
@@ -256,3 +281,53 @@ def test_postgres_bulk_batch_size_stays_under_bind_limit_for_option_payloads() -
     batch_size = HistoricalMarketDataStore._postgres_bulk_batch_size(HistoricalOptionDayBar.__table__, rows)
     assert batch_size < 5000
     assert batch_size * len(rows[0]) <= 65000
+
+
+def test_option_payloads_use_postgres_copy_fast_path_when_available(monkeypatch) -> None:
+    fake_session = MagicMock()
+    fake_session.get_bind.return_value = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    store = HistoricalMarketDataStore(lambda: fake_session, lambda: fake_session)
+
+    rows = [
+        {
+            "id": "ignored",
+            "option_ticker": "O:AAPL250418C00190000",
+            "underlying_symbol": "AAPL",
+            "trade_date": date(2025, 4, 1),
+            "expiration_date": date(2025, 4, 18),
+            "contract_type": "call",
+            "strike_price": Decimal("190"),
+            "open_price": Decimal("5.10"),
+            "high_price": Decimal("5.40"),
+            "low_price": Decimal("4.80"),
+            "close_price": Decimal("5.25"),
+            "volume": Decimal("10"),
+            "source_dataset": "flatfile_day_aggs",
+            "source_file_date": date(2025, 4, 1),
+        }
+    ]
+
+    calls = {"copy": 0, "insert": 0}
+
+    monkeypatch.setattr(
+        HistoricalMarketDataStore,
+        "_can_use_postgres_copy_fast_path",
+        classmethod(lambda cls, session, model: model is HistoricalOptionDayBar),
+    )
+
+    def _fake_copy(self, session, payloads, model, key_fields):
+        calls["copy"] += 1
+        assert session is fake_session
+        assert payloads == rows
+        assert model is HistoricalOptionDayBar
+        assert key_fields == ("option_ticker", "trade_date")
+
+    def _fake_insert(self, session, payloads, model, key_fields):
+        calls["insert"] += 1
+
+    monkeypatch.setattr(HistoricalMarketDataStore, "_bulk_upsert_postgres_copy", _fake_copy)
+    monkeypatch.setattr(HistoricalMarketDataStore, "_bulk_upsert_postgres_insert", _fake_insert)
+
+    assert store.upsert_option_day_bar_payloads(rows) == 1
+    assert calls == {"copy": 1, "insert": 0}
+    fake_session.commit.assert_called_once()

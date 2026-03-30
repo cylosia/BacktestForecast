@@ -51,8 +51,9 @@ class OptionDataPrefetcher:
     date range, populating the gateway's in-memory and Redis caches.
 
     Uses a thread pool to fetch multiple dates concurrently.  The gateway's
-    in-memory LRU caches are protected by ``threading.Lock`` so concurrent
-    writes are safe.
+    own cache implementation is responsible for thread safety. Prefetch works
+    with both live Massive gateways and local historical gateways as long as
+    they expose ``list_contracts()`` and ``get_quote()``.
     """
 
     def __init__(self, max_workers: int | None = None, api_concurrency: int = _DEFAULT_API_CONCURRENCY, timeout_seconds: int = 300) -> None:
@@ -76,10 +77,8 @@ class OptionDataPrefetcher:
         include_quotes: bool = True,
         max_dates: int | None = None,
     ) -> PrefetchSummary:
-        from backtestforecast.market_data.service import MassiveOptionGateway
-
-        if not isinstance(option_gateway, MassiveOptionGateway):
-            raise TypeError("option_gateway must be a MassiveOptionGateway instance")
+        if not self._supports_gateway(option_gateway):
+            raise TypeError("option_gateway must expose list_contracts() and get_quote() methods")
 
         trade_dates = [
             bar.trade_date
@@ -193,3 +192,9 @@ class OptionDataPrefetcher:
             workers=workers,
         )
         return summary
+
+    @staticmethod
+    def _supports_gateway(option_gateway: object) -> bool:
+        return callable(getattr(option_gateway, "list_contracts", None)) and callable(
+            getattr(option_gateway, "get_quote", None)
+        )

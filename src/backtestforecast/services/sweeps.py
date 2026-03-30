@@ -658,17 +658,16 @@ class SweepService:
                     f"SweepResult[{idx}].summary_json",
                     required_keys=_SUMMARY_REQUIRED_KEYS,
                 )
-                job.results.append(
-                    SweepResult(
-                        rank=idx,
-                        score=Decimal(str(round(candidate["score"], 6))),
-                        strategy_type=candidate["strategy_type"],
-                        parameter_snapshot_json=params,
-                        summary_json=candidate["summary"],
-                        warnings_json=candidate.get("warnings", []),
-                        trades_json=candidate["trades"],
-                        equity_curve_json=candidate["equity_curve"],
-                    )
+                self._persist_result(
+                    job_id=job.id,
+                    rank=idx,
+                    score=candidate["score"],
+                    strategy_type=candidate["strategy_type"],
+                    parameter_snapshot_json=params,
+                    summary_json=candidate["summary"],
+                    warnings_json=candidate.get("warnings", []),
+                    trades_json=candidate["trades"],
+                    equity_curve_json=candidate["equity_curve"],
                 )
 
             success_rows = self.session.execute(
@@ -861,20 +860,19 @@ class SweepService:
                 f"GeneticSweepResult[{actual_rank}].summary_json",
                 required_keys=_SUMMARY_REQUIRED_KEYS,
             )
-            job.results.append(
-                SweepResult(
-                    rank=actual_rank,
-                    score=Decimal(str(round(fit_val, 6))),
-                    strategy_type=strategy_type.value,
-                    parameter_snapshot_json=parameters,
-                    summary_json=summary,
-                    warnings_json=result.warnings or [],
-                    trades_json=trades,
-                    equity_curve_json=equity_curve,
-                )
+            self._persist_result(
+                job_id=job.id,
+                rank=actual_rank,
+                score=fit_val,
+                strategy_type=strategy_type.value,
+                parameter_snapshot_json=parameters,
+                summary_json=summary,
+                warnings_json=result.warnings or [],
+                trades_json=trades,
+                equity_curve_json=equity_curve,
             )
 
-        if len(job.results) == 0:
+        if actual_rank == 0:
             job.result_count = 0
             job.status = "failed"
             job.error_code = "sweep_empty"
@@ -889,7 +887,7 @@ class SweepService:
                     .where(SweepJob.id == job.id, SweepJob.status == "running")
                     .values(
                         status="succeeded",
-                        result_count=len(job.results),
+                        result_count=actual_rank,
                         completed_at=datetime.now(UTC),
                         warnings_json=warnings,
                         updated_at=datetime.now(UTC),
@@ -995,6 +993,33 @@ class SweepService:
     @staticmethod
     def _score_candidate(candidate: dict[str, Any]) -> float:
         return candidate.get("score", 0.0)
+
+    def _persist_result(
+        self,
+        *,
+        job_id: UUID,
+        rank: int,
+        score: float | Decimal,
+        strategy_type: str,
+        parameter_snapshot_json: dict[str, Any],
+        summary_json: dict[str, Any],
+        warnings_json: list[dict[str, Any]],
+        trades_json: list[dict[str, Any]],
+        equity_curve_json: list[dict[str, Any]],
+    ) -> None:
+        self.session.add(
+            SweepResult(
+                sweep_job_id=job_id,
+                rank=rank,
+                score=Decimal(str(round(score, 6))),
+                strategy_type=strategy_type,
+                parameter_snapshot_json=parameter_snapshot_json,
+                summary_json=summary_json,
+                warnings_json=warnings_json,
+                trades_json=trades_json,
+                equity_curve_json=equity_curve_json,
+            )
+        )
 
     @staticmethod
     def _score_candidate_from_summary(summary: dict[str, Any], cfg: dict[str, float] | None = None) -> float:

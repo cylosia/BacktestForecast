@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, TypeVar
 from uuid import uuid4
 
 import httpx
@@ -25,6 +25,7 @@ logger = structlog.get_logger("massive_flatfiles")
 
 _STOCK_DAY_DATASET = "us_stocks_sip/day_aggs_v1"
 _OPTION_DAY_DATASET = "us_options_opra/day_aggs_v1"
+_T = TypeVar("_T")
 
 
 def _day_key(dataset: str, trade_date: date) -> str:
@@ -335,6 +336,36 @@ def option_day_bar_payload(row: dict[str, str], trade_date: date, *, symbols: se
         return None
 
 
+def option_day_bar_record(row: dict[str, str], trade_date: date, *, symbols: set[str] | None = None) -> tuple[object, ...] | None:
+    option_ticker = (_first(row, "ticker", "sym", "option_ticker") or "").strip().upper()
+    metadata = parse_option_ticker_metadata(option_ticker)
+    if metadata is None:
+        logger.debug("massive_flatfiles.option_row_skipped", ticker=option_ticker)
+        return None
+    underlying, expiration, contract_type, strike = metadata
+    if symbols is not None and underlying not in symbols:
+        return None
+    try:
+        return (
+            uuid4(),
+            option_ticker,
+            underlying,
+            trade_date,
+            expiration,
+            contract_type,
+            Decimal(f"{strike:.4f}"),
+            Decimal(_first(row, "open", "o") or "0"),
+            Decimal(_first(row, "high", "h") or "0"),
+            Decimal(_first(row, "low", "l") or "0"),
+            Decimal(_first(row, "close", "c") or "0"),
+            Decimal(_first(row, "volume", "v") or "0"),
+            trade_date,
+        )
+    except Exception:
+        logger.debug("massive_flatfiles.option_row_parse_failed", ticker=option_ticker, row=row)
+        return None
+
+
 def iter_stock_day_bar_payloads(
     rows: Iterable[dict[str, str]],
     trade_date: date,
@@ -359,10 +390,22 @@ def iter_option_day_bar_payloads(
             yield payload
 
 
-def chunked(iterable: Iterable[dict[str, object]], size: int) -> Iterator[list[dict[str, object]]]:
+def iter_option_day_bar_records(
+    rows: Iterable[dict[str, str]],
+    trade_date: date,
+    *,
+    symbols: set[str] | None = None,
+) -> Iterator[tuple[object, ...]]:
+    for row in rows:
+        record = option_day_bar_record(row, trade_date, symbols=symbols)
+        if record is not None:
+            yield record
+
+
+def chunked(iterable: Iterable[_T], size: int) -> Iterator[list[_T]]:
     if size < 1:
         raise ValueError("chunk size must be >= 1")
-    batch: list[dict[str, object]] = []
+    batch: list[_T] = []
     for item in iterable:
         batch.append(item)
         if len(batch) >= size:
