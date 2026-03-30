@@ -442,6 +442,12 @@ def _on_worker_shutdown(**kwargs):  # type: ignore[no-untyped-def]
     global _heartbeat_redis_open_connections
     _shutdown_logger.info("worker.shutdown_cleanup_started")
     _heartbeat_stop.set()
+    try:
+        from apps.worker.app.tasks import close_shared_backtest_execution_service
+
+        close_shared_backtest_execution_service()
+    except Exception:
+        _shutdown_logger.warning("worker.shared_backtest_execution_service_stop_failed", exc_info=True)
     if _metrics_server is not None:
         try:
             _metrics_server.shutdown()

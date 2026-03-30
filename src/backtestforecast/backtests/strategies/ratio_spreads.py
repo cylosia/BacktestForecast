@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from backtestforecast.backtests.margin import ratio_backspread_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
-    choose_primary_expiration,
-    contracts_for_expiration,
     get_overrides,
+    maybe_build_contract_delta_lookup,
     offset_strike,
     require_contract_for_strike,
     resolve_strike,
+    select_preferred_expiration_contracts,
     sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
@@ -40,11 +40,26 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
-        expiration = choose_primary_expiration(calls, bar.trade_date, config.target_dte)
-        cc = contracts_for_expiration(calls, expiration)
+        expiration, cc = select_preferred_expiration_contracts(
+            option_gateway,
+            entry_date=bar.trade_date,
+            contract_type="call",
+            target_dte=config.target_dte,
+            dte_tolerance_days=config.dte_tolerance_days,
+        )
         strikes = sorted_unique_strikes(cc)
         dte = (expiration - bar.trade_date).days
+        delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_call_strike,
+            contracts=cc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            dividend_yield=config.dividend_yield,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+        )
 
         short_strike = resolve_strike(
             strikes,
@@ -52,6 +67,7 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
             "call",
             overrides.short_call_strike,
             dte,
+            delta_lookup=delta_lookup,
             contracts=cc,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
@@ -117,11 +133,26 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        puts = option_gateway.list_contracts(bar.trade_date, "put", config.target_dte, config.dte_tolerance_days)
-        expiration = choose_primary_expiration(puts, bar.trade_date, config.target_dte)
-        pc = contracts_for_expiration(puts, expiration)
+        expiration, pc = select_preferred_expiration_contracts(
+            option_gateway,
+            entry_date=bar.trade_date,
+            contract_type="put",
+            target_dte=config.target_dte,
+            dte_tolerance_days=config.dte_tolerance_days,
+        )
         strikes = sorted_unique_strikes(pc)
         dte = (expiration - bar.trade_date).days
+        delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_put_strike,
+            contracts=pc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            dividend_yield=config.dividend_yield,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+        )
 
         short_strike = resolve_strike(
             strikes,
@@ -129,6 +160,7 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
             "put",
             overrides.short_put_strike,
             dte,
+            delta_lookup=delta_lookup,
             contracts=pc,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,

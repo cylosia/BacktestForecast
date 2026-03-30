@@ -5,11 +5,10 @@ from dataclasses import dataclass
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_atm_strike,
-    choose_primary_expiration,
-    contracts_for_expiration,
     get_overrides,
     require_contract_for_strike,
     resolve_wing_strike,
+    select_preferred_expiration_contracts,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -36,9 +35,13 @@ class ButterflyStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
-        expiration = choose_primary_expiration(calls, bar.trade_date, config.target_dte)
-        call_contracts = contracts_for_expiration(calls, expiration)
+        expiration, call_contracts = select_preferred_expiration_contracts(
+            option_gateway,
+            entry_date=bar.trade_date,
+            contract_type="call",
+            target_dte=config.target_dte,
+            dte_tolerance_days=config.dte_tolerance_days,
+        )
         strikes = sorted({contract.strike_price for contract in call_contracts})
         center_strike = choose_atm_strike(strikes, bar.close_price)
         lower_strike = resolve_wing_strike(strikes, center_strike, -1, bar.close_price, overrides.spread_width)

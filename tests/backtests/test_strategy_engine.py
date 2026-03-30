@@ -66,6 +66,39 @@ class FilteringGateway(FakeGateway):
         ]
 
 
+@dataclass
+class ExactCalendarGateway(FakeGateway):
+    exact_calls: list[tuple[date, str, date]] = field(default_factory=list)
+
+    def list_contracts(
+        self,
+        entry_date: date,
+        contract_type: str,
+        target_dte: int,
+        dte_tolerance_days: int,
+    ) -> list[OptionContractRecord]:
+        raise AssertionError("calendar strategy should use exact-expiration lookups when available")
+
+    def list_contracts_for_expiration(
+        self,
+        *,
+        entry_date: date,
+        contract_type: str,
+        expiration_date: date,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[OptionContractRecord]:
+        self.exact_calls.append((entry_date, contract_type, expiration_date))
+        contracts = super().list_contracts(entry_date, contract_type, 0, 0)
+        return [
+            contract
+            for contract in contracts
+            if contract.expiration_date == expiration_date
+            and (strike_price_gte is None or contract.strike_price >= strike_price_gte)
+            and (strike_price_lte is None or contract.strike_price <= strike_price_lte)
+        ]
+
+
 def make_bar(trade_date: date, close_price: float, volume: float = 1_000_000) -> DailyBar:
     return DailyBar(
         trade_date=trade_date,
@@ -278,6 +311,54 @@ def test_calendar_spread_uses_one_day_far_leg_and_minimum_eight_day_tolerance() 
     assert trade.detail_json["legs"][1]["ticker"] == "NEAR100"
     assert "at least 1 day farther out" in trade.detail_json["assumptions"][1]
     assert "8 DTE tolerance days" in trade.detail_json["assumptions"][1]
+
+
+def test_calendar_spread_prefers_exact_expiration_fetch_when_gateway_supports_it() -> None:
+    engine = OptionsBacktestEngine()
+    entry_date = date(2025, 2, 2)
+    near_expiration = date(2025, 2, 9)
+    far_expiration = date(2025, 2, 10)
+    bars = [
+        make_bar(date(2025, 2, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 2, 3), 100),
+        make_bar(near_expiration, 100),
+    ]
+    contracts = {
+        (entry_date, "call"): [
+            OptionContractRecord("NEAR100", "call", near_expiration, 100, 100),
+            OptionContractRecord("FAR100", "call", far_expiration, 100, 100),
+        ]
+    }
+    quotes = {
+        ("NEAR100", entry_date): make_quote(entry_date, 1.0),
+        ("FAR100", entry_date): make_quote(entry_date, 1.5),
+        ("FAR100", near_expiration): make_quote(near_expiration, 1.2),
+    }
+    gateway = ExactCalendarGateway(contracts=contracts, quotes=quotes)
+
+    result = engine.run(
+        BacktestConfig(
+            symbol="F",
+            strategy_type="calendar_spread",
+            start_date=date(2025, 2, 1),
+            end_date=date(2025, 2, 3),
+            target_dte=7,
+            dte_tolerance_days=0,
+            max_holding_days=30,
+            account_size=10_000,
+            risk_per_trade_pct=3,
+            commission_per_contract=0,
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        gateway,
+    )
+
+    assert result.summary.trade_count == 1
+    assert (entry_date, "call", near_expiration) in gateway.exact_calls
+    assert (entry_date, "call", far_expiration) in gateway.exact_calls
 
 
 def test_custom_2_leg_stock_only_uses_end_date() -> None:

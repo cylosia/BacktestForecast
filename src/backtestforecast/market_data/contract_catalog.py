@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backtestforecast.market_data.types import OptionContractRecord
-from backtestforecast.models import OptionContractCatalogSnapshot
+from backtestforecast.models import HistoricalOptionContractCatalogSnapshot, OptionContractCatalogSnapshot
 
 logger = structlog.get_logger("market_data.contract_catalog")
 
@@ -83,6 +83,7 @@ def _filter_contracts(
 class OptionContractCatalogStore:
     session_factory: Callable[[], Session]
     readonly_session_factory: Callable[[], Session] | None = None
+    snapshot_model: type[OptionContractCatalogSnapshot] | type[HistoricalOptionContractCatalogSnapshot] = OptionContractCatalogSnapshot
     _disabled_until_monotonic: float = field(init=False, default=0.0)
 
     def __post_init__(self) -> None:
@@ -108,13 +109,13 @@ class OptionContractCatalogStore:
                 return None
             try:
                 snapshot = session.scalar(
-                    select(OptionContractCatalogSnapshot).where(
-                        OptionContractCatalogSnapshot.symbol == symbol,
-                        OptionContractCatalogSnapshot.as_of_date == as_of_date,
-                        OptionContractCatalogSnapshot.contract_type == contract_type,
-                        OptionContractCatalogSnapshot.expiration_date == expiration_date,
-                        OptionContractCatalogSnapshot.strike_price_gte == strike_floor,
-                        OptionContractCatalogSnapshot.strike_price_lte == strike_ceiling,
+                    select(self.snapshot_model).where(
+                        self.snapshot_model.symbol == symbol,
+                        self.snapshot_model.as_of_date == as_of_date,
+                        self.snapshot_model.contract_type == contract_type,
+                        self.snapshot_model.expiration_date == expiration_date,
+                        self.snapshot_model.strike_price_gte == strike_floor,
+                        self.snapshot_model.strike_price_lte == strike_ceiling,
                     )
                 )
                 if snapshot is not None:
@@ -123,13 +124,13 @@ class OptionContractCatalogStore:
                     return None
 
                 full_snapshot = session.scalar(
-                    select(OptionContractCatalogSnapshot).where(
-                        OptionContractCatalogSnapshot.symbol == symbol,
-                        OptionContractCatalogSnapshot.as_of_date == as_of_date,
-                        OptionContractCatalogSnapshot.contract_type == contract_type,
-                        OptionContractCatalogSnapshot.expiration_date == expiration_date,
-                        OptionContractCatalogSnapshot.strike_price_gte.is_(None),
-                        OptionContractCatalogSnapshot.strike_price_lte.is_(None),
+                    select(self.snapshot_model).where(
+                        self.snapshot_model.symbol == symbol,
+                        self.snapshot_model.as_of_date == as_of_date,
+                        self.snapshot_model.contract_type == contract_type,
+                        self.snapshot_model.expiration_date == expiration_date,
+                        self.snapshot_model.strike_price_gte.is_(None),
+                        self.snapshot_model.strike_price_lte.is_(None),
                     )
                 )
                 if full_snapshot is None:
@@ -172,19 +173,19 @@ class OptionContractCatalogStore:
                 return
             try:
                 snapshot = session.scalar(
-                    select(OptionContractCatalogSnapshot).where(
-                        OptionContractCatalogSnapshot.symbol == symbol,
-                        OptionContractCatalogSnapshot.as_of_date == as_of_date,
-                        OptionContractCatalogSnapshot.contract_type == contract_type,
-                        OptionContractCatalogSnapshot.expiration_date == expiration_date,
-                        OptionContractCatalogSnapshot.strike_price_gte == strike_floor,
-                        OptionContractCatalogSnapshot.strike_price_lte == strike_ceiling,
+                    select(self.snapshot_model).where(
+                        self.snapshot_model.symbol == symbol,
+                        self.snapshot_model.as_of_date == as_of_date,
+                        self.snapshot_model.contract_type == contract_type,
+                        self.snapshot_model.expiration_date == expiration_date,
+                        self.snapshot_model.strike_price_gte == strike_floor,
+                        self.snapshot_model.strike_price_lte == strike_ceiling,
                     )
                 )
                 serialized = _serialize_contracts(contracts)
                 if snapshot is None:
                     session.add(
-                        OptionContractCatalogSnapshot(
+                        self.snapshot_model(
                             symbol=symbol,
                             as_of_date=as_of_date,
                             contract_type=contract_type,

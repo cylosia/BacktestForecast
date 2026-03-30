@@ -78,8 +78,15 @@ class HistoricalMarketDataStore:
     def get_underlying_day_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
         with self._session(readonly=True) as session:
             rows = list(
-                session.scalars(
-                    select(HistoricalUnderlyingDayBar)
+                session.execute(
+                    select(
+                        HistoricalUnderlyingDayBar.trade_date,
+                        HistoricalUnderlyingDayBar.open_price,
+                        HistoricalUnderlyingDayBar.high_price,
+                        HistoricalUnderlyingDayBar.low_price,
+                        HistoricalUnderlyingDayBar.close_price,
+                        HistoricalUnderlyingDayBar.volume,
+                    )
                     .where(
                         HistoricalUnderlyingDayBar.symbol == symbol,
                         HistoricalUnderlyingDayBar.trade_date >= start_date,
@@ -90,14 +97,14 @@ class HistoricalMarketDataStore:
             )
         return [
             DailyBar(
-                trade_date=row.trade_date,
-                open_price=float(row.open_price),
-                high_price=float(row.high_price),
-                low_price=float(row.low_price),
-                close_price=float(row.close_price),
-                volume=float(row.volume),
+                trade_date=trade_date,
+                open_price=float(open_price),
+                high_price=float(high_price),
+                low_price=float(low_price),
+                close_price=float(close_price),
+                volume=float(volume),
             )
-            for row in rows
+            for trade_date, open_price, high_price, low_price, close_price, volume in rows
         ]
 
     def _get_underlying_trade_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
@@ -157,7 +164,12 @@ class HistoricalMarketDataStore:
     ) -> list[OptionContractRecord]:
         with self._session(readonly=True) as session:
             stmt = (
-                select(HistoricalOptionDayBar)
+                select(
+                    HistoricalOptionDayBar.option_ticker,
+                    HistoricalOptionDayBar.contract_type,
+                    HistoricalOptionDayBar.expiration_date,
+                    HistoricalOptionDayBar.strike_price,
+                )
                 .where(
                     HistoricalOptionDayBar.underlying_symbol == symbol,
                     HistoricalOptionDayBar.trade_date == as_of_date,
@@ -174,19 +186,23 @@ class HistoricalMarketDataStore:
                 stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
             if strike_price_lte is not None:
                 stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            rows = list(session.scalars(stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)))
+            rows = list(
+                session.execute(
+                    stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)
+                )
+            )
         seen: set[str] = set()
         contracts: list[OptionContractRecord] = []
-        for row in rows:
-            if row.option_ticker in seen:
+        for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
+            if option_ticker in seen:
                 continue
-            seen.add(row.option_ticker)
+            seen.add(option_ticker)
             contracts.append(
                 OptionContractRecord(
-                    ticker=row.option_ticker,
-                    contract_type=row.contract_type,
-                    expiration_date=row.expiration_date,
-                    strike_price=float(row.strike_price),
+                    ticker=option_ticker,
+                    contract_type=row_contract_type,
+                    expiration_date=row_expiration_date,
+                    strike_price=float(row_strike_price),
                     shares_per_contract=100.0,
                 )
             )
@@ -194,15 +210,15 @@ class HistoricalMarketDataStore:
 
     def get_option_quote_for_date(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         with self._session(readonly=True) as session:
-            row = session.scalar(
-                select(HistoricalOptionDayBar).where(
+            close_price = session.scalar(
+                select(HistoricalOptionDayBar.close_price).where(
                     HistoricalOptionDayBar.option_ticker == option_ticker,
                     HistoricalOptionDayBar.trade_date == trade_date,
                 )
             )
-        if row is None:
+        if close_price is None:
             return None
-        close_price = float(row.close_price)
+        close_price = float(close_price)
         if close_price <= 0:
             return None
         return OptionQuoteRecord(
@@ -248,8 +264,11 @@ class HistoricalMarketDataStore:
             return {}
         with self._session(readonly=True) as session:
             rows = list(
-                session.scalars(
-                    select(HistoricalTreasuryYield)
+                session.execute(
+                    select(
+                        HistoricalTreasuryYield.trade_date,
+                        HistoricalTreasuryYield.yield_3_month,
+                    )
                     .where(
                         HistoricalTreasuryYield.trade_date >= start_date,
                         HistoricalTreasuryYield.trade_date <= end_date,
@@ -257,7 +276,7 @@ class HistoricalMarketDataStore:
                     .order_by(HistoricalTreasuryYield.trade_date)
                 )
             )
-        return {row.trade_date: float(row.yield_3_month) for row in rows}
+        return {trade_date: float(yield_3_month) for trade_date, yield_3_month in rows}
 
     def upsert_underlying_day_bars(self, bars: list[HistoricalUnderlyingDayBar]) -> int:
         return self._bulk_upsert(bars, HistoricalUnderlyingDayBar, ("symbol", "trade_date"))

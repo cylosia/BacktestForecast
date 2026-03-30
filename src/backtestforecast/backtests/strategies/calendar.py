@@ -10,6 +10,7 @@ from backtestforecast.backtests.strategies.common import (
     choose_secondary_expiration,
     contracts_for_expiration,
     get_overrides,
+    preferred_expiration_dates,
     require_contract_for_strike,
     synthetic_ticker,
     valid_entry_mids,
@@ -27,6 +28,86 @@ CALENDAR_MIN_FAR_LEG_EXTRA_DAYS = 1
 CALENDAR_MIN_DTE_TOLERANCE_DAYS = 8
 
 
+def resolve_calendar_contract_groups(
+    option_gateway: OptionDataGateway,
+    *,
+    entry_date: date,
+    contract_type: str,
+    target_dte: int,
+    dte_tolerance_days: int,
+    strike_price_gte: float | None = None,
+    strike_price_lte: float | None = None,
+) -> tuple[date, list[OptionContractRecord], date, list[OptionContractRecord]]:
+    effective_tolerance_days = max(dte_tolerance_days, CALENDAR_MIN_DTE_TOLERANCE_DAYS)
+    exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
+    if callable(exact_fetch):
+        ordered_expirations = preferred_expiration_dates(
+            entry_date,
+            target_dte,
+            effective_tolerance_days,
+        )
+        near_expiration: date | None = None
+        near_contracts: list[OptionContractRecord] = []
+        for expiration_date in ordered_expirations:
+            contracts = list(
+                exact_fetch(
+                    entry_date=entry_date,
+                    contract_type=contract_type,
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_price_gte,
+                    strike_price_lte=strike_price_lte,
+                )
+            )
+            if contracts:
+                near_expiration = expiration_date
+                near_contracts = contracts
+                break
+        if near_expiration is None:
+            raise DataUnavailableError("No eligible option expirations were available.")
+
+        minimum_target = (near_expiration - entry_date).days + CALENDAR_MIN_FAR_LEG_EXTRA_DAYS
+        later_expirations = sorted(
+            expiration_date
+            for expiration_date in ordered_expirations
+            if expiration_date > near_expiration and (expiration_date - entry_date).days >= minimum_target
+        )
+        for expiration_date in later_expirations:
+            contracts = list(
+                exact_fetch(
+                    entry_date=entry_date,
+                    contract_type=contract_type,
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_price_gte,
+                    strike_price_lte=strike_price_lte,
+                )
+            )
+            if contracts:
+                return near_expiration, near_contracts, expiration_date, contracts
+        raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
+
+    contracts = option_gateway.list_contracts(
+        entry_date,
+        contract_type,
+        target_dte,
+        effective_tolerance_days,
+    )
+    near_expiration = choose_primary_expiration(contracts, entry_date, target_dte)
+    far_expiration = choose_secondary_expiration(
+        contracts,
+        entry_date,
+        near_expiration,
+        min_extra_days=CALENDAR_MIN_FAR_LEG_EXTRA_DAYS,
+    )
+    if far_expiration is None:
+        raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
+    return (
+        near_expiration,
+        contracts_for_expiration(contracts, near_expiration),
+        far_expiration,
+        contracts_for_expiration(contracts, far_expiration),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CalendarSpreadStrategy(StrategyDefinition):
     strategy_type: str = "calendar_spread"
@@ -41,25 +122,13 @@ class CalendarSpreadStrategy(StrategyDefinition):
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
         contract_type = overrides.calendar_contract_type or "call"
-        effective_tolerance_days = max(config.dte_tolerance_days, CALENDAR_MIN_DTE_TOLERANCE_DAYS)
-        contracts = option_gateway.list_contracts(
-            bar.trade_date,
-            contract_type,
-            config.target_dte,
-            effective_tolerance_days,
+        near_expiration, near_calls, far_expiration, far_calls = resolve_calendar_contract_groups(
+            option_gateway,
+            entry_date=bar.trade_date,
+            contract_type=contract_type,
+            target_dte=config.target_dte,
+            dte_tolerance_days=config.dte_tolerance_days,
         )
-        near_expiration = choose_primary_expiration(contracts, bar.trade_date, config.target_dte)
-        far_expiration = choose_secondary_expiration(
-            contracts,
-            bar.trade_date,
-            near_expiration,
-            min_extra_days=CALENDAR_MIN_FAR_LEG_EXTRA_DAYS,
-        )
-        if far_expiration is None:
-            raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
-
-        near_calls = contracts_for_expiration(contracts, near_expiration)
-        far_calls = contracts_for_expiration(contracts, far_expiration)
         common_strikes = sorted(
             {contract.strike_price for contract in near_calls} & {contract.strike_price for contract in far_calls}
         )

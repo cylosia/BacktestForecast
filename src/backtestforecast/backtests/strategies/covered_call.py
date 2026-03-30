@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from backtestforecast.backtests.margin import covered_call_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
-    choose_primary_expiration,
-    contracts_for_expiration,
     get_overrides,
+    maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
+    select_preferred_expiration_contracts,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -43,21 +43,32 @@ class CoveredCallStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        calls = option_gateway.list_contracts(
+        primary_expiration, call_contracts = select_preferred_expiration_contracts(
+            option_gateway,
             entry_date=bar.trade_date,
             contract_type="call",
             target_dte=config.target_dte,
             dte_tolerance_days=config.dte_tolerance_days,
         )
-        primary_expiration = choose_primary_expiration(calls, bar.trade_date, config.target_dte)
-        call_contracts = contracts_for_expiration(calls, primary_expiration)
         dte = (primary_expiration - bar.trade_date).days
+        delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_call_strike,
+            contracts=call_contracts,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            dividend_yield=config.dividend_yield,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+        )
         strike = resolve_strike(
             [c.strike_price for c in call_contracts],
             bar.close_price,
             "call",
             overrides.short_call_strike,
             dte,
+            delta_lookup=delta_lookup,
             contracts=call_contracts,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,

@@ -34,7 +34,8 @@ def test_dispatch_targets_and_celery_routes_use_isolated_queues() -> None:
 
 def test_production_worker_topology_separates_heavy_queues() -> None:
     source = Path("docker-compose.prod.yml").read_text()
-    assert "--queues=backtests,multi_symbol_backtests,multi_step_backtests,scans,exports,research" in source
+    assert "--queues=backtests,multi_symbol_backtests,multi_step_backtests" in source
+    assert "--queues=scans,exports,research" in source
     assert "--queues=sweeps,analysis" in source
     assert "--queues=pipeline" in source
     assert "--queues=maintenance --concurrency=2" in source

@@ -129,6 +129,7 @@ class ScanService:
     ) -> None:
         self.session = session
         self._execution_service = execution_service
+        self._owns_execution_service = execution_service is None
         self._forecaster = forecaster
         self.repository = ScannerJobRepository(session)
         self.audit = AuditService(session)
@@ -143,7 +144,7 @@ class ScanService:
         return self._execution_service
 
     def close(self) -> None:
-        if self._execution_service is not None:
+        if self._execution_service is not None and self._owns_execution_service:
             self._execution_service.close()
 
     def __enter__(self) -> ScanService:

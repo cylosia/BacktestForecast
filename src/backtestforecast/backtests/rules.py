@@ -9,6 +9,7 @@ from datetime import date, timedelta
 
 import structlog
 
+from backtestforecast.backtests.strategies.common import select_preferred_common_expiration_contracts
 from backtestforecast.backtests.types import BacktestConfig, OptionDataGateway
 from backtestforecast.indicators.calculations import (
     bollinger_bands,
@@ -321,27 +322,18 @@ def estimate_atm_iv_for_date(
     risk_free_rate_resolver: Callable[[date], float] | None = None,
     dividend_yield: float = 0.0,
 ) -> float | None:
-    calls = option_gateway.list_contracts(trade_date, "call", target_dte, dte_tolerance_days)
-    puts = option_gateway.list_contracts(trade_date, "put", target_dte, dte_tolerance_days)
-    if not calls or not puts:
+    try:
+        chosen_expiration, call_contracts, put_contracts = select_preferred_common_expiration_contracts(
+            option_gateway,
+            entry_date=trade_date,
+            target_dte=target_dte,
+            dte_tolerance_days=dte_tolerance_days,
+        )
+    except Exception:
+        return None
+    if not call_contracts or not put_contracts:
         return None
 
-    calls_by_exp = _group_by_expiration(calls)
-    puts_by_exp = _group_by_expiration(puts)
-    common_expirations = sorted(set(calls_by_exp) & set(puts_by_exp))
-    if not common_expirations:
-        return None
-
-    chosen_expiration = min(
-        common_expirations,
-        key=lambda expiration: (
-            abs((expiration - trade_date).days - target_dte),
-            0 if (expiration - trade_date).days >= target_dte else 1,
-            (expiration - trade_date).days,
-        ),
-    )
-    call_contracts = calls_by_exp[chosen_expiration]
-    put_contracts = puts_by_exp[chosen_expiration]
     common_strikes = sorted(
         {contract.strike_price for contract in call_contracts} & {contract.strike_price for contract in put_contracts}
     )

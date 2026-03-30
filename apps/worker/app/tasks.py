@@ -3,6 +3,7 @@
 from contextlib import suppress
 from datetime import UTC
 import os
+import threading
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -65,18 +66,64 @@ from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
 
 SessionLocal = create_worker_session
+_shared_backtest_execution_service = None
+_shared_backtest_execution_service_lock = threading.Lock()
 
 
 def create_worker_session():
     return SessionLocal()
 
 
+def _get_shared_backtest_execution_service():
+    global _shared_backtest_execution_service
+    with _shared_backtest_execution_service_lock:
+        if _shared_backtest_execution_service is None:
+            from backtestforecast.integrations.massive_client import MassiveClient
+            from backtestforecast.market_data.service import MarketDataService
+            from backtestforecast.services.backtest_execution import BacktestExecutionService
+
+            shared_market_data_service = MarketDataService(MassiveClient())
+            _shared_backtest_execution_service = BacktestExecutionService(
+                market_data_service=shared_market_data_service,
+            )
+        return _shared_backtest_execution_service
+
+
+def close_shared_backtest_execution_service() -> None:
+    global _shared_backtest_execution_service
+    with _shared_backtest_execution_service_lock:
+        service = _shared_backtest_execution_service
+        _shared_backtest_execution_service = None
+    if service is not None:
+        _close_owned_resource(service, label="worker.shared_backtest_execution_service")
+
+
 def _build_backtest_service(session):
+    return BacktestService(session, execution_service=_build_worker_execution_service())
+
+
+def _build_worker_execution_service():
     if os.environ.get("BFF_TEST_FAKE_BACKTEST_EXECUTION") == "1":
         from tests.integration.fakes import FakeExecutionService
 
-        return BacktestService(session, execution_service=FakeExecutionService())
-    return BacktestService(session)
+        return FakeExecutionService()
+    return _get_shared_backtest_execution_service()
+
+
+def _build_scan_service(session):
+    return ScanService(session, execution_service=_build_worker_execution_service())
+
+
+def _build_sweep_service(session):
+    return SweepService(session, execution_service=_build_worker_execution_service())
+
+
+def _build_multi_symbol_backtest_service(session):
+    return MultiSymbolBacktestService(session, execution_service=_build_worker_execution_service())
+
+
+def _build_multi_step_backtest_service(session):
+    return MultiStepBacktestService(session, execution_service=_build_worker_execution_service())
 
 
 @celery_app.task(name="maintenance.ping", ignore_result=True)
@@ -453,7 +500,7 @@ def run_multi_symbol_backtest(self, run_id: str) -> dict[str, str]:
                 return {"status": "failed", "run_id": run_id, "error_code": "quota_exceeded"}
         publish_job_status("multi_symbol_backtest", UUID(run_id), "running")
         _update_heartbeat(session, MultiSymbolRun, UUID(run_id))
-        service = MultiSymbolBacktestService(session)
+        service = _build_multi_symbol_backtest_service(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
         except AppError as exc:
@@ -573,7 +620,7 @@ def run_multi_step_backtest(self, run_id: str) -> dict[str, str]:
                 return {"status": "failed", "run_id": run_id, "error_code": "quota_exceeded"}
         publish_job_status("multi_step_backtest", UUID(run_id), "running")
         _update_heartbeat(session, MultiStepRun, UUID(run_id))
-        service = MultiStepBacktestService(session)
+        service = _build_multi_step_backtest_service(session)
         try:
             run = service.execute_run_by_id(UUID(run_id))
         except AppError as exc:
@@ -1031,7 +1078,7 @@ def run_scan_job(self, job_id: str) -> dict[str, str | int]:
             return {"status": "failed", "job_id": job_id, "error_code": "entitlement_revoked"}
         publish_job_status("scan", UUID(job_id), "running")
         _update_heartbeat(session, ScannerJobModel, UUID(job_id))
-        service = ScanService(session)
+        service = _build_scan_service(session)
         try:
             job = service.run_job(UUID(job_id))
         except AppError as exc:
@@ -1202,7 +1249,7 @@ def run_sweep(self, job_id: str) -> dict[str, str | int]:
                 return {"status": "failed", "job_id": job_id, "error_code": "quota_exceeded"}
         publish_job_status("sweep", UUID(job_id), "running")
         _update_heartbeat(session, SweepJobModel, UUID(job_id))
-        service = SweepService(session)
+        service = _build_sweep_service(session)
         try:
             job = service.run_job(UUID(job_id))
         except AppError as exc:
@@ -1330,7 +1377,7 @@ def refresh_prioritized_scans(self) -> dict[str, int]:
         dispatched = 0
         pending_recovery = 0
         with create_worker_session() as session:
-            service = ScanService(session)
+            service = _build_scan_service(session)
             try:
                 dispatched, pending_recovery = service.create_and_dispatch_scheduled_refresh_jobs(
                     limit=25,

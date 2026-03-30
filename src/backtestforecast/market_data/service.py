@@ -20,7 +20,7 @@ from backtestforecast.market_data.contract_catalog import OptionContractCatalogS
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
-from backtestforecast.models import HistoricalExDividendDate
+from backtestforecast.models import HistoricalExDividendDate, HistoricalOptionContractCatalogSnapshot
 from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
 from backtestforecast.schemas.backtests import (
     AvoidEarningsRule,
@@ -34,7 +34,7 @@ from backtestforecast.schemas.backtests import (
     SupportResistanceRule,
     VolumeSpikeRule,
 )
-from backtestforecast.utils.dates import market_date_today
+from backtestforecast.utils.dates import is_trading_day, market_date_today
 
 logger = structlog.get_logger("market_data")
 
@@ -58,10 +58,18 @@ class ExDividendLoadResult:
     warnings: list[dict[str, Any]] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _BarsFetchResult:
+    bars: list[DailyBar]
+    local_history_complete: bool = False
+    local_history_start: date | None = None
+
+
 _GATEWAY_CONTRACT_CACHE_MAX = 2_000
 _GATEWAY_QUOTE_CACHE_MAX = 10_000
 _GATEWAY_SNAPSHOT_CACHE_MAX = 5_000
 _GATEWAY_IV_CACHE_MAX = 50_000
+_EX_DIVIDEND_CACHE_MAX = 1_000
 
 _global_cache_entries = 0
 _global_cache_lock = threading.Lock()
@@ -263,6 +271,23 @@ class MassiveOptionGateway:
             if contracts:
                 return contracts
         raise DataUnavailableError("No eligible option expirations were available.")
+
+    def list_contracts_for_expiration(
+        self,
+        *,
+        entry_date: date,
+        contract_type: str,
+        expiration_date: date,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[OptionContractRecord]:
+        return self._list_contracts_for_exact_expiration(
+            entry_date=entry_date,
+            contract_type=contract_type,
+            expiration_date=expiration_date,
+            strike_price_gte=strike_price_gte,
+            strike_price_lte=strike_price_lte,
+        )
 
     def _list_contracts_for_exact_expiration(
         self,
@@ -533,12 +558,15 @@ class MarketDataService:
 
     def __init__(self, client: MassiveClient) -> None:
         self.client = client
-        self._bars_cache: OrderedDict[tuple[str, date, date], list[DailyBar]] = OrderedDict()
+        self._bars_cache: OrderedDict[tuple[str, date, date], _BarsFetchResult] = OrderedDict()
         self._bars_cache_lock = threading.Lock()
         self._bars_inflight: dict[tuple[str, date, date], threading.Event] = {}
         self._bars_errors: dict[tuple[str, date, date], tuple[Exception, float]] = {}
+        self._ex_dividend_cache: OrderedDict[tuple[str, date, date], ExDividendLoadResult] = OrderedDict()
+        self._ex_dividend_cache_lock = threading.Lock()
         self._redis_cache: OptionDataRedisCache | None = self._build_redis_cache()
         self._contract_catalog: OptionContractCatalogStore | None = self._build_contract_catalog()
+        self._historical_contract_catalog: OptionContractCatalogStore | None = self._build_historical_contract_catalog()
         self._historical_store: HistoricalMarketDataStore | None = self._build_historical_store()
 
     def close(self) -> None:
@@ -576,6 +604,18 @@ class MarketDataService:
             return None
 
     @staticmethod
+    def _build_historical_contract_catalog() -> OptionContractCatalogStore | None:
+        try:
+            return OptionContractCatalogStore(
+                session_factory=create_session,
+                readonly_session_factory=create_readonly_session,
+                snapshot_model=HistoricalOptionContractCatalogSnapshot,
+            )
+        except Exception:
+            logger.warning("market_data.historical_contract_catalog_init_failed", exc_info=True)
+            return None
+
+    @staticmethod
     def _build_historical_store() -> HistoricalMarketDataStore | None:
         try:
             return HistoricalMarketDataStore(
@@ -601,6 +641,21 @@ class MarketDataService:
         return end_date <= self._local_availability_cutoff()
 
     def _fetch_bars_coalesced(self, symbol: str, start: date, end: date) -> list[DailyBar]:
+        return self._fetch_bars_with_metadata(symbol, start, end).bars
+
+    @staticmethod
+    def _bars_cover_trading_days(bars: list[DailyBar], start: date, end: date) -> bool:
+        if not bars:
+            return False
+        trade_dates = {bar.trade_date for bar in bars}
+        current = start
+        while current <= end:
+            if is_trading_day(current) and current not in trade_dates:
+                return False
+            current += timedelta(days=1)
+        return True
+
+    def _fetch_bars_with_metadata(self, symbol: str, start: date, end: date) -> _BarsFetchResult:
         """Fetch bars with request coalescing: only one thread fetches per key."""
         cache_key = (symbol, start, end)
 
@@ -620,21 +675,26 @@ class MarketDataService:
 
             if self._prefer_local_history(end):
                 local_cached = self._historical_store.get_underlying_day_bars(symbol, start, end) if self._historical_store is not None else []
+                local_history_complete = bool(
+                    local_cached and self._bars_cover_trading_days(local_cached, local_cached[0].trade_date, end)
+                )
                 if (
-                    local_cached
-                    and self._historical_store is not None
+                    local_history_complete
                     # Historical backtests often request a padded warmup window
                     # that begins before the first locally loaded trade date.
                     # Accept the local cache as long as coverage is complete from
                     # the first available local bar onward; prepare_backtest()
                     # separately enforces that enough pre-start bars exist.
-                    and self._historical_store.has_underlying_coverage(symbol, local_cached[0].trade_date, end)
                 ):
                     if len(self._bars_cache) >= self._MAX_BARS_CACHE_SIZE:
                         self._bars_cache.popitem(last=False)
-                    self._bars_cache[cache_key] = local_cached
+                    self._bars_cache[cache_key] = _BarsFetchResult(
+                        bars=local_cached,
+                        local_history_complete=True,
+                        local_history_start=local_cached[0].trade_date,
+                    )
                     self._bars_cache.move_to_end(cache_key)
-                    return local_cached
+                    return self._bars_cache[cache_key]
 
         try:
             if not am_fetcher:
@@ -667,7 +727,7 @@ class MarketDataService:
                 if cache_key not in self._bars_cache:
                     if len(self._bars_cache) >= self._MAX_BARS_CACHE_SIZE:
                         self._bars_cache.popitem(last=False)
-                    self._bars_cache[cache_key] = raw_bars
+                    self._bars_cache[cache_key] = _BarsFetchResult(bars=raw_bars)
                 self._bars_cache.move_to_end(cache_key)
                 return self._bars_cache[cache_key]
         except Exception as exc:
@@ -697,8 +757,8 @@ class MarketDataService:
             days=max(request.max_holding_days, request.target_dte + request.dte_tolerance_days) + 45
         )
 
-        raw_bars = self._fetch_bars_coalesced(request.symbol, extended_start, extended_end)
-        bars = self._validate_bars(raw_bars, request.symbol)
+        bars_fetch = self._fetch_bars_with_metadata(request.symbol, extended_start, extended_end)
+        bars = self._validate_bars(bars_fetch.bars, request.symbol)
 
         if not bars:
             raise DataUnavailableError(f"No daily bar data was returned for {request.symbol}.")
@@ -717,19 +777,15 @@ class MarketDataService:
             )
 
         earnings_dates = self._load_earnings_dates_if_required(request)
-        local_coverage_end = min(extended_end, self._local_availability_cutoff())
         data_source = (
             "historical_flatfile"
             if (
                 self._prefer_local_history(request.end_date)
-                and self._historical_store is not None
                 and bars
+                and bars_fetch.local_history_complete
+                and bars_fetch.local_history_start is not None
+                and bars_fetch.local_history_start <= request.start_date
                 and bars[0].trade_date <= request.start_date
-                and self._historical_store.has_underlying_coverage(
-                    request.symbol,
-                    bars[0].trade_date,
-                    local_coverage_end,
-                )
             )
             else "massive"
         )
@@ -809,10 +865,30 @@ class MarketDataService:
         start_date: date,
         end_date: date,
     ) -> ExDividendLoadResult:
+        cache_key = (symbol, start_date, end_date)
+        cached = self._get_cached_ex_dividend_result(cache_key)
+        if cached is not None:
+            return cached
+
         if self._prefer_local_history(end_date) and self._historical_store is not None:
             local = self._historical_store.list_ex_dividend_dates(symbol, start_date, end_date)
             if local:
-                return ExDividendLoadResult(dates=local, warnings=[])
+                result = ExDividendLoadResult(dates=local, warnings=[])
+                self._store_ex_dividend_result(cache_key, result)
+                if self._redis_cache is not None:
+                    self._redis_cache.set_ex_dividend_dates(symbol, start_date, end_date, local)
+                return result
+
+        if self._redis_cache is not None:
+            from backtestforecast.market_data.redis_cache import CACHE_MISS
+
+            redis_result = self._redis_cache.get_ex_dividend_dates(symbol, start_date, end_date)
+            if redis_result is not CACHE_MISS:
+                dates, degraded = redis_result
+                return ExDividendLoadResult(
+                    dates=dates,
+                    warnings=self._ex_dividend_warning(symbol, start_date, end_date) if degraded else [],
+                )
         try:
             result = self.client.list_ex_dividend_dates(symbol, start_date, end_date)
             if result and self._historical_store is not None:
@@ -826,7 +902,11 @@ class MarketDataService:
                         for item in sorted(result)
                     ]
                 )
-            return ExDividendLoadResult(dates=result, warnings=[])
+            response = ExDividendLoadResult(dates=result, warnings=[])
+            self._store_ex_dividend_result(cache_key, response)
+            if self._redis_cache is not None:
+                self._redis_cache.set_ex_dividend_dates(symbol, start_date, end_date, result)
+            return response
         except ExternalServiceError:
             logger.warning(
                 "market_data.ex_dividend_dates_unavailable",
@@ -835,34 +915,87 @@ class MarketDataService:
                 end_date=end_date.isoformat(),
                 exc_info=True,
             )
-            return ExDividendLoadResult(
+            response = ExDividendLoadResult(
                 dates=set(),
-                warnings=[
-                    make_warning(
-                        "ex_dividend_dates_unavailable",
-                        (
-                            f"Ex-dividend dates for {symbol} were unavailable for "
-                            f"{start_date.isoformat()} through {end_date.isoformat()}. "
-                            "Early-assignment logic may be incomplete for dividend-sensitive strategies."
-                        ),
-                        metadata={
-                            "symbol": symbol,
-                            "start_date": start_date.isoformat(),
-                            "end_date": end_date.isoformat(),
-                        },
-                    )
-                ],
+                warnings=self._ex_dividend_warning(symbol, start_date, end_date),
             )
+            if self._redis_cache is not None:
+                from backtestforecast.market_data.redis_cache import _NEGATIVE_CACHE_TTL_SECONDS
+
+                self._redis_cache.set_ex_dividend_dates(
+                    symbol,
+                    start_date,
+                    end_date,
+                    set(),
+                    degraded=True,
+                    ttl_seconds=_NEGATIVE_CACHE_TTL_SECONDS,
+                )
+            return response
 
     def build_option_gateway(self, symbol: str, *, prefer_local: bool = False) -> MassiveOptionGateway | HistoricalOptionGateway:
         if prefer_local and self._historical_store is not None:
-            return HistoricalOptionGateway(self._historical_store, symbol)
+            return HistoricalOptionGateway(
+                self._historical_store,
+                symbol,
+                redis_cache=self._redis_cache,
+                contract_catalog=self._historical_contract_catalog,
+            )
         return MassiveOptionGateway(
             self.client,
             symbol,
             redis_cache=self._redis_cache,
             contract_catalog=self._contract_catalog,
         )
+
+    def _get_cached_ex_dividend_result(
+        self,
+        cache_key: tuple[str, date, date],
+    ) -> ExDividendLoadResult | None:
+        with self._ex_dividend_cache_lock:
+            cached = self._ex_dividend_cache.get(cache_key)
+            if cached is None:
+                return None
+            self._ex_dividend_cache.move_to_end(cache_key)
+            return ExDividendLoadResult(
+                dates=set(cached.dates),
+                warnings=list(cached.warnings or []),
+            )
+
+    def _store_ex_dividend_result(
+        self,
+        cache_key: tuple[str, date, date],
+        result: ExDividendLoadResult,
+    ) -> None:
+        with self._ex_dividend_cache_lock:
+            self._ex_dividend_cache[cache_key] = ExDividendLoadResult(
+                dates=set(result.dates),
+                warnings=list(result.warnings or []),
+            )
+            self._ex_dividend_cache.move_to_end(cache_key)
+            while len(self._ex_dividend_cache) > _EX_DIVIDEND_CACHE_MAX:
+                self._ex_dividend_cache.popitem(last=False)
+
+    @staticmethod
+    def _ex_dividend_warning(
+        symbol: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
+        return [
+            make_warning(
+                "ex_dividend_dates_unavailable",
+                (
+                    f"Ex-dividend dates for {symbol} were unavailable for "
+                    f"{start_date.isoformat()} through {end_date.isoformat()}. "
+                    "Early-assignment logic may be incomplete for dividend-sensitive strategies."
+                ),
+                metadata={
+                    "symbol": symbol,
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                },
+            )
+        ]
 
     @staticmethod
     def _validate_bars(raw_bars: list[DailyBar], symbol: str) -> list[DailyBar]:

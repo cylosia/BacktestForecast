@@ -9,6 +9,7 @@ from backtestforecast.backtests.strategies.common import (
     choose_secondary_expiration,
     contracts_for_expiration,
     get_overrides,
+    maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
     resolve_wing_strike,
@@ -64,6 +65,18 @@ class PMCCStrategy(StrategyDefinition):
         near_cc = contracts_for_expiration(calls, near_exp)
         far_cc = contracts_for_expiration(calls, far_exp)
         dte = (near_exp - bar.trade_date).days
+        risk_free_rate = config.resolve_risk_free_rate(bar.trade_date)
+        near_delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_call_strike,
+            contracts=near_cc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=config.dividend_yield,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+        )
 
         short_strike = resolve_strike(
             [c.strike_price for c in near_cc],
@@ -71,11 +84,12 @@ class PMCCStrategy(StrategyDefinition):
             "call",
             overrides.short_call_strike,
             dte,
+            delta_lookup=near_delta_lookup,
             contracts=near_cc,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
             iv_cache=getattr(option_gateway, '_iv_cache', None),
-            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            risk_free_rate=risk_free_rate,
         )
         long_strike = _deep_itm_call_strike([c.strike_price for c in far_cc], bar.close_price)
         short_c = require_contract_for_strike(near_cc, short_strike)
@@ -170,6 +184,18 @@ class DiagonalSpreadStrategy(StrategyDefinition):
         near_cc = contracts_for_expiration(calls, near_exp)
         far_cc = contracts_for_expiration(calls, far_exp)
         dte = (near_exp - bar.trade_date).days
+        risk_free_rate = config.resolve_risk_free_rate(bar.trade_date)
+        near_delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_call_strike,
+            contracts=near_cc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=config.dividend_yield,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+        )
 
         near_strike = resolve_strike(
             [c.strike_price for c in near_cc],
@@ -177,11 +203,12 @@ class DiagonalSpreadStrategy(StrategyDefinition):
             "call",
             overrides.short_call_strike,
             dte,
+            delta_lookup=near_delta_lookup,
             contracts=near_cc,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
             iv_cache=getattr(option_gateway, '_iv_cache', None),
-            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            risk_free_rate=risk_free_rate,
         )
         far_strikes = sorted_unique_strikes(far_cc)
         far_strike = resolve_wing_strike(far_strikes, near_strike, -1, bar.close_price, overrides.spread_width)
@@ -301,17 +328,41 @@ class DoubleDiagonalStrategy(StrategyDefinition):
         dte = (near_exp - bar.trade_date).days
 
         _iv_cache = getattr(option_gateway, '_iv_cache', None)
+        risk_free_rate = config.resolve_risk_free_rate(bar.trade_date)
+        near_call_delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_call_strike,
+            contracts=near_cc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=config.dividend_yield,
+            iv_cache=_iv_cache,
+        )
+        near_put_delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_put_strike,
+            contracts=near_pc,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=config.dividend_yield,
+            iv_cache=_iv_cache,
+        )
         near_call_strike = resolve_strike(
             [c.strike_price for c in near_cc],
             bar.close_price,
             "call",
             overrides.short_call_strike,
             dte,
+            delta_lookup=near_call_delta_lookup,
             contracts=near_cc,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
             iv_cache=_iv_cache,
-            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            risk_free_rate=risk_free_rate,
         )
         near_put_strike = resolve_strike(
             [c.strike_price for c in near_pc],
@@ -319,11 +370,12 @@ class DoubleDiagonalStrategy(StrategyDefinition):
             "put",
             overrides.short_put_strike,
             dte,
+            delta_lookup=near_put_delta_lookup,
             contracts=near_pc,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
             iv_cache=_iv_cache,
-            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            risk_free_rate=risk_free_rate,
         )
         far_call_strike = resolve_wing_strike(sorted_unique_strikes(far_cc), near_call_strike, -1, bar.close_price, overrides.spread_width)
         far_put_strike = resolve_wing_strike(sorted_unique_strikes(far_pc), near_put_strike, 1, bar.close_price, overrides.spread_width)

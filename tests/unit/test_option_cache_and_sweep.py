@@ -354,6 +354,40 @@ class TestHistoricalGatewayRunScopedCache:
         assert result2 == contracts
         store.list_option_contracts.assert_called_once()
 
+    def test_list_contracts_cache_is_shared_across_gateway_instances_for_same_store(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        store = MagicMock()
+        contracts = [
+            OptionContractRecord("O:TEST", "put", date(2025, 3, 21), 250.0, 100.0),
+        ]
+        store.list_option_contracts.return_value = contracts
+
+        first = HistoricalOptionGateway(store, "TSLA")
+        second = HistoricalOptionGateway(store, "TSLA")
+
+        assert first.list_contracts(date(2025, 3, 14), "put", 8, 2) == contracts
+        assert second.list_contracts(date(2025, 3, 14), "put", 8, 2) == contracts
+        store.list_option_contracts.assert_called_once()
+
+    def test_list_contracts_prefers_store_shared_cache_over_redis_for_historical_broad_queries(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+        from backtestforecast.market_data.redis_cache import OptionDataRedisCache
+
+        store = MagicMock()
+        contracts = [
+            OptionContractRecord("O:TEST", "put", date(2025, 3, 21), 250.0, 100.0),
+        ]
+        store.list_option_contracts.return_value = contracts
+        redis_cache = MagicMock(spec=OptionDataRedisCache)
+
+        gw = HistoricalOptionGateway(store, "TSLA", redis_cache=redis_cache)
+        assert gw.list_contracts(date(2025, 3, 14), "put", 8, 2) == contracts
+
+        redis_cache.get_contracts.assert_not_called()
+        redis_cache.set_contracts.assert_not_called()
+        store.list_option_contracts.assert_called_once()
+
     def test_preferred_expiration_cache_reuses_exact_queries(self):
         from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 
@@ -404,6 +438,42 @@ class TestHistoricalGatewayRunScopedCache:
         assert gw.get_quote("O:TEST", date(2025, 3, 14)) is None
         assert gw.get_quote("O:TEST", date(2025, 3, 14)) is None
         store.get_option_quote_for_date.assert_called_once_with("O:TEST", date(2025, 3, 14))
+
+    def test_get_quote_uses_redis_before_store(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+        from backtestforecast.market_data.redis_cache import OptionDataRedisCache
+
+        store = MagicMock()
+        redis_cache = MagicMock(spec=OptionDataRedisCache)
+        redis_cache.get_quote.return_value = OptionQuoteRecord(date(2025, 3, 14), 3.0, 3.2, None)
+
+        gw = HistoricalOptionGateway(store, "TSLA", redis_cache=redis_cache)
+        result = gw.get_quote("O:TEST", date(2025, 3, 14))
+
+        assert result is not None
+        assert result.bid_price == 3.0
+        store.get_option_quote_for_date.assert_not_called()
+
+    def test_exact_contracts_use_redis_before_store(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+        from backtestforecast.market_data.redis_cache import OptionDataRedisCache
+
+        store = MagicMock()
+        redis_cache = MagicMock(spec=OptionDataRedisCache)
+        redis_cache.get_exact_contracts.return_value = [
+            OptionContractRecord("O:EXACT", "call", date(2025, 4, 18), 250.0, 100.0),
+        ]
+
+        gw = HistoricalOptionGateway(store, "TSLA", redis_cache=redis_cache)
+        result = gw.list_contracts_for_expiration(
+            entry_date=date(2025, 3, 14),
+            contract_type="call",
+            expiration_date=date(2025, 4, 18),
+        )
+
+        assert len(result) == 1
+        assert result[0].ticker == "O:EXACT"
+        store.list_option_contracts_for_expiration.assert_not_called()
 
     def test_concurrent_get_quote_coalesces_store_calls(self):
         from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway

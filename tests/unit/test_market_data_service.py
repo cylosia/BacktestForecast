@@ -46,6 +46,7 @@ def _make_service(bars: list[DailyBar] | None = None) -> MarketDataService:
     with (
         patch.object(MarketDataService, "_build_redis_cache", return_value=None),
         patch.object(MarketDataService, "_build_contract_catalog", return_value=None),
+        patch.object(MarketDataService, "_build_historical_contract_catalog", return_value=None),
         patch.object(MarketDataService, "_build_historical_store", return_value=None),
     ):
         svc = MarketDataService(client)
@@ -310,6 +311,72 @@ class TestPrepareBacktestExDividendDates:
         warning_codes = {warning["code"] for warning in bundle.warnings}
         assert "ex_dividend_dates_unavailable" in warning_codes
 
+    def test_prepare_backtest_reuses_in_memory_ex_dividend_cache(self):
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        svc.client.list_ex_dividend_dates.return_value = {date(2024, 1, 12)}
+
+        request = CreateBacktestRunRequest(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2024, 1, 10),
+            end_date=date(2024, 1, 31),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=10,
+            account_size=10000,
+            risk_per_trade_pct=5,
+            commission_per_contract=1,
+            entry_rules=[],
+        )
+
+        first = svc.prepare_backtest(request)
+        second = svc.prepare_backtest(request)
+
+        assert first.ex_dividend_dates == {date(2024, 1, 12)}
+        assert second.ex_dividend_dates == {date(2024, 1, 12)}
+        svc.client.list_ex_dividend_dates.assert_called_once()
+
+    def test_load_ex_dividend_data_uses_redis_cache_before_provider(self):
+        from backtestforecast.market_data.redis_cache import OptionDataRedisCache
+
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        redis_cache = MagicMock(spec=OptionDataRedisCache)
+        redis_cache.get_ex_dividend_dates.return_value = ({date(2024, 1, 12)}, False)
+        svc._redis_cache = redis_cache
+
+        result = svc._load_ex_dividend_data(
+            "AAPL",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+        )
+
+        assert result.dates == {date(2024, 1, 12)}
+        assert result.warnings == []
+        svc.client.list_ex_dividend_dates.assert_not_called()
+
+    def test_load_ex_dividend_data_caches_provider_failures_in_redis(self):
+        from backtestforecast.market_data.redis_cache import CACHE_MISS, OptionDataRedisCache
+
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        redis_cache = MagicMock(spec=OptionDataRedisCache)
+        redis_cache.get_ex_dividend_dates.return_value = CACHE_MISS
+        svc._redis_cache = redis_cache
+        svc.client.list_ex_dividend_dates.side_effect = ExternalServiceError("provider failed")
+
+        result = svc._load_ex_dividend_data(
+            "AAPL",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+        )
+
+        assert result.dates == set()
+        warning_codes = {warning["code"] for warning in result.warnings or []}
+        assert "ex_dividend_dates_unavailable" in warning_codes
+        redis_cache.set_ex_dividend_dates.assert_called_once()
+
 
 def test_historical_market_holiday_calendar_covers_backfill_years() -> None:
     assert is_market_holiday(date(2014, 7, 4))
@@ -330,6 +397,7 @@ def test_fetch_bars_coalesced_uses_local_history_when_padding_precedes_first_loa
     with (
         patch.object(MarketDataService, "_build_redis_cache", return_value=None),
         patch.object(MarketDataService, "_build_contract_catalog", return_value=None),
+        patch.object(MarketDataService, "_build_historical_contract_catalog", return_value=None),
         patch.object(MarketDataService, "_build_historical_store", return_value=store),
     ):
         svc = MarketDataService(client)
@@ -350,6 +418,7 @@ def test_prepare_backtest_prefers_local_history_when_warmup_is_satisfied_from_lo
     with (
         patch.object(MarketDataService, "_build_redis_cache", return_value=None),
         patch.object(MarketDataService, "_build_contract_catalog", return_value=None),
+        patch.object(MarketDataService, "_build_historical_contract_catalog", return_value=None),
         patch.object(MarketDataService, "_build_historical_store", return_value=store),
     ):
         svc = MarketDataService(client)
@@ -373,4 +442,41 @@ def test_prepare_backtest_prefers_local_history_when_warmup_is_satisfied_from_lo
 
     assert bundle.data_source == "historical_flatfile"
     assert isinstance(bundle.option_gateway, HistoricalOptionGateway)
+    client.get_stock_daily_bars.assert_not_called()
+
+
+def test_prepare_backtest_reuses_local_coverage_result_without_second_store_scan() -> None:
+    store = _make_historical_store()
+    client = MagicMock()
+    client.list_ex_dividend_dates.return_value = set()
+
+    with (
+        patch.object(MarketDataService, "_build_redis_cache", return_value=None),
+        patch.object(MarketDataService, "_build_contract_catalog", return_value=None),
+        patch.object(MarketDataService, "_build_historical_contract_catalog", return_value=None),
+        patch.object(MarketDataService, "_build_historical_store", return_value=store),
+    ):
+        svc = MarketDataService(client)
+
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=date(2022, 4, 1),
+        end_date=date(2022, 4, 29),
+        target_dte=21,
+        dte_tolerance_days=3,
+        max_holding_days=5,
+        account_size=10000,
+        risk_per_trade_pct=5,
+        commission_per_contract=1,
+        entry_rules=[],
+    )
+
+    with (
+        patch.object(MarketDataService, "_prefer_local_history", return_value=True),
+        patch.object(HistoricalMarketDataStore, "has_underlying_coverage", side_effect=AssertionError("should not be called")),
+    ):
+        bundle = svc.prepare_backtest(request)
+
+    assert bundle.data_source == "historical_flatfile"
     client.get_stock_daily_bars.assert_not_called()

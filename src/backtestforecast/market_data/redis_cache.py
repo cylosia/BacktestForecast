@@ -34,6 +34,26 @@ def _quote_key(option_ticker: str, trade_date: date) -> str:
     return f"{_KEY_PREFIX}:quote:{option_ticker}:{trade_date.isoformat()}"
 
 
+def _exact_contract_key(
+    symbol: str,
+    as_of: date,
+    contract_type: str,
+    expiration_date: date,
+    strike_gte: float | None,
+    strike_lte: float | None,
+) -> str:
+    strike_floor = "any" if strike_gte is None else f"{strike_gte:.4f}"
+    strike_ceiling = "any" if strike_lte is None else f"{strike_lte:.4f}"
+    return (
+        f"{_KEY_PREFIX}:contracts_exact:{symbol}:{as_of.isoformat()}:{contract_type}:"
+        f"{expiration_date.isoformat()}:{strike_floor}:{strike_ceiling}"
+    )
+
+
+def _ex_dividend_key(symbol: str, start_date: date, end_date: date) -> str:
+    return f"{_KEY_PREFIX}:exdiv:{symbol}:{start_date.isoformat()}:{end_date.isoformat()}"
+
+
 def _serialize_contracts(contracts: list[OptionContractRecord]) -> str:
     return json.dumps([
         {
@@ -81,6 +101,23 @@ def _deserialize_quote(raw: str) -> OptionQuoteRecord | None:
         bid_price=data["bid_price"],
         ask_price=data["ask_price"],
         participant_timestamp=data.get("participant_timestamp"),
+    )
+
+
+def _serialize_ex_dividend_dates(dates: set[date], *, degraded: bool) -> str:
+    return json.dumps(
+        {
+            "dates": sorted(item.isoformat() for item in dates),
+            "degraded": degraded,
+        }
+    )
+
+
+def _deserialize_ex_dividend_dates(raw: str) -> tuple[set[date], bool]:
+    data = json.loads(raw)
+    return (
+        {date.fromisoformat(item) for item in data.get("dates", [])},
+        bool(data.get("degraded", False)),
     )
 
 
@@ -167,6 +204,66 @@ class OptionDataRedisCache:
         except Exception:
             logger.debug("redis_cache.set_contracts_failed", symbol=symbol, exc_info=True)
 
+    def get_exact_contracts(
+        self,
+        symbol: str,
+        as_of_date: date,
+        contract_type: str,
+        expiration_date: date,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[OptionContractRecord] | None:
+        key = _exact_contract_key(
+            symbol,
+            as_of_date,
+            contract_type,
+            expiration_date,
+            strike_price_gte,
+            strike_price_lte,
+        )
+        try:
+            raw = self._conn().get(key)
+            if raw is None:
+                return None
+            return _deserialize_contracts(raw)
+        except Exception:
+            logger.debug("redis_cache.get_exact_contracts_failed", symbol=symbol, exc_info=True)
+            try:
+                self._conn().delete(key)
+            except Exception:
+                logger.debug("redis_cache.delete_corrupted_failed", key=key, exc_info=True)
+            return None
+
+    def set_exact_contracts(
+        self,
+        symbol: str,
+        as_of_date: date,
+        contract_type: str,
+        expiration_date: date,
+        contracts: list[OptionContractRecord],
+        *,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        try:
+            key = _exact_contract_key(
+                symbol,
+                as_of_date,
+                contract_type,
+                expiration_date,
+                strike_price_gte,
+                strike_price_lte,
+            )
+            pipe = self._conn().pipeline(transaction=False)
+            ttl = ttl_seconds if ttl_seconds is not None else self._ttl
+            pipe.set(key, _serialize_contracts(contracts), ex=ttl)
+            pipe.set(f"{key}:ts", str(int(time.time())), ex=ttl)
+            pipe.execute()
+            self.track_symbol_write(symbol, cache_key=key)
+        except Exception:
+            logger.debug("redis_cache.set_exact_contracts_failed", symbol=symbol, exc_info=True)
+
     # -- quotes --------------------------------------------------------------
 
     def get_quote(
@@ -221,6 +318,47 @@ class OptionDataRedisCache:
             self.track_symbol_write(symbol, cache_key=key)
         except Exception:
             logger.debug("redis_cache.set_quote_failed", ticker=option_ticker, exc_info=True)
+
+    # -- ex-dividend dates ---------------------------------------------------
+
+    def get_ex_dividend_dates(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+    ) -> tuple[set[date], bool] | _CacheMiss:
+        key = _ex_dividend_key(symbol, start_date, end_date)
+        try:
+            raw = self._conn().get(key)
+            if raw is None:
+                return CACHE_MISS
+            return _deserialize_ex_dividend_dates(raw)
+        except Exception:
+            logger.debug("redis_cache.get_ex_dividend_dates_failed", symbol=symbol, exc_info=True)
+            try:
+                self._conn().delete(key)
+            except Exception:
+                logger.debug("redis_cache.delete_corrupted_failed", key=key, exc_info=True)
+            return CACHE_MISS
+
+    def set_ex_dividend_dates(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        dates: set[date],
+        *,
+        degraded: bool = False,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        try:
+            key = _ex_dividend_key(symbol, start_date, end_date)
+            ttl = ttl_seconds if ttl_seconds is not None else self._ttl
+            pipe = self._conn().pipeline(transaction=False)
+            pipe.set(key, _serialize_ex_dividend_dates(dates, degraded=degraded), ex=ttl)
+            pipe.execute()
+        except Exception:
+            logger.debug("redis_cache.set_ex_dividend_dates_failed", symbol=symbol, exc_info=True)
 
     def _symbol_meta_key(self, symbol: str) -> str:
         return f"{_KEY_PREFIX}:meta:{symbol}"

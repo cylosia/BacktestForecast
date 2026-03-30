@@ -6,11 +6,11 @@ from backtestforecast.backtests.margin import short_straddle_strangle_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_common_atm_strike,
-    choose_primary_expiration,
-    contracts_for_expiration,
     get_overrides,
+    maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
+    select_preferred_common_expiration_contracts,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -39,18 +39,12 @@ class ShortVolatilityStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
-        puts = option_gateway.list_contracts(bar.trade_date, "put", config.target_dte, config.dte_tolerance_days)
-        common_expirations = sorted({c.expiration_date for c in calls} & {c.expiration_date for c in puts})
-        if not common_expirations:
-            raise DataUnavailableError("No common call/put expiration available.")
-        expiration = choose_primary_expiration(
-            [c for c in calls if c.expiration_date in common_expirations],
-            bar.trade_date,
-            config.target_dte,
+        expiration, cc, pc = select_preferred_common_expiration_contracts(
+            option_gateway,
+            entry_date=bar.trade_date,
+            target_dte=config.target_dte,
+            dte_tolerance_days=config.dte_tolerance_days,
         )
-        cc = contracts_for_expiration(calls, expiration)
-        pc = contracts_for_expiration(puts, expiration)
         dte = (expiration - bar.trade_date).days
 
         if self.strategy_type == "short_straddle":
@@ -59,17 +53,41 @@ class ShortVolatilityStrategy(StrategyDefinition):
             put_c = require_contract_for_strike(pc, strike)
         else:
             _iv_cache = getattr(option_gateway, '_iv_cache', None)
+            risk_free_rate = config.resolve_risk_free_rate(bar.trade_date)
+            call_delta_lookup = maybe_build_contract_delta_lookup(
+                selection=overrides.short_call_strike,
+                contracts=cc,
+                option_gateway=option_gateway,
+                trade_date=bar.trade_date,
+                underlying_close=bar.close_price,
+                dte_days=dte,
+                risk_free_rate=risk_free_rate,
+                dividend_yield=config.dividend_yield,
+                iv_cache=_iv_cache,
+            )
+            put_delta_lookup = maybe_build_contract_delta_lookup(
+                selection=overrides.short_put_strike,
+                contracts=pc,
+                option_gateway=option_gateway,
+                trade_date=bar.trade_date,
+                underlying_close=bar.close_price,
+                dte_days=dte,
+                risk_free_rate=risk_free_rate,
+                dividend_yield=config.dividend_yield,
+                iv_cache=_iv_cache,
+            )
             call_strike = resolve_strike(
                 [c.strike_price for c in cc],
                 bar.close_price,
                 "call",
                 overrides.short_call_strike,
                 dte,
+                delta_lookup=call_delta_lookup,
                 contracts=cc,
                 option_gateway=option_gateway,
                 trade_date=bar.trade_date,
                 iv_cache=_iv_cache,
-                risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+                risk_free_rate=risk_free_rate,
             )
             put_strike = resolve_strike(
                 [c.strike_price for c in pc],
@@ -77,11 +95,12 @@ class ShortVolatilityStrategy(StrategyDefinition):
                 "put",
                 overrides.short_put_strike,
                 dte,
+                delta_lookup=put_delta_lookup,
                 contracts=pc,
                 option_gateway=option_gateway,
                 trade_date=bar.trade_date,
                 iv_cache=_iv_cache,
-                risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+                risk_free_rate=risk_free_rate,
             )
             call_c = require_contract_for_strike(cc, call_strike)
             put_c = require_contract_for_strike(pc, put_strike)

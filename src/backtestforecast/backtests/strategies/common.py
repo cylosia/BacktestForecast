@@ -91,6 +91,84 @@ def contracts_for_expiration(contracts: Iterable[OptionContractRecord], expirati
     return [contract for contract in contracts if contract.expiration_date == expiration]
 
 
+def select_preferred_expiration_contracts(
+    option_gateway: OptionDataGateway,
+    *,
+    entry_date: date,
+    contract_type: str,
+    target_dte: int,
+    dte_tolerance_days: int,
+    strike_price_gte: float | None = None,
+    strike_price_lte: float | None = None,
+) -> tuple[date, list[OptionContractRecord]]:
+    preferred_fetch = getattr(option_gateway, "list_contracts_for_preferred_expiration", None)
+    if callable(preferred_fetch):
+        contracts = list(
+            preferred_fetch(
+                entry_date=entry_date,
+                contract_type=contract_type,
+                target_dte=target_dte,
+                dte_tolerance_days=dte_tolerance_days,
+                strike_price_gte=strike_price_gte,
+                strike_price_lte=strike_price_lte,
+            )
+        )
+        if not contracts:
+            raise DataUnavailableError("No eligible option expirations were available.")
+        return contracts[0].expiration_date, contracts
+
+    contracts = list(
+        option_gateway.list_contracts(
+            entry_date,
+            contract_type,
+            target_dte,
+            dte_tolerance_days,
+        )
+    )
+    expiration = choose_primary_expiration(contracts, entry_date, target_dte)
+    return expiration, contracts_for_expiration(contracts, expiration)
+
+
+def select_preferred_common_expiration_contracts(
+    option_gateway: OptionDataGateway,
+    *,
+    entry_date: date,
+    target_dte: int,
+    dte_tolerance_days: int,
+) -> tuple[date, list[OptionContractRecord], list[OptionContractRecord]]:
+    exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
+    if callable(exact_fetch):
+        for expiration_date in preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days):
+            calls = list(
+                exact_fetch(
+                    entry_date=entry_date,
+                    contract_type="call",
+                    expiration_date=expiration_date,
+                )
+            )
+            puts = list(
+                exact_fetch(
+                    entry_date=entry_date,
+                    contract_type="put",
+                    expiration_date=expiration_date,
+                )
+            )
+            if calls and puts:
+                return expiration_date, calls, puts
+
+    calls = list(option_gateway.list_contracts(entry_date, "call", target_dte, dte_tolerance_days))
+    puts = list(option_gateway.list_contracts(entry_date, "put", target_dte, dte_tolerance_days))
+    common_expirations = sorted({contract.expiration_date for contract in calls} & {contract.expiration_date for contract in puts})
+    if not common_expirations:
+        raise DataUnavailableError("No common call/put expiration was available for the selected strategy.")
+    expiration = choose_primary_expiration(
+        [contract for contract in calls if contract.expiration_date in common_expirations],
+        entry_date,
+        target_dte,
+    )
+    return expiration, contracts_for_expiration(calls, expiration), contracts_for_expiration(puts, expiration)
+
+
 def sorted_unique_strikes(contracts: Iterable[OptionContractRecord]) -> list[float]:
     return sorted({contract.strike_price for contract in contracts})
 
@@ -242,6 +320,30 @@ def _estimate_iv_for_strike(
     if contract is None:
         return None
 
+    return _estimate_iv_for_contract(
+        contract,
+        underlying_close=underlying_close,
+        dte_days=dte_days,
+        option_gateway=option_gateway,
+        trade_date=trade_date,
+        risk_free_rate=risk_free_rate,
+        iv_cache=iv_cache,
+    )
+
+
+def _estimate_iv_for_contract(
+    contract: OptionContractRecord,
+    *,
+    underlying_close: float,
+    dte_days: int,
+    option_gateway: OptionDataGateway,
+    trade_date: date,
+    risk_free_rate: float = 0.045,
+    iv_cache: dict[tuple[str, date], float | None] | None = None,
+) -> float | None:
+    """Estimate implied volatility for a specific contract."""
+    from backtestforecast.backtests.rules import implied_volatility_from_price
+
     cache_key = (contract.ticker, trade_date)
 
     _get_iv = getattr(option_gateway, "get_iv", None)
@@ -265,9 +367,9 @@ def _estimate_iv_for_strike(
     iv = implied_volatility_from_price(
         option_price=quote.mid_price,
         underlying_price=underlying_close,
-        strike_price=strike,
+        strike_price=contract.strike_price,
         time_to_expiry_years=max(dte_days, 1) / 365.0,
-        option_type=contract_type,
+        option_type=contract.contract_type,
         risk_free_rate=risk_free_rate,
     )
     if _store_iv is not None:
@@ -275,6 +377,110 @@ def _estimate_iv_for_strike(
     elif iv_cache is not None:
         iv_cache[cache_key] = iv
     return iv
+
+
+def build_contract_delta_lookup(
+    *,
+    contracts: list[OptionContractRecord],
+    option_gateway: OptionDataGateway,
+    trade_date: date,
+    underlying_close: float,
+    dte_days: int,
+    risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
+    iv_cache: dict[tuple[str, date], float | None] | None = None,
+    realized_vol: float | None = None,
+) -> dict[tuple[float, date], float]:
+    if not contracts:
+        return {}
+
+    gateway_lookup = getattr(option_gateway, "get_chain_delta_lookup", None)
+    if callable(gateway_lookup):
+        try:
+            raw_lookup = gateway_lookup(contracts) or {}
+        except Exception:
+            raw_lookup = {}
+        else:
+            normalized: dict[tuple[float, date], float] = {}
+            for contract in contracts:
+                raw_delta = raw_lookup.get((contract.strike_price, contract.expiration_date))
+                if raw_delta is None:
+                    raw_delta = raw_lookup.get(contract.strike_price)
+                if raw_delta is not None:
+                    normalized[(contract.strike_price, contract.expiration_date)] = raw_delta
+            if normalized:
+                return normalized
+
+    lookup: dict[tuple[float, date], float] = {}
+    for contract in contracts:
+        iv = _estimate_iv_for_contract(
+            contract,
+            underlying_close=underlying_close,
+            dte_days=dte_days,
+            option_gateway=option_gateway,
+            trade_date=trade_date,
+            risk_free_rate=risk_free_rate,
+            iv_cache=iv_cache,
+        )
+        if iv is not None:
+            delta = _approx_bsm_delta(
+                underlying_close,
+                contract.strike_price,
+                dte_days,
+                contract.contract_type,
+                vol=iv,
+                risk_free_rate=risk_free_rate,
+                dividend_yield=dividend_yield,
+            )
+        elif realized_vol is not None:
+            delta = _approx_bsm_delta(
+                underlying_close,
+                contract.strike_price,
+                dte_days,
+                contract.contract_type,
+                vol=realized_vol,
+                risk_free_rate=risk_free_rate,
+                dividend_yield=dividend_yield,
+            )
+        else:
+            delta = _approx_bsm_delta(
+                underlying_close,
+                contract.strike_price,
+                dte_days,
+                contract.contract_type,
+                risk_free_rate=risk_free_rate,
+                dividend_yield=dividend_yield,
+            )
+        lookup[(contract.strike_price, contract.expiration_date)] = delta
+    return lookup
+
+
+def maybe_build_contract_delta_lookup(
+    *,
+    selection: StrikeSelection | None,
+    contracts: list[OptionContractRecord],
+    option_gateway: OptionDataGateway,
+    trade_date: date,
+    underlying_close: float,
+    dte_days: int,
+    risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
+    iv_cache: dict[tuple[str, date], float | None] | None = None,
+    realized_vol: float | None = None,
+) -> dict[tuple[float, date], float] | None:
+    if selection is None or selection.mode != StrikeSelectionMode.DELTA_TARGET:
+        return None
+    return build_contract_delta_lookup(
+        contracts=contracts,
+        option_gateway=option_gateway,
+        trade_date=trade_date,
+        underlying_close=underlying_close,
+        dte_days=dte_days,
+        risk_free_rate=risk_free_rate,
+        dividend_yield=dividend_yield,
+        iv_cache=iv_cache,
+        realized_vol=realized_vol,
+    )
 
 
 def _nearest_strike(strikes: list[float], target: float) -> float:

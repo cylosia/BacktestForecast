@@ -7,12 +7,12 @@ import structlog
 from backtestforecast.backtests.margin import iron_condor_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
-    choose_primary_expiration,
-    contracts_for_expiration,
     get_overrides,
+    maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
     resolve_wing_strike,
+    select_preferred_common_expiration_contracts,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -43,34 +43,50 @@ class IronCondorStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
-        puts = option_gateway.list_contracts(bar.trade_date, "put", config.target_dte, config.dte_tolerance_days)
-        common_expirations = sorted(
-            {contract.expiration_date for contract in calls} & {contract.expiration_date for contract in puts}
+        expiration, call_contracts, put_contracts = select_preferred_common_expiration_contracts(
+            option_gateway,
+            entry_date=bar.trade_date,
+            target_dte=config.target_dte,
+            dte_tolerance_days=config.dte_tolerance_days,
         )
-        if not common_expirations:
-            raise DataUnavailableError("No common call/put expiration was available for iron condor construction.")
-        expiration = choose_primary_expiration(
-            [contract for contract in calls if contract.expiration_date in common_expirations],
-            bar.trade_date,
-            config.target_dte,
-        )
-        call_contracts = contracts_for_expiration(calls, expiration)
-        put_contracts = contracts_for_expiration(puts, expiration)
         dte = (expiration - bar.trade_date).days
 
         _iv_cache = getattr(option_gateway, '_iv_cache', None)
+        risk_free_rate = config.resolve_risk_free_rate(bar.trade_date)
+        call_delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_call_strike,
+            contracts=call_contracts,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=config.dividend_yield,
+            iv_cache=_iv_cache,
+        )
+        put_delta_lookup = maybe_build_contract_delta_lookup(
+            selection=overrides.short_put_strike,
+            contracts=put_contracts,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=config.dividend_yield,
+            iv_cache=_iv_cache,
+        )
         call_short_strike = resolve_strike(
             [c.strike_price for c in call_contracts],
             bar.close_price,
             "call",
             overrides.short_call_strike,
             dte,
+            delta_lookup=call_delta_lookup,
             contracts=call_contracts,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
             iv_cache=_iv_cache,
-            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            risk_free_rate=risk_free_rate,
         )
         put_short_strike = resolve_strike(
             [c.strike_price for c in put_contracts],
@@ -78,11 +94,12 @@ class IronCondorStrategy(StrategyDefinition):
             "put",
             overrides.short_put_strike,
             dte,
+            delta_lookup=put_delta_lookup,
             contracts=put_contracts,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
             iv_cache=_iv_cache,
-            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            risk_free_rate=risk_free_rate,
         )
         call_long_strike = resolve_wing_strike(
             [c.strike_price for c in call_contracts],

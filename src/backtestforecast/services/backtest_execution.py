@@ -8,7 +8,11 @@ from backtestforecast.config import get_settings
 from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.prefetch import OptionDataPrefetcher
-from backtestforecast.market_data.prewarm import prewarm_long_option_bundle
+from backtestforecast.market_data.prewarm import (
+    prewarm_long_option_bundle,
+    prewarm_targeted_option_bundle,
+    supports_targeted_exact_quote_prewarm,
+)
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest, StrategyType
 from backtestforecast.services.risk_free_rate import (
@@ -22,7 +26,7 @@ _logger = structlog.get_logger("services.backtest_execution")
 class BacktestExecutionService:
     """Orchestrates market data fetching and backtest engine execution.
 
-    Thread safety: instances hold mutable state (_owns_client,
+    Thread safety: instances hold mutable state (_owns_market_data_service,
     market_data_service, engine). Do NOT share across threads without
     external synchronization. Create one instance per thread/task.
     """
@@ -32,22 +36,32 @@ class BacktestExecutionService:
         market_data_service: MarketDataService | None = None,
         engine: OptionsBacktestEngine | None = None,
     ) -> None:
-        self._owns_client = market_data_service is None
+        self._owns_market_data_service = market_data_service is None
         self._closed = False
-        self.market_data_service = market_data_service or MarketDataService(MassiveClient())
+        self._market_data_service = market_data_service
         self.engine = engine or OptionsBacktestEngine()
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
-        if self._owns_client:
-            self.market_data_service.close()
-            self.market_data_service.client.close()
+        if self._owns_market_data_service and self._market_data_service is not None:
+            self._market_data_service.close()
+            self._market_data_service.client.close()
 
     def __enter__(self) -> BacktestExecutionService:
         return self
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+    @property
+    def market_data_service(self) -> MarketDataService:
+        if self._market_data_service is None:
+            if self._closed:
+                raise RuntimeError("BacktestExecutionService has been closed and cannot be reused.")
+            self._market_data_service = MarketDataService(MassiveClient())
+        return self._market_data_service
 
     def execute_request(
         self,
@@ -59,12 +73,13 @@ class BacktestExecutionService:
             raise RuntimeError("BacktestExecutionService has been closed and cannot be reused.")
         settings = get_settings()
         resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
+        provider_client = self._market_data_service.client if self._market_data_service is not None else None
         self._maybe_prefetch_option_data(request, resolved_bundle, settings)
         parameters = resolved_parameters
         if parameters is None:
             resolved_risk_free_rate = resolve_backtest_risk_free_rate(
                 request,
-                client=self.market_data_service.client,
+                client=provider_client,
             )
             parameters = ResolvedExecutionParameters.from_request_resolution(
                 request,
@@ -73,7 +88,7 @@ class BacktestExecutionService:
         resolved_risk_free_rate_curve = build_backtest_risk_free_rate_curve(
             request,
             default_rate=parameters.risk_free_rate or 0.0,
-            client=self.market_data_service.client,
+            client=provider_client,
         )
         config = BacktestConfig(
             symbol=request.symbol,
@@ -134,6 +149,15 @@ class BacktestExecutionService:
                     warm_future_quotes=True,
                 )
                 prefetch_mode = "targeted_exact_quotes"
+            elif supports_targeted_exact_quote_prewarm(request.strategy_type):
+                summary = prewarm_targeted_option_bundle(
+                    request,
+                    bundle=bundle,
+                    include_quotes=False,
+                    max_dates=max_dates,
+                    warm_future_quotes=False,
+                )
+                prefetch_mode = "targeted_strategy_exact_contracts"
             else:
                 summary = OptionDataPrefetcher(
                     timeout_seconds=getattr(settings, "backtest_prefetch_timeout_seconds", 180),
@@ -166,7 +190,7 @@ class BacktestExecutionService:
     ) -> None:
         """Add a warning to backtest results if cached option data is stale."""
         try:
-            cache = getattr(self.market_data_service, '_redis_cache', None)
+            cache = getattr(self._market_data_service, '_redis_cache', None)
             if cache is None:
                 return
             warn_age = getattr(settings, 'option_cache_warn_age_seconds', 259_200)

@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from backtestforecast.backtests.margin import credit_spread_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
-    choose_primary_expiration,
-    contracts_for_expiration,
     get_overrides,
+    maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
     resolve_wing_strike,
+    select_preferred_expiration_contracts,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -39,21 +39,31 @@ class VerticalSpreadStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        contracts = option_gateway.list_contracts(
+        expiration, expiration_contracts = select_preferred_expiration_contracts(
+            option_gateway,
             entry_date=bar.trade_date,
             contract_type=self.contract_type,
             target_dte=config.target_dte,
             dte_tolerance_days=config.dte_tolerance_days,
         )
-        expiration = choose_primary_expiration(contracts, bar.trade_date, config.target_dte)
-        expiration_contracts = contracts_for_expiration(contracts, expiration)
         strikes = [contract.strike_price for contract in expiration_contracts]
         dte = (expiration - bar.trade_date).days
-
         # Determine short leg placement override based on contract type
         short_override = overrides.short_call_strike if self.contract_type == "call" else overrides.short_put_strike
+        delta_lookup = maybe_build_contract_delta_lookup(
+            selection=short_override,
+            contracts=expiration_contracts,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            dividend_yield=config.dividend_yield,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+        )
 
         _kw = dict(
+            delta_lookup=delta_lookup,
             contracts=expiration_contracts,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,

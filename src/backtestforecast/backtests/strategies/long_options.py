@@ -7,6 +7,7 @@ from backtestforecast.backtests.strategies.common import (
     choose_primary_expiration,
     contracts_for_expiration,
     get_overrides,
+    maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
     valid_entry_mids,
@@ -82,17 +83,30 @@ class LongOptionStrategy(StrategyDefinition):
             primary_expiration = choose_primary_expiration(all_contracts, bar.trade_date, config.target_dte)
             exp_contracts = contracts_for_expiration(all_contracts, primary_expiration)
         dte = (primary_expiration - bar.trade_date).days
+        risk_free_rate = config.resolve_risk_free_rate(bar.trade_date)
+        delta_lookup = maybe_build_contract_delta_lookup(
+            selection=strike_override,
+            contracts=exp_contracts,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=dte,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=config.dividend_yield,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+        )
         strike = resolve_strike(
             [c.strike_price for c in exp_contracts],
             bar.close_price,
             self.contract_type,
             strike_override,
             dte,
+            delta_lookup=delta_lookup,
             contracts=exp_contracts,
             option_gateway=option_gateway,
             trade_date=bar.trade_date,
             iv_cache=getattr(option_gateway, '_iv_cache', None),
-            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            risk_free_rate=risk_free_rate,
         )
         contract = require_contract_for_strike(exp_contracts, strike)
         entry_quote = option_gateway.get_quote(contract.ticker, bar.trade_date)

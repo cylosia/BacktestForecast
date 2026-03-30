@@ -103,6 +103,7 @@ class BacktestService:
         self.run_repository = BacktestRunRepository(session)
         self.audit = AuditService(session)
         self._execution_service = execution_service
+        self._owns_execution_service = execution_service is None
 
     @property
     def execution_service(self) -> BacktestExecutionService:
@@ -111,7 +112,7 @@ class BacktestService:
         return self._execution_service
 
     def close(self) -> None:
-        if self._execution_service is not None:
+        if self._execution_service is not None and self._owns_execution_service:
             self._execution_service.close()
 
     def __enter__(self) -> BacktestService:
