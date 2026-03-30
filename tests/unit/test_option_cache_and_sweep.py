@@ -333,6 +333,108 @@ class TestGatewayThreeTierLookup:
 
 
 # ---------------------------------------------------------------------------
+# Historical gateway run-scoped cache
+# ---------------------------------------------------------------------------
+
+class TestHistoricalGatewayRunScopedCache:
+    def test_list_contracts_hits_store_once_per_key(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        store = MagicMock()
+        contracts = [
+            OptionContractRecord("O:TEST", "put", date(2025, 3, 21), 250.0, 100.0),
+        ]
+        store.list_option_contracts.return_value = contracts
+
+        gw = HistoricalOptionGateway(store, "TSLA")
+        result1 = gw.list_contracts(date(2025, 3, 14), "put", 8, 2)
+        result2 = gw.list_contracts(date(2025, 3, 14), "put", 8, 2)
+
+        assert result1 == contracts
+        assert result2 == contracts
+        store.list_option_contracts.assert_called_once()
+
+    def test_preferred_expiration_cache_reuses_exact_queries(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        store = MagicMock()
+        target_contracts = [
+            OptionContractRecord("O:API", "call", date(2025, 4, 7), 250.0, 100.0),
+        ]
+
+        def fetch_exact(**kwargs):
+            if kwargs["expiration_date"] == date(2025, 4, 8):
+                return []
+            if kwargs["expiration_date"] == date(2025, 4, 9):
+                return []
+            if kwargs["expiration_date"] == date(2025, 4, 7):
+                return target_contracts
+            raise AssertionError(f"unexpected expiration probe {kwargs['expiration_date']}")
+
+        store.list_option_contracts_for_expiration.side_effect = fetch_exact
+
+        gw = HistoricalOptionGateway(store, "TSLA")
+        result1 = gw.list_contracts_for_preferred_expiration(
+            entry_date=date(2025, 4, 1),
+            contract_type="call",
+            target_dte=7,
+            dte_tolerance_days=2,
+        )
+        result2 = gw.list_contracts_for_preferred_expiration(
+            entry_date=date(2025, 4, 1),
+            contract_type="call",
+            target_dte=7,
+            dte_tolerance_days=2,
+        )
+
+        assert result1 == target_contracts
+        assert result2 == target_contracts
+        assert [
+            call.kwargs["expiration_date"]
+            for call in store.list_option_contracts_for_expiration.call_args_list
+        ] == [date(2025, 4, 8), date(2025, 4, 9), date(2025, 4, 7)]
+
+    def test_get_quote_caches_missing_result(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        store = MagicMock()
+        store.get_option_quote_for_date.return_value = None
+
+        gw = HistoricalOptionGateway(store, "TSLA")
+        assert gw.get_quote("O:TEST", date(2025, 3, 14)) is None
+        assert gw.get_quote("O:TEST", date(2025, 3, 14)) is None
+        store.get_option_quote_for_date.assert_called_once_with("O:TEST", date(2025, 3, 14))
+
+    def test_concurrent_get_quote_coalesces_store_calls(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        store = MagicMock()
+        quote = OptionQuoteRecord(date(2025, 3, 14), 3.0, 3.2, None)
+
+        def fetch_quote(*args, **kwargs):
+            time.sleep(0.05)
+            return quote
+
+        store.get_option_quote_for_date.side_effect = fetch_quote
+        gw = HistoricalOptionGateway(store, "TSLA")
+        results: list[OptionQuoteRecord | None] = []
+
+        def worker() -> None:
+            results.append(gw.get_quote("O:TEST", date(2025, 3, 14)))
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join(timeout=2)
+        t2.join(timeout=2)
+
+        assert len(results) == 2
+        assert all(result is not None for result in results)
+        assert store.get_option_quote_for_date.call_count == 1
+
+
+# ---------------------------------------------------------------------------
 # Prefetcher
 # ---------------------------------------------------------------------------
 
@@ -482,7 +584,7 @@ class TestOptionDataPrefetcher:
         assert summary.contracts_fetched == 4
         assert summary.quotes_fetched == 4
         assert store.list_option_contracts.call_count == 4
-        assert store.get_option_quote_for_date.call_count == 4
+        assert store.get_option_quote_for_date.call_count == 2
 
 
 # ---------------------------------------------------------------------------

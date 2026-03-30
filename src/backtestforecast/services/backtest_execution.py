@@ -8,8 +8,9 @@ from backtestforecast.config import get_settings
 from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
 from backtestforecast.integrations.massive_client import MassiveClient
 from backtestforecast.market_data.prefetch import OptionDataPrefetcher
+from backtestforecast.market_data.prewarm import prewarm_long_option_bundle
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
-from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+from backtestforecast.schemas.backtests import CreateBacktestRunRequest, StrategyType
 from backtestforecast.services.risk_free_rate import (
     build_backtest_risk_free_rate_curve,
     resolve_backtest_risk_free_rate,
@@ -122,23 +123,36 @@ class BacktestExecutionService:
         ]
         if len(trade_dates) < getattr(settings, "backtest_prefetch_min_trade_dates", 10):
             return
+        max_dates = getattr(settings, "backtest_prefetch_max_dates", 6)
         try:
-            summary = OptionDataPrefetcher(
-                timeout_seconds=getattr(settings, "backtest_prefetch_timeout_seconds", 180),
-            ).prefetch_for_symbol(
-                request.symbol,
-                bundle.bars,
-                request.start_date,
-                request.end_date,
-                request.target_dte,
-                request.dte_tolerance_days,
-                bundle.option_gateway,
-                include_quotes=False,
-                max_dates=getattr(settings, "backtest_prefetch_max_dates", 6),
-            )
+            if request.strategy_type in {StrategyType.LONG_CALL, StrategyType.LONG_PUT}:
+                summary = prewarm_long_option_bundle(
+                    request,
+                    bundle=bundle,
+                    include_quotes=True,
+                    max_dates=max_dates,
+                    warm_future_quotes=True,
+                )
+                prefetch_mode = "targeted_exact_quotes"
+            else:
+                summary = OptionDataPrefetcher(
+                    timeout_seconds=getattr(settings, "backtest_prefetch_timeout_seconds", 180),
+                ).prefetch_for_symbol(
+                    request.symbol,
+                    bundle.bars,
+                    request.start_date,
+                    request.end_date,
+                    request.target_dte,
+                    request.dte_tolerance_days,
+                    bundle.option_gateway,
+                    include_quotes=False,
+                    max_dates=max_dates,
+                )
+                prefetch_mode = "broad_contracts_only"
             _logger.info(
                 "backtest.option_prefetch_completed",
                 symbol=request.symbol,
+                mode=prefetch_mode,
                 summary=summary.to_dict(),
             )
         except Exception:

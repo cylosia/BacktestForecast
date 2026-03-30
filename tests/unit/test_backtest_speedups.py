@@ -55,6 +55,87 @@ def test_execution_service_prefetches_contracts_for_single_backtests(monkeypatch
 
     captured: dict[str, object] = {}
 
+    def _fake_prewarm(
+        request,
+        *,
+        bundle,
+        include_quotes,
+        max_dates,
+        warm_future_quotes,
+    ):
+        captured["symbol"] = request.symbol
+        captured["bar_count"] = len(bundle.bars)
+        captured["start_date"] = request.start_date
+        captured["end_date"] = request.end_date
+        captured["target_dte"] = request.target_dte
+        captured["dte_tolerance_days"] = request.dte_tolerance_days
+        captured["include_quotes"] = include_quotes
+        captured["max_dates"] = max_dates
+        captured["warm_future_quotes"] = warm_future_quotes
+        return SimpleNamespace(to_dict=lambda: {"dates_processed": len(bundle.bars)})
+
+    settings = SimpleNamespace(
+        option_cache_warn_age_seconds=259_200,
+        backtest_option_prefetch_enabled=True,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=4,
+        backtest_prefetch_timeout_seconds=77,
+    )
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "prewarm_long_option_bundle", _fake_prewarm)
+    monkeypatch.setattr(module, "build_backtest_risk_free_rate_curve", lambda *args, **kwargs: None)
+
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 4, 1)),
+        SimpleNamespace(trade_date=date(2025, 4, 2)),
+        SimpleNamespace(trade_date=date(2025, 4, 3)),
+    ]
+    bundle = HistoricalDataBundle(
+        bars=bars,
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+    )
+    service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle),
+        engine=_CapturingEngine(),
+    )
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2025-04-01",
+        end_date="2025-04-03",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
+    )
+    resolved = ResolvedExecutionParameters(
+        risk_free_rate=0.01,
+        risk_free_rate_source="configured_fallback",
+        risk_free_rate_field_name="yield_3_month",
+        risk_free_rate_model="curve_default",
+        dividend_yield=0.0,
+        source_of_truth="test",
+    )
+
+    result = service.execute_request(request, resolved_parameters=resolved)
+
+    assert result.summary.ending_equity == 10100.0
+    assert captured["symbol"] == "AAPL"
+    assert captured["include_quotes"] is True
+    assert captured["max_dates"] == 4
+    assert captured["warm_future_quotes"] is True
+
+
+def test_execution_service_falls_back_to_broad_prefetch_for_non_long_strategies(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    captured: dict[str, object] = {}
+
     class _FakePrefetcher:
         def __init__(self, timeout_seconds: int) -> None:
             captured["timeout_seconds"] = timeout_seconds
@@ -110,7 +191,7 @@ def test_execution_service_prefetches_contracts_for_single_backtests(monkeypatch
     )
     request = CreateBacktestRunRequest(
         symbol="AAPL",
-        strategy_type="long_call",
+        strategy_type="covered_call",
         start_date="2025-04-01",
         end_date="2025-04-03",
         target_dte=30,

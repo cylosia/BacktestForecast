@@ -67,14 +67,15 @@ def prewarm_long_option_backtest(
     market_data_service: MarketDataService,
     include_quotes: bool = False,
     max_dates: int | None = None,
+    warm_future_quotes: bool = False,
 ) -> ContractCatalogPrewarmSummary:
-    contract_type = resolve_long_option_contract_type(request.strategy_type)
     bundle = market_data_service.prepare_backtest(request)
     return prewarm_long_option_bundle(
         request,
         bundle=bundle,
         include_quotes=include_quotes,
         max_dates=max_dates,
+        warm_future_quotes=warm_future_quotes,
     )
 
 
@@ -84,6 +85,7 @@ def prewarm_long_option_bundle(
     bundle: HistoricalDataBundle,
     include_quotes: bool = False,
     max_dates: int | None = None,
+    warm_future_quotes: bool = False,
 ) -> ContractCatalogPrewarmSummary:
     contract_type = resolve_long_option_contract_type(request.strategy_type)
     gateway = bundle.option_gateway
@@ -93,16 +95,17 @@ def prewarm_long_option_bundle(
 
     strike_override = _resolve_long_option_strike_override(request)
     strike_band_resolver = LONG_CALL_STRATEGY if contract_type == "call" else LONG_PUT_STRATEGY
-    summary = ContractCatalogPrewarmSummary(
-        symbol=request.symbol,
-        strategy_type=request.strategy_type.value,
-    )
-    for bar in collect_trade_dates(
+    trade_bars = collect_trade_dates(
         bundle.bars,
         start_date=request.start_date,
         end_date=request.end_date,
         max_dates=max_dates,
-    ):
+    )
+    summary = ContractCatalogPrewarmSummary(
+        symbol=request.symbol,
+        strategy_type=request.strategy_type.value,
+    )
+    for index, bar in enumerate(trade_bars):
         try:
             strike_band = strike_band_resolver._preferred_strike_band(bar.close_price, strike_override)
             contracts = exact_fetch(
@@ -116,9 +119,36 @@ def prewarm_long_option_bundle(
             summary.dates_processed += 1
             summary.contracts_fetched += len(contracts)
             if include_quotes:
+                quote_dates = (
+                    _quote_trade_dates_for_entry(
+                        trade_bars=trade_bars,
+                        entry_index=index,
+                        max_holding_days=request.max_holding_days,
+                    )
+                    if warm_future_quotes
+                    else [bar.trade_date]
+                )
                 for contract in contracts:
-                    gateway.get_quote(contract.ticker, bar.trade_date)
-                    summary.quotes_fetched += 1
+                    for quote_date in quote_dates:
+                        if quote_date > contract.expiration_date:
+                            break
+                        gateway.get_quote(contract.ticker, quote_date)
+                        summary.quotes_fetched += 1
         except Exception as exc:
             summary.errors.append(f"{request.symbol} {bar.trade_date}: {exc}")
     return summary
+
+
+def _quote_trade_dates_for_entry(
+    *,
+    trade_bars: list[DailyBar],
+    entry_index: int,
+    max_holding_days: int,
+) -> list[date]:
+    entry_date = trade_bars[entry_index].trade_date
+    quote_dates: list[date] = []
+    for bar in trade_bars[entry_index:]:
+        if (bar.trade_date - entry_date).days > max_holding_days:
+            break
+        quote_dates.append(bar.trade_date)
+    return quote_dates

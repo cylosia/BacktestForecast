@@ -95,6 +95,36 @@ def test_prewarm_long_option_bundle_uses_exact_lookup_and_quotes():
     ]
 
 
+def test_prewarm_long_option_bundle_can_warm_future_mark_to_market_quotes():
+    gateway = _Gateway()
+    request = _request()
+    bars = [
+        DailyBar(date(2025, 4, 1), 200, 201, 199, 200, 1_000_000),
+        DailyBar(date(2025, 4, 2), 202, 203, 201, 202, 1_000_000),
+        DailyBar(date(2025, 4, 3), 203, 204, 202, 203, 1_000_000),
+    ]
+    bundle = HistoricalDataBundle(bars=bars, earnings_dates=set(), ex_dividend_dates=set(), option_gateway=gateway)
+
+    summary = prewarm_long_option_bundle(
+        request,
+        bundle=bundle,
+        include_quotes=True,
+        warm_future_quotes=True,
+    )
+
+    assert summary.dates_processed == 3
+    assert summary.contracts_fetched == 3
+    assert summary.quotes_fetched == 6
+    assert gateway.quote_calls == [
+        ("O:AAPL250404C00200000", date(2025, 4, 1)),
+        ("O:AAPL250404C00200000", date(2025, 4, 2)),
+        ("O:AAPL250404C00200000", date(2025, 4, 3)),
+        ("O:AAPL250404C00200000", date(2025, 4, 2)),
+        ("O:AAPL250404C00200000", date(2025, 4, 3)),
+        ("O:AAPL250404C00200000", date(2025, 4, 3)),
+    ]
+
+
 def test_resolve_long_option_contract_type_rejects_other_strategies():
     with pytest.raises(ValueError, match="supports only long_call/long_put"):
         resolve_long_option_contract_type(StrategyType.COVERED_CALL)
