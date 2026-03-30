@@ -2016,6 +2016,16 @@ export interface components {
              */
             backtests: boolean;
             /**
+             * Multi Symbol Backtests
+             * @default false
+             */
+            multi_symbol_backtests: boolean;
+            /**
+             * Multi Step Backtests
+             * @default false
+             */
+            multi_step_backtests: boolean;
+            /**
              * Billing
              * @default true
              */

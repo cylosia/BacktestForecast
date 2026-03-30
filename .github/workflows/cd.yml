@@ -162,7 +162,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --constraint constraints.txt -e '.'
-          alembic upgrade head
+          python -m alembic upgrade head
         env:
           STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
@@ -246,7 +246,7 @@ jobs:
         id: prod_backup
 
       - name: Run database migrations
-        run: alembic upgrade head
+        run: python -m alembic upgrade head
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
@@ -320,12 +320,12 @@ jobs:
         run: |
           echo "Checking if the failed deployment ran migrations that differ from rollback tag..."
           set +e
-          FAILED_HEADS=$(docker run --rm "${REPO}/api:${{ github.sha }}" alembic heads 2>/dev/null | tr -d ' \n' || echo "unknown")
-          ROLLBACK_HEADS=$(docker run --rm "${REPO}/api:${ROLLBACK_TAG}" alembic heads 2>/dev/null | tr -d ' \n' || echo "unknown")
+          FAILED_HEADS=$(docker run --rm "${REPO}/api:${{ github.sha }}" python -m alembic heads 2>/dev/null | tr -d ' \n' || echo "unknown")
+          ROLLBACK_HEADS=$(docker run --rm "${REPO}/api:${ROLLBACK_TAG}" python -m alembic heads 2>/dev/null | tr -d ' \n' || echo "unknown")
           set -e
           if [ "${FAILED_HEADS}" != "${ROLLBACK_HEADS}" ] && [ "${FAILED_HEADS}" != "unknown" ] && [ "${ROLLBACK_HEADS}" != "unknown" ]; then
             echo "::warning::Migration mismatch detected. The failed deployment ran migrations (head: ${FAILED_HEADS}) that differ from the rollback tag (head: ${ROLLBACK_HEADS})."
-            echo "::warning::Manual downgrade may be required before proceeding. Run: alembic downgrade <target_revision>"
+            echo "::warning::Manual downgrade may be required before proceeding. Run: python -m alembic downgrade <target_revision>"
             echo "::warning::See the rollback step comments for full manual migration rollback instructions."
           else
             echo "Migration heads match or could not be determined. Proceeding with image rollback."
@@ -343,7 +343,7 @@ jobs:
           set -euo pipefail
 
           # WARNING: If the failed deployment included a database migration,
-          # you should run: alembic downgrade -1
+          # you should run: python -m alembic downgrade -1
           # before re-deploying the previous version.
           # Automated migration rollback is not safe for all migrations
           # (some are irreversible). Consider adding a pre-deploy check
@@ -351,10 +351,10 @@ jobs:
           #
           # Manual steps:
           #   1. Identify the migration head expected by ROLLBACK_TAG:
-          #      docker run --rm <REPO>/api:<ROLLBACK_TAG> alembic heads
-          #   2. Downgrade one step: alembic downgrade -1
-          #      Or to a specific revision: alembic downgrade <target_revision>
-          #   3. Verify the DB state: alembic current
+          #      docker run --rm <REPO>/api:<ROLLBACK_TAG> python -m alembic heads
+          #   2. Downgrade one step: python -m alembic downgrade -1
+          #      Or to a specific revision: python -m alembic downgrade <target_revision>
+          #   3. Verify the DB state: python -m alembic current
           #   4. Then proceed with the image rollback below.
 
           for svc in api worker web; do

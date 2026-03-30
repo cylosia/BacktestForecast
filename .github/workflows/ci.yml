@@ -88,7 +88,7 @@ jobs:
         run: python -m mypy src apps --ignore-missing-imports
 
       - name: Run Alembic migrations (for unit tests needing Postgres)
-        run: alembic upgrade head
+        run: python -m alembic upgrade head
 
       - name: Run fast Python tests with coverage
         env:
@@ -265,7 +265,7 @@ jobs:
           python -m pip install --constraint constraints.txt -e '.[dev]'
 
       - name: Run Alembic migrations
-        run: alembic upgrade head
+        run: python -m alembic upgrade head
 
       - name: Check migration-model drift
         run: python scripts/check_migration_drift.py
@@ -419,7 +419,7 @@ jobs:
           python -m pip install --constraint constraints.txt -e '.[dev]'
 
       - name: Run Alembic migrations
-        run: alembic upgrade head
+        run: python -m alembic upgrade head
 
       - name: Run real-worker lifecycle suite
         run: pytest -q tests/e2e/test_full_lifecycle.py -m real_worker
@@ -506,18 +506,18 @@ jobs:
           python -m pip install --constraint constraints.txt -e '.[dev]'
 
       - name: Run alembic upgrade head
-        run: alembic upgrade head
+        run: python -m alembic upgrade head
 
       - name: Verify no model-migration drift
-        run: alembic check
+        run: python -m alembic check
 
       - name: Verify alembic downgrade chain
         run: |
-          alembic downgrade base
-          alembic upgrade head
+          python -m alembic downgrade base
+          python -m alembic upgrade head
 
       - name: Verify clean state after downgrade round-trip
-        run: alembic check
+        run: python -m alembic check
 
       - name: Check non-nullable columns have server_default
         run: python scripts/check_migration_defaults.py
@@ -615,7 +615,7 @@ jobs:
           python -m pip install --constraint constraints.txt -e '.[dev]'
 
       - name: Run database migrations
-        run: alembic upgrade head
+        run: python -m alembic upgrade head
 
       - name: Start API and web servers, run Playwright smoke
         env:
@@ -812,7 +812,7 @@ jobs:
             -e REDIS_URL=redis://localhost:6379/0 \
             -e APP_ENV=test \
             backtestforecast-api:ci \
-            sh -c "alembic upgrade head && uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+            sh -c "python -m alembic upgrade head && python -m uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000 --workers 1"
           sleep 8
           docker logs ci-api
           curl --fail --silent --max-time 5 http://localhost:8000/health/live || {

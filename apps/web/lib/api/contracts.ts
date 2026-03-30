@@ -194,6 +194,8 @@ function validateFeatureAccess(value: unknown, label: string): void {
 function validateMetaFeatures(value: unknown, label: string): void {
   if (!isRecord(value)) throw new Error(`${label} must be an object`);
   assertBoolean(value.backtests, `${label}.backtests`);
+  assertBoolean(value.multi_symbol_backtests, `${label}.multi_symbol_backtests`);
+  assertBoolean(value.multi_step_backtests, `${label}.multi_step_backtests`);
   assertBoolean(value.scanner, `${label}.scanner`);
   assertBoolean(value.exports, `${label}.exports`);
   assertBoolean(value.forecasts, `${label}.forecasts`);

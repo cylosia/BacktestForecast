@@ -85,7 +85,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rebuild-public-schema",
         action="store_true",
-        help="Drop and recreate the public schema, then run alembic upgrade head.",
+        help="Drop and recreate the public schema, then run python -m alembic upgrade head.",
     )
     parser.add_argument(
         "--confirm-database",

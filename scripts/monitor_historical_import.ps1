@@ -220,6 +220,9 @@ function Write-ImportStatusSummary {
     } else {
         Write-Host "Window: unavailable"
     }
+    if ($Status.requested_symbols) {
+        Write-Host ("Requested symbols: {0}" -f (($Status.requested_symbols | ForEach-Object { "$_" }) -join ", "))
+    }
     if ($Status.status) {
         Write-Host ("Import status: {0}" -f $Status.status)
     }
@@ -229,8 +232,33 @@ function Write-ImportStatusSummary {
         $completedPct = if ($null -ne $Status.completed_pct) { $Status.completed_pct } else { "?" }
         Write-Host ("Progress: {0}/{1} trade dates ({2}%)" -f $completedTradeDates, $totalTradeDates, $completedPct)
     }
+    if ($null -ne $Status.processed_trade_dates -or $null -ne $Status.processed_pct) {
+        $processedTradeDates = if ($null -ne $Status.processed_trade_dates) { $Status.processed_trade_dates } else { "?" }
+        $totalTradeDates = if ($null -ne $Status.total_trade_dates) { $Status.total_trade_dates } else { "?" }
+        $processedPct = if ($null -ne $Status.processed_pct) { $Status.processed_pct } else { "?" }
+        Write-Host ("Attempted: {0}/{1} trade dates ({2}%)" -f $processedTradeDates, $totalTradeDates, $processedPct)
+    }
+    if ($null -ne $Status.resume_requested -or $null -ne $Status.resume_applied -or $null -ne $Status.resumed_trade_dates) {
+        $resumeRequested = if ($Status.resume_requested) { "requested" } else { "not requested" }
+        $resumeApplied = if ($Status.resume_applied) { "applied" } else { "not applied" }
+        $resumedTradeDates = if ($null -ne $Status.resumed_trade_dates) { $Status.resumed_trade_dates } else { 0 }
+        Write-Host ("Resume checkpoint: {0}, {1}, reused={2}" -f $resumeRequested, $resumeApplied, $resumedTradeDates)
+    }
     if ($Status.last_completed_trade_date) {
         Write-Host ("Last completed trade date: {0}" -f $Status.last_completed_trade_date)
+    }
+    if ($null -ne $Status.remaining_trade_dates -or $Status.window_coverage_status -or $Status.window_target_trade_date -or $null -ne $Status.window_freshness_trade_date_lag) {
+        $remainingTradeDates = if ($null -ne $Status.remaining_trade_dates) { $Status.remaining_trade_dates } else { "?" }
+        $coverageStatus = if ($Status.window_coverage_status) { $Status.window_coverage_status } else { "unknown" }
+        $targetTradeDate = if ($Status.window_target_trade_date) { $Status.window_target_trade_date } else { "?" }
+        $lagTradeDates = if ($null -ne $Status.window_freshness_trade_date_lag) { $Status.window_freshness_trade_date_lag } else { "?" }
+        Write-Host ("Coverage: {0}  remaining={1}  target={2}  trade-date lag={3}" -f $coverageStatus, $remainingTradeDates, $targetTradeDate, $lagTradeDates)
+    }
+    if ($Status.next_pending_trade_date) {
+        Write-Host ("Next pending trade date: {0}" -f $Status.next_pending_trade_date)
+    }
+    if ($Status.remaining_trade_dates_sample) {
+        Write-Host ("Remaining trade date sample: {0}" -f (($Status.remaining_trade_dates_sample | ForEach-Object { "$_" }) -join ", "))
     }
     if ($null -ne $Status.completed_stock_rows -or $null -ne $Status.completed_option_rows) {
         $completedStockRows = if ($null -ne $Status.completed_stock_rows) { $Status.completed_stock_rows } else { "?" }

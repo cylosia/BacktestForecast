@@ -52,6 +52,13 @@ class TradeDateResultPayload(TypedDict):
     option_symbols: list[str]
 
 
+class TradeDateCheckpointPayload(TypedDict):
+    stock_count: int
+    option_count: int
+    stock_error: str | None
+    option_error: str | None
+
+
 class ImportStatusSnapshot(TypedDict, total=False):
     started_at: str
     command: str
@@ -68,13 +75,36 @@ class ImportStatusSnapshot(TypedDict, total=False):
     total_trade_dates: int
     completed_trade_dates: int
     completed_pct: float
+    processed_trade_dates: int
+    processed_pct: float
     completed_stock_rows: int
     completed_option_rows: int
     last_completed_trade_date: str | None
     last_result: TradeDateResultPayload | None
+    trade_date_checkpoints: dict[str, TradeDateCheckpointPayload]
+    completed_trade_dates_list: list[str]
+    processed_trade_dates_list: list[str]
+    requested_symbols: list[str]
+    run_signature: dict[str, object]
+    resume_requested: bool
+    resume_applied: bool
+    resumed_trade_dates: int
+    remaining_trade_dates: int
+    remaining_trade_dates_sample: list[str]
+    next_pending_trade_date: str | None
+    window_target_trade_date: str | None
+    window_coverage_status: str
+    window_freshness_trade_date_lag: int
     completed_at: str | None
     failed_at: str | None
     error: str | None
+
+
+@dataclass(slots=True)
+class ResumeCheckpoint:
+    trade_date_checkpoints: dict[date, TradeDateCheckpointPayload]
+    last_result: TradeDateResultPayload | None
+    applied: bool
 
 
 def _iter_dates(start_date: date, end_date: date) -> Iterator[date]:
@@ -380,6 +410,156 @@ def _result_status_payload(result: TradeDateSyncResult) -> TradeDateResultPayloa
     }
 
 
+def _checkpoint_payload(result: TradeDateSyncResult) -> TradeDateCheckpointPayload:
+    return {
+        "stock_count": result.stock_count,
+        "option_count": result.option_count,
+        "stock_error": result.stock_error,
+        "option_error": result.option_error,
+    }
+
+
+def _read_status_snapshot(status_path: str | None) -> ImportStatusSnapshot:
+    if not status_path:
+        return {}
+    path = Path(status_path)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # pragma: no cover - exercised through main()
+        raise ValueError(f"Unable to parse import status file '{status_path}': {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Import status file '{status_path}' does not contain a JSON object.")
+    return payload
+
+
+def _run_signature(
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: set[str],
+    dry_run: bool,
+    skip_rest_enrichment: bool,
+) -> dict[str, object]:
+    return {
+        "window_start": start_date.isoformat(),
+        "window_end": end_date.isoformat(),
+        "symbols": sorted(symbols),
+        "dry_run": dry_run,
+        "skip_rest_enrichment": skip_rest_enrichment,
+    }
+
+
+def _parse_trade_date_checkpoints(raw: object) -> dict[date, TradeDateCheckpointPayload]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("trade_date_checkpoints must be a JSON object keyed by ISO trade date.")
+    checkpoints: dict[date, TradeDateCheckpointPayload] = {}
+    for raw_trade_date, payload in raw.items():
+        if not isinstance(raw_trade_date, str):
+            raise ValueError("trade_date_checkpoints keys must be ISO date strings.")
+        if not isinstance(payload, dict):
+            raise ValueError(f"trade_date_checkpoints['{raw_trade_date}'] must be an object.")
+        try:
+            trade_date = date.fromisoformat(raw_trade_date)
+        except ValueError as exc:
+            raise ValueError(f"trade_date_checkpoints contains an invalid ISO date: {raw_trade_date}") from exc
+        checkpoints[trade_date] = {
+            "stock_count": int(payload.get("stock_count", 0)),
+            "option_count": int(payload.get("option_count", 0)),
+            "stock_error": None if payload.get("stock_error") is None else str(payload.get("stock_error")),
+            "option_error": None if payload.get("option_error") is None else str(payload.get("option_error")),
+        }
+    return checkpoints
+
+
+def _completed_trade_dates(checkpoints: dict[date, TradeDateCheckpointPayload]) -> set[date]:
+    return {
+        trade_date
+        for trade_date, payload in checkpoints.items()
+        if payload["stock_error"] is None and payload["option_error"] is None
+    }
+
+
+def _checkpoint_row_totals(checkpoints: dict[date, TradeDateCheckpointPayload]) -> tuple[int, int]:
+    stock_total = sum(payload["stock_count"] for payload in checkpoints.values())
+    option_total = sum(payload["option_count"] for payload in checkpoints.values())
+    return stock_total, option_total
+
+
+def _progress_snapshot_fields(
+    trade_dates: list[date],
+    checkpoints: dict[date, TradeDateCheckpointPayload],
+) -> dict[str, object]:
+    processed_dates = set(checkpoints)
+    completed_dates = _completed_trade_dates(checkpoints)
+    remaining_dates = [trade_date for trade_date in trade_dates if trade_date not in completed_dates]
+    total_trade_dates = len(trade_dates)
+    completed_count = len(completed_dates)
+    processed_count = len(processed_dates)
+    return {
+        "total_trade_dates": total_trade_dates,
+        "completed_trade_dates": completed_count,
+        "completed_pct": round((completed_count / total_trade_dates) * 100, 2) if total_trade_dates else 0.0,
+        "processed_trade_dates": processed_count,
+        "processed_pct": round((processed_count / total_trade_dates) * 100, 2) if total_trade_dates else 0.0,
+        "completed_trade_dates_list": [item.isoformat() for item in sorted(completed_dates)],
+        "processed_trade_dates_list": [item.isoformat() for item in sorted(processed_dates)],
+        "remaining_trade_dates": len(remaining_dates),
+        "remaining_trade_dates_sample": [item.isoformat() for item in remaining_dates[:10]],
+        "next_pending_trade_date": remaining_dates[0].isoformat() if remaining_dates else None,
+        "last_completed_trade_date": max(completed_dates).isoformat() if completed_dates else None,
+        "window_target_trade_date": trade_dates[-1].isoformat() if trade_dates else None,
+        "window_coverage_status": "complete" if not remaining_dates else "incomplete",
+        "window_freshness_trade_date_lag": len(remaining_dates),
+    }
+
+
+def _load_resume_checkpoint(
+    *,
+    status_path: str | None,
+    run_signature: dict[str, object],
+    trade_dates: list[date],
+    resume_requested: bool,
+) -> ResumeCheckpoint:
+    if not resume_requested:
+        return ResumeCheckpoint(trade_date_checkpoints={}, last_result=None, applied=False)
+    if not status_path:
+        raise ValueError("--resume requires --status-path or BACKTESTFORECAST_IMPORT_STATUS_PATH.")
+
+    snapshot = _read_status_snapshot(status_path)
+    if not snapshot:
+        return ResumeCheckpoint(trade_date_checkpoints={}, last_result=None, applied=False)
+
+    existing_signature = snapshot.get("run_signature")
+    if existing_signature is not None and existing_signature != run_signature:
+        raise ValueError("Existing status checkpoint belongs to a different import window or symbol set; refusing to resume.")
+
+    checkpoints = _parse_trade_date_checkpoints(snapshot.get("trade_date_checkpoints"))
+    if not checkpoints:
+        legacy_completed = int(snapshot.get("completed_trade_dates", 0) or 0)
+        legacy_processed = int(snapshot.get("processed_trade_dates", 0) or 0)
+        if legacy_completed > 0 or legacy_processed > 0:
+            raise ValueError("Existing status file does not contain per-trade-date checkpoints; rerun without --resume.")
+
+    valid_trade_dates = set(trade_dates)
+    unknown_dates = set(checkpoints) - valid_trade_dates
+    if unknown_dates:
+        sample = ", ".join(item.isoformat() for item in sorted(unknown_dates)[:5])
+        raise ValueError(f"Existing status checkpoint references trade dates outside the requested window: {sample}")
+
+    last_result = snapshot.get("last_result")
+    if last_result is not None and not isinstance(last_result, dict):
+        last_result = None
+    return ResumeCheckpoint(
+        trade_date_checkpoints=dict(checkpoints),
+        last_result=last_result if isinstance(last_result, dict) else None,
+        applied=bool(checkpoints),
+    )
+
+
 def _write_status_snapshot(status_path: str | None, **fields: object) -> None:
     if not status_path:
         return
@@ -406,6 +586,7 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=1, help="Parallel trade-date workers for flat-file sync.")
     parser.add_argument("--skip-rest-enrichment", action="store_true", help="Skip treasury/dividend REST enrichment during bulk backfills.")
     parser.add_argument("--dry-run", action="store_true", help="Parse and count rows without writing to Postgres.")
+    parser.add_argument("--resume", action="store_true", help="Resume from the existing status checkpoint instead of replaying already completed trade dates.")
     parser.add_argument("--status-path", default="", help="Optional JSON status file to update incrementally during the import.")
     args = parser.parse_args()
 
@@ -421,14 +602,31 @@ def main() -> int:
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
     status_path = args.status_path or os.getenv("BACKTESTFORECAST_IMPORT_STATUS_PATH") or os.getenv("HISTORICAL_IMPORT_STATUS_PATH")
+    if args.resume and not status_path:
+        raise ValueError("--resume requires --status-path or BACKTESTFORECAST_IMPORT_STATUS_PATH.")
 
     store = None if args.dry_run else HistoricalMarketDataStore(create_session, create_readonly_session)
     flatfiles = MassiveFlatFilesClient.from_settings()
     rest_client = None if args.dry_run or args.skip_rest_enrichment else MassiveClient()
-    trade_dates = list(_iter_trading_dates(start_date, end_date))
-    total_trade_dates = len(trade_dates)
-    completed_stock_rows = 0
-    completed_option_rows = 0
+    all_trade_dates = list(_iter_trading_dates(start_date, end_date))
+    total_trade_dates = len(all_trade_dates)
+    run_signature = _run_signature(
+        start_date=start_date,
+        end_date=end_date,
+        symbols=symbols,
+        dry_run=args.dry_run,
+        skip_rest_enrichment=args.skip_rest_enrichment,
+    )
+    resume_checkpoint = _load_resume_checkpoint(
+        status_path=status_path,
+        run_signature=run_signature,
+        trade_dates=all_trade_dates,
+        resume_requested=args.resume,
+    )
+    trade_date_checkpoints = dict(resume_checkpoint.trade_date_checkpoints)
+    progress_fields = _progress_snapshot_fields(all_trade_dates, trade_date_checkpoints)
+    completed_stock_rows, completed_option_rows = _checkpoint_row_totals(trade_date_checkpoints)
+    pending_trade_dates = [trade_date for trade_date in all_trade_dates if trade_date not in _completed_trade_dates(trade_date_checkpoints)]
     initial_timestamp = _iso_now()
 
     _write_status_snapshot(
@@ -437,16 +635,19 @@ def main() -> int:
         updated_at=initial_timestamp,
         window_start=start_date.isoformat(),
         window_end=end_date.isoformat(),
-        total_trade_dates=total_trade_dates,
-        completed_trade_dates=0,
-        completed_pct=0.0,
-        completed_stock_rows=0,
-        completed_option_rows=0,
-        last_completed_trade_date=None,
-        last_result=None,
+        requested_symbols=sorted(symbols),
+        run_signature=run_signature,
+        resume_requested=args.resume,
+        resume_applied=resume_checkpoint.applied,
+        resumed_trade_dates=progress_fields["completed_trade_dates"],
+        completed_stock_rows=completed_stock_rows,
+        completed_option_rows=completed_option_rows,
+        trade_date_checkpoints={trade_date.isoformat(): payload for trade_date, payload in sorted(trade_date_checkpoints.items())},
+        last_result=resume_checkpoint.last_result,
         completed_at=None,
         failed_at=None,
         error=None,
+        **progress_fields,
     )
 
     try:
@@ -454,12 +655,12 @@ def main() -> int:
             for index, result in enumerate(_iter_sync_trade_dates(
                 store,
                 flatfiles,
-                trade_dates,
+                pending_trade_dates,
                 symbols=symbols or None,
                 batch_size=args.batch_size,
                 dry_run=args.dry_run,
                 workers=args.workers,
-            ), start=1):
+            ), start=1 + int(progress_fields["processed_trade_dates"])):
                 _print_trade_date_result(
                     result,
                     dry_run=args.dry_run,
@@ -473,40 +674,54 @@ def main() -> int:
                     symbols=symbols,
                     skip_rest_enrichment=args.skip_rest_enrichment,
                 )
-                completed_stock_rows += result.stock_count
-                completed_option_rows += result.option_count
+                trade_date_checkpoints[result.trade_date] = _checkpoint_payload(result)
+                completed_stock_rows, completed_option_rows = _checkpoint_row_totals(trade_date_checkpoints)
+                progress_fields = _progress_snapshot_fields(all_trade_dates, trade_date_checkpoints)
                 progress_timestamp = _iso_now()
                 _write_status_snapshot(
                     status_path,
                     status="running",
                     updated_at=progress_timestamp,
-                    completed_trade_dates=index,
-                    completed_pct=round((index / total_trade_dates) * 100, 2) if total_trade_dates else 100.0,
                     completed_stock_rows=completed_stock_rows,
                     completed_option_rows=completed_option_rows,
-                    last_completed_trade_date=result.trade_date.isoformat(),
+                    trade_date_checkpoints={trade_date.isoformat(): payload for trade_date, payload in sorted(trade_date_checkpoints.items())},
                     last_result=_result_status_payload(result),
+                    **progress_fields,
                 )
         completion_timestamp = _iso_now()
+        progress_fields = _progress_snapshot_fields(all_trade_dates, trade_date_checkpoints)
+        completion_status = "completed" if int(progress_fields["remaining_trade_dates"]) == 0 else "completed_with_errors"
+        completion_error = None
+        if completion_status != "completed":
+            completion_error = (
+                f"{progress_fields['remaining_trade_dates']} trade date(s) remain incomplete. "
+                "Resolve the per-date sync errors and rerun with --resume."
+            )
         _write_status_snapshot(
             status_path,
-            status="completed",
+            status=completion_status,
             updated_at=completion_timestamp,
-            completed_trade_dates=total_trade_dates,
-            completed_pct=100.0 if total_trade_dates else 0.0,
             completed_stock_rows=completed_stock_rows,
             completed_option_rows=completed_option_rows,
             completed_at=completion_timestamp,
-            error=None,
+            trade_date_checkpoints={trade_date.isoformat(): payload for trade_date, payload in sorted(trade_date_checkpoints.items())},
+            error=completion_error,
+            **progress_fields,
         )
     except Exception as exc:
         failure_timestamp = _iso_now()
+        completed_stock_rows, completed_option_rows = _checkpoint_row_totals(trade_date_checkpoints)
+        progress_fields = _progress_snapshot_fields(all_trade_dates, trade_date_checkpoints)
         _write_status_snapshot(
             status_path,
             status="failed",
             updated_at=failure_timestamp,
             failed_at=failure_timestamp,
+            completed_stock_rows=completed_stock_rows,
+            completed_option_rows=completed_option_rows,
+            trade_date_checkpoints={trade_date.isoformat(): payload for trade_date, payload in sorted(trade_date_checkpoints.items())},
             error=str(exc),
+            **progress_fields,
         )
         raise
     finally:

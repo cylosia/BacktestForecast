@@ -57,7 +57,7 @@ jobs:
           python -m pip install --constraint constraints.txt -e '.[dev]'
 
       - name: Run Alembic migrations
-        run: alembic upgrade head
+        run: python -m alembic upgrade head
 
       - name: Run live-provider smoke suite
         run: |

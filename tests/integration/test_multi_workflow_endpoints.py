@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.orm import Session, sessionmaker
 
+from backtestforecast.config import get_settings
 from backtestforecast.models import MultiStepRun, MultiSymbolRun
 from tests.integration.test_api_critical_flows import _set_user_plan
 
@@ -187,11 +188,26 @@ def immediate_multi_workflow_completion(_fake_celery, session_factory: sessionma
     _fake_celery.register("multi_step_backtests.run", _finish_multi_step)
 
 
+@pytest.fixture()
+def enabled_multi_workflow_flags(client):
+    settings = get_settings().model_copy(update={
+        "feature_backtests_enabled": True,
+        "feature_multi_symbol_backtests_enabled": True,
+        "feature_multi_step_backtests_enabled": True,
+    })
+    client.app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        yield
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
+
+
 def test_multi_symbol_endpoint_lifecycle(
     client,
     auth_headers,
     db_session,
     immediate_multi_workflow_completion,
+    enabled_multi_workflow_flags,
 ):
     client.get("/v1/me", headers=auth_headers)
     _set_user_plan(db_session, tier="pro", subscription_status="active")
@@ -226,6 +242,7 @@ def test_multi_step_endpoint_lifecycle(
     auth_headers,
     db_session,
     immediate_multi_workflow_completion,
+    enabled_multi_workflow_flags,
 ):
     client.get("/v1/me", headers=auth_headers)
     _set_user_plan(db_session, tier="pro", subscription_status="active")
@@ -254,3 +271,107 @@ def test_multi_step_endpoint_lifecycle(
     assert listing.status_code == 200
     items = listing.json()["items"]
     assert any(item["id"] == run_id for item in items)
+
+
+def test_multi_symbol_create_is_feature_locked_when_dedicated_flag_is_disabled(
+    client,
+    auth_headers,
+    db_session,
+):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    settings = get_settings().model_copy(update={
+        "feature_backtests_enabled": True,
+        "feature_multi_symbol_backtests_enabled": False,
+    })
+    client.app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        response = client.post("/v1/multi-symbol-backtests", json=_multi_symbol_payload(), headers=auth_headers)
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "feature_locked"
+
+
+def test_multi_step_create_is_feature_locked_when_dedicated_flag_is_disabled(
+    client,
+    auth_headers,
+    db_session,
+):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+    settings = get_settings().model_copy(update={
+        "feature_backtests_enabled": True,
+        "feature_multi_step_backtests_enabled": False,
+    })
+    client.app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        response = client.post("/v1/multi-step-backtests", json=_multi_step_payload(), headers=auth_headers)
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "feature_locked"
+
+
+def test_multi_symbol_cancel_then_delete_path(
+    client,
+    auth_headers,
+    db_session,
+    _fake_celery,
+    enabled_multi_workflow_flags,
+):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    create = client.post("/v1/multi-symbol-backtests", json=_multi_symbol_payload(), headers=auth_headers)
+    assert create.status_code == 202
+    run_id = create.json()["id"]
+    assert create.json()["status"] == "queued"
+
+    delete_queued = client.delete(f"/v1/multi-symbol-backtests/{run_id}", headers=auth_headers)
+    assert delete_queued.status_code == 409
+
+    cancel = client.post(f"/v1/multi-symbol-backtests/{run_id}/cancel", headers=auth_headers)
+    assert cancel.status_code == 200
+    cancel_body = cancel.json()
+    assert cancel_body["status"] == "cancelled"
+    assert cancel_body["error_code"] == "cancelled_by_user"
+
+    delete_cancelled = client.delete(f"/v1/multi-symbol-backtests/{run_id}", headers=auth_headers)
+    assert delete_cancelled.status_code == 204
+
+    detail = client.get(f"/v1/multi-symbol-backtests/{run_id}", headers=auth_headers)
+    assert detail.status_code == 404
+
+
+def test_multi_step_cancel_then_delete_path(
+    client,
+    auth_headers,
+    db_session,
+    _fake_celery,
+    enabled_multi_workflow_flags,
+):
+    client.get("/v1/me", headers=auth_headers)
+    _set_user_plan(db_session, tier="pro", subscription_status="active")
+
+    create = client.post("/v1/multi-step-backtests", json=_multi_step_payload(), headers=auth_headers)
+    assert create.status_code == 202
+    run_id = create.json()["id"]
+    assert create.json()["status"] == "queued"
+
+    delete_queued = client.delete(f"/v1/multi-step-backtests/{run_id}", headers=auth_headers)
+    assert delete_queued.status_code == 409
+
+    cancel = client.post(f"/v1/multi-step-backtests/{run_id}/cancel", headers=auth_headers)
+    assert cancel.status_code == 200
+    cancel_body = cancel.json()
+    assert cancel_body["status"] == "cancelled"
+    assert cancel_body["error_code"] == "cancelled_by_user"
+
+    delete_cancelled = client.delete(f"/v1/multi-step-backtests/{run_id}", headers=auth_headers)
+    assert delete_cancelled.status_code == 204
+
+    detail = client.get(f"/v1/multi-step-backtests/{run_id}", headers=auth_headers)
+    assert detail.status_code == 404

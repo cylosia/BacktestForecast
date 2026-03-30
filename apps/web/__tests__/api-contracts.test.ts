@@ -96,6 +96,8 @@ describe("api runtime contracts", () => {
         daily_picks_schedule_utc: "06:15 UTC",
         features: {
           backtests: true,
+          multi_symbol_backtests: false,
+          multi_step_backtests: false,
           scanner: true,
           exports: true,
           forecasts: true,

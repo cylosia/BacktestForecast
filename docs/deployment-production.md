@@ -134,8 +134,11 @@ set to a valid shell command (e.g., `ssh deploy@host ./deploy.sh`). If unset,
 the deploy step fails hard to prevent silent no-op deployments.
 
 Run migrations before shifting traffic:
+Use the same Python environment as the image you are deploying. If you are
+running the command from the repo checkout, activate the repo virtualenv first.
+
 ```bash
-alembic upgrade head
+python -m alembic upgrade head
 ```
 
 ## Rollback
@@ -147,11 +150,11 @@ alembic upgrade head
 
 1. Record the current Alembic revision:
    ```bash
-   alembic current
+   python -m alembic current
    ```
 2. Apply the new revision before shifting traffic:
    ```bash
-   alembic upgrade head
+   python -m alembic upgrade head
    ```
 3. Verify:
    - `GET /health/live`
@@ -170,7 +173,7 @@ alembic upgrade head
   - Confirm no long-running migration is still executing.
   - Downgrade exactly one revision:
     ```bash
-    alembic downgrade -1
+    python -m alembic downgrade -1
     ```
   - Re-run `/health/ready` and one authenticated smoke test before reopening traffic.
 - **Migration regression and the revision is not safely reversible**
@@ -180,7 +183,7 @@ alembic upgrade head
 
 ### Pre-rollback checklist
 
-- Capture the failing revision from `alembic current`.
+- Capture the failing revision from `python -m alembic current`.
 - Snapshot logs from API, worker, and beat around the failure window.
 - Check for queued backlog before recycling workers:
   - `maintenance.poll_outbox`

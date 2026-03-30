@@ -25,6 +25,8 @@ def test_meta_returns_features_with_bearer_token(client, auth_headers):
     assert "features" in data, "Authenticated /v1/meta should include 'features'"
     assert isinstance(data["features"], dict)
     assert "backtests" in data["features"]
+    assert "multi_symbol_backtests" in data["features"]
+    assert "multi_step_backtests" in data["features"]
 
 
 def test_meta_without_auth_returns_null_features(client):

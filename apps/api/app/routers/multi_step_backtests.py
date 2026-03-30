@@ -5,6 +5,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from apps.api.app.dependencies import get_current_user, get_current_user_readonly, get_request_metadata
@@ -54,8 +55,8 @@ def create_multi_step_backtest(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> MultiStepRunDetailResponse:
-    if not settings.feature_backtests_enabled:
-        raise FeatureLockedError("Backtesting is temporarily disabled.", required_tier="free")
+    if not settings.feature_multi_step_backtests_enabled:
+        raise FeatureLockedError("Multi-step backtesting is temporarily disabled.", required_tier="free")
     get_rate_limiter().check(
         bucket="multi_step_backtests:create",
         actor_key=str(user.id),
@@ -110,3 +111,38 @@ def get_multi_step_backtest_status(
     )
     with MultiStepBacktestService(db) as service:
         return service.get_run_status_for_owner(user_id=user.id, run_id=run_id)
+
+
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_multi_step_backtest(
+    run_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    get_rate_limiter().check(
+        bucket="multi_step_backtests:delete",
+        actor_key=str(user.id),
+        limit=settings.delete_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with MultiStepBacktestService(db) as service:
+        service.delete_for_user(run_id=run_id, user_id=user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{run_id}/cancel", response_model=MultiStepRunStatusResponse)
+def cancel_multi_step_backtest(
+    run_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> MultiStepRunStatusResponse:
+    get_rate_limiter().check(
+        bucket="multi_step_backtests:delete",
+        actor_key=str(user.id),
+        limit=settings.delete_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    with MultiStepBacktestService(db) as service:
+        return service.cancel_for_user(run_id=run_id, user_id=user.id)

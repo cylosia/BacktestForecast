@@ -95,7 +95,7 @@ These are implementation assumptions for the current slices:
    - `pip install -e .[dev]`
 
 4. Run migrations:
-   - `alembic upgrade head`
+   - `python -m alembic upgrade head`
 
 5. Install frontend deps:
    - `pnpm install`

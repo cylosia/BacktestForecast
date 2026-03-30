@@ -206,6 +206,37 @@ def test_monitor_script_shows_progress_fields_when_present() -> None:
         status_path.unlink(missing_ok=True)
 
 
+def test_monitor_script_shows_resume_and_coverage_fields_when_present() -> None:
+    status_path = _status_path()
+    try:
+        _seed_monitor_status(
+            status_path,
+            requested_symbols=["AAPL", "MSFT"],
+            resume_requested=True,
+            resume_applied=True,
+            resumed_trade_dates=4,
+            processed_trade_dates=5,
+            processed_pct=83.33,
+            remaining_trade_dates=1,
+            remaining_trade_dates_sample=["2025-04-03"],
+            next_pending_trade_date="2025-04-03",
+            window_target_trade_date="2025-04-03",
+            window_coverage_status="incomplete",
+            window_freshness_trade_date_lag=1,
+        )
+
+        output = _run_monitor(status_path)
+
+        assert "Requested symbols: AAPL, MSFT" in output
+        assert "Resume checkpoint: requested, applied, reused=4" in output
+        assert re.search(r"Attempted: 5/\? trade dates \(83\.33", output)
+        assert "Coverage: incomplete  remaining=1  target=2025-04-03  trade-date lag=1" in output
+        assert "Next pending trade date: 2025-04-03" in output
+        assert "Remaining trade date sample: 2025-04-03" in output
+    finally:
+        status_path.unlink(missing_ok=True)
+
+
 def test_monitor_script_shows_partial_progress_fields_when_counts_are_incomplete() -> None:
     status_path = _status_path()
     try:

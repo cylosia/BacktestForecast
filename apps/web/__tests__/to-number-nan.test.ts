@@ -46,11 +46,11 @@ describe("formatCurrency", () => {
   });
 
   it("returns dash for null", () => {
-    expect(formatCurrency(null)).toBe("—");
+    expect(formatCurrency(null)).toBe("-");
   });
 
   it("returns dash for undefined", () => {
-    expect(formatCurrency(undefined)).toBe("—");
+    expect(formatCurrency(undefined)).toBe("-");
   });
 
   it("formats zero", () => {
@@ -68,7 +68,7 @@ describe("formatPercent", () => {
   });
 
   it("returns dash for null", () => {
-    expect(formatPercent(null)).toBe("—");
+    expect(formatPercent(null)).toBe("-");
   });
 
   it("formats zero", () => {
@@ -82,7 +82,7 @@ describe("formatNumber", () => {
   });
 
   it("returns dash for null", () => {
-    expect(formatNumber(null)).toBe("—");
+    expect(formatNumber(null)).toBe("-");
   });
 });
 
@@ -90,18 +90,18 @@ describe("formatDate", () => {
   it("formats a valid ISO date string", () => {
     const result = formatDate("2025-03-14");
     expect(result).toContain("2025");
-    expect(result).not.toBe("—");
+    expect(result).not.toBe("-");
   });
 
   it("returns dash for null", () => {
-    expect(formatDate(null)).toBe("—");
+    expect(formatDate(null)).toBe("-");
   });
 
   it("returns dash for empty string", () => {
-    expect(formatDate("")).toBe("—");
+    expect(formatDate("")).toBe("-");
   });
 
   it("returns dash for invalid date", () => {
-    expect(formatDate("not-a-date")).toBe("—");
+    expect(formatDate("not-a-date")).toBe("-");
   });
 });

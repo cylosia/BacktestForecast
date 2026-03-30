@@ -49,7 +49,7 @@ class TestFeatureFlags:
     """Fix #82: Feature flags are properly configured."""
 
     def test_all_feature_flags_have_defaults(self):
-        flag_fields = [
+        default_true_flags = [
             "feature_backtests_enabled",
             "feature_scanner_enabled",
             "feature_exports_enabled",
@@ -59,10 +59,19 @@ class TestFeatureFlags:
             "feature_billing_enabled",
             "feature_sweeps_enabled",
         ]
-        for field_name in flag_fields:
+        default_false_flags = [
+            "feature_multi_symbol_backtests_enabled",
+            "feature_multi_step_backtests_enabled",
+        ]
+        for field_name in default_true_flags:
             assert field_name in Settings.model_fields, f"Missing flag: {field_name}"
             assert Settings.model_fields[field_name].default is True, (
                 f"{field_name} should default to True"
+            )
+        for field_name in default_false_flags:
+            assert field_name in Settings.model_fields, f"Missing flag: {field_name}"
+            assert Settings.model_fields[field_name].default is False, (
+                f"{field_name} should default to False"
             )
 
 

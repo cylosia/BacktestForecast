@@ -34,19 +34,18 @@ def test_dispatch_targets_and_celery_routes_use_isolated_queues() -> None:
 
 def test_production_worker_topology_separates_heavy_queues() -> None:
     source = Path("docker-compose.prod.yml").read_text()
-    assert "--queues=backtests,scans,exports,research" in source
+    assert "--queues=backtests,multi_symbol_backtests,multi_step_backtests,scans,exports,research" in source
     assert "--queues=sweeps,analysis" in source
     assert "--queues=pipeline" in source
     assert "--queues=maintenance --concurrency=2" in source
     assert "--queues=recovery --concurrency=2" in source
-    assert "/health/live" in source
+    assert "/health/ready" in source
     assert "--destination=celery@$HOSTNAME" in source
 
 
-def test_api_image_healthcheck_uses_live_endpoint() -> None:
+def test_api_image_healthcheck_uses_ready_endpoint() -> None:
     source = Path("apps/api/Dockerfile").read_text()
-    assert "/health/live" in source
-    assert "/health/ready" not in source[source.index("HEALTHCHECK"):]
+    assert "/health/ready" in source[source.index("HEALTHCHECK"):]
 
 
 def test_root_endpoint_advertises_live_health_path() -> None:

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -71,6 +72,7 @@ def _run_main(
     sync_side_effect=None,
     env: dict[str, str] | None = None,
     include_status_flag: bool = False,
+    resume: bool = False,
 ) -> int:
     fake_flatfiles = _ContextFlatFilesClient()
     argv = [
@@ -81,6 +83,8 @@ def _run_main(
     ]
     if include_status_flag and status_path is not None:
         argv.extend(["--status-path", str(status_path)])
+    if resume:
+        argv.append("--resume")
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(sys, "argv", argv))
@@ -935,10 +939,14 @@ def test_main_updates_status_file_to_completed() -> None:
         assert payload["status"] == "completed"
         assert payload["completed_trade_dates"] == 2
         assert payload["completed_pct"] == 100.0
+        assert payload["processed_trade_dates"] == 2
+        assert payload["processed_pct"] == 100.0
         assert payload["completed_stock_rows"] == 5
         assert payload["completed_option_rows"] == 3
         assert payload["last_completed_trade_date"] == "2025-04-02"
         assert payload["last_result"]["trade_date"] == "2025-04-02"
+        assert payload["window_coverage_status"] == "complete"
+        assert payload["remaining_trade_dates"] == 0
         assert payload["started_at"] == "2026-03-29T14:02:55-05:00"
         assert payload["python_pid"] == 12345
         assert payload["stdout_log_path"] == "stdout.log"
@@ -1053,8 +1061,157 @@ def test_main_keeps_completed_pct_zero_for_empty_trading_window() -> None:
         assert payload["status"] == "completed"
         assert payload["completed_trade_dates"] == 0
         assert payload["completed_pct"] == 0.0
+        assert payload["processed_trade_dates"] == 0
+        assert payload["processed_pct"] == 0.0
         assert payload["last_completed_trade_date"] is None
         assert payload["last_result"] is None
+    finally:
+        status_path.unlink(missing_ok=True)
+
+
+def test_main_marks_completion_with_errors_when_trade_dates_remain_incomplete() -> None:
+    module = _load_sync_script_module()
+    status_path = _status_file_path()
+    results = iter([
+        module.TradeDateSyncResult(
+            trade_date=date(2025, 4, 1),
+            stock_count=2,
+            option_count=0,
+            stock_error=None,
+            option_error="missing option flat file",
+        )
+    ])
+    try:
+        _seed_status_file(status_path)
+        assert _run_main(
+            module,
+            status_path=status_path,
+            trade_dates=[date(2025, 4, 1)],
+            results=results,
+            include_status_flag=True,
+        ) == 0
+
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        assert payload["status"] == "completed_with_errors"
+        assert payload["completed_trade_dates"] == 0
+        assert payload["processed_trade_dates"] == 1
+        assert payload["remaining_trade_dates"] == 1
+        assert payload["next_pending_trade_date"] == "2025-04-01"
+        assert payload["window_coverage_status"] == "incomplete"
+        assert payload["window_freshness_trade_date_lag"] == 1
+        assert payload["error"].startswith("1 trade date(s) remain incomplete.")
+        assert payload["trade_date_checkpoints"]["2025-04-01"]["option_error"] == "missing option flat file"
+    finally:
+        status_path.unlink(missing_ok=True)
+
+
+def test_main_resume_skips_completed_trade_dates_and_retries_incomplete_dates() -> None:
+    module = _load_sync_script_module()
+    status_path = _status_file_path()
+    results = iter([
+        module.TradeDateSyncResult(
+            trade_date=date(2025, 4, 2),
+            stock_count=3,
+            option_count=2,
+            stock_error=None,
+            option_error=None,
+        )
+    ])
+    try:
+        _seed_status_file(
+            status_path,
+            run_signature={
+                "window_start": "2025-04-01",
+                "window_end": "2025-04-02",
+                "symbols": [],
+                "dry_run": True,
+                "skip_rest_enrichment": False,
+            },
+            trade_date_checkpoints={
+                "2025-04-01": {
+                    "stock_count": 2,
+                    "option_count": 1,
+                    "stock_error": None,
+                    "option_error": None,
+                },
+                "2025-04-02": {
+                    "stock_count": 3,
+                    "option_count": 0,
+                    "stock_error": None,
+                    "option_error": "missing option flat file",
+                },
+            },
+            completed_trade_dates=1,
+            processed_trade_dates=2,
+            completed_pct=50.0,
+            processed_pct=100.0,
+            completed_trade_dates_list=["2025-04-01"],
+            processed_trade_dates_list=["2025-04-01", "2025-04-02"],
+            remaining_trade_dates=1,
+            next_pending_trade_date="2025-04-02",
+            window_target_trade_date="2025-04-02",
+            window_coverage_status="incomplete",
+            window_freshness_trade_date_lag=1,
+        )
+
+        assert _run_main(
+            module,
+            status_path=status_path,
+            start_date="2025-04-01",
+            end_date="2025-04-02",
+            trade_dates=[date(2025, 4, 1), date(2025, 4, 2)],
+            results=results,
+            include_status_flag=True,
+            resume=True,
+        ) == 0
+
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        assert payload["status"] == "completed"
+        assert payload["resume_requested"] is True
+        assert payload["resume_applied"] is True
+        assert payload["resumed_trade_dates"] == 1
+        assert payload["completed_trade_dates"] == 2
+        assert payload["processed_trade_dates"] == 2
+        assert payload["remaining_trade_dates"] == 0
+        assert payload["completed_stock_rows"] == 5
+        assert payload["completed_option_rows"] == 3
+        assert payload["trade_date_checkpoints"]["2025-04-02"]["option_error"] is None
+    finally:
+        status_path.unlink(missing_ok=True)
+
+
+def test_main_resume_rejects_checkpoint_signature_mismatch() -> None:
+    module = _load_sync_script_module()
+    status_path = _status_file_path()
+    try:
+        _seed_status_file(
+            status_path,
+            run_signature={
+                "window_start": "2025-04-03",
+                "window_end": "2025-04-03",
+                "symbols": ["SPY"],
+                "dry_run": True,
+                "skip_rest_enrichment": False,
+            },
+            trade_date_checkpoints={
+                "2025-04-03": {
+                    "stock_count": 2,
+                    "option_count": 1,
+                    "stock_error": None,
+                    "option_error": None,
+                }
+            },
+        )
+
+        with pytest.raises(ValueError, match="different import window or symbol set"):
+            _run_main(
+                module,
+                status_path=status_path,
+                trade_dates=[date(2025, 4, 1)],
+                results=iter(()),
+                include_status_flag=True,
+                resume=True,
+            )
     finally:
         status_path.unlink(missing_ok=True)
 

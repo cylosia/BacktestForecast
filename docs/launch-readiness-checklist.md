@@ -1,8 +1,8 @@
 # Launch readiness checklist
 
 ## Database and migrations
-- [ ] Alembic migrations applied in staging: `alembic upgrade head`
-- [ ] Alembic migrations applied in production: `alembic upgrade head`
+- [ ] Alembic migrations applied in staging: `python -m alembic upgrade head`
+- [ ] Alembic migrations applied in production: `python -m alembic upgrade head`
 - [ ] PostgreSQL backups configured and restore tested
 
 ## Authentication

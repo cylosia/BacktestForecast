@@ -23,19 +23,19 @@ describe("formatDate with date-only string", () => {
   });
 
   it("returns dash for null", () => {
-    expect(formatDate(null)).toBe("—");
+    expect(formatDate(null)).toBe("-");
   });
 
   it("returns dash for undefined", () => {
-    expect(formatDate(undefined)).toBe("—");
+    expect(formatDate(undefined)).toBe("-");
   });
 
   it("returns dash for empty string", () => {
-    expect(formatDate("")).toBe("—");
+    expect(formatDate("")).toBe("-");
   });
 
   it("returns dash for invalid date string", () => {
-    expect(formatDate("not-a-date")).toBe("—");
+    expect(formatDate("not-a-date")).toBe("-");
   });
 
   it("handles ISO datetime string without timezone shift", () => {
@@ -50,10 +50,10 @@ describe("formatCurrency", () => {
     expect(formatCurrency(1234.56)).toBe("$1,234.56");
   });
   it("returns — for null", () => {
-    expect(formatCurrency(null)).toBe("—");
+    expect(formatCurrency(null)).toBe("-");
   });
   it("returns — for undefined", () => {
-    expect(formatCurrency(undefined)).toBe("—");
+    expect(formatCurrency(undefined)).toBe("-");
   });
   it("formats negative values", () => {
     expect(formatCurrency(-99.5)).toBe("-$99.50");
@@ -65,7 +65,7 @@ describe("formatPercent", () => {
     expect(formatPercent(50)).toBe("50%");
   });
   it("returns — for null", () => {
-    expect(formatPercent(null)).toBe("—");
+    expect(formatPercent(null)).toBe("-");
   });
   it("handles decimal precision", () => {
     expect(formatPercent(33.333)).toBe("33.33%");
@@ -77,7 +77,7 @@ describe("formatNumber", () => {
     expect(formatNumber(1000000)).toBe("1,000,000");
   });
   it("returns — for null", () => {
-    expect(formatNumber(null)).toBe("—");
+    expect(formatNumber(null)).toBe("-");
   });
 });
 
@@ -104,6 +104,6 @@ describe("formatDateTime", () => {
     expect(result).toContain("2025");
   });
   it("returns — for null", () => {
-    expect(formatDateTime(null)).toBe("—");
+    expect(formatDateTime(null)).toBe("-");
   });
 });

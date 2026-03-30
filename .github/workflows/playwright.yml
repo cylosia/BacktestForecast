@@ -93,7 +93,7 @@ jobs:
         run: pip install --constraint constraints.txt -e ".[s3]"
 
       - name: Run database migrations
-        run: alembic upgrade head
+        run: python -m alembic upgrade head
         env:
           DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
 

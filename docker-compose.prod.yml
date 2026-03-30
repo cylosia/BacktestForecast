@@ -97,7 +97,7 @@ services:
           memory: 512m
           cpus: '2.0'
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/health/live'); exit(0 if r.getcode()==200 else 1)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/health/ready'); exit(0 if r.getcode()==200 else 1)\""]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -127,7 +127,7 @@ services:
     stop_grace_period: 40s
     command: >-
       celery -A apps.worker.app.celery_app.celery_app worker
-      --loglevel=INFO --queues=backtests,scans,exports,research
+      --loglevel=INFO --queues=backtests,multi_symbol_backtests,multi_step_backtests,scans,exports,research
       --concurrency=${CELERY_CONCURRENCY:-4}
     deploy:
       replicas: ${WORKER_REPLICAS:-2}

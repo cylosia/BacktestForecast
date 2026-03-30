@@ -18,7 +18,7 @@ from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import BacktestConfig, EquityPointResult, OpenMultiLegPosition, TradeResult
 from backtestforecast.config import get_settings
-from backtestforecast.errors import AppValidationError, DataUnavailableError, ExternalServiceError, NotFoundError
+from backtestforecast.errors import AppValidationError, ConflictError, DataUnavailableError, ExternalServiceError, NotFoundError
 from backtestforecast.indicators.calculations import ema, rsi, sma
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.market_data.types import DailyBar
@@ -48,10 +48,13 @@ from backtestforecast.schemas.multi_symbol_backtests import (
 from backtestforecast.services.backtest_execution import BacktestExecutionService
 from backtestforecast.services.backtest_workflow_access import enforce_backtest_workflow_quota
 from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
+from backtestforecast.services.job_cancellation import mark_job_cancelled, publish_cancellation_event, revoke_celery_task
+from backtestforecast.services.job_transitions import cancellation_blocked_message, deletion_blocked_message
 
 logger = structlog.get_logger("services.multi_symbol_backtests")
 
 _QUEUE = "multi_symbol_backtests"
+_RUNNING_DELETE_CONFLICT = deletion_blocked_message("multi-symbol backtest run")
 
 
 def _persistable_ratio_metric(value: Any) -> Decimal | None:
@@ -435,6 +438,45 @@ class MultiSymbolBacktestService:
             completed_at=run.completed_at,
             error_code=run.error_code,
             error_message=run.error_message,
+        )
+
+    def delete_for_user(self, *, run_id: UUID, user_id: UUID) -> None:
+        run = self.session.scalar(select(MultiSymbolRun).where(MultiSymbolRun.id == run_id, MultiSymbolRun.user_id == user_id))
+        if run is None:
+            raise NotFoundError("Multi-symbol backtest run not found.")
+        if run.status in ("queued", "running"):
+            raise ConflictError(_RUNNING_DELETE_CONFLICT)
+        self.session.delete(run)
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def cancel_for_user(self, *, run_id: UUID, user_id: UUID) -> MultiSymbolRunStatusResponse:
+        run = self.session.scalar(select(MultiSymbolRun).where(MultiSymbolRun.id == run_id, MultiSymbolRun.user_id == user_id))
+        if run is None:
+            raise NotFoundError("Multi-symbol backtest run not found.")
+        if run.status not in ("queued", "running"):
+            raise ConflictError(cancellation_blocked_message("multi-symbol backtest run"))
+        task_id = mark_job_cancelled(run)
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        revoke_celery_task(task_id, job_type="multi_symbol_backtest", job_id=run.id)
+        publish_cancellation_event(job_type="multi_symbol_backtest", job_id=run.id)
+        refreshed = self.session.scalar(select(MultiSymbolRun).where(MultiSymbolRun.id == run_id, MultiSymbolRun.user_id == user_id))
+        if refreshed is None:
+            raise NotFoundError("Multi-symbol backtest run not found.")
+        return MultiSymbolRunStatusResponse(
+            id=refreshed.id,
+            status=refreshed.status,
+            started_at=refreshed.started_at,
+            completed_at=refreshed.completed_at,
+            error_code=refreshed.error_code,
+            error_message=refreshed.error_message,
         )
 
     def _prepare_symbol_data(self, request: CreateMultiSymbolRunRequest) -> dict[str, _PreparedSymbolData]:

@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+import backtestforecast.models  # noqa: F401 - ensure model tables are registered on Base.metadata
 from backtestforecast.db.base import Base
 
 

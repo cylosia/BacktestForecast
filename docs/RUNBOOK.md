@@ -98,8 +98,11 @@ Query the `audit_events` table for `event_type = 'account.deleted'` and cross-re
 ## Database Operations
 
 ### Run migrations
+Use the same Python environment as the release artifact you are operating on
+(activated repo virtualenv locally, or the target container in production).
+
 ```bash
-alembic upgrade head
+python -m alembic upgrade head
 ```
 
 ### Check migration drift
@@ -109,7 +112,7 @@ python scripts/check_migration_drift.py
 
 ### Rollback last migration
 ```bash
-alembic downgrade -1
+python -m alembic downgrade -1
 ```
 
 ## Worker Operations
@@ -441,9 +444,9 @@ Only rollback migrations as a last resort. Prefer forward-fixing with a new migr
 
 ### Procedure
 
-1. Identify the target revision: `alembic history`
-2. Downgrade: `alembic downgrade <target_revision>`
-3. Verify: `alembic current`
+1. Identify the target revision: `python -m alembic history`
+2. Downgrade: `python -m alembic downgrade <target_revision>`
+3. Verify: `python -m alembic current`
 4. Some migrations have destructive downgrades (column drops). Check the downgrade function before running.
 
 ### Destructive downgrades

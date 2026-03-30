@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,3 +50,22 @@ def test_ci_runs_router_dispatch_guard() -> None:
     source = _read(".github/workflows/ci.yml")
     assert "Guard router dispatch transaction boundaries" in source
     assert "python scripts/check_router_dispatch_transactions.py" in source
+
+
+def test_github_workflows_use_python_module_alembic_invocations() -> None:
+    workflow_paths = (
+        ".github/workflows/ci.yml",
+        ".github/workflows/cd.yml",
+        ".github/workflows/playwright.yml",
+        ".github/workflows/live-provider-nightly.yml",
+    )
+    bare_command = re.compile(r"(?<!python -m )\balembic\b\s+(upgrade|downgrade|current|heads|check)\b")
+
+    for relpath in workflow_paths:
+        source = _read(relpath)
+        disallowed = [
+            line.strip()
+            for line in source.splitlines()
+            if bare_command.search(line) and not line.strip().startswith("- name:")
+        ]
+        assert not disallowed, f"{relpath} contains bare alembic command snippets: {disallowed}"

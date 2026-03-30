@@ -35,6 +35,6 @@ elif [ "$HEAD_COUNT" -eq 0 ]; then
 else
   echo "✗ Alembic has $HEAD_COUNT migration heads (expected 1)."
   echo "  This means there are branching migrations that need to be resolved."
-  echo "  Run: alembic heads"
+  echo "  Run: python -m alembic heads"
   exit 1
 fi

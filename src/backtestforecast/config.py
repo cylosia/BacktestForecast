@@ -307,6 +307,8 @@ class Settings(BaseSettings):
     # Use `from backtestforecast.feature_flags import is_feature_enabled`
     # for user-aware checks.  The boolean flags below remain the kill-switch.
     feature_backtests_enabled: bool = True
+    feature_multi_symbol_backtests_enabled: bool = False
+    feature_multi_step_backtests_enabled: bool = False
     feature_scanner_enabled: bool = True
     feature_exports_enabled: bool = True
     feature_forecasts_enabled: bool = True
@@ -848,6 +850,8 @@ class Settings(BaseSettings):
                 )
             _data_features = (
                 self.feature_backtests_enabled
+                or self.feature_multi_symbol_backtests_enabled
+                or self.feature_multi_step_backtests_enabled
                 or self.feature_scanner_enabled
                 or self.feature_sweeps_enabled
                 or self.feature_analysis_enabled
@@ -873,6 +877,8 @@ class Settings(BaseSettings):
 
         _data_features = (
             self.feature_backtests_enabled
+            or self.feature_multi_symbol_backtests_enabled
+            or self.feature_multi_step_backtests_enabled
             or self.feature_scanner_enabled
             or self.feature_sweeps_enabled
             or self.feature_analysis_enabled

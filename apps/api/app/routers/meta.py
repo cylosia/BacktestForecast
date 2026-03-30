@@ -21,6 +21,8 @@ from backtestforecast.version import API_SERVICE_NAME, get_public_version
 
 class FeatureFlagsResponse(BaseModel):
     backtests: bool = True
+    multi_symbol_backtests: bool = False
+    multi_step_backtests: bool = False
     scanner: bool = True
     exports: bool = True
     forecasts: bool = True
@@ -97,6 +99,8 @@ def get_meta(request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
         result["billing_enabled"] = settings.stripe_billing_enabled
         result["features"] = {
             "backtests": settings.feature_backtests_enabled,
+            "multi_symbol_backtests": settings.feature_multi_symbol_backtests_enabled,
+            "multi_step_backtests": settings.feature_multi_step_backtests_enabled,
             "scanner": settings.feature_scanner_enabled,
             "exports": settings.feature_exports_enabled,
             "forecasts": settings.feature_forecasts_enabled,
