@@ -12,6 +12,7 @@ from backtestforecast.db.session import (
     get_applied_revision,
     get_database_timezones,
     get_expected_revision,
+    get_expected_revision_error,
     get_missing_schema_tables,
     ping_database,
 )
@@ -116,25 +117,27 @@ def _get_migration_status() -> dict[str, object]:
 
         current = get_applied_revision()
         head = get_expected_revision()
+        error = get_expected_revision_error()
         match = bool(head and current == head)
         MIGRATION_HEAD_MATCH.set(1 if match else 0)
         payload = {
             "aligned": match,
             "applied_revision": current,
             "expected_revision": head,
+            "error": error,
         }
         _migration_check_cache = (now, payload)
         return dict(payload)
     except (ImportError, FileNotFoundError):
         import structlog
         structlog.get_logger("health").debug("health.migration_check_unavailable", exc_info=True)
-        payload = {"aligned": False, "applied_revision": None, "expected_revision": None}
+        payload = {"aligned": False, "applied_revision": None, "expected_revision": None, "error": None}
         _migration_check_cache = (now, payload)
         return dict(payload)
     except Exception:
         import structlog
         structlog.get_logger("health").warning("health.migration_check_failed", exc_info=True)
-        payload = {"aligned": False, "applied_revision": None, "expected_revision": None}
+        payload = {"aligned": False, "applied_revision": None, "expected_revision": None, "error": None}
         _migration_check_cache = (now, payload)
         return dict(payload)
 
@@ -269,7 +272,7 @@ def ready(request: Request) -> JSONResponse:
         rl_mode = "in_memory_fallback"
 
     massive_status = _check_massive_health(settings)
-    migration_status = {"aligned": True, "applied_revision": None, "expected_revision": None}
+    migration_status = {"aligned": True, "applied_revision": None, "expected_revision": None, "error": None}
     if settings.app_env not in ("development",):
         migration_status = _get_migration_status()
         if not migration_status["aligned"]:
@@ -286,6 +289,8 @@ def ready(request: Request) -> JSONResponse:
                 payload["migration_aligned"] = False
                 payload["migration_applied_revision"] = migration_status["applied_revision"]
                 payload["migration_expected_revision"] = migration_status["expected_revision"]
+                if migration_status.get("error"):
+                    payload["migration_error"] = migration_status["error"]
             return JSONResponse(status_code=503, content=payload)
 
     operations_status = _get_operations_status()
@@ -304,6 +309,8 @@ def ready(request: Request) -> JSONResponse:
                 payload["migration_aligned"] = bool(migration_status["aligned"])
                 payload["migration_applied_revision"] = migration_status["applied_revision"]
                 payload["migration_expected_revision"] = migration_status["expected_revision"]
+                if migration_status.get("error"):
+                    payload["migration_error"] = migration_status["error"]
             payload.update(operations_status)
         return JSONResponse(status_code=503, content=payload)
 
@@ -353,6 +360,8 @@ def ready(request: Request) -> JSONResponse:
             payload["migration_aligned"] = bool(migration_status["aligned"])
             payload["migration_applied_revision"] = migration_status["applied_revision"]
             payload["migration_expected_revision"] = migration_status["expected_revision"]
+            if migration_status.get("error"):
+                payload["migration_error"] = migration_status["error"]
         payload.update(operations_status)
     return JSONResponse(status_code=200, content=payload)
 

@@ -21,6 +21,8 @@ from backtestforecast.db.base import Base
 from backtestforecast.errors import ExternalServiceError
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
+from backtestforecast.market_data.types import ExDividendRecord
+from backtestforecast.models import HistoricalExDividendDate
 
 
 def _load_sync_script_module():
@@ -173,10 +175,21 @@ class _FakeRestClient:
         self.treasury_calls.append(start_date)
         return Decimal("0.041")
 
-    def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date):
+    def list_ex_dividend_records(self, symbol: str, start_date: date, end_date: date):
         assert start_date == end_date
         self.dividend_calls.append((symbol, start_date))
-        return {start_date} if symbol == "AAPL" else set()
+        if symbol != "AAPL":
+            return []
+        return [
+            ExDividendRecord(
+                ex_dividend_date=start_date,
+                provider_dividend_id=f"{symbol}-{start_date.isoformat()}",
+                cash_amount=0.15,
+                currency="USD",
+                frequency=4,
+                distribution_type="recurring",
+            )
+        ]
 
     def close(self) -> None:
         return None
@@ -396,6 +409,10 @@ def test_maybe_enrich_trade_date_writes_treasury_and_dividends_when_enabled() ->
     assert rest_client.dividend_calls == [("AAPL", date(2025, 4, 1)), ("MSFT", date(2025, 4, 1))]
     assert store.get_average_treasury_yield(date(2025, 4, 1), date(2025, 4, 1)) == 0.041
     assert store.list_ex_dividend_dates("AAPL", date(2025, 4, 1), date(2025, 4, 1)) == {date(2025, 4, 1)}
+    with store._session(readonly=True) as session:
+        row = session.query(HistoricalExDividendDate).filter_by(symbol="AAPL", ex_dividend_date=date(2025, 4, 1)).one()
+    assert row.provider_dividend_id == "AAPL-2025-04-01"
+    assert row.distribution_type == "recurring"
 
 
 def test_maybe_enrich_trade_date_uses_imported_symbols_when_allowlist_is_empty() -> None:

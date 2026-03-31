@@ -9,8 +9,10 @@ from uuid import uuid4
 
 import structlog
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import delete
 from sqlalchemy import select
 from sqlalchemy import text
+from sqlalchemy import tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -232,7 +234,7 @@ class HistoricalMarketDataStore:
         with self._session(readonly=True) as session:
             rows = list(
                 session.scalars(
-                    select(HistoricalExDividendDate.ex_dividend_date).where(
+                    select(HistoricalExDividendDate.ex_dividend_date).distinct().where(
                         HistoricalExDividendDate.symbol == symbol,
                         HistoricalExDividendDate.ex_dividend_date >= start_date,
                         HistoricalExDividendDate.ex_dividend_date <= end_date,
@@ -285,7 +287,10 @@ class HistoricalMarketDataStore:
         return self._bulk_upsert(bars, HistoricalOptionDayBar, ("option_ticker", "trade_date"))
 
     def upsert_ex_dividend_dates(self, rows: list[HistoricalExDividendDate]) -> int:
-        return self._bulk_upsert(rows, HistoricalExDividendDate, ("symbol", "ex_dividend_date"))
+        if not rows:
+            return 0
+        payloads = [self._normalize_payload(self._row_payload(row, HistoricalExDividendDate), HistoricalExDividendDate) for row in rows]
+        return self.upsert_ex_dividend_payloads(payloads)
 
     def upsert_treasury_yields(self, rows: list[HistoricalTreasuryYield]) -> int:
         return self._bulk_upsert(rows, HistoricalTreasuryYield, ("trade_date",))
@@ -329,7 +334,54 @@ class HistoricalMarketDataStore:
                 session.close()
 
     def upsert_ex_dividend_payloads(self, rows: list[dict[str, object]]) -> int:
-        return self._bulk_upsert_payloads(rows, HistoricalExDividendDate, ("symbol", "ex_dividend_date"))
+        if not rows:
+            return 0
+        normalized_rows = [self._normalize_payload(row, HistoricalExDividendDate) for row in rows]
+        provider_rows = [row for row in normalized_rows if row.get("provider_dividend_id")]
+        legacy_rows = [row for row in normalized_rows if not row.get("provider_dividend_id")]
+        stored = 0
+        session = self._session(readonly=False)
+        try:
+            if provider_rows:
+                provider_rows = self._dedupe_payloads(provider_rows, ("provider_dividend_id",))
+                placeholder_pairs = sorted(
+                    {
+                        (str(row["symbol"]), row["ex_dividend_date"])
+                        for row in provider_rows
+                        if row.get("symbol") and row.get("ex_dividend_date") is not None
+                    }
+                )
+                if placeholder_pairs:
+                    session.execute(
+                        delete(HistoricalExDividendDate).where(
+                            HistoricalExDividendDate.provider_dividend_id.is_(None),
+                            tuple_(HistoricalExDividendDate.symbol, HistoricalExDividendDate.ex_dividend_date).in_(placeholder_pairs),
+                        )
+                    )
+                bind = session.get_bind()
+                if bind is not None and bind.dialect.name == "postgresql":
+                    self._bulk_upsert_postgres(session, provider_rows, HistoricalExDividendDate, ("provider_dividend_id",))
+                else:
+                    self._bulk_upsert_fallback(session, provider_rows, HistoricalExDividendDate, ("provider_dividend_id",))
+                stored += len(provider_rows)
+            if legacy_rows:
+                legacy_rows = self._dedupe_payloads(legacy_rows, ("symbol", "ex_dividend_date"))
+                bind = session.get_bind()
+                if bind is not None and bind.dialect.name == "postgresql":
+                    self._bulk_upsert_postgres(session, legacy_rows, HistoricalExDividendDate, ("symbol", "ex_dividend_date"))
+                else:
+                    self._bulk_upsert_fallback(session, legacy_rows, HistoricalExDividendDate, ("symbol", "ex_dividend_date"))
+                stored += len(legacy_rows)
+            session.commit()
+            return stored
+        except Exception:
+            with suppress(Exception):
+                session.rollback()
+            logger.warning("historical_store.bulk_upsert_ex_dividend_failed", exc_info=True)
+            raise
+        finally:
+            with suppress(Exception):
+                session.close()
 
     def upsert_treasury_yield_payloads(self, rows: list[dict[str, object]]) -> int:
         return self._bulk_upsert_payloads(rows, HistoricalTreasuryYield, ("trade_date",))

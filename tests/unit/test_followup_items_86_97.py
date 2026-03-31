@@ -69,3 +69,29 @@ def test_github_workflows_use_python_module_alembic_invocations() -> None:
             if bare_command.search(line) and not line.strip().startswith("- name:")
         ]
         assert not disallowed, f"{relpath} contains bare alembic command snippets: {disallowed}"
+
+
+def test_ci_has_repo_root_bootstrap_smoke_check() -> None:
+    source = _read(".github/workflows/ci.yml")
+
+    assert "Verify repo-root Python bootstrap beats stale path contamination" in source
+    assert "PYTHONPATH: .ci-stale-checkout" in source
+    assert "from apps.api.app import main" in source
+
+
+def test_cd_rollback_guidance_requires_reviewed_migration_reversibility() -> None:
+    source = _read(".github/workflows/cd.yml")
+
+    assert "alembic downgrade -1" not in source
+    assert "Do not run a schema downgrade as a default rollback step." in source
+    assert "migration is proven reversible for this deployment" in source
+
+
+def test_gitignore_covers_local_runtime_and_audit_artifacts() -> None:
+    source = _read(".gitignore")
+
+    assert "/celery-broker-*.sqlite3" in source
+    assert "/celerybeat-schedule*" in source
+    assert "/apps/web/playwright-report/" in source
+    assert "/logs/" in source
+    assert "/.bench_baseline*" in source

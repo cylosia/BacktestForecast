@@ -18,7 +18,7 @@ from backtestforecast.errors import ExternalServiceError
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data.service import MarketDataService
-from backtestforecast.market_data.types import DailyBar
+from backtestforecast.market_data.types import DailyBar, ExDividendRecord
 from backtestforecast.models import HistoricalUnderlyingDayBar
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.utils.dates import is_market_holiday, is_trading_day
@@ -237,7 +237,10 @@ class TestPrepareBacktestExDividendDates:
     def test_prepare_backtest_loads_and_sets_ex_dividend_dates(self):
         bars = _make_bars(60, base_date=date(2023, 12, 1))
         svc = _make_service(bars)
-        svc.client.list_ex_dividend_dates.return_value = {date(2024, 1, 12), date(2024, 1, 26)}
+        svc.client.list_ex_dividend_records.return_value = [
+            ExDividendRecord(ex_dividend_date=date(2024, 1, 12), provider_dividend_id="div-1"),
+            ExDividendRecord(ex_dividend_date=date(2024, 1, 26), provider_dividend_id="div-2"),
+        ]
 
         request = CreateBacktestRunRequest(
             symbol="AAPL",
@@ -260,12 +263,14 @@ class TestPrepareBacktestExDividendDates:
             date(2024, 1, 12),
             date(2024, 1, 26),
         }
-        svc.client.list_ex_dividend_dates.assert_called_once()
+        svc.client.list_ex_dividend_records.assert_called_once()
 
     def test_prepare_backtest_populates_live_gateway_ex_dividend_cache(self):
         bars = _make_bars(60, base_date=date(2023, 12, 1))
         svc = _make_service(bars)
-        svc.client.list_ex_dividend_dates.return_value = {date(2024, 1, 12)}
+        svc.client.list_ex_dividend_records.return_value = [
+            ExDividendRecord(ex_dividend_date=date(2024, 1, 12), provider_dividend_id="div-1")
+        ]
 
         request = CreateBacktestRunRequest(
             symbol="AAPL",
@@ -288,7 +293,7 @@ class TestPrepareBacktestExDividendDates:
     def test_prepare_backtest_surfaces_warning_when_ex_dividend_dates_fail(self):
         bars = _make_bars(60, base_date=date(2023, 12, 1))
         svc = _make_service(bars)
-        svc.client.list_ex_dividend_dates.side_effect = ExternalServiceError("provider failed")
+        svc.client.list_ex_dividend_records.side_effect = ExternalServiceError("provider failed")
 
         request = CreateBacktestRunRequest(
             symbol="AAPL",
@@ -314,7 +319,9 @@ class TestPrepareBacktestExDividendDates:
     def test_prepare_backtest_reuses_in_memory_ex_dividend_cache(self):
         bars = _make_bars(60, base_date=date(2023, 12, 1))
         svc = _make_service(bars)
-        svc.client.list_ex_dividend_dates.return_value = {date(2024, 1, 12)}
+        svc.client.list_ex_dividend_records.return_value = [
+            ExDividendRecord(ex_dividend_date=date(2024, 1, 12), provider_dividend_id="div-1")
+        ]
 
         request = CreateBacktestRunRequest(
             symbol="AAPL",
@@ -335,7 +342,7 @@ class TestPrepareBacktestExDividendDates:
 
         assert first.ex_dividend_dates == {date(2024, 1, 12)}
         assert second.ex_dividend_dates == {date(2024, 1, 12)}
-        svc.client.list_ex_dividend_dates.assert_called_once()
+        svc.client.list_ex_dividend_records.assert_called_once()
 
     def test_load_ex_dividend_data_uses_redis_cache_before_provider(self):
         from backtestforecast.market_data.redis_cache import OptionDataRedisCache
@@ -354,7 +361,7 @@ class TestPrepareBacktestExDividendDates:
 
         assert result.dates == {date(2024, 1, 12)}
         assert result.warnings == []
-        svc.client.list_ex_dividend_dates.assert_not_called()
+        svc.client.list_ex_dividend_records.assert_not_called()
 
     def test_load_ex_dividend_data_caches_provider_failures_in_redis(self):
         from backtestforecast.market_data.redis_cache import CACHE_MISS, OptionDataRedisCache
@@ -364,7 +371,7 @@ class TestPrepareBacktestExDividendDates:
         redis_cache = MagicMock(spec=OptionDataRedisCache)
         redis_cache.get_ex_dividend_dates.return_value = CACHE_MISS
         svc._redis_cache = redis_cache
-        svc.client.list_ex_dividend_dates.side_effect = ExternalServiceError("provider failed")
+        svc.client.list_ex_dividend_records.side_effect = ExternalServiceError("provider failed")
 
         result = svc._load_ex_dividend_data(
             "AAPL",

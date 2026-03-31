@@ -15,6 +15,7 @@ from backtestforecast.config import get_settings
 from backtestforecast.errors import ConfigurationError, ExternalServiceError
 from backtestforecast.market_data.types import (
     DailyBar,
+    ExDividendRecord,
     OptionContractRecord,
     OptionGreeks,
     OptionQuoteRecord,
@@ -88,6 +89,13 @@ class _MassiveClientCore:
         if traceparent:
             headers["traceparent"] = traceparent
         return headers
+
+    def _build_query_params(self, url: str, params: dict[str, Any] | None) -> dict[str, Any] | None:
+        request_params = dict(params) if params is not None else {}
+        parsed = urlparse(url)
+        if parsed.path.startswith("/stocks/v1/") and "apiKey" not in request_params:
+            request_params["apiKey"] = self.api_key
+        return request_params or None
 
     def _compute_retry_delay(self, attempt: int, retry_after_header: str | None) -> float:
         """Return how many seconds to sleep before the next retry."""
@@ -364,16 +372,69 @@ class _MassiveClientCore:
 
     @staticmethod
     def parse_ex_dividend_dates(rows: list[dict[str, Any]]) -> set[date]:
-        dates: set[date] = set()
+        return {record.ex_dividend_date for record in _MassiveClientCore.parse_ex_dividend_records(rows)}
+
+    @staticmethod
+    def parse_ex_dividend_records(rows: list[dict[str, Any]]) -> list[ExDividendRecord]:
+        records: list[ExDividendRecord] = []
         for row in rows:
             raw_date = row.get("ex_dividend_date")
             if not isinstance(raw_date, str):
                 continue
             try:
-                dates.add(date.fromisoformat(raw_date))
+                ex_dividend_date = date.fromisoformat(raw_date)
             except ValueError:
                 logger.debug("massive_client.ex_dividend.invalid_date", raw_date=raw_date)
-        return dates
+                continue
+
+            def _parse_optional_date(field_name: str) -> date | None:
+                raw_value = row.get(field_name)
+                if not isinstance(raw_value, str) or not raw_value:
+                    return None
+                try:
+                    return date.fromisoformat(raw_value)
+                except ValueError:
+                    logger.debug("massive_client.ex_dividend.invalid_optional_date", field=field_name, raw_value=raw_value)
+                    return None
+
+            def _parse_optional_float(field_name: str) -> float | None:
+                raw_value = row.get(field_name)
+                if raw_value is None:
+                    return None
+                try:
+                    value = _parse_finite_float(raw_value, field_name)
+                except (TypeError, ValueError):
+                    logger.debug("massive_client.ex_dividend.invalid_numeric", field=field_name, raw_value=raw_value)
+                    return None
+                return value
+
+            raw_frequency = row.get("frequency")
+            frequency: int | None = None
+            if raw_frequency is not None:
+                try:
+                    frequency = int(raw_frequency)
+                except (TypeError, ValueError):
+                    logger.debug("massive_client.ex_dividend.invalid_frequency", raw_value=raw_frequency)
+
+            distribution_type = row.get("distribution_type")
+            currency = row.get("currency")
+            provider_dividend_id = row.get("id")
+            records.append(
+                ExDividendRecord(
+                    ex_dividend_date=ex_dividend_date,
+                    provider_dividend_id=provider_dividend_id if isinstance(provider_dividend_id, str) else None,
+                    cash_amount=_parse_optional_float("cash_amount"),
+                    currency=currency.strip().upper() if isinstance(currency, str) and currency.strip() else None,
+                    declaration_date=_parse_optional_date("declaration_date"),
+                    record_date=_parse_optional_date("record_date"),
+                    pay_date=_parse_optional_date("pay_date"),
+                    frequency=frequency,
+                    distribution_type=distribution_type.strip().lower() if isinstance(distribution_type, str) and distribution_type.strip() else None,
+                    historical_adjustment_factor=_parse_optional_float("historical_adjustment_factor"),
+                    split_adjusted_cash_amount=_parse_optional_float("split_adjusted_cash_amount"),
+                )
+            )
+        return records
 
     @staticmethod
     def parse_treasury_yield_average(
@@ -526,6 +587,30 @@ class MassiveClient(_MassiveClientCore):
         )
         return self.parse_contracts(rows)
 
+    def list_optionable_underlyings(
+        self,
+        *,
+        as_of_date: date,
+        include_expired: bool = True,
+    ) -> list[str]:
+        symbols: set[str] = set()
+        for page_rows in self._iter_paginated_results(
+            "/v3/reference/options/contracts",
+            params={
+                "as_of": as_of_date.isoformat(),
+                "expired": "true" if include_expired else "false",
+                "sort": "underlying_ticker",
+                "order": "asc",
+                "limit": 1000,
+            },
+            max_pages=1000,
+        ):
+            for row in page_rows:
+                underlying = row.get("underlying_ticker")
+                if isinstance(underlying, str) and underlying.strip():
+                    symbols.add(underlying.strip().upper())
+        return sorted(symbols)
+
     def list_option_contracts_for_expiration(
         self,
         symbol: str,
@@ -611,18 +696,23 @@ class MassiveClient(_MassiveClientCore):
         return set()
 
     def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        return {
+            record.ex_dividend_date
+            for record in self.list_ex_dividend_records(symbol, start_date, end_date)
+        }
+
+    def list_ex_dividend_records(self, symbol: str, start_date: date, end_date: date) -> list[ExDividendRecord]:
         rows = self._get_paginated_json(
-            "/v3/reference/dividends",
+            "/stocks/v1/dividends",
             params={
                 "ticker": symbol,
                 "ex_dividend_date.gte": start_date.isoformat(),
                 "ex_dividend_date.lte": end_date.isoformat(),
-                "sort": "ex_dividend_date",
-                "order": "asc",
-                "limit": 1000,
+                "sort": "ex_dividend_date.asc",
+                "limit": 5000,
             },
         )
-        return self.parse_ex_dividend_dates(rows)
+        return self.parse_ex_dividend_records(rows)
 
     def get_average_treasury_yield(
         self,
@@ -664,18 +754,34 @@ class MassiveClient(_MassiveClientCore):
 
     def _get_paginated_json(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        for page_rows in self._iter_paginated_results(path, params=params):
+            rows.extend(page_rows)
+        return rows
+
+    def _iter_paginated_results(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any],
+        max_pages: int = MAX_PAGINATION_PAGES,
+    ):
         next_path: str | None = path
         next_params: dict[str, Any] | None = params.copy()
         pages_fetched = 0
+        rows_collected = 0
         while next_path:
-            if pages_fetched >= MAX_PAGINATION_PAGES:
+            if pages_fetched >= max_pages:
                 self._raise_pagination_limit_exceeded(
                     path=path,
                     pages_fetched=pages_fetched,
-                    rows_collected=len(rows),
+                    rows_collected=rows_collected,
                 )
             payload = self._get_json(next_path, params=next_params)
-            rows.extend(payload.get("results", []))
+            page_rows = payload.get("results", [])
+            if not isinstance(page_rows, list):
+                raise ExternalServiceError("Massive pagination returned an unexpected payload.")
+            rows_collected += len(page_rows)
+            yield page_rows
             pages_fetched += 1
             next_url = payload.get("next_url")
             if not isinstance(next_url, str) or not next_url:
@@ -685,11 +791,10 @@ class MassiveClient(_MassiveClientCore):
                     path=path,
                     next_url=next_url,
                     pages_fetched=pages_fetched,
-                    rows_collected=len(rows),
+                    rows_collected=rows_collected,
                 )
             next_path = next_url
             next_params = None
-        return rows
 
     def _request_with_retry(
         self,
@@ -710,6 +815,7 @@ class MassiveClient(_MassiveClientCore):
 
         url = self._build_url(path)
         headers = self._build_headers()
+        request_params = self._build_query_params(url, params)
         retryable_message: str | None = None
         deadline = time.monotonic() + self.timeout * (self.max_retries + 1)
 
@@ -717,7 +823,7 @@ class MassiveClient(_MassiveClientCore):
             if time.monotonic() > deadline:
                 raise ExternalServiceError("Massive request exceeded aggregate retry deadline.")
             try:
-                response = self._http.get(url, params=params, headers=headers)
+                response = self._http.get(url, params=request_params, headers=headers)
             except httpx.HTTPError as exc:
                 self._circuit.record_failure(is_transient=True)
                 retryable_message = "Massive request failed due to a network error."
@@ -825,6 +931,30 @@ class AsyncMassiveClient(_MassiveClientCore):
         )
         return self.parse_contracts(rows)
 
+    async def list_optionable_underlyings(
+        self,
+        *,
+        as_of_date: date,
+        include_expired: bool = True,
+    ) -> list[str]:
+        symbols: set[str] = set()
+        async for page_rows in self._iter_paginated_results(
+            "/v3/reference/options/contracts",
+            params={
+                "as_of": as_of_date.isoformat(),
+                "expired": "true" if include_expired else "false",
+                "sort": "underlying_ticker",
+                "order": "asc",
+                "limit": 1000,
+            },
+            max_pages=1000,
+        ):
+            for row in page_rows:
+                underlying = row.get("underlying_ticker")
+                if isinstance(underlying, str) and underlying.strip():
+                    symbols.add(underlying.strip().upper())
+        return sorted(symbols)
+
     async def list_option_contracts_for_expiration(
         self,
         symbol: str,
@@ -910,18 +1040,23 @@ class AsyncMassiveClient(_MassiveClientCore):
         return set()
 
     async def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        return {
+            record.ex_dividend_date
+            for record in await self.list_ex_dividend_records(symbol, start_date, end_date)
+        }
+
+    async def list_ex_dividend_records(self, symbol: str, start_date: date, end_date: date) -> list[ExDividendRecord]:
         rows = await self._get_paginated_json(
-            "/v3/reference/dividends",
+            "/stocks/v1/dividends",
             params={
                 "ticker": symbol,
                 "ex_dividend_date.gte": start_date.isoformat(),
                 "ex_dividend_date.lte": end_date.isoformat(),
-                "sort": "ex_dividend_date",
-                "order": "asc",
-                "limit": 1000,
+                "sort": "ex_dividend_date.asc",
+                "limit": 5000,
             },
         )
-        return self.parse_ex_dividend_dates(rows)
+        return self.parse_ex_dividend_records(rows)
 
     async def get_average_treasury_yield(
         self,
@@ -945,18 +1080,34 @@ class AsyncMassiveClient(_MassiveClientCore):
 
     async def _get_paginated_json(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        async for page_rows in self._iter_paginated_results(path, params=params):
+            rows.extend(page_rows)
+        return rows
+
+    async def _iter_paginated_results(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any],
+        max_pages: int = MAX_PAGINATION_PAGES,
+    ):
         next_path: str | None = path
         next_params: dict[str, Any] | None = params.copy()
         pages_fetched = 0
+        rows_collected = 0
         while next_path:
-            if pages_fetched >= MAX_PAGINATION_PAGES:
+            if pages_fetched >= max_pages:
                 self._raise_pagination_limit_exceeded(
                     path=path,
                     pages_fetched=pages_fetched,
-                    rows_collected=len(rows),
+                    rows_collected=rows_collected,
                 )
             payload = await self._get_json(next_path, params=next_params)
-            rows.extend(payload.get("results", []))
+            page_rows = payload.get("results", [])
+            if not isinstance(page_rows, list):
+                raise ExternalServiceError("Massive pagination returned an unexpected payload.")
+            rows_collected += len(page_rows)
+            yield page_rows
             pages_fetched += 1
             next_url = payload.get("next_url")
             if not isinstance(next_url, str) or not next_url:
@@ -966,11 +1117,10 @@ class AsyncMassiveClient(_MassiveClientCore):
                     path=path,
                     next_url=next_url,
                     pages_fetched=pages_fetched,
-                    rows_collected=len(rows),
+                    rows_collected=rows_collected,
                 )
             next_path = next_url
             next_params = None
-        return rows
 
     async def _request_with_retry(
         self,
@@ -985,6 +1135,7 @@ class AsyncMassiveClient(_MassiveClientCore):
 
         url = self._build_url(path)
         headers = self._build_headers()
+        request_params = self._build_query_params(url, params)
         retryable_message: str | None = None
         deadline = time.monotonic() + self.timeout * (self.max_retries + 1)
 
@@ -992,7 +1143,7 @@ class AsyncMassiveClient(_MassiveClientCore):
             if time.monotonic() > deadline:
                 raise ExternalServiceError("Massive request exceeded aggregate retry deadline.")
             try:
-                response = await self._http.get(url, params=params, headers=headers)
+                response = await self._http.get(url, params=request_params, headers=headers)
             except httpx.HTTPError as exc:
                 await self._circuit.record_failure_async(is_transient=True)
                 retryable_message = "Massive request failed due to a network error."

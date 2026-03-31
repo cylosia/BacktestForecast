@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.types import BacktestConfig
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
-from backtestforecast.schemas.backtests import StrategyOverrides
+from backtestforecast.schemas.backtests import CreateBacktestRunRequest, CustomLegDefinition, StrategyOverrides
 
 
 @dataclass
@@ -97,6 +99,52 @@ class ExactCalendarGateway(FakeGateway):
             and (strike_price_gte is None or contract.strike_price >= strike_price_gte)
             and (strike_price_lte is None or contract.strike_price <= strike_price_lte)
         ]
+
+
+@dataclass
+class ExactCustomGateway(FakeGateway):
+    exact_calls: list[tuple[date, str, date]] = field(default_factory=list)
+
+    def list_contracts(
+        self,
+        entry_date: date,
+        contract_type: str,
+        target_dte: int,
+        dte_tolerance_days: int,
+    ) -> list[OptionContractRecord]:
+        raise AssertionError("custom explicit expirations should use exact-expiration lookups when available")
+
+    def list_contracts_for_expiration(
+        self,
+        *,
+        entry_date: date,
+        contract_type: str,
+        expiration_date: date,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[OptionContractRecord]:
+        self.exact_calls.append((entry_date, contract_type, expiration_date))
+        contracts = super().list_contracts(entry_date, contract_type, 0, 0)
+        return [
+            contract
+            for contract in contracts
+            if contract.expiration_date == expiration_date
+            and (strike_price_gte is None or contract.strike_price >= strike_price_gte)
+            and (strike_price_lte is None or contract.strike_price <= strike_price_lte)
+        ]
+
+    def get_chain_delta_lookup(self, contracts):
+        lookup = {}
+        for contract in contracts:
+            if contract.contract_type != "put":
+                continue
+            if contract.strike_price == 14:
+                lookup[(contract.strike_price, contract.expiration_date)] = -0.20
+            elif contract.strike_price == 15:
+                lookup[(contract.strike_price, contract.expiration_date)] = -0.50
+            elif contract.strike_price == 16:
+                lookup[(contract.strike_price, contract.expiration_date)] = -0.80
+        return lookup
 
 
 def make_bar(trade_date: date, close_price: float, volume: float = 1_000_000) -> DailyBar:
@@ -363,8 +411,6 @@ def test_calendar_spread_prefers_exact_expiration_fetch_when_gateway_supports_it
 
 def test_custom_2_leg_stock_only_uses_end_date() -> None:
     """Stock-only custom legs use config.end_date as scheduled_exit_date."""
-    from backtestforecast.schemas.backtests import CustomLegDefinition
-
     engine = OptionsBacktestEngine()
     bars = [make_bar(date(2025, 1, d), 100 + d, 1_000_000) for d in range(1, 10)]
     config = BacktestConfig(
@@ -388,6 +434,140 @@ def test_custom_2_leg_stock_only_uses_end_date() -> None:
     assert result.summary is not None
     for trade in result.trades:
         assert trade.exit_date <= date(2025, 1, 9)
+
+
+def test_custom_strategy_supports_three_explicit_expirations_and_furthest_exit() -> None:
+    engine = OptionsBacktestEngine()
+    entry_date = date(2025, 5, 1)
+    exp_1 = date(2025, 6, 5)
+    exp_2 = date(2025, 6, 12)
+    exp_3 = date(2025, 10, 2)
+    bars = [
+        make_bar(date(2025, 4, 30), 15.0),
+        make_bar(entry_date, 15.0),
+        make_bar(exp_3, 15.0),
+    ]
+    contracts = {
+        (entry_date, "put"): [
+            OptionContractRecord("P15_0605", "put", exp_1, 15.0, 100),
+            OptionContractRecord("P14_0612", "put", exp_2, 14.0, 100),
+            OptionContractRecord("P15_0612", "put", exp_2, 15.0, 100),
+            OptionContractRecord("P16_0612", "put", exp_2, 16.0, 100),
+            OptionContractRecord("P15_1002", "put", exp_3, 15.0, 100),
+        ],
+        (entry_date, "call"): [
+            OptionContractRecord("C15_1002", "call", exp_3, 15.0, 100),
+        ],
+    }
+    quotes = {
+        ("P15_0605", entry_date): make_quote(entry_date, 1.2),
+        ("P15_0612", entry_date): make_quote(entry_date, 1.4),
+        ("P14_0612", entry_date): make_quote(entry_date, 0.8),
+        ("P15_1002", entry_date): make_quote(entry_date, 2.1),
+        ("C15_1002", entry_date): make_quote(entry_date, 2.3),
+    }
+    gateway = ExactCustomGateway(contracts=contracts, quotes=quotes)
+
+    result = engine.run(
+        BacktestConfig(
+            symbol="F",
+            strategy_type="custom_5_leg",
+            start_date=date(2025, 4, 30),
+            end_date=entry_date,
+            target_dte=21,
+            dte_tolerance_days=5,
+            max_holding_days=120,
+            account_size=100_000,
+            risk_per_trade_pct=10,
+            commission_per_contract=0,
+            entry_rules=[],
+            custom_legs=[
+                CustomLegDefinition(
+                    asset_type="option",
+                    contract_type="put",
+                    side="short",
+                    expiration_date=exp_1,
+                    strike_selection={"mode": "atm_offset_steps", "value": 0},
+                    quantity_ratio=1,
+                ),
+                CustomLegDefinition(
+                    asset_type="option",
+                    contract_type="put",
+                    side="long",
+                    expiration_date=exp_2,
+                    strike_selection={"mode": "atm_offset_steps", "value": 0},
+                    quantity_ratio=1,
+                ),
+                CustomLegDefinition(
+                    asset_type="option",
+                    contract_type="put",
+                    side="long",
+                    expiration_date=exp_2,
+                    strike_selection={"mode": "delta_target", "value": 20},
+                    quantity_ratio=1,
+                ),
+                CustomLegDefinition(
+                    asset_type="option",
+                    contract_type="call",
+                    side="short",
+                    expiration_date=exp_3,
+                    strike_selection={"mode": "atm_offset_steps", "value": 0},
+                    quantity_ratio=1,
+                ),
+                CustomLegDefinition(
+                    asset_type="option",
+                    contract_type="put",
+                    side="short",
+                    expiration_date=exp_3,
+                    strike_selection={"mode": "atm_offset_steps", "value": 0},
+                    quantity_ratio=1,
+                ),
+            ],
+        ),
+        bars,
+        set(),
+        gateway,
+    )
+
+    assert result.summary.trade_count == 1
+    trade = result.trades[0]
+    assert trade.exit_date == exp_3
+    assert trade.expiration_date == exp_3
+    assert (entry_date, "put", exp_1) in gateway.exact_calls
+    assert (entry_date, "put", exp_2) in gateway.exact_calls
+    assert (entry_date, "call", exp_3) in gateway.exact_calls
+    legs_by_ticker = {leg["ticker"]: leg for leg in trade.detail_json["legs"]}
+    assert "P14_0612" in legs_by_ticker
+    assert trade.detail_json["custom_legs"][2]["strike_selection"]["mode"] == "delta_target"
+    assert trade.detail_json["resolved_option_expirations"] == [
+        exp_1.isoformat(),
+        exp_2.isoformat(),
+        exp_3.isoformat(),
+    ]
+
+
+def test_custom_request_rejects_more_than_three_explicit_expirations() -> None:
+    with pytest.raises(PydanticValidationError, match="at most 3 unique option expiration_date"):
+        CreateBacktestRunRequest(
+            symbol="F",
+            strategy_type="custom_5_leg",
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 2, 1),
+            target_dte=21,
+            dte_tolerance_days=5,
+            max_holding_days=30,
+            account_size=Decimal("10000"),
+            risk_per_trade_pct=Decimal("10"),
+            commission_per_contract=Decimal("1"),
+            entry_rules=[{"type": "rsi", "operator": "lt", "threshold": 35, "period": 14}],
+            custom_legs=[
+                CustomLegDefinition(asset_type="option", contract_type="put", side="short", expiration_date=date(2025, 2, 7), quantity_ratio=1),
+                CustomLegDefinition(asset_type="option", contract_type="put", side="long", expiration_date=date(2025, 2, 14), quantity_ratio=1),
+                CustomLegDefinition(asset_type="option", contract_type="call", side="short", expiration_date=date(2025, 2, 21), quantity_ratio=1),
+                CustomLegDefinition(asset_type="option", contract_type="call", side="long", expiration_date=date(2025, 2, 28), quantity_ratio=1),
+                CustomLegDefinition(asset_type="stock", side="long", quantity_ratio=1),
+            ],
+        )
 
 
 def test_zero_trade_run_has_empty_stats() -> None:

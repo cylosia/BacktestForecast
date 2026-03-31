@@ -152,8 +152,21 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
 
     migration_status = get_migration_status()
     if not migration_status["aligned"]:
+        migration_error = migration_status.get("error")
         expected_revision = migration_status["expected_revision"] or "unknown"
         applied_revision = migration_status["applied_revision"] or "none"
+        if migration_error:
+            if _startup_settings.app_env in ("production", "staging"):
+                raise RuntimeError(
+                    "Unable to resolve Alembic head for readiness verification. "
+                    f"Applied revision: {applied_revision}; error: {migration_error}."
+                )
+            logger.warning(
+                "startup.migration_head_unavailable",
+                applied_revision=applied_revision,
+                migration_error=migration_error,
+                hint="Fix repository bootstrap/import paths so Alembic resolves this checkout's migration head.",
+            )
         if _startup_settings.app_env in ("production", "staging"):
             raise RuntimeError(
                 "DATABASE_URL points to a schema revision that does not match Alembic head. "
@@ -163,6 +176,7 @@ async def _lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
             "startup.migration_drift",
             applied_revision=applied_revision,
             expected_revision=expected_revision,
+            migration_error=migration_error,
             hint="Run Alembic migrations against the configured DATABASE_URL before serving traffic.",
         )
 

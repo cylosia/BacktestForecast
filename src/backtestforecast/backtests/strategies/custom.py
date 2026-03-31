@@ -9,8 +9,10 @@ from backtestforecast.backtests.strategies.common import (
     choose_primary_expiration,
     choose_secondary_expiration,
     contracts_for_expiration,
+    maybe_build_contract_delta_lookup,
     offset_strike,
     require_contract_for_strike,
+    resolve_strike,
     sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
@@ -44,29 +46,105 @@ class CustomNLegStrategy(StrategyDefinition):
         if not custom_legs:
             raise DataUnavailableError("custom_legs definitions are required for custom strategies.")
 
-        # Gather all calls and puts for expiration selection
-        calls = list(
-            option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
+        option_leg_defs = [leg for leg in custom_legs if leg.asset_type == "option"]
+        explicit_expiration_dates = sorted(
+            {
+                leg.expiration_date
+                for leg in option_leg_defs
+                if leg.expiration_date is not None
+            }
         )
-        puts = list(option_gateway.list_contracts(bar.trade_date, "put", config.target_dte, config.dte_tolerance_days))
-        all_contracts = calls + puts
-        if not all_contracts:
-            raise DataUnavailableError("No option contracts available.")
+        uses_explicit_expirations = bool(option_leg_defs) and all(
+            leg.expiration_date is not None for leg in option_leg_defs
+        )
 
-        # Resolve expirations: offset 0 = primary, 1/2 = successively later
-        primary_exp = choose_primary_expiration(all_contracts, bar.trade_date, config.target_dte)
-        expirations = {0: primary_exp}
-        if any(leg.expiration_offset >= 1 for leg in custom_legs):
-            sec = choose_secondary_expiration(all_contracts, bar.trade_date, primary_exp)
-            if sec is None:
-                raise DataUnavailableError("No secondary expiration available.")
-            expirations[1] = sec
-        if any(leg.expiration_offset >= 2 for leg in custom_legs):
-            sec1 = expirations.get(1, primary_exp)
-            third = choose_secondary_expiration(all_contracts, bar.trade_date, sec1)
-            if third is None:
-                raise DataUnavailableError("No third expiration available.")
-            expirations[2] = third
+        calls: list = []
+        puts: list = []
+        all_contracts: list = []
+        expirations: dict[int, object] = {}
+        contracts_by_type_and_expiration: dict[tuple[str, object], list] = {}
+
+        def _fetch_exact_contracts(contract_type: str, expiration_date: object) -> list:
+            cache_key = (contract_type, expiration_date)
+            cached = contracts_by_type_and_expiration.get(cache_key)
+            if cached is not None:
+                return cached
+
+            exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
+            chain: list
+            if callable(exact_fetch):
+                chain = list(
+                    exact_fetch(
+                        entry_date=bar.trade_date,
+                        contract_type=contract_type,
+                        expiration_date=expiration_date,
+                    )
+                )
+            else:
+                pool = calls if contract_type == "call" else puts
+                chain = contracts_for_expiration(pool, expiration_date)
+            contracts_by_type_and_expiration[cache_key] = chain
+            return chain
+
+        if option_leg_defs:
+            if uses_explicit_expirations:
+                earliest_expiration = min(explicit_expiration_dates)
+                furthest_expiration = max(explicit_expiration_dates)
+                exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
+                if not callable(exact_fetch):
+                    lower_bound = max(1, (earliest_expiration - bar.trade_date).days)
+                    upper_bound = max(1, (furthest_expiration - bar.trade_date).days)
+                    fetch_target_dte = max(1, (lower_bound + upper_bound) // 2)
+                    fetch_tolerance = max(fetch_target_dte - lower_bound, upper_bound - fetch_target_dte)
+                    calls = list(
+                        option_gateway.list_contracts(
+                            bar.trade_date, "call", fetch_target_dte, fetch_tolerance,
+                        )
+                    )
+                    puts = list(
+                        option_gateway.list_contracts(
+                            bar.trade_date, "put", fetch_target_dte, fetch_tolerance,
+                        )
+                    )
+                for expiration_date in explicit_expiration_dates:
+                    if any(leg.contract_type == "call" and leg.expiration_date == expiration_date for leg in option_leg_defs):
+                        _fetch_exact_contracts("call", expiration_date)
+                    if any(leg.contract_type == "put" and leg.expiration_date == expiration_date for leg in option_leg_defs):
+                        _fetch_exact_contracts("put", expiration_date)
+            else:
+                max_expiration_offset = max((leg.expiration_offset for leg in option_leg_defs), default=0)
+                minimum_dte = max(1, config.target_dte - config.dte_tolerance_days)
+                maximum_dte = config.target_dte + config.dte_tolerance_days + (14 * max_expiration_offset)
+                fetch_target_dte = max(1, (minimum_dte + maximum_dte) // 2)
+                fetch_tolerance = max(fetch_target_dte - minimum_dte, maximum_dte - fetch_target_dte)
+
+                calls = list(
+                    option_gateway.list_contracts(
+                        bar.trade_date, "call", fetch_target_dte, fetch_tolerance,
+                    )
+                )
+                puts = list(
+                    option_gateway.list_contracts(
+                        bar.trade_date, "put", fetch_target_dte, fetch_tolerance,
+                    )
+                )
+                all_contracts = calls + puts
+                if not all_contracts:
+                    raise DataUnavailableError("No option contracts available.")
+
+                primary_exp = choose_primary_expiration(all_contracts, bar.trade_date, config.target_dte)
+                expirations = {0: primary_exp}
+                if any(leg.expiration_offset >= 1 for leg in option_leg_defs):
+                    sec = choose_secondary_expiration(all_contracts, bar.trade_date, primary_exp)
+                    if sec is None:
+                        raise DataUnavailableError("No secondary expiration available.")
+                    expirations[1] = sec
+                if any(leg.expiration_offset >= 2 for leg in option_leg_defs):
+                    sec1 = expirations.get(1, primary_exp)
+                    third = choose_secondary_expiration(all_contracts, bar.trade_date, sec1)
+                    if third is None:
+                        raise DataUnavailableError("No third expiration available.")
+                    expirations[2] = third
 
         option_legs: list[OpenOptionLeg] = []
         stock_legs: list[OpenStockLeg] = []
@@ -103,24 +181,51 @@ class CustomNLegStrategy(StrategyDefinition):
             # Option leg
             if leg_def.contract_type is None:
                 raise DataUnavailableError("contract_type is required for option legs.")
-            exp = expirations.get(leg_def.expiration_offset)
+            exp = leg_def.expiration_date if uses_explicit_expirations else expirations.get(leg_def.expiration_offset)
             if exp is None:
                 raise DataUnavailableError(
                     f"Expiration offset {leg_def.expiration_offset} is not available. "
                     f"Only offsets 0-2 are supported and the requested expiration must exist in the chain."
                 )
-            if leg_def.contract_type == "call":
-                chain = contracts_for_expiration(calls, exp)
-            else:
-                chain = contracts_for_expiration(puts, exp)
+            chain = _fetch_exact_contracts(leg_def.contract_type, exp)
 
             if not chain:
+                if uses_explicit_expirations:
+                    raise DataUnavailableError(
+                        f"No {leg_def.contract_type} contracts were available for expiration {exp}."
+                    )
                 raise DataUnavailableError(
                     f"No {leg_def.contract_type} contracts at expiration offset {leg_def.expiration_offset}."
                 )
 
             strikes = sorted_unique_strikes(chain)
-            if leg_def.strike_offset == 0:
+            if leg_def.strike_selection is not None:
+                dte_days = max(1, (exp - bar.trade_date).days)
+                risk_free_rate = config.resolve_risk_free_rate(bar.trade_date)
+                delta_lookup = maybe_build_contract_delta_lookup(
+                    selection=leg_def.strike_selection,
+                    contracts=chain,
+                    option_gateway=option_gateway,
+                    trade_date=bar.trade_date,
+                    underlying_close=bar.close_price,
+                    dte_days=dte_days,
+                    risk_free_rate=risk_free_rate,
+                    dividend_yield=config.dividend_yield,
+                )
+                strike = resolve_strike(
+                    strikes,
+                    bar.close_price,
+                    leg_def.contract_type,
+                    leg_def.strike_selection,
+                    dte_days,
+                    delta_lookup=delta_lookup,
+                    contracts=chain,
+                    option_gateway=option_gateway,
+                    trade_date=bar.trade_date,
+                    expiration_date=exp,
+                    risk_free_rate=risk_free_rate,
+                )
+            elif leg_def.strike_offset == 0:
                 strike = choose_atm_strike(strikes, bar.close_price)
             else:
                 base = choose_atm_strike(strikes, bar.close_price)
@@ -167,7 +272,7 @@ class CustomNLegStrategy(StrategyDefinition):
 
         net_cost = total_debit - total_credit
         capital = max(net_cost, 0.0)
-        earliest_exp = min(
+        furthest_exp = max(
             (leg.expiration_date for leg in option_legs),
             default=config.end_date,
         )
@@ -185,29 +290,58 @@ class CustomNLegStrategy(StrategyDefinition):
             entry_date=bar.trade_date,
             entry_index=bar_index,
             quantity=1,
-            dte_at_open=(earliest_exp - bar.trade_date).days,
+            dte_at_open=max(0, (furthest_exp - bar.trade_date).days),
             option_legs=option_legs,
             stock_legs=stock_legs,
-            scheduled_exit_date=earliest_exp,
+            scheduled_exit_date=furthest_exp,
             capital_required_per_unit=capital,
             max_loss_per_unit=max_loss,
             max_profit_per_unit=None,
             detail_json={
-                "custom_legs": [
-                    {
-                        "asset_type": ld.asset_type,
-                        "contract_type": ld.contract_type,
-                        "side": ld.side,
-                        "strike_offset": ld.strike_offset,
-                        "expiration_offset": ld.expiration_offset,
-                        "quantity_ratio": ld.quantity_ratio,
-                    }
-                    for ld in custom_legs
+                "legs": [
+                    *[
+                        {
+                            "asset_type": "option",
+                            "ticker": leg.ticker,
+                            "side": "long" if leg.side == 1 else "short",
+                            "contract_type": leg.contract_type,
+                            "strike_price": leg.strike_price,
+                            "expiration_date": leg.expiration_date.isoformat(),
+                            "quantity_per_unit": leg.quantity_per_unit,
+                            "entry_mid": leg.entry_mid,
+                        }
+                        for leg in option_legs
+                    ],
+                    *[
+                        {
+                            "asset_type": "stock",
+                            "identifier": leg.symbol,
+                            "side": "long" if leg.side == 1 else "short",
+                            "share_quantity_per_unit": leg.share_quantity_per_unit,
+                            "entry_price": leg.entry_price,
+                        }
+                        for leg in stock_legs
+                    ],
                 ],
+                "custom_legs": [ld.model_dump(mode="json") for ld in custom_legs],
                 "net_cost_per_unit": net_cost,
+                "resolved_option_expirations": sorted({leg.expiration_date.isoformat() for leg in option_legs}),
                 "assumptions": [
-                    "Strike offsets are relative to the ATM strike at the selected expiration.",
-                    "Expiration offsets: 0=nearest to target_dte, 1=next available, 2=second-next.",
+                    (
+                        "Custom option legs use explicit expiration_date values and exact-expiration contract resolution."
+                        if uses_explicit_expirations
+                        else "Strike offsets are relative to the ATM strike at the selected expiration."
+                    ),
+                    (
+                        "The position remains open until the furthest option expiration unless another exit rule closes it earlier."
+                        if option_legs
+                        else "Stock-only custom positions use the backtest end date as the scheduled exit."
+                    ),
+                    (
+                        "Expiration offsets: 0=nearest to target_dte, 1=next available, 2=second-next."
+                        if not uses_explicit_expirations
+                        else "Per-leg strike_selection values override strike_offset for contract selection."
+                    ),
                     "Capital requirement is estimated; actual margin requirements may differ.",
                 ],
             },

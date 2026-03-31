@@ -10,7 +10,20 @@ Create Date: 2026-03-24
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from alembic import op
+
+ROOT = Path(__file__).resolve().parents[2]
+root_str = str(ROOT)
+if root_str not in sys.path:
+    sys.path.insert(0, root_str)
+
+from repo_bootstrap import ensure_repo_import_paths
+
+ensure_repo_import_paths()
+
 from backtestforecast.db.baseline_20260324_schema import (
     BASELINE_TABLE_NAMES,
     POSTGRESQL_DDL_STATEMENTS,

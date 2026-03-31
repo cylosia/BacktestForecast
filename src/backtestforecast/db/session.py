@@ -196,16 +196,32 @@ def get_missing_schema_tables() -> tuple[str, ...]:
 
 
 @lru_cache
-def get_expected_revision() -> str | None:
+def _get_expected_revision_details() -> tuple[str | None, str | None]:
     try:
         from alembic.config import Config
         from alembic.script import ScriptDirectory
 
         config = Config("alembic.ini")
         script = ScriptDirectory.from_config(config)
-        return script.get_current_head()
-    except Exception:
-        return None
+        return script.get_current_head(), None
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        structlog.get_logger("db.session").warning(
+            "db.migration_head_resolution_failed",
+            error=error,
+            exc_info=True,
+        )
+        return None, error
+
+
+def get_expected_revision() -> str | None:
+    expected_revision, _error = _get_expected_revision_details()
+    return expected_revision
+
+
+def get_expected_revision_error() -> str | None:
+    _expected_revision, error = _get_expected_revision_details()
+    return error
 
 
 def get_applied_revision() -> str | None:
@@ -221,12 +237,13 @@ def get_applied_revision() -> str | None:
 
 
 def get_migration_status() -> dict[str, str | bool | None]:
-    expected_revision = get_expected_revision()
+    expected_revision, error = _get_expected_revision_details()
     applied_revision = get_applied_revision()
     return {
         "expected_revision": expected_revision,
         "applied_revision": applied_revision,
         "aligned": bool(expected_revision and applied_revision == expected_revision),
+        "error": error,
     }
 
 
@@ -284,7 +301,7 @@ def _invalidate_db_caches() -> None:
         if engine_ref is not None:
             with suppress(Exception):
                 engine_ref.dispose()
-    get_expected_revision.cache_clear()
+    _get_expected_revision_details.cache_clear()
 
 
 register_invalidation_callback(_invalidate_db_caches)

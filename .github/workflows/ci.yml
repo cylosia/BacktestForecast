@@ -69,6 +69,34 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --constraint constraints.txt -e '.[dev]'
 
+      - name: Verify repo-root Python bootstrap beats stale path contamination
+        env:
+          PYTHONPATH: .ci-stale-checkout
+        run: |
+          mkdir -p .ci-stale-checkout/backtestforecast
+          cat <<'PY' > .ci-stale-checkout/backtestforecast/__init__.py
+          raise RuntimeError("stale checkout was imported")
+          PY
+          python - <<'PY'
+          from pathlib import Path
+          import backtestforecast
+          from apps.api.app import main
+
+          repo_root = Path.cwd().resolve()
+          expected_package = repo_root / "src" / "backtestforecast" / "__init__.py"
+          expected_app = repo_root / "apps" / "api" / "app" / "main.py"
+
+          actual_package = Path(backtestforecast.__file__).resolve()
+          actual_app = Path(main.__file__).resolve()
+
+          assert actual_package == expected_package, (
+              f"backtestforecast resolved to {actual_package}, expected {expected_package}"
+          )
+          assert actual_app == expected_app, (
+              f"apps.api.app.main resolved to {actual_app}, expected {expected_app}"
+          )
+          PY
+
       # Load coverage stays lightweight in CI: contract/shape checks run here,
       # and a short authenticated locust run can run in staging/CD when tokens
       # are available. See tests/load/locustfile.py for workflow coverage.

@@ -56,27 +56,100 @@ def test_list_ex_dividend_dates_uses_dividends_endpoint(monkeypatch) -> None:
         captured["path"] = path
         captured["params"] = params
         return [
-            {"ticker": "AAPL", "ex_dividend_date": "2024-01-12"},
-            {"ticker": "AAPL", "ex_dividend_date": "2024-02-09"},
+            {
+                "id": "div-1",
+                "ticker": "AAPL",
+                "ex_dividend_date": "2024-01-12",
+                "cash_amount": 0.24,
+                "currency": "usd",
+                "declaration_date": "2024-01-02",
+                "record_date": "2024-01-15",
+                "pay_date": "2024-02-01",
+                "frequency": 4,
+                "distribution_type": "recurring",
+                "historical_adjustment_factor": 1.001,
+                "split_adjusted_cash_amount": 0.24,
+            },
+            {"id": "div-2", "ticker": "AAPL", "ex_dividend_date": "2024-02-09"},
         ]
 
     monkeypatch.setattr(MassiveClient, "_get_paginated_json", fake_get_paginated_json)
     client = MassiveClient(api_key="test-key", base_url="https://api.test.com")
     try:
+        records = client.list_ex_dividend_records("AAPL", date(2024, 1, 1), date(2024, 2, 29))
         ex_dates = client.list_ex_dividend_dates("AAPL", date(2024, 1, 1), date(2024, 2, 29))
     finally:
         client.close()
 
-    assert captured["path"] == "/v3/reference/dividends"
+    assert captured["path"] == "/stocks/v1/dividends"
     assert captured["params"] == {
         "ticker": "AAPL",
         "ex_dividend_date.gte": "2024-01-01",
         "ex_dividend_date.lte": "2024-02-29",
-        "sort": "ex_dividend_date",
-        "order": "asc",
-        "limit": 1000,
+        "sort": "ex_dividend_date.asc",
+        "limit": 5000,
     }
+    assert records[0].provider_dividend_id == "div-1"
+    assert records[0].cash_amount == pytest.approx(0.24)
+    assert records[0].currency == "USD"
+    assert records[0].declaration_date == date(2024, 1, 2)
+    assert records[0].record_date == date(2024, 1, 15)
+    assert records[0].pay_date == date(2024, 2, 1)
+    assert records[0].frequency == 4
+    assert records[0].distribution_type == "recurring"
+    assert records[0].historical_adjustment_factor == pytest.approx(1.001)
+    assert records[0].split_adjusted_cash_amount == pytest.approx(0.24)
     assert ex_dates == {date(2024, 1, 12), date(2024, 2, 9)}
+
+
+def test_stocks_v1_requests_include_api_key_query_param() -> None:
+    client = MassiveClient(api_key="test-key", base_url="https://api.test.com")
+    try:
+        params = client._build_query_params(
+            "https://api.test.com/stocks/v1/dividends",
+            {"ticker": "F"},
+        )
+        other_params = client._build_query_params(
+            "https://api.test.com/v3/reference/options/contracts",
+            {"underlying_ticker": "SPY"},
+        )
+    finally:
+        client.close()
+
+    assert params == {"ticker": "F", "apiKey": "test-key"}
+    assert other_params == {"underlying_ticker": "SPY"}
+
+
+@pytest.mark.asyncio
+async def test_async_list_ex_dividend_dates_uses_dividends_endpoint(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_get_paginated_json(self, path, params):
+        captured["path"] = path
+        captured["params"] = params
+        return [
+            {"ticker": "F", "ex_dividend_date": "2024-03-01"},
+            {"ticker": "F", "ex_dividend_date": "2024-06-03"},
+        ]
+
+    monkeypatch.setattr(AsyncMassiveClient, "_get_paginated_json", fake_get_paginated_json)
+    client = AsyncMassiveClient(api_key="test-key", base_url="https://api.test.com")
+    try:
+        records = await client.list_ex_dividend_records("F", date(2024, 1, 1), date(2024, 12, 31))
+        ex_dates = await client.list_ex_dividend_dates("F", date(2024, 1, 1), date(2024, 12, 31))
+    finally:
+        await client.close()
+
+    assert captured["path"] == "/stocks/v1/dividends"
+    assert captured["params"] == {
+        "ticker": "F",
+        "ex_dividend_date.gte": "2024-01-01",
+        "ex_dividend_date.lte": "2024-12-31",
+        "sort": "ex_dividend_date.asc",
+        "limit": 5000,
+    }
+    assert [record.ex_dividend_date for record in records] == [date(2024, 3, 1), date(2024, 6, 3)]
+    assert ex_dates == {date(2024, 3, 1), date(2024, 6, 3)}
 
 
 def test_list_option_contracts_uses_active_as_of_window(monkeypatch) -> None:
@@ -123,6 +196,40 @@ def test_list_option_contracts_uses_active_as_of_window(monkeypatch) -> None:
     assert len(contracts) == 1
 
 
+def test_list_optionable_underlyings_uses_options_contracts_endpoint(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_iter_paginated_results(self, path, *, params, max_pages):
+        captured["path"] = path
+        captured["params"] = params
+        captured["max_pages"] = max_pages
+        yield [
+            {"underlying_ticker": "SPY"},
+            {"underlying_ticker": "AAPL"},
+            {"underlying_ticker": "SPY"},
+            {"underlying_ticker": " msft "},
+            {"underlying_ticker": None},
+        ]
+
+    monkeypatch.setattr(MassiveClient, "_iter_paginated_results", fake_iter_paginated_results)
+    client = MassiveClient(api_key="test-key", base_url="https://api.test.com")
+    try:
+        symbols = client.list_optionable_underlyings(as_of_date=date(2025, 4, 1))
+    finally:
+        client.close()
+
+    assert captured["path"] == "/v3/reference/options/contracts"
+    assert captured["params"] == {
+        "as_of": "2025-04-01",
+        "expired": "true",
+        "sort": "underlying_ticker",
+        "order": "asc",
+        "limit": 1000,
+    }
+    assert captured["max_pages"] == 1000
+    assert symbols == ["AAPL", "MSFT", "SPY"]
+
+
 @pytest.mark.asyncio
 async def test_async_list_option_contracts_uses_active_as_of_window(monkeypatch) -> None:
     captured: dict[str, object] = {}
@@ -166,6 +273,39 @@ async def test_async_list_option_contracts_uses_active_as_of_window(monkeypatch)
         "limit": 1000,
     }
     assert len(contracts) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_list_optionable_underlyings_uses_options_contracts_endpoint(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_iter_paginated_results(self, path, *, params, max_pages):
+        captured["path"] = path
+        captured["params"] = params
+        captured["max_pages"] = max_pages
+        yield [
+            {"underlying_ticker": "QQQ"},
+            {"underlying_ticker": "SPY"},
+            {"underlying_ticker": "QQQ"},
+        ]
+
+    monkeypatch.setattr(AsyncMassiveClient, "_iter_paginated_results", fake_iter_paginated_results)
+    client = AsyncMassiveClient(api_key="test-key", base_url="https://api.test.com")
+    try:
+        symbols = await client.list_optionable_underlyings(as_of_date=date(2025, 4, 1), include_expired=False)
+    finally:
+        await client.close()
+
+    assert captured["path"] == "/v3/reference/options/contracts"
+    assert captured["params"] == {
+        "as_of": "2025-04-01",
+        "expired": "false",
+        "sort": "underlying_ticker",
+        "order": "asc",
+        "limit": 1000,
+    }
+    assert captured["max_pages"] == 1000
+    assert symbols == ["QQQ", "SPY"]
 
 
 def test_massive_client_uses_explicit_transport_timeouts(monkeypatch) -> None:

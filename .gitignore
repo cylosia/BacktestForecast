@@ -23,6 +23,23 @@ __pycache__
 openapi.snapshot.json.new
 pytest-cache-files-*
 
+# Local runtime / audit artifacts
+/.bench_baseline*
+/.db_*.txt
+/.pytest_skip_report.txt
+/.pytest-tmp*/
+/.pytest_tmp_ok/
+/pytest-tmp*/
+/bff-celery-fs-*/
+/sanity_tmp*/
+/tmp*/
+/celery-broker-*.sqlite3
+/celerybeat-schedule*
+/logs/
+/subset_*.txt
+/tmp_baseline_preview.txt
+/unit_failure_log.txt
+
 # Env files
 .env
 .env.*
@@ -42,3 +59,6 @@ redis_data
 
 # Playwright auth state (contains session cookies)
 apps/web/e2e/.auth/user.json
+
+# Generated browser artifacts
+/apps/web/playwright-report/

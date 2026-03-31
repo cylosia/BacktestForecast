@@ -86,6 +86,9 @@ class WheelStrategyBacktestEngine:
         held_shares: HeldShares | None = None
         trades: list[TradeResult] = []
         equity_curve: list[EquityPointResult] = []
+        slippage_ratio = float(config.slippage_pct) / 100.0
+        profit_target_pct = float(config.profit_target_pct) if config.profit_target_pct is not None else None
+        stop_loss_pct = float(config.stop_loss_pct) if config.stop_loss_pct is not None else None
         evaluator = EntryRuleEvaluator(
             config=config, bars=sorted_bars, earnings_dates=earnings_dates, option_gateway=option_gateway
         )
@@ -137,8 +140,8 @@ class WheelStrategyBacktestEngine:
                     backtest_end_date=config.end_date,
                     last_bar_date=sorted_bars[-1].trade_date,
                     current_bar_index=index,
-                    profit_target_pct=config.profit_target_pct,
-                    stop_loss_pct=config.stop_loss_pct,
+                    profit_target_pct=profit_target_pct,
+                    stop_loss_pct=stop_loss_pct,
                     capital_at_risk=capital_at_risk,
                     current_value=capital_at_risk + position_pnl,
                 )
@@ -147,8 +150,8 @@ class WheelStrategyBacktestEngine:
                     exit_commission = float(config.commission_per_contract) * active_option.quantity
                     entry_commission = float(config.commission_per_contract) * active_option.quantity
                     option_gross_pnl = (active_option.entry_mid - exit_mid) * 100.0 * active_option.quantity
-                    entry_slippage = active_option.entry_mid * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
-                    exit_slippage = abs(exit_mid) * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
+                    entry_slippage = active_option.entry_mid * 100.0 * active_option.quantity * slippage_ratio
+                    exit_slippage = abs(exit_mid) * 100.0 * active_option.quantity * slippage_ratio
                     option_net_pnl = option_gross_pnl - (entry_commission + exit_commission) - (entry_slippage + exit_slippage)
                     option_detail = {
                         "phase": active_option.phase,
@@ -373,7 +376,7 @@ class WheelStrategyBacktestEngine:
                     position = self._open_short_put(config, bar, index, option_gateway, cash, warnings, warning_codes)
                     if position is not None:
                         active_option = position
-                        entry_slip = position.entry_mid * 100.0 * position.quantity * (config.slippage_pct / 100.0)
+                        entry_slip = position.entry_mid * 100.0 * position.quantity * slippage_ratio
                         cash += (_D(position.entry_mid) * _D(100) * _D(position.quantity)) - (
                             _D(config.commission_per_contract) * _D(position.quantity)
                         ) - _D(entry_slip)
@@ -383,7 +386,7 @@ class WheelStrategyBacktestEngine:
                     )
                     if position is not None:
                         active_option = position
-                        entry_slip = position.entry_mid * 100.0 * position.quantity * (config.slippage_pct / 100.0)
+                        entry_slip = position.entry_mid * 100.0 * position.quantity * slippage_ratio
                         cash += (_D(position.entry_mid) * _D(100) * _D(position.quantity)) - (
                             _D(config.commission_per_contract) * _D(position.quantity)
                         ) - _D(entry_slip)
@@ -421,8 +424,8 @@ class WheelStrategyBacktestEngine:
             entry_commission = float(config.commission_per_contract) * active_option.quantity
             exit_commission = float(config.commission_per_contract) * active_option.quantity
             option_gross = (active_option.entry_mid - exit_mid) * 100.0 * active_option.quantity
-            liq_entry_slip = active_option.entry_mid * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
-            liq_exit_slip = abs(exit_mid) * 100.0 * active_option.quantity * (config.slippage_pct / 100.0)
+            liq_entry_slip = active_option.entry_mid * 100.0 * active_option.quantity * slippage_ratio
+            liq_exit_slip = abs(exit_mid) * 100.0 * active_option.quantity * slippage_ratio
             option_net = option_gross - (entry_commission + exit_commission) - (liq_entry_slip + liq_exit_slip)
             cash += (_D(-exit_mid) * _D(100) * _D(active_option.quantity)) - _D(exit_commission) - _D(liq_exit_slip)
             trades.append(

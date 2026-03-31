@@ -377,7 +377,7 @@ def _maybe_enrich_trade_date(
     effective_symbols = set(symbols) if symbols else set(result.stock_symbols) | set(result.option_symbols)
     for symbol in sorted(effective_symbols):
         try:
-            dividends = rest_client.list_ex_dividend_dates(symbol, trade_date, trade_date)
+            dividends = rest_client.list_ex_dividend_records(symbol, trade_date, trade_date)
         except ExternalServiceError:
             continue
         if not dividends:
@@ -385,11 +385,21 @@ def _maybe_enrich_trade_date(
         store.upsert_ex_dividend_dates(
             [
                 HistoricalExDividendDate(
-                    symbol=symbol,
-                    ex_dividend_date=item,
+                    symbol=symbol.upper(),
+                    ex_dividend_date=item.ex_dividend_date,
+                    provider_dividend_id=item.provider_dividend_id,
+                    cash_amount=item.cash_amount,
+                    currency=item.currency,
+                    declaration_date=item.declaration_date,
+                    record_date=item.record_date,
+                    pay_date=item.pay_date,
+                    frequency=item.frequency,
+                    distribution_type=item.distribution_type,
+                    historical_adjustment_factor=item.historical_adjustment_factor,
+                    split_adjusted_cash_amount=item.split_adjusted_cash_amount,
                     source_file_date=trade_date,
                 )
-                for item in dividends
+                for item in sorted(dividends, key=lambda record: (record.ex_dividend_date, record.provider_dividend_id or ""))
             ]
         )
 

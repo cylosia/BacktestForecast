@@ -23,7 +23,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def mock_massive_client():
     """Create a mock MassiveClient that returns realistic bar data."""
-    from backtestforecast.market_data.types import DailyBar
+    from backtestforecast.market_data.types import DailyBar, ExDividendRecord
 
     client = MagicMock()
     start = date(2023, 1, 2)
@@ -39,7 +39,10 @@ def mock_massive_client():
         for i in range(400)
     ]
     client.get_stock_daily_bars.return_value = bars
-    client.list_ex_dividend_dates.return_value = {date(2024, 3, 15), date(2024, 5, 17)}
+    client.list_ex_dividend_records.return_value = [
+        ExDividendRecord(ex_dividend_date=date(2024, 3, 15), provider_dividend_id="div-1"),
+        ExDividendRecord(ex_dividend_date=date(2024, 5, 17), provider_dividend_id="div-2"),
+    ]
     client.get_average_treasury_yield.return_value = 0.02
     return client
 
@@ -155,4 +158,4 @@ def test_execution_service_passes_prepared_ex_dividend_dates_to_engine(mock_mass
         date(2024, 3, 15),
         date(2024, 5, 17),
     }
-    mock_massive_client.list_ex_dividend_dates.assert_called_once()
+    mock_massive_client.list_ex_dividend_records.assert_called_once()

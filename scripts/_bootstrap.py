@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+from repo_bootstrap import ensure_repo_import_paths
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -39,8 +41,5 @@ def bootstrap_repo(*, load_api_env: bool = False, load_web_env: bool = False) ->
         _load_env_file(ROOT / "apps" / "web" / ".env.example", protected_keys=protected_keys)
         _load_env_file(ROOT / "apps" / "web" / ".env.local", override=True, protected_keys=protected_keys)
 
-    for path in (ROOT / "src", ROOT):
-        path_str = str(path)
-        if path_str not in sys.path:
-            sys.path.insert(0, path_str)
+    ensure_repo_import_paths()
     return ROOT

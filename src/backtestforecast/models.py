@@ -1326,15 +1326,40 @@ class HistoricalOptionDayBar(Base):
 class HistoricalExDividendDate(Base):
     __tablename__ = "historical_ex_dividend_dates"
     __table_args__ = (
-        UniqueConstraint("symbol", "ex_dividend_date", name="uq_historical_ex_dividend_dates_symbol_date"),
+        UniqueConstraint("provider_dividend_id", name="uq_historical_ex_dividend_dates_provider_dividend_id"),
         CheckConstraint("length(symbol) > 0", name="ck_historical_ex_dividend_dates_symbol_not_empty"),
         CheckConstraint("cash_amount IS NULL OR cash_amount >= 0", name="ck_historical_ex_dividend_dates_cash_nonneg"),
+        CheckConstraint(
+            "split_adjusted_cash_amount IS NULL OR split_adjusted_cash_amount >= 0",
+            name="ck_historical_ex_dividend_dates_split_cash_nonneg",
+        ),
+        CheckConstraint(
+            "historical_adjustment_factor IS NULL OR historical_adjustment_factor >= 0",
+            name="ck_historical_ex_dividend_dates_adjustment_factor_nonneg",
+        ),
+        CheckConstraint(
+            "frequency IS NULL OR frequency >= 0",
+            name="ck_historical_ex_dividend_dates_frequency_nonneg",
+        ),
+        CheckConstraint(
+            "distribution_type IS NULL OR distribution_type IN ('recurring', 'special', 'supplemental', 'irregular', 'unknown')",
+            name="ck_historical_ex_dividend_dates_distribution_type",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     ex_dividend_date: Mapped[date] = mapped_column(Date, nullable=False)
+    provider_dividend_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     cash_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    declaration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    record_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    pay_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    frequency: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    distribution_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    historical_adjustment_factor: Mapped[Decimal | None] = mapped_column(Numeric(18, 10), nullable=True)
+    split_adjusted_cash_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
     source_dataset: Mapped[str] = mapped_column(String(64), nullable=False, default="rest_dividends", server_default="rest_dividends")
     source_file_date: Mapped[date] = mapped_column(Date, nullable=False)
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

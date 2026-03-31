@@ -238,8 +238,9 @@ def test_refresh_prioritized_scans_uses_transactional_dispatch(monkeypatch) -> N
             return None
 
     class _FakeScanService:
-        def __init__(self, session):
+        def __init__(self, session, execution_service=None):
             self.session = session
+            self.execution_service = execution_service
 
         def create_and_dispatch_scheduled_refresh_jobs(self, *, limit=25, dispatch_logger=None):
             dispatch_calls.append({"limit": limit, "dispatch_logger": dispatch_logger})

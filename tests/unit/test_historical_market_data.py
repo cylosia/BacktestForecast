@@ -24,6 +24,7 @@ from backtestforecast.market_data.historical_gateway import HistoricalOptionGate
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore, parse_option_ticker_metadata
 from backtestforecast.market_data.service import MarketDataService
 from backtestforecast.models import (
+    HistoricalExDividendDate,
     HistoricalOptionDayBar,
     HistoricalTreasuryYield,
     HistoricalUnderlyingDayBar,
@@ -173,6 +174,32 @@ def test_market_data_service_fetches_local_bars_first() -> None:
     bars = service._fetch_bars_coalesced("AAPL", start, end)
     assert len(bars) == 3
     assert [bar.trade_date for bar in bars] == [date(2025, 1, 2), date(2025, 1, 3), date(2025, 1, 6)]
+
+
+def test_ex_dividend_upsert_preserves_multiple_provider_records_for_same_day() -> None:
+    store = _store()
+    assert store.upsert_ex_dividend_dates(
+        [
+            HistoricalExDividendDate(
+                symbol="F",
+                ex_dividend_date=date(2016, 1, 27),
+                provider_dividend_id="div-recurring",
+                cash_amount=Decimal("0.15"),
+                distribution_type="recurring",
+                source_file_date=date(2016, 1, 27),
+            ),
+            HistoricalExDividendDate(
+                symbol="F",
+                ex_dividend_date=date(2016, 1, 27),
+                provider_dividend_id="div-supplemental",
+                cash_amount=Decimal("0.25"),
+                distribution_type="supplemental",
+                source_file_date=date(2016, 1, 27),
+            ),
+        ]
+    ) == 2
+
+    assert store.list_ex_dividend_dates("F", date(2016, 1, 1), date(2016, 12, 31)) == {date(2016, 1, 27)}
 
 
 def test_streaming_stock_payloads_can_be_chunked_and_upserted() -> None:

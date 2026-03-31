@@ -890,16 +890,27 @@ class MarketDataService:
                     warnings=self._ex_dividend_warning(symbol, start_date, end_date) if degraded else [],
                 )
         try:
-            result = self.client.list_ex_dividend_dates(symbol, start_date, end_date)
-            if result and self._historical_store is not None:
+            records = self.client.list_ex_dividend_records(symbol, start_date, end_date)
+            result = {item.ex_dividend_date for item in records}
+            if records and self._historical_store is not None:
                 self._historical_store.upsert_ex_dividend_dates(
                     [
                         HistoricalExDividendDate(
                             symbol=symbol,
-                            ex_dividend_date=item,
-                            source_file_date=item,
+                            ex_dividend_date=item.ex_dividend_date,
+                            provider_dividend_id=item.provider_dividend_id,
+                            cash_amount=item.cash_amount,
+                            currency=item.currency,
+                            declaration_date=item.declaration_date,
+                            record_date=item.record_date,
+                            pay_date=item.pay_date,
+                            frequency=item.frequency,
+                            distribution_type=item.distribution_type,
+                            historical_adjustment_factor=item.historical_adjustment_factor,
+                            split_adjusted_cash_amount=item.split_adjusted_cash_amount,
+                            source_file_date=item.ex_dividend_date,
                         )
-                        for item in sorted(result)
+                        for item in sorted(records, key=lambda record: (record.ex_dividend_date, record.provider_dividend_id or ""))
                     ]
                 )
             response = ExDividendLoadResult(dates=result, warnings=[])

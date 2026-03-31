@@ -325,8 +325,8 @@ jobs:
           set -e
           if [ "${FAILED_HEADS}" != "${ROLLBACK_HEADS}" ] && [ "${FAILED_HEADS}" != "unknown" ] && [ "${ROLLBACK_HEADS}" != "unknown" ]; then
             echo "::warning::Migration mismatch detected. The failed deployment ran migrations (head: ${FAILED_HEADS}) that differ from the rollback tag (head: ${ROLLBACK_HEADS})."
-            echo "::warning::Manual downgrade may be required before proceeding. Run: python -m alembic downgrade <target_revision>"
-            echo "::warning::See the rollback step comments for full manual migration rollback instructions."
+            echo "::warning::Do not run a schema downgrade as a default rollback step."
+            echo "::warning::Review migration reversibility, identify the exact target revision, and prefer restoring from backup unless the migration is proven reversible."
           else
             echo "Migration heads match or could not be determined. Proceeding with image rollback."
           fi
@@ -342,19 +342,17 @@ jobs:
           echo "::error::Smoke check failed — rolling back to known-good tag: ${ROLLBACK_TAG}"
           set -euo pipefail
 
-          # WARNING: If the failed deployment included a database migration,
-          # you should run: python -m alembic downgrade -1
-          # before re-deploying the previous version.
-          # Automated migration rollback is not safe for all migrations
-          # (some are irreversible). Consider adding a pre-deploy check
-          # that validates migration reversibility.
+          # WARNING: Do not run a schema downgrade as a default rollback step.
+          # Some migrations are destructive or irreversible, so DB rollback
+          # requires explicit review of migration reversibility and backup state.
           #
           # Manual steps:
           #   1. Identify the migration head expected by ROLLBACK_TAG:
           #      docker run --rm <REPO>/api:<ROLLBACK_TAG> python -m alembic heads
-          #   2. Downgrade one step: python -m alembic downgrade -1
-          #      Or to a specific revision: python -m alembic downgrade <target_revision>
-          #   3. Verify the DB state: python -m alembic current
+          #   2. Verify the currently applied DB revision:
+          #      python -m alembic current
+          #   3. Restore from backup or perform a reviewed downgrade only if the
+          #      migration is proven reversible for this deployment.
           #   4. Then proceed with the image rollback below.
 
           for svc in api worker web; do

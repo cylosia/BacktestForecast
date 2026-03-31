@@ -35,6 +35,8 @@ def test_d1_consolidated_baseline_is_only_revision_file():
         "20260328_0009_async_job_operational_indexes.py",
         "20260328_0010_db_index_hygiene_and_ops_guards.py",
         "20260330_0011_historical_read_path_optimizations.py",
+        "20260330_0012_expand_historical_dividend_metadata.py",
+        "20260330_0013_dividend_identity_by_provider_id.py",
     ]
 
 

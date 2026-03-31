@@ -104,12 +104,12 @@ class BacktestExecutionService:
             entry_rules=request.entry_rules,
             risk_free_rate=parameters.risk_free_rate or 0.0,
             risk_free_rate_curve=resolved_risk_free_rate_curve,
-            dividend_yield=parameters.dividend_yield,
-            slippage_pct=request.slippage_pct,
+            dividend_yield=float(parameters.dividend_yield),
+            slippage_pct=float(request.slippage_pct),
             strategy_overrides=request.strategy_overrides,
             custom_legs=request.custom_legs,
-            profit_target_pct=request.profit_target_pct,
-            stop_loss_pct=request.stop_loss_pct,
+            profit_target_pct=float(request.profit_target_pct) if request.profit_target_pct is not None else None,
+            stop_loss_pct=float(request.stop_loss_pct) if request.stop_loss_pct is not None else None,
         )
         result = self.engine.run(
             config=config,

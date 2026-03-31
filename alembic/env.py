@@ -17,12 +17,22 @@ MIGRATION BEST PRACTICES FOR ZERO-DOWNTIME DEPLOYMENTS:
 from __future__ import annotations
 
 import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from sqlalchemy import engine_from_config, pool, text
 
-import backtestforecast.models  # noqa: F401
 from alembic import context
+from repo_bootstrap import ensure_repo_import_paths
+
+ROOT = Path(__file__).resolve().parents[1]
+root_str = str(ROOT)
+if root_str not in sys.path:
+    sys.path.insert(0, root_str)
+ensure_repo_import_paths()
+
+import backtestforecast.models  # noqa: F401
 from backtestforecast.config import get_settings
 from backtestforecast.db.base import Base
 

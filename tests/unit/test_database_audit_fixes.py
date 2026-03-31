@@ -41,9 +41,18 @@ def test_consolidated_baseline_is_static_snapshot_not_runtime_create_all() -> No
 
     source = Path("alembic/versions/20260324_0001_consolidated_baseline.py").read_text(encoding="utf-8")
 
+    assert "ensure_repo_import_paths()" in source
     assert "POSTGRESQL_DDL_STATEMENTS" in source
     assert "SQLITE_DDL_STATEMENTS" in source
     assert "Base.metadata.create_all" not in source
+
+
+def test_apps_package_bootstraps_repo_import_paths() -> None:
+    from pathlib import Path
+
+    source = Path("apps/__init__.py").read_text(encoding="utf-8")
+
+    assert "ensure_repo_import_paths" in source
 
 
 def test_historical_coverage_uses_date_only_lookup() -> None:

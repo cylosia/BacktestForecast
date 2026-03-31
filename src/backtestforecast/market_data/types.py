@@ -76,4 +76,13 @@ class OptionSnapshotRecord:
 @dataclass(frozen=True, slots=True)
 class ExDividendRecord:
     ex_dividend_date: date
+    provider_dividend_id: str | None = None
     cash_amount: float | None = None
+    currency: str | None = None
+    declaration_date: date | None = None
+    record_date: date | None = None
+    pay_date: date | None = None
+    frequency: int | None = None
+    distribution_type: str | None = None
+    historical_adjustment_factor: float | None = None
+    split_adjusted_cash_amount: float | None = None

@@ -111,3 +111,72 @@ def test_execute_request_can_stay_provider_lazy_with_prepared_bundle(monkeypatch
     service.execute_request(request, bundle=bundle)
 
     market_data_ctor.assert_not_called()
+
+
+def test_execute_request_normalizes_decimal_optional_numeric_fields(monkeypatch) -> None:
+    from backtestforecast.backtests.types import BacktestExecutionResult
+    from backtestforecast.services import backtest_execution as module
+
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            option_cache_warn_age_seconds=259_200,
+            backtest_option_prefetch_enabled=False,
+        ),
+    )
+
+    captured: dict[str, object] = {}
+
+    class _Engine:
+        def run(self, *, config, bars, earnings_dates, ex_dividend_dates, option_gateway):
+            captured["slippage_pct"] = config.slippage_pct
+            captured["profit_target_pct"] = config.profit_target_pct
+            captured["stop_loss_pct"] = config.stop_loss_pct
+            captured["dividend_yield"] = config.dividend_yield
+            return BacktestExecutionResult(
+                summary=SimpleNamespace(ending_equity=10100.0, starting_equity=10000.0),
+                trades=[],
+                equity_curve=[],
+                warnings=[],
+            )
+
+    bundle = SimpleNamespace(
+        bars=[
+            SimpleNamespace(trade_date=date(2025, 4, 1)),
+            SimpleNamespace(trade_date=date(2025, 4, 2)),
+        ],
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+        data_source="historical_flatfile",
+        warnings=[],
+    )
+    request = module.CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 2),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[],
+        risk_free_rate=Decimal("0.02"),
+        dividend_yield=Decimal("0.03"),
+        slippage_pct=Decimal("0.25"),
+        profit_target_pct=Decimal("50"),
+        stop_loss_pct=Decimal("20"),
+    )
+
+    service = module.BacktestExecutionService(engine=_Engine())
+    service.execute_request(request, bundle=bundle)
+
+    assert captured == {
+        "slippage_pct": 0.25,
+        "profit_target_pct": 50.0,
+        "stop_loss_pct": 20.0,
+        "dividend_yield": 0.03,
+    }

@@ -460,6 +460,42 @@ class TestMissingQuoteSkipsEntry:
         assert any(w["code"] == "missing_entry_quote" for w in warnings)
 
 
+class TestDecimalOptionalNumericInputs:
+    def test_run_accepts_decimal_slippage_and_exit_thresholds(self):
+        engine = WheelStrategyBacktestEngine()
+        entry_date = date(2024, 1, 2)
+        expiry = date(2024, 2, 2)
+        config = _make_config(
+            account_size=10_000.0,
+            start_date=entry_date,
+            end_date=date(2024, 2, 5),
+            target_dte=30,
+            max_holding_days=60,
+            risk_per_trade_pct=100.0,
+            slippage_pct=Decimal("0.50"),
+            profit_target_pct=Decimal("25"),
+            stop_loss_pct=Decimal("25"),
+        )
+
+        contract = _make_contract("O:AAPL240202P00090000", "put", 90.0, expiry)
+        bars = [
+            _make_bar(date(2024, 1, 2), 95.0),
+            _make_bar(date(2024, 1, 3), 94.0),
+            _make_bar(date(2024, 2, 2), 85.0),
+            _make_bar(date(2024, 2, 5), 86.0),
+        ]
+        quotes = {
+            ("O:AAPL240202P00090000", date(2024, 1, 2)): _make_quote(date(2024, 1, 2), 2.9, 3.1),
+            ("O:AAPL240202P00090000", date(2024, 1, 3)): _make_quote(date(2024, 1, 3), 2.4, 2.6),
+            ("O:AAPL240202P00090000", date(2024, 2, 2)): _make_quote(date(2024, 2, 2), 4.5, 5.5),
+        }
+
+        result = engine.run(config, bars, set(), _MockGateway(contracts=[contract], quotes=quotes))
+
+        assert result.equity_curve
+        assert result.trades
+
+
 class TestAddWarningOnce:
     """The _add_warning_once method deduplicates warnings by code."""
 

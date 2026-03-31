@@ -132,6 +132,52 @@ def test_ready_checks_migration_status_without_detailed_access(monkeypatch) -> N
     assert calls["migration"] == 1
 
 
+def test_ready_includes_migration_error_only_in_detailed_payload(monkeypatch) -> None:
+    from apps.api.app.routers import health
+
+    monkeypatch.setattr(health, "ping_database", lambda: None)
+    monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
+    monkeypatch.setattr(health, "ping_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
+    monkeypatch.setattr(
+        health,
+        "_get_migration_status",
+        lambda: {
+            "aligned": False,
+            "applied_revision": "20260330_0013",
+            "expected_revision": None,
+            "error": "ModuleNotFoundError: demo",
+        },
+    )
+    monkeypatch.setattr(
+        health,
+        "_get_operations_status",
+        lambda **kwargs: {"outbox": {"status": "ok"}, "queue_diagnostics": {"status": "ok"}},
+    )
+    monkeypatch.setattr(
+        health,
+        "get_settings",
+        lambda: SimpleNamespace(
+            metrics_token="secret",
+            app_env="production",
+            rate_limit_fail_closed=False,
+            rate_limit_degraded_memory_fallback=True,
+            sentry_dsn=None,
+            option_cache_enabled=False,
+            redis_cache_url=None,
+        ),
+    )
+
+    without_details = health.ready(SimpleNamespace(headers={}))
+    with_details = health.ready(SimpleNamespace(headers={"x-metrics-token": "secret"}))
+
+    assert without_details.status_code == 503
+    assert with_details.status_code == 503
+    assert "migration_error" not in json.loads(without_details.body)
+    assert json.loads(with_details.body)["migration_error"] == "ModuleNotFoundError: demo"
+
+
 def test_queue_health_includes_broker_recovery_depth(monkeypatch) -> None:
     from apps.api.app.routers import health
 

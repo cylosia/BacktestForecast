@@ -304,6 +304,14 @@ class CustomLegDefinition(BaseModel):
         le=2,
         description="0=primary expiration, 1=next available, 2=second-next.",
     )
+    expiration_date: date | None = Field(
+        default=None,
+        description="Optional explicit expiration date for option legs. When set, the builder resolves this exact date instead of using expiration_offset.",
+    )
+    strike_selection: StrikeSelection | None = Field(
+        default=None,
+        description="Optional explicit strike selection for custom option legs. When set, the builder ignores strike_offset for strike resolution.",
+    )
     quantity_ratio: Decimal = Field(default=Decimal("1.0"), ge=Decimal("0.1"), le=Decimal("10.0"))
 
     @model_validator(mode="after")
@@ -315,6 +323,14 @@ class CustomLegDefinition(BaseModel):
                 raise ValueError("contract_type must be null for stock legs")
             if self.expiration_offset != 0:
                 raise ValueError("expiration_offset must be 0 for stock legs")
+            if self.expiration_date is not None:
+                raise ValueError("expiration_date must be null for stock legs")
+            if self.strike_selection is not None:
+                raise ValueError("strike_selection must be null for stock legs")
+        elif self.expiration_date is not None and self.expiration_offset != 0:
+            raise ValueError("expiration_offset must be 0 when expiration_date is provided")
+        if self.strike_selection is not None and self.strike_offset != 0:
+            raise ValueError("strike_offset must be 0 when strike_selection is provided")
         return self
 
 
@@ -517,6 +533,15 @@ class CreateBacktestRunRequest(BaseModel):
             short_count = sum(1 for leg in self.custom_legs if leg.side == "short")
             if long_count == 0 or short_count == 0:
                 raise ValueError("custom_legs must contain at least one long and one short leg")
+            option_legs = [leg for leg in self.custom_legs if leg.asset_type == "option"]
+            explicit_expiration_legs = [leg for leg in option_legs if leg.expiration_date is not None]
+            if explicit_expiration_legs and len(explicit_expiration_legs) != len(option_legs):
+                raise ValueError(
+                    "custom_legs option legs must either all use explicit expiration_date values or all use expiration_offset"
+                )
+            unique_expiration_dates = {leg.expiration_date for leg in explicit_expiration_legs}
+            if len(unique_expiration_dates) > 3:
+                raise ValueError("custom_legs support at most 3 unique option expiration_date values")
 
         if (
             self.strategy_overrides
