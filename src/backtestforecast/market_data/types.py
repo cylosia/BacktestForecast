@@ -86,3 +86,10 @@ class ExDividendRecord:
     distribution_type: str | None = None
     historical_adjustment_factor: float | None = None
     split_adjusted_cash_amount: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EarningsEventRecord:
+    event_date: date
+    event_type: str
+    provider_event_id: str | None = None

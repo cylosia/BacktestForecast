@@ -24,6 +24,7 @@ from backtestforecast.market_data.historical_gateway import HistoricalOptionGate
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore, parse_option_ticker_metadata
 from backtestforecast.market_data.service import MarketDataService
 from backtestforecast.models import (
+    HistoricalEarningsEvent,
     HistoricalExDividendDate,
     HistoricalOptionDayBar,
     HistoricalTreasuryYield,
@@ -200,6 +201,142 @@ def test_ex_dividend_upsert_preserves_multiple_provider_records_for_same_day() -
     ) == 2
 
     assert store.list_ex_dividend_dates("F", date(2016, 1, 1), date(2016, 12, 31)) == {date(2016, 1, 27)}
+
+
+def test_list_imported_symbols_for_window_unifies_underlying_and_option_sources() -> None:
+    store = _store()
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                open_price=Decimal("100"),
+                high_price=Decimal("101"),
+                low_price=Decimal("99"),
+                close_price=Decimal("100"),
+                volume=Decimal("1000"),
+                source_file_date=date(2025, 4, 1),
+            )
+        ]
+    )
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:MSFT250418C00200000",
+                underlying_symbol="MSFT",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("200"),
+                open_price=Decimal("5"),
+                high_price=Decimal("6"),
+                low_price=Decimal("4"),
+                close_price=Decimal("5.5"),
+                volume=Decimal("10"),
+                source_file_date=date(2025, 4, 1),
+            )
+        ]
+    )
+
+    assert store.list_imported_symbols_for_window(date(2025, 4, 1), date(2025, 4, 30)) == {"AAPL", "MSFT"}
+
+
+def test_earnings_event_upsert_and_lookup_preserves_multiple_types_for_same_day() -> None:
+    store = _store()
+    assert store.upsert_earnings_events(
+        [
+            HistoricalEarningsEvent(
+                symbol="F",
+                event_date=date(2016, 1, 27),
+                event_type="earnings_announcement_date",
+                provider_event_id="earn-announcement",
+                source_file_date=date(2016, 1, 27),
+            ),
+            HistoricalEarningsEvent(
+                symbol="F",
+                event_date=date(2016, 1, 27),
+                event_type="earnings_conference_call",
+                provider_event_id="earn-call",
+                source_file_date=date(2016, 1, 27),
+            ),
+        ]
+    ) == 2
+
+    assert store.list_earnings_event_dates("F", date(2016, 1, 1), date(2016, 12, 31)) == {date(2016, 1, 27)}
+
+
+def test_get_freshness_summary_reports_latest_dates_without_table_scan_helpers() -> None:
+    store = _store()
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="AAPL",
+                trade_date=date(2025, 4, 2),
+                open_price=Decimal("100"),
+                high_price=Decimal("101"),
+                low_price=Decimal("99"),
+                close_price=Decimal("100"),
+                volume=Decimal("1000"),
+                source_file_date=date(2025, 4, 2),
+            )
+        ]
+    )
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:AAPL250418C00100000",
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 3),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("100"),
+                open_price=Decimal("4"),
+                high_price=Decimal("5"),
+                low_price=Decimal("3"),
+                close_price=Decimal("4.5"),
+                volume=Decimal("10"),
+                source_file_date=date(2025, 4, 3),
+            )
+        ]
+    )
+    store.upsert_ex_dividend_dates(
+        [
+            HistoricalExDividendDate(
+                symbol="AAPL",
+                ex_dividend_date=date(2025, 4, 4),
+                provider_dividend_id="div-1",
+                source_file_date=date(2025, 4, 4),
+            )
+        ]
+    )
+    store.upsert_earnings_events(
+        [
+            HistoricalEarningsEvent(
+                symbol="AAPL",
+                event_date=date(2025, 4, 4),
+                event_type="earnings_announcement_date",
+                provider_event_id="earn-1",
+                source_file_date=date(2025, 4, 4),
+            )
+        ]
+    )
+    store.upsert_treasury_yields(
+        [
+            HistoricalTreasuryYield(
+                trade_date=date(2025, 4, 5),
+                yield_3_month=Decimal("0.041"),
+                source_file_date=date(2025, 4, 5),
+            )
+        ]
+    )
+
+    summary = store.get_freshness_summary()
+
+    assert summary["underlying_day_bars"]["latest_date"] == "2025-04-02"
+    assert summary["option_day_bars"]["latest_date"] == "2025-04-03"
+    assert summary["ex_dividend_dates"]["latest_date"] == "2025-04-04"
+    assert summary["earnings_events"]["latest_date"] == "2025-04-04"
+    assert summary["treasury_yields"]["latest_date"] == "2025-04-05"
 
 
 def test_streaming_stock_payloads_can_be_chunked_and_upserted() -> None:

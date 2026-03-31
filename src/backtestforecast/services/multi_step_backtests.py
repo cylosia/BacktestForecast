@@ -394,12 +394,21 @@ class MultiStepBacktestService:
             end_date=bars[-1].trade_date,
         )
         ex_dividend_dates = ex_dividend_result.dates
+        earnings_dates = market_data_service.load_earnings_dates_for_rules(
+            symbol=request.symbol,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            rule_groups=[
+                request.initial_entry_rules,
+                *[step.trigger.rules for step in request.steps],
+            ],
+        )
         prefer_local = market_data_service._prefer_local_history(request.end_date)
         option_gateway = market_data_service.build_option_gateway(request.symbol, prefer_local=prefer_local)
         option_gateway.set_ex_dividend_dates(ex_dividend_dates)
         bundle = HistoricalDataBundle(
             bars=bars,
-            earnings_dates=set(),
+            earnings_dates=earnings_dates,
             ex_dividend_dates=ex_dividend_dates,
             option_gateway=option_gateway,
             data_source="historical_flatfile" if prefer_local else "massive",
@@ -445,6 +454,7 @@ class MultiStepBacktestService:
                 target_dte=step.contract_selection.target_dte,
                 dte_tolerance_days=step.contract_selection.dte_tolerance_days,
                 rules=(request.initial_entry_rules if step.step_number == 1 else step.trigger.rules),
+                earnings_dates=bundle.earnings_dates,
                 option_gateway=option_gateway,
             )
             for step in step_definitions
@@ -707,6 +717,7 @@ class MultiStepBacktestService:
         target_dte: int,
         dte_tolerance_days: int,
         rules: list[Any],
+        earnings_dates: set[date],
         option_gateway: MassiveOptionGateway,
     ) -> EntryRuleEvaluator:
         config = BacktestConfig(
@@ -722,7 +733,12 @@ class MultiStepBacktestService:
             commission_per_contract=Decimal("0"),
             entry_rules=rules,
         )
-        return EntryRuleEvaluator(config=config, bars=bars, earnings_dates=set(), option_gateway=option_gateway)
+        return EntryRuleEvaluator(
+            config=config,
+            bars=bars,
+            earnings_dates=set(earnings_dates),
+            option_gateway=option_gateway,
+        )
 
     def _is_step_triggered(
         self,
@@ -743,6 +759,7 @@ class MultiStepBacktestService:
                 target_dte=step.contract_selection.target_dte,
                 dte_tolerance_days=step.contract_selection.dte_tolerance_days,
                 rules=request.initial_entry_rules,
+                earnings_dates=set(evaluator.earnings_dates),
                 option_gateway=evaluator.option_gateway,
             )
             if request.initial_entry_rules and not initial_eval.is_entry_allowed(bar_index):

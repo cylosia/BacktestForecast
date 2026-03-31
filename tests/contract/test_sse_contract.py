@@ -96,11 +96,11 @@ def test_metadata_keys_cannot_overwrite_reserved(capture_redis: _CapturingRedis)
 def test_channel_format_matches_frontend_pattern(capture_redis: _CapturingRedis) -> None:
     """Frontend subscribes to ``job:{type}:{id}:status`` channels."""
     job_id = uuid4()
-    for job_type in ("backtest", "scan", "export", "sweep", "analysis"):
+    for job_type in ("backtest", "multi_symbol_backtest", "multi_step_backtest", "scan", "export", "sweep", "analysis"):
         publish_job_status(job_type, job_id, "queued")
 
     channels = [ch for ch, _ in capture_redis.published]
-    for job_type in ("backtest", "scan", "export", "sweep", "analysis"):
+    for job_type in ("backtest", "multi_symbol_backtest", "multi_step_backtest", "scan", "export", "sweep", "analysis"):
         expected = f"job:{job_type}:{job_id}:status"
         assert expected in channels, f"Missing channel {expected}"
 

@@ -24,7 +24,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   }
 
   const { path } = await params;
-  const ALLOWED_RESOURCE_TYPES = new Set(["backtests", "scans", "exports", "analyses", "sweeps"]);
+  const ALLOWED_RESOURCE_TYPES = new Set([
+    "backtests",
+    "multi_symbol_backtests",
+    "multi_step_backtests",
+    "scans",
+    "exports",
+    "analyses",
+    "sweeps",
+  ]);
   if (!path.length || !ALLOWED_RESOURCE_TYPES.has(path[0])) {
     return new Response("Invalid resource type", { status: 400 });
   }

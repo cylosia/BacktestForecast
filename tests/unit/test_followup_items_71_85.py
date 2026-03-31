@@ -65,8 +65,11 @@ def test_dispatch_started_at_added_to_all_async_job_models() -> None:
 def test_sse_resources_and_task_route_names_stay_consistent() -> None:
     tasks_source = _read("src/backtestforecast/services/dispatch_recovery.py")
     events_source = _read("apps/api/app/routers/events.py")
+    proxy_source = _read("apps/web/app/api/events/[...path]/route.ts")
     expected = {
         "backtests.run": "/backtests/",
+        "multi_symbol_backtests.run": "/multi_symbol_backtests/",
+        "multi_step_backtests.run": "/multi_step_backtests/",
         "scans.run_job": "/scans/",
         "sweeps.run": "/sweeps/",
         "exports.generate": "/exports/",
@@ -75,6 +78,8 @@ def test_sse_resources_and_task_route_names_stay_consistent() -> None:
     for task_name, resource_path in expected.items():
         assert task_name in tasks_source
         assert resource_path in events_source
+    assert '"multi_symbol_backtests"' in proxy_source
+    assert '"multi_step_backtests"' in proxy_source
 
 
 def test_repo_get_routes_keep_readonly_session_audit_guardrails() -> None:

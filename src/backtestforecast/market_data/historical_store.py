@@ -13,11 +13,13 @@ from sqlalchemy import delete
 from sqlalchemy import select
 from sqlalchemy import text
 from sqlalchemy import tuple_
+from sqlalchemy import union_all
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
 from backtestforecast.models import (
+    HistoricalEarningsEvent,
     HistoricalExDividendDate,
     HistoricalOptionDayBar,
     HistoricalTreasuryYield,
@@ -243,6 +245,91 @@ class HistoricalMarketDataStore:
             )
         return set(rows)
 
+    def list_earnings_event_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        with self._session(readonly=True) as session:
+            rows = list(
+                session.scalars(
+                    select(HistoricalEarningsEvent.event_date).distinct().where(
+                        HistoricalEarningsEvent.symbol == symbol,
+                        HistoricalEarningsEvent.event_date >= start_date,
+                        HistoricalEarningsEvent.event_date <= end_date,
+                    )
+                )
+            )
+        return set(rows)
+
+    def list_imported_symbols_for_window(self, start_date: date, end_date: date) -> set[str]:
+        symbol_union = union_all(
+            select(HistoricalUnderlyingDayBar.symbol.label("symbol")).where(
+                HistoricalUnderlyingDayBar.trade_date >= start_date,
+                HistoricalUnderlyingDayBar.trade_date <= end_date,
+            ),
+            select(HistoricalOptionDayBar.underlying_symbol.label("symbol")).where(
+                HistoricalOptionDayBar.trade_date >= start_date,
+                HistoricalOptionDayBar.trade_date <= end_date,
+            ),
+        ).subquery()
+        with self._session(readonly=True) as session:
+            symbol_rows = session.execute(select(symbol_union.c.symbol).distinct())
+            return {str(symbol).upper() for (symbol,) in symbol_rows if symbol}
+
+    def get_freshness_summary(self) -> dict[str, dict[str, str | None]]:
+        def _row_to_payload(latest_date: date | None, latest_source_file_date: date | None) -> dict[str, str | None]:
+            return {
+                "latest_date": latest_date.isoformat() if latest_date is not None else None,
+                "latest_source_file_date": latest_source_file_date.isoformat() if latest_source_file_date is not None else None,
+            }
+
+        with self._session(readonly=True) as session:
+            latest_underlying = session.execute(
+                select(
+                    HistoricalUnderlyingDayBar.trade_date,
+                    HistoricalUnderlyingDayBar.source_file_date,
+                )
+                .order_by(HistoricalUnderlyingDayBar.trade_date.desc())
+                .limit(1)
+            ).first()
+            latest_option = session.execute(
+                select(
+                    HistoricalOptionDayBar.trade_date,
+                    HistoricalOptionDayBar.source_file_date,
+                )
+                .order_by(HistoricalOptionDayBar.trade_date.desc())
+                .limit(1)
+            ).first()
+            latest_dividend = session.execute(
+                select(
+                    HistoricalExDividendDate.ex_dividend_date,
+                    HistoricalExDividendDate.source_file_date,
+                )
+                .order_by(HistoricalExDividendDate.ex_dividend_date.desc())
+                .limit(1)
+            ).first()
+            latest_earnings = session.execute(
+                select(
+                    HistoricalEarningsEvent.event_date,
+                    HistoricalEarningsEvent.source_file_date,
+                )
+                .order_by(HistoricalEarningsEvent.event_date.desc())
+                .limit(1)
+            ).first()
+            latest_treasury = session.execute(
+                select(
+                    HistoricalTreasuryYield.trade_date,
+                    HistoricalTreasuryYield.source_file_date,
+                )
+                .order_by(HistoricalTreasuryYield.trade_date.desc())
+                .limit(1)
+            ).first()
+
+        return {
+            "underlying_day_bars": _row_to_payload(*(latest_underlying or (None, None))),
+            "option_day_bars": _row_to_payload(*(latest_option or (None, None))),
+            "ex_dividend_dates": _row_to_payload(*(latest_dividend or (None, None))),
+            "earnings_events": _row_to_payload(*(latest_earnings or (None, None))),
+            "treasury_yields": _row_to_payload(*(latest_treasury or (None, None))),
+        }
+
     def get_average_treasury_yield(
         self,
         start_date: date,
@@ -291,6 +378,12 @@ class HistoricalMarketDataStore:
             return 0
         payloads = [self._normalize_payload(self._row_payload(row, HistoricalExDividendDate), HistoricalExDividendDate) for row in rows]
         return self.upsert_ex_dividend_payloads(payloads)
+
+    def upsert_earnings_events(self, rows: list[HistoricalEarningsEvent]) -> int:
+        if not rows:
+            return 0
+        payloads = [self._normalize_payload(self._row_payload(row, HistoricalEarningsEvent), HistoricalEarningsEvent) for row in rows]
+        return self.upsert_earnings_event_payloads(payloads)
 
     def upsert_treasury_yields(self, rows: list[HistoricalTreasuryYield]) -> int:
         return self._bulk_upsert(rows, HistoricalTreasuryYield, ("trade_date",))
@@ -378,6 +471,60 @@ class HistoricalMarketDataStore:
             with suppress(Exception):
                 session.rollback()
             logger.warning("historical_store.bulk_upsert_ex_dividend_failed", exc_info=True)
+            raise
+        finally:
+            with suppress(Exception):
+                session.close()
+
+    def upsert_earnings_event_payloads(self, rows: list[dict[str, object]]) -> int:
+        if not rows:
+            return 0
+        normalized_rows = [self._normalize_payload(row, HistoricalEarningsEvent) for row in rows]
+        provider_rows = [row for row in normalized_rows if row.get("provider_event_id")]
+        legacy_rows = [row for row in normalized_rows if not row.get("provider_event_id")]
+        stored = 0
+        session = self._session(readonly=False)
+        try:
+            if provider_rows:
+                provider_rows = self._dedupe_payloads(provider_rows, ("provider_event_id",))
+                placeholder_keys = sorted(
+                    {
+                        (str(row["symbol"]), row["event_date"], str(row["event_type"]))
+                        for row in provider_rows
+                        if row.get("symbol") and row.get("event_date") is not None and row.get("event_type")
+                    }
+                )
+                if placeholder_keys:
+                    session.execute(
+                        delete(HistoricalEarningsEvent).where(
+                            HistoricalEarningsEvent.provider_event_id.is_(None),
+                            tuple_(
+                                HistoricalEarningsEvent.symbol,
+                                HistoricalEarningsEvent.event_date,
+                                HistoricalEarningsEvent.event_type,
+                            ).in_(placeholder_keys),
+                        )
+                    )
+                bind = session.get_bind()
+                if bind is not None and bind.dialect.name == "postgresql":
+                    self._bulk_upsert_postgres(session, provider_rows, HistoricalEarningsEvent, ("provider_event_id",))
+                else:
+                    self._bulk_upsert_fallback(session, provider_rows, HistoricalEarningsEvent, ("provider_event_id",))
+                stored += len(provider_rows)
+            if legacy_rows:
+                legacy_rows = self._dedupe_payloads(legacy_rows, ("symbol", "event_date", "event_type"))
+                bind = session.get_bind()
+                if bind is not None and bind.dialect.name == "postgresql":
+                    self._bulk_upsert_postgres(session, legacy_rows, HistoricalEarningsEvent, ("symbol", "event_date", "event_type"))
+                else:
+                    self._bulk_upsert_fallback(session, legacy_rows, HistoricalEarningsEvent, ("symbol", "event_date", "event_type"))
+                stored += len(legacy_rows)
+            session.commit()
+            return stored
+        except Exception:
+            with suppress(Exception):
+                session.rollback()
+            logger.warning("historical_store.bulk_upsert_earnings_failed", exc_info=True)
             raise
         finally:
             with suppress(Exception):

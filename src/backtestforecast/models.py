@@ -1240,6 +1240,7 @@ class HistoricalUnderlyingDayBar(Base):
             "trade_date",
             postgresql_include=["open_price", "high_price", "low_price", "close_price", "volume"],
         ),
+        Index("ix_historical_underlying_day_bars_trade_date_desc", text("trade_date DESC")),
         CheckConstraint("length(symbol) > 0", name="ck_historical_underlying_day_bars_symbol_not_empty"),
         CheckConstraint("open_price > 0", name="ck_historical_underlying_day_bars_open_positive"),
         CheckConstraint("high_price > 0", name="ck_historical_underlying_day_bars_high_positive"),
@@ -1292,6 +1293,7 @@ class HistoricalOptionDayBar(Base):
             "trade_date",
             postgresql_include=["close_price"],
         ),
+        Index("ix_historical_option_day_bars_trade_date_desc", text("trade_date DESC")),
         CheckConstraint("length(option_ticker) > 0", name="ck_historical_option_day_bars_ticker_not_empty"),
         CheckConstraint("length(underlying_symbol) > 0", name="ck_historical_option_day_bars_symbol_not_empty"),
         CheckConstraint("contract_type IN ('call', 'put')", name="ck_historical_option_day_bars_contract_type"),
@@ -1327,6 +1329,7 @@ class HistoricalExDividendDate(Base):
     __tablename__ = "historical_ex_dividend_dates"
     __table_args__ = (
         UniqueConstraint("provider_dividend_id", name="uq_historical_ex_dividend_dates_provider_dividend_id"),
+        Index("ix_historical_ex_dividend_dates_date_desc", text("ex_dividend_date DESC")),
         CheckConstraint("length(symbol) > 0", name="ck_historical_ex_dividend_dates_symbol_not_empty"),
         CheckConstraint("cash_amount IS NULL OR cash_amount >= 0", name="ck_historical_ex_dividend_dates_cash_nonneg"),
         CheckConstraint(
@@ -1368,10 +1371,37 @@ class HistoricalExDividendDate(Base):
     )
 
 
+class HistoricalEarningsEvent(Base):
+    __tablename__ = "historical_earnings_events"
+    __table_args__ = (
+        UniqueConstraint("provider_event_id", name="uq_historical_earnings_events_provider_event_id"),
+        UniqueConstraint("symbol", "event_date", "event_type", name="uq_historical_earnings_events_symbol_date_type"),
+        Index("ix_historical_earnings_events_date_desc", text("event_date DESC")),
+        CheckConstraint("length(symbol) > 0", name="ck_historical_earnings_events_symbol_not_empty"),
+        CheckConstraint(
+            "event_type IN ('earnings_announcement_date', 'earnings_conference_call')",
+            name="ck_historical_earnings_events_event_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_date: Mapped[date] = mapped_column(Date, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    provider_event_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False, default="rest_earnings", server_default="rest_earnings")
+    source_file_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class HistoricalTreasuryYield(Base):
     __tablename__ = "historical_treasury_yields"
     __table_args__ = (
         UniqueConstraint("trade_date", name="uq_historical_treasury_yields_trade_date"),
+        Index("ix_historical_treasury_yields_trade_date_desc", text("trade_date DESC")),
         CheckConstraint("yield_3_month >= 0 AND yield_3_month <= 1", name="ck_historical_treasury_yields_3m_range"),
     )
 

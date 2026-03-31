@@ -13,7 +13,7 @@ from sse_starlette.sse import EventSourceResponse
 from apps.api.app.dependencies import get_current_user_readonly
 from backtestforecast.config import get_settings, register_invalidation_callback
 from backtestforecast.errors import NotFoundError
-from backtestforecast.models import BacktestRun, ExportJob, ScannerJob, SweepJob, SymbolAnalysis, User
+from backtestforecast.models import BacktestRun, ExportJob, MultiStepRun, MultiSymbolRun, ScannerJob, SweepJob, SymbolAnalysis, User
 from backtestforecast.observability.metrics import ACTIVE_SSE_CONNECTIONS
 from backtestforecast.security import get_rate_limiter
 
@@ -446,6 +446,40 @@ async def backtest_events(
     await asyncio.to_thread(_check_sse_rate, user.id)
     await asyncio.to_thread(_verify_ownership, BacktestRun, run_id, user.id)
     channel = f"job:backtest:{run_id}:status"
+    logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
+    return EventSourceResponse(
+        _event_stream(channel, request, user.id),
+        ping=SSE_HEARTBEAT_SECONDS,
+        headers={"Cache-Control": "no-cache, no-store", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/multi_symbol_backtests/{run_id}", responses=_SSE_RESPONSES)
+async def multi_symbol_backtest_events(
+    run_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_user_readonly),
+) -> EventSourceResponse:
+    await asyncio.to_thread(_check_sse_rate, user.id)
+    await asyncio.to_thread(_verify_ownership, MultiSymbolRun, run_id, user.id)
+    channel = f"job:multi_symbol_backtest:{run_id}:status"
+    logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
+    return EventSourceResponse(
+        _event_stream(channel, request, user.id),
+        ping=SSE_HEARTBEAT_SECONDS,
+        headers={"Cache-Control": "no-cache, no-store", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/multi_step_backtests/{run_id}", responses=_SSE_RESPONSES)
+async def multi_step_backtest_events(
+    run_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_user_readonly),
+) -> EventSourceResponse:
+    await asyncio.to_thread(_check_sse_rate, user.id)
+    await asyncio.to_thread(_verify_ownership, MultiStepRun, run_id, user.id)
+    channel = f"job:multi_step_backtest:{run_id}:status"
     logger.info("sse.subscribe", channel=channel, user_id=str(user.id))
     return EventSourceResponse(
         _event_stream(channel, request, user.id),

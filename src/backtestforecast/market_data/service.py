@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from backtestforecast.backtests.run_warnings import make_warning
+from backtestforecast.config import get_settings
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError
 from backtestforecast.backtests.strategies.common import preferred_expiration_dates
 from backtestforecast.db.session import create_readonly_session, create_session
@@ -20,7 +21,7 @@ from backtestforecast.market_data.contract_catalog import OptionContractCatalogS
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
-from backtestforecast.models import HistoricalExDividendDate, HistoricalOptionContractCatalogSnapshot
+from backtestforecast.models import HistoricalEarningsEvent, HistoricalExDividendDate, HistoricalOptionContractCatalogSnapshot
 from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
 from backtestforecast.schemas.backtests import (
     AvoidEarningsRule,
@@ -819,8 +820,24 @@ class MarketDataService:
             warnings=warnings,
         )
 
-    def _load_earnings_dates_if_required(self, request: CreateBacktestRunRequest) -> set[date]:
-        avoid_rules = [rule for rule in request.entry_rules if isinstance(rule, AvoidEarningsRule)]
+    @staticmethod
+    def _collect_avoid_earnings_rules(rule_groups: list[list[Any]]) -> list[AvoidEarningsRule]:
+        return [
+            rule
+            for group in rule_groups
+            for rule in group
+            if isinstance(rule, AvoidEarningsRule)
+        ]
+
+    def load_earnings_dates_for_rules(
+        self,
+        *,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        rule_groups: list[list[Any]],
+    ) -> set[date]:
+        avoid_rules = self._collect_avoid_earnings_rules(rule_groups)
         if not avoid_rules:
             return set()
 
@@ -834,16 +851,44 @@ class MarketDataService:
         #   - Add max_days_before to end: captures earnings that occur
         #     *after* the backtest ends, since the engine checks "are we
         #     within N days *before* an earnings event?"
-        earnings_start = request.start_date - timedelta(days=max_days_after)
-        earnings_end = request.end_date + timedelta(days=max_days_before)
+        earnings_start = start_date - timedelta(days=max_days_after)
+        earnings_end = end_date + timedelta(days=max_days_before)
+
+        if self._historical_store is not None:
+            local = self._historical_store.list_earnings_event_dates(symbol, earnings_start, earnings_end)
+            if local:
+                return local
 
         try:
-            return self.client.list_earnings_event_dates(request.symbol, earnings_start, earnings_end)
+            records = self.client.list_earnings_event_records(symbol, earnings_start, earnings_end)
+            dates = {record.event_date for record in records}
+            if records and self._historical_store is not None:
+                self._historical_store.upsert_earnings_events(
+                    [
+                        HistoricalEarningsEvent(
+                            symbol=symbol,
+                            event_date=record.event_date,
+                            event_type=record.event_type,
+                            provider_event_id=record.provider_event_id,
+                            source_file_date=record.event_date,
+                        )
+                        for record in sorted(records, key=lambda item: (item.event_date, item.event_type, item.provider_event_id or ""))
+                    ]
+                )
+            return dates
         except ExternalServiceError as exc:
             raise DataUnavailableError(
                 "The avoid_earnings rule requires an earnings-capable Massive endpoint, "
                 "but earnings data could not be retrieved."
             ) from exc
+
+    def _load_earnings_dates_if_required(self, request: CreateBacktestRunRequest) -> set[date]:
+        return self.load_earnings_dates_for_rules(
+            symbol=request.symbol,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            rule_groups=[request.entry_rules],
+        )
 
     def _load_ex_dividend_dates(
         self,
@@ -926,6 +971,12 @@ class MarketDataService:
                 end_date=end_date.isoformat(),
                 exc_info=True,
             )
+            settings = get_settings()
+            if settings.app_env in {"production", "staging"}:
+                raise DataUnavailableError(
+                    "Ex-dividend data could not be retrieved for this backtest window. "
+                    "Production-like environments fail closed to avoid silently incorrect assignment behavior."
+                )
             response = ExDividendLoadResult(
                 dates=set(),
                 warnings=self._ex_dividend_warning(symbol, start_date, end_date),

@@ -25,6 +25,8 @@ router = APIRouter(tags=["health"])
 
 _broker_redis = None
 _broker_redis_lock = Lock()
+_result_backend_redis = None
+_result_backend_redis_lock = Lock()
 _OPERATIONS_STATUS_TTL_SECONDS = 30.0
 _operations_status_cache: tuple[float, dict[str, object]] | None = None
 _operations_status_lock = Lock()
@@ -41,6 +43,19 @@ def _invalidate_broker_redis() -> None:
 
 
 register_invalidation_callback(_invalidate_broker_redis)
+
+
+def _invalidate_result_backend_redis() -> None:
+    global _result_backend_redis
+    with _result_backend_redis_lock:
+        client = _result_backend_redis
+        _result_backend_redis = None
+    if client is not None:
+        with suppress(Exception):
+            client.close()
+
+
+register_invalidation_callback(_invalidate_result_backend_redis)
 
 
 def _ping_broker_redis() -> bool:
@@ -64,6 +79,34 @@ def _ping_broker_redis() -> bool:
                 with suppress(Exception):
                     _broker_redis.close()
                 _broker_redis = None
+        return False
+
+
+def _ping_result_backend_redis() -> bool:
+    """Ping the Celery result backend when it is Redis-backed."""
+    global _result_backend_redis
+    try:
+        from redis import Redis
+
+        with _result_backend_redis_lock:
+            if _result_backend_redis is None:
+                settings = get_settings()
+                backend_url = settings.celery_result_backend_url
+                if not backend_url or not backend_url.startswith(("redis://", "rediss://")):
+                    return True
+                _result_backend_redis = Redis.from_url(
+                    backend_url,
+                    socket_timeout=2.0,
+                    socket_connect_timeout=2.0,
+                )
+            conn = _result_backend_redis
+        return bool(conn.ping())
+    except Exception:
+        with _result_backend_redis_lock:
+            if _result_backend_redis is not None:
+                with suppress(Exception):
+                    _result_backend_redis.close()
+                _result_backend_redis = None
         return False
 
 def _get_redis_pool_stats() -> dict[str, int] | None:
@@ -216,6 +259,7 @@ def ready(request: Request) -> JSONResponse:
 
     redis_up = ping_redis()
     broker_up = _ping_broker_redis()
+    result_backend_up = _ping_result_backend_redis()
 
     db_up = True
     missing_schema_tables: tuple[str, ...] = ()
@@ -234,6 +278,7 @@ def ready(request: Request) -> JSONResponse:
             content["database"] = "down"
             content["redis"] = "up" if redis_up else "degraded"
             content["broker"] = "up" if broker_up else "down"
+            content["result_backend"] = "up" if result_backend_up else "down"
         return JSONResponse(status_code=503, content=content)
 
     if missing_schema_tables:
@@ -245,6 +290,7 @@ def ready(request: Request) -> JSONResponse:
             payload["database"] = "schema_incomplete"
             payload["redis"] = "up" if redis_up else "degraded"
             payload["broker"] = "up" if broker_up else "down"
+            payload["result_backend"] = "up" if result_backend_up else "down"
             payload["missing_tables"] = list(missing_schema_tables)
         return JSONResponse(status_code=503, content=payload)
 
@@ -261,6 +307,7 @@ def ready(request: Request) -> JSONResponse:
             content["database"] = "up"
             content["redis"] = "down"
             content["broker"] = "up"
+            content["result_backend"] = "up" if result_backend_up else "down"
             content["rate_limit_mode"] = "fail_closed"
         return JSONResponse(status_code=503, content=content)
 
@@ -272,6 +319,20 @@ def ready(request: Request) -> JSONResponse:
         rl_mode = "in_memory_fallback"
 
     massive_status = _check_massive_health(settings)
+    if not result_backend_up and settings.app_env not in ("development",):
+        payload: dict[str, object] = {"status": "degraded"}
+        if _show_version_in_health():
+            payload["version"] = get_public_version()
+        if show_details:
+            payload["environment"] = settings.app_env
+            payload["database"] = "up"
+            payload["redis"] = "up" if redis_up else "down"
+            payload["broker"] = "up" if broker_up else "down"
+            payload["result_backend"] = "down"
+            payload["rate_limit_mode"] = rl_mode
+            payload["massive_api"] = massive_status
+        return JSONResponse(status_code=503, content=payload)
+
     migration_status = {"aligned": True, "applied_revision": None, "expected_revision": None, "error": None}
     if settings.app_env not in ("development",):
         migration_status = _get_migration_status()
@@ -284,6 +345,7 @@ def ready(request: Request) -> JSONResponse:
                 payload["database"] = "up"
                 payload["redis"] = "up" if redis_up else "down"
                 payload["broker"] = "up" if broker_up else "down"
+                payload["result_backend"] = "up" if result_backend_up else "down"
                 payload["rate_limit_mode"] = rl_mode
                 payload["massive_api"] = massive_status
                 payload["migration_aligned"] = False
@@ -303,6 +365,7 @@ def ready(request: Request) -> JSONResponse:
             payload["database"] = "up"
             payload["redis"] = "up" if redis_up else "down"
             payload["broker"] = "up" if broker_up else "down"
+            payload["result_backend"] = "up" if result_backend_up else "down"
             payload["rate_limit_mode"] = rl_mode
             payload["massive_api"] = massive_status
             if settings.app_env not in ("development",):
@@ -314,7 +377,7 @@ def ready(request: Request) -> JSONResponse:
             payload.update(operations_status)
         return JSONResponse(status_code=503, content=payload)
 
-    all_ok = redis_up and broker_up and massive_status in ("ok", "unconfigured")
+    all_ok = redis_up and broker_up and result_backend_up and massive_status in ("ok", "unconfigured")
     payload: dict[str, object] = {
         "status": "ok" if all_ok else "degraded",
     }
@@ -325,6 +388,7 @@ def ready(request: Request) -> JSONResponse:
         payload["database"] = "up"
         payload["redis"] = "up" if redis_up else "down"
         payload["broker"] = "up" if broker_up else "down"
+        payload["result_backend"] = "up" if result_backend_up else "down"
         payload["rate_limit_mode"] = rl_mode
         payload["massive_api"] = massive_status
         with suppress(Exception):

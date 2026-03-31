@@ -4,9 +4,11 @@ import os
 import sys
 from pathlib import Path
 
-from repo_bootstrap import ensure_repo_import_paths
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from repo_bootstrap import ensure_repo_import_paths
 
 
 def _load_env_file(path: Path, *, override: bool = False, protected_keys: set[str] | None = None) -> None:

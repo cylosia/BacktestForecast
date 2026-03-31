@@ -10,17 +10,18 @@ import time
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from backtestforecast.db.base import Base
-from backtestforecast.errors import ExternalServiceError
+from backtestforecast.errors import DataUnavailableError, ExternalServiceError
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data.service import MarketDataService
-from backtestforecast.market_data.types import DailyBar, ExDividendRecord
-from backtestforecast.models import HistoricalUnderlyingDayBar
-from backtestforecast.schemas.backtests import CreateBacktestRunRequest
+from backtestforecast.market_data.types import DailyBar, EarningsEventRecord, ExDividendRecord
+from backtestforecast.models import HistoricalEarningsEvent, HistoricalUnderlyingDayBar
+from backtestforecast.schemas.backtests import AvoidEarningsRule, CreateBacktestRunRequest
 from backtestforecast.utils.dates import is_market_holiday, is_trading_day
 
 
@@ -383,6 +384,79 @@ class TestPrepareBacktestExDividendDates:
         warning_codes = {warning["code"] for warning in result.warnings or []}
         assert "ex_dividend_dates_unavailable" in warning_codes
         redis_cache.set_ex_dividend_dates.assert_called_once()
+
+    def test_load_ex_dividend_data_fails_closed_in_production_like_envs(self):
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        svc.client.list_ex_dividend_records.side_effect = ExternalServiceError("provider failed")
+
+        with patch(
+            "backtestforecast.market_data.service.get_settings",
+            return_value=type("S", (), {"app_env": "production"})(),
+        ):
+            with pytest.raises(DataUnavailableError, match="Ex-dividend data could not be retrieved"):
+                svc._load_ex_dividend_data(
+                    "AAPL",
+                    start_date=date(2024, 1, 1),
+                    end_date=date(2024, 1, 31),
+                )
+
+
+class TestHistoricalEarningsStorage:
+    def test_load_earnings_dates_for_rules_uses_local_store_before_provider(self):
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        store = _make_historical_store(symbol="AAPL")
+        store.upsert_earnings_events(
+            [
+                HistoricalEarningsEvent(
+                    symbol="AAPL",
+                    event_date=date(2024, 1, 15),
+                    event_type="earnings_announcement_date",
+                    provider_event_id="earn-1",
+                    source_file_date=date(2024, 1, 15),
+                )
+            ]
+        )
+        svc._historical_store = store
+
+        result = svc.load_earnings_dates_for_rules(
+            symbol="AAPL",
+            start_date=date(2024, 1, 10),
+            end_date=date(2024, 1, 31),
+            rule_groups=[[AvoidEarningsRule(type="avoid_earnings", days_before=3, days_after=3)]],
+        )
+
+        assert result == {date(2024, 1, 15)}
+        svc.client.list_earnings_event_records.assert_not_called()
+
+    def test_load_earnings_dates_for_rules_persists_provider_records(self):
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        store = _make_historical_store(symbol="AAPL")
+        svc._historical_store = store
+        svc.client.list_earnings_event_records.return_value = [
+            EarningsEventRecord(
+                event_date=date(2024, 1, 15),
+                event_type="earnings_announcement_date",
+                provider_event_id="earn-1",
+            ),
+            EarningsEventRecord(
+                event_date=date(2024, 1, 15),
+                event_type="earnings_conference_call",
+                provider_event_id="earn-2",
+            ),
+        ]
+
+        result = svc.load_earnings_dates_for_rules(
+            symbol="AAPL",
+            start_date=date(2024, 1, 10),
+            end_date=date(2024, 1, 31),
+            rule_groups=[[AvoidEarningsRule(type="avoid_earnings", days_before=3, days_after=3)]],
+        )
+
+        assert result == {date(2024, 1, 15)}
+        assert store.list_earnings_event_dates("AAPL", date(2024, 1, 1), date(2024, 1, 31)) == {date(2024, 1, 15)}
 
 
 def test_historical_market_holiday_calendar_covers_backfill_years() -> None:

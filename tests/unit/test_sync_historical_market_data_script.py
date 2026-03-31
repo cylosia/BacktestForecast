@@ -21,8 +21,8 @@ from backtestforecast.db.base import Base
 from backtestforecast.errors import ExternalServiceError
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
-from backtestforecast.market_data.types import ExDividendRecord
-from backtestforecast.models import HistoricalExDividendDate
+from backtestforecast.market_data.types import EarningsEventRecord, ExDividendRecord
+from backtestforecast.models import HistoricalEarningsEvent, HistoricalExDividendDate, HistoricalUnderlyingDayBar
 
 
 def _load_sync_script_module():
@@ -168,7 +168,8 @@ class _ContextFlatFilesClient(_FakeFlatFilesClient):
 class _FakeRestClient:
     def __init__(self) -> None:
         self.treasury_calls: list[date] = []
-        self.dividend_calls: list[tuple[str, date]] = []
+        self.dividend_calls: list[tuple[str, date, date]] = []
+        self.earnings_calls: list[tuple[str, date, date]] = []
 
     def get_average_treasury_yield(self, start_date: date, end_date: date):
         assert start_date == end_date
@@ -176,8 +177,7 @@ class _FakeRestClient:
         return Decimal("0.041")
 
     def list_ex_dividend_records(self, symbol: str, start_date: date, end_date: date):
-        assert start_date == end_date
-        self.dividend_calls.append((symbol, start_date))
+        self.dividend_calls.append((symbol, start_date, end_date))
         if symbol != "AAPL":
             return []
         return [
@@ -189,6 +189,23 @@ class _FakeRestClient:
                 frequency=4,
                 distribution_type="recurring",
             )
+        ]
+
+    def list_earnings_event_records(self, symbol: str, start_date: date, end_date: date):
+        self.earnings_calls.append((symbol, start_date, end_date))
+        if symbol != "AAPL":
+            return []
+        return [
+            EarningsEventRecord(
+                event_date=start_date,
+                event_type="earnings_announcement_date",
+                provider_event_id=f"{symbol}-earn-{start_date.isoformat()}",
+            ),
+            EarningsEventRecord(
+                event_date=start_date,
+                event_type="earnings_conference_call",
+                provider_event_id=f"{symbol}-call-{start_date.isoformat()}",
+            ),
         ]
 
     def close(self) -> None:
@@ -406,13 +423,9 @@ def test_maybe_enrich_trade_date_writes_treasury_and_dividends_when_enabled() ->
     )
 
     assert rest_client.treasury_calls == [date(2025, 4, 1)]
-    assert rest_client.dividend_calls == [("AAPL", date(2025, 4, 1)), ("MSFT", date(2025, 4, 1))]
+    assert rest_client.dividend_calls == []
     assert store.get_average_treasury_yield(date(2025, 4, 1), date(2025, 4, 1)) == 0.041
-    assert store.list_ex_dividend_dates("AAPL", date(2025, 4, 1), date(2025, 4, 1)) == {date(2025, 4, 1)}
-    with store._session(readonly=True) as session:
-        row = session.query(HistoricalExDividendDate).filter_by(symbol="AAPL", ex_dividend_date=date(2025, 4, 1)).one()
-    assert row.provider_dividend_id == "AAPL-2025-04-01"
-    assert row.distribution_type == "recurring"
+    assert store.list_ex_dividend_dates("AAPL", date(2025, 4, 1), date(2025, 4, 1)) == set()
 
 
 def test_maybe_enrich_trade_date_uses_imported_symbols_when_allowlist_is_empty() -> None:
@@ -436,8 +449,115 @@ def test_maybe_enrich_trade_date_uses_imported_symbols_when_allowlist_is_empty()
     )
 
     assert rest_client.treasury_calls == [date(2025, 4, 1)]
-    assert rest_client.dividend_calls == [("AAPL", date(2025, 4, 1)), ("MSFT", date(2025, 4, 1))]
-    assert store.list_ex_dividend_dates("AAPL", date(2025, 4, 1), date(2025, 4, 1)) == {date(2025, 4, 1)}
+    assert rest_client.dividend_calls == []
+    assert store.list_ex_dividend_dates("AAPL", date(2025, 4, 1), date(2025, 4, 1)) == set()
+
+
+def test_backfill_dividends_for_window_batches_by_symbol_and_range() -> None:
+    module = _load_sync_script_module()
+    store = _store()
+    rest_client = _FakeRestClient()
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                open_price=Decimal("100"),
+                high_price=Decimal("101"),
+                low_price=Decimal("99"),
+                close_price=Decimal("100"),
+                volume=Decimal("1000"),
+                source_file_date=date(2025, 4, 1),
+            ),
+            HistoricalUnderlyingDayBar(
+                symbol="MSFT",
+                trade_date=date(2025, 4, 1),
+                open_price=Decimal("200"),
+                high_price=Decimal("201"),
+                low_price=Decimal("199"),
+                close_price=Decimal("200"),
+                volume=Decimal("1000"),
+                source_file_date=date(2025, 4, 1),
+            ),
+        ]
+    )
+
+    stored = module._backfill_dividends_for_window(
+        store,
+        rest_client,
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 30),
+        symbols=set(),
+        skip_rest_enrichment=False,
+    )
+
+    assert stored == 1
+    assert rest_client.dividend_calls == [
+        ("AAPL", date(2025, 4, 1), date(2025, 4, 30)),
+        ("MSFT", date(2025, 4, 1), date(2025, 4, 30)),
+    ]
+    assert store.list_ex_dividend_dates("AAPL", date(2025, 4, 1), date(2025, 4, 30)) == {date(2025, 4, 1)}
+    with store._session(readonly=True) as session:
+        row = session.query(HistoricalExDividendDate).filter_by(symbol="AAPL", ex_dividend_date=date(2025, 4, 1)).one()
+    assert row.provider_dividend_id == "AAPL-2025-04-01"
+    assert row.distribution_type == "recurring"
+
+
+def test_backfill_earnings_for_window_batches_by_symbol_and_range() -> None:
+    module = _load_sync_script_module()
+    store = _store()
+    rest_client = _FakeRestClient()
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                open_price=Decimal("100"),
+                high_price=Decimal("101"),
+                low_price=Decimal("99"),
+                close_price=Decimal("100"),
+                volume=Decimal("1000"),
+                source_file_date=date(2025, 4, 1),
+            ),
+            HistoricalUnderlyingDayBar(
+                symbol="MSFT",
+                trade_date=date(2025, 4, 1),
+                open_price=Decimal("200"),
+                high_price=Decimal("201"),
+                low_price=Decimal("199"),
+                close_price=Decimal("200"),
+                volume=Decimal("1000"),
+                source_file_date=date(2025, 4, 1),
+            ),
+        ]
+    )
+
+    stored = module._backfill_earnings_for_window(
+        store,
+        rest_client,
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 30),
+        symbols=set(),
+        skip_rest_enrichment=False,
+    )
+
+    assert stored == 2
+    assert rest_client.earnings_calls == [
+        ("AAPL", date(2025, 4, 1), date(2025, 4, 30)),
+        ("MSFT", date(2025, 4, 1), date(2025, 4, 30)),
+    ]
+    assert store.list_earnings_event_dates("AAPL", date(2025, 4, 1), date(2025, 4, 30)) == {date(2025, 4, 1)}
+    with store._session(readonly=True) as session:
+        rows = (
+            session.query(HistoricalEarningsEvent)
+            .filter_by(symbol="AAPL", event_date=date(2025, 4, 1))
+            .order_by(HistoricalEarningsEvent.event_type)
+            .all()
+        )
+    assert [row.provider_event_id for row in rows] == [
+        "AAPL-earn-2025-04-01",
+        "AAPL-call-2025-04-01",
+    ]
 
 
 def test_print_trade_date_result_includes_progress_prefix_and_flushes() -> None:

@@ -15,6 +15,7 @@ from backtestforecast.config import get_settings
 from backtestforecast.errors import ConfigurationError, ExternalServiceError
 from backtestforecast.market_data.types import (
     DailyBar,
+    EarningsEventRecord,
     ExDividendRecord,
     OptionContractRecord,
     OptionGreeks,
@@ -355,20 +356,34 @@ class _MassiveClientCore:
         return holidays
 
     @staticmethod
-    def parse_earnings(rows: list[dict[str, Any]]) -> set[date]:
-        dates: set[date] = set()
+    def parse_earnings_records(rows: list[dict[str, Any]]) -> list[EarningsEventRecord]:
+        records: list[EarningsEventRecord] = []
         for row in rows:
             raw_date = row.get("date")
             event_type = row.get("type")
             if not isinstance(raw_date, str) or not isinstance(event_type, str):
                 continue
-            if event_type not in {"earnings_announcement_date", "earnings_conference_call"}:
+            normalized_event_type = event_type.strip().lower()
+            if normalized_event_type not in {"earnings_announcement_date", "earnings_conference_call"}:
                 continue
             try:
-                dates.add(date.fromisoformat(raw_date))
+                event_date = date.fromisoformat(raw_date)
             except ValueError:
                 logger.debug("massive_client.earnings.invalid_date", raw_date=raw_date)
-        return dates
+                continue
+            provider_event_id = row.get("id")
+            records.append(
+                EarningsEventRecord(
+                    event_date=event_date,
+                    event_type=normalized_event_type,
+                    provider_event_id=provider_event_id if isinstance(provider_event_id, str) and provider_event_id.strip() else None,
+                )
+            )
+        return records
+
+    @staticmethod
+    def parse_earnings(rows: list[dict[str, Any]]) -> set[date]:
+        return {record.event_date for record in _MassiveClientCore.parse_earnings_records(rows)}
 
     @staticmethod
     def parse_ex_dividend_dates(rows: list[dict[str, Any]]) -> set[date]:
@@ -683,6 +698,12 @@ class MassiveClient(_MassiveClientCore):
         return self.parse_holidays(data)
 
     def list_earnings_event_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        return {
+            record.event_date
+            for record in self.list_earnings_event_records(symbol, start_date, end_date)
+        }
+
+    def list_earnings_event_records(self, symbol: str, start_date: date, end_date: date) -> list[EarningsEventRecord]:
         last_error: ExternalServiceError | None = None
         for params in self._earnings_param_variants(symbol, start_date, end_date):
             try:
@@ -690,10 +711,10 @@ class MassiveClient(_MassiveClientCore):
             except ExternalServiceError as exc:
                 last_error = exc
                 continue
-            return self.parse_earnings(rows)
+            return self.parse_earnings_records(rows)
         if last_error is not None:
             raise last_error
-        return set()
+        return []
 
     def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         return {
@@ -1027,6 +1048,10 @@ class AsyncMassiveClient(_MassiveClientCore):
         return self.parse_holidays(data)
 
     async def list_earnings_event_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
+        records = await self.list_earnings_event_records(symbol, start_date, end_date)
+        return {record.event_date for record in records}
+
+    async def list_earnings_event_records(self, symbol: str, start_date: date, end_date: date) -> list[EarningsEventRecord]:
         last_error: ExternalServiceError | None = None
         for params in self._earnings_param_variants(symbol, start_date, end_date):
             try:
@@ -1034,10 +1059,10 @@ class AsyncMassiveClient(_MassiveClientCore):
             except ExternalServiceError as exc:
                 last_error = exc
                 continue
-            return self.parse_earnings(rows)
+            return self.parse_earnings_records(rows)
         if last_error is not None:
             raise last_error
-        return set()
+        return []
 
     async def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         return {

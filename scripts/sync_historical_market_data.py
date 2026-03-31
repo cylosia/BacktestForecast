@@ -27,7 +27,7 @@ from backtestforecast.integrations.massive_flatfiles import (
     stock_day_dataset,
 )
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
-from backtestforecast.models import HistoricalExDividendDate, HistoricalTreasuryYield
+from backtestforecast.models import HistoricalEarningsEvent, HistoricalExDividendDate, HistoricalTreasuryYield
 from backtestforecast.utils.dates import is_trading_day, market_date_today
 
 
@@ -374,15 +374,30 @@ def _maybe_enrich_trade_date(
             )
     except ExternalServiceError:
         pass
-    effective_symbols = set(symbols) if symbols else set(result.stock_symbols) | set(result.option_symbols)
+
+
+def _backfill_dividends_for_window(
+    store: HistoricalMarketDataStore | None,
+    rest_client: MassiveClient | None,
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: set[str],
+    skip_rest_enrichment: bool,
+) -> int:
+    if store is None or rest_client is None or skip_rest_enrichment:
+        return 0
+
+    effective_symbols = set(symbols) if symbols else store.list_imported_symbols_for_window(start_date, end_date)
+    stored_rows = 0
     for symbol in sorted(effective_symbols):
         try:
-            dividends = rest_client.list_ex_dividend_records(symbol, trade_date, trade_date)
+            dividends = rest_client.list_ex_dividend_records(symbol, start_date, end_date)
         except ExternalServiceError:
             continue
         if not dividends:
             continue
-        store.upsert_ex_dividend_dates(
+        stored_rows += store.upsert_ex_dividend_dates(
             [
                 HistoricalExDividendDate(
                     symbol=symbol.upper(),
@@ -397,11 +412,48 @@ def _maybe_enrich_trade_date(
                     distribution_type=item.distribution_type,
                     historical_adjustment_factor=item.historical_adjustment_factor,
                     split_adjusted_cash_amount=item.split_adjusted_cash_amount,
-                    source_file_date=trade_date,
+                    source_file_date=item.ex_dividend_date,
                 )
                 for item in sorted(dividends, key=lambda record: (record.ex_dividend_date, record.provider_dividend_id or ""))
             ]
         )
+    return stored_rows
+
+
+def _backfill_earnings_for_window(
+    store: HistoricalMarketDataStore | None,
+    rest_client: MassiveClient | None,
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: set[str],
+    skip_rest_enrichment: bool,
+) -> int:
+    if store is None or rest_client is None or skip_rest_enrichment:
+        return 0
+
+    effective_symbols = set(symbols) if symbols else store.list_imported_symbols_for_window(start_date, end_date)
+    stored_rows = 0
+    for symbol in sorted(effective_symbols):
+        try:
+            events = rest_client.list_earnings_event_records(symbol, start_date, end_date)
+        except ExternalServiceError:
+            continue
+        if not events:
+            continue
+        stored_rows += store.upsert_earnings_events(
+            [
+                HistoricalEarningsEvent(
+                    symbol=symbol.upper(),
+                    event_date=item.event_date,
+                    event_type=item.event_type,
+                    provider_event_id=item.provider_event_id,
+                    source_file_date=item.event_date,
+                )
+                for item in sorted(events, key=lambda record: (record.event_date, record.event_type, record.provider_event_id or ""))
+            ]
+        )
+    return stored_rows
 
 
 def _iso_now() -> str:
@@ -698,6 +750,22 @@ def main() -> int:
                     last_result=_result_status_payload(result),
                     **progress_fields,
                 )
+        _backfill_dividends_for_window(
+            store,
+            rest_client,
+            start_date=start_date,
+            end_date=end_date,
+            symbols=symbols,
+            skip_rest_enrichment=args.skip_rest_enrichment,
+        )
+        _backfill_earnings_for_window(
+            store,
+            rest_client,
+            start_date=start_date,
+            end_date=end_date,
+            symbols=symbols,
+            skip_rest_enrichment=args.skip_rest_enrichment,
+        )
         completion_timestamp = _iso_now()
         progress_fields = _progress_snapshot_fields(all_trade_dates, trade_date_checkpoints)
         completion_status = "completed" if int(progress_fields["remaining_trade_dates"]) == 0 else "completed_with_errors"

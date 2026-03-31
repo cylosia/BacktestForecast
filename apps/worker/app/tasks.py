@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from contextlib import suppress
-from datetime import UTC
+from datetime import UTC, timedelta
 import os
 import threading
 from typing import TYPE_CHECKING
@@ -1481,8 +1481,16 @@ def reconcile_s3_orphans(self) -> None:
         raise
 
 
+def _coerce_result_expires_seconds(value: object, default: int = 7200) -> int:
+    if isinstance(value, timedelta):
+        return max(int(value.total_seconds()), 0)
+    if isinstance(value, (int, float)):
+        return max(int(value), 0)
+    return default
+
+
 @celery_app.task(name="maintenance.reap_stale_jobs", base=BaseTaskWithDLQ, bind=True, ignore_result=True, max_retries=1, soft_time_limit=300, time_limit=360)
-def reap_stale_jobs(self, stale_minutes: int = 10) -> dict[str, int]:
+def reap_stale_jobs(self=None, stale_minutes: int = 10) -> dict[str, int]:
     """Re-dispatch jobs stuck in 'queued' with no celery_task_id for too long."""
     stale_minutes = max(stale_minutes, 5)
 
@@ -1864,9 +1872,7 @@ def _reap_stale_jobs_inner(stale_minutes: int) -> dict[str, int]:
         logger.exception("reaper.pipeline_reap_failed")
 
     orphan_cutoff = datetime.now(UTC) - timedelta(minutes=15)
-    _result_expires = celery_app.conf.get("result_expires", 7200)
-    if isinstance(_result_expires, timedelta):
-        _result_expires = int(_result_expires.total_seconds())
+    _result_expires = _coerce_result_expires_seconds(celery_app.conf.get("result_expires", 7200))
     result_expires_cutoff = datetime.now(UTC) - timedelta(seconds=_result_expires)
     for model_cls, model_name in [
         (BacktestRun, "BacktestRun"),
