@@ -16,6 +16,20 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+
+def _prepare_local_canary_overrides() -> None:
+    if os.environ.get("CANARY_LOCAL_REDIS_NOAUTH", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    os.environ.setdefault("REDIS_URL", redis_url)
+    os.environ.setdefault("REDIS_CACHE_URL", redis_url)
+    os.environ.setdefault("CELERY_RESULT_BACKEND_URL", redis_url)
+    # Protect an explicit no-auth local Redis override before bootstrap reads .env.
+    os.environ["REDIS_PASSWORD"] = ""
+
+
+_prepare_local_canary_overrides()
+
 from _bootstrap import bootstrap_repo
 
 bootstrap_repo(load_api_env=True)
