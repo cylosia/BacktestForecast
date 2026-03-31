@@ -106,7 +106,7 @@ class TestBullPutCreditSpreadPnl:
         entry_vpu = (1.00 - 2.50) * 100
         exit_vpu = 0.0
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         expected_net = expected_gross - expected_comm
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
@@ -171,7 +171,7 @@ class TestBearCallCreditSpreadPnl:
 
         entry_vpu = (1.00 - 3.00) * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -241,7 +241,7 @@ class TestBullCallDebitSpreadPnl:
         entry_vpu = (3.00 - 1.00) * 100
         exit_vpu = (10.0 - 5.0) * 100
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -282,7 +282,7 @@ class TestBearPutDebitSpreadPnl:
         entry_vpu = (4.00 - 1.50) * 100
         exit_vpu = (15.0 - 10.0) * 100
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -335,7 +335,7 @@ class TestIronCondorPnl:
 
         entry_vpu = (0.30 + 0.30 - 1.00 - 1.00) * 100  # long_put + long_call - short_put - short_call
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 4 * t.quantity * 2
+        expected_comm = _COMM * 4 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -416,7 +416,7 @@ class TestButterflyPnl:
         entry_vpu = (1 * 6.00 + 1 * 1.50 - 2 * 3.50) * 100  # 50
         exit_vpu = (1 * 5.0 + 1 * 0.0 - 2 * 0.0) * 100  # 500
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 4 * t.quantity * 2  # 1+2+1 = 4 contracts
+        expected_comm = _COMM * 4 * t.quantity  # 1+2+1 = 4 contracts
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -464,7 +464,7 @@ class TestIronButterflyPnl:
 
         entry_vpu = (0.50 + 0.50 - 3.00 - 3.00) * 100  # -500
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 4 * t.quantity * 2
+        expected_comm = _COMM * 4 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -507,7 +507,7 @@ class TestCoveredCallPnl:
         entry_vpu = (-1 * 2.00 * 100) + (1 * 100 * 100)  # 9800
         exit_vpu = (-1 * 0.0 * 100) + (1 * 100 * 105)  # 10500
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 1 * t.quantity * 2
+        expected_comm = _COMM * 1 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -568,7 +568,7 @@ class TestCashSecuredPutPnl:
 
         entry_vpu = -1 * 3.00 * 100  # -300
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 1 * t.quantity * 2
+        expected_comm = _COMM * 1 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -629,7 +629,7 @@ class TestCollarPnl:
         entry_vpu = (-1 * 2.00 * 100) + (1 * 1.50 * 100) + (1 * 100 * 100)  # 9950
         exit_vpu = 0.0 + 0.0 + (1 * 100 * 100)  # 10000
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -669,7 +669,7 @@ class TestCoveredStranglePnl:
         entry_vpu = (-1 * 2.00 * 100) + (-1 * 1.50 * 100) + (1 * 100 * 100)  # 9650
         exit_vpu = 0.0 + 0.0 + (1 * 100 * 100)  # 10000
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -711,7 +711,7 @@ class TestNakedCallPnl:
 
         entry_vpu = -1 * 2.00 * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 1 * t.quantity * 2
+        expected_comm = _COMM * 1 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -748,7 +748,7 @@ class TestNakedPutPnl:
 
         entry_vpu = -1 * 2.00 * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 1 * t.quantity * 2
+        expected_comm = _COMM * 1 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -791,7 +791,7 @@ class TestShortStraddlePnl:
 
         entry_vpu = (-1 * 3.00 + -1 * 3.00) * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -829,7 +829,7 @@ class TestShortStranglePnl:
 
         entry_vpu = (-1 * 2.00 + -1 * 2.00) * 100
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -868,7 +868,7 @@ class TestLongStraddlePnl:
         entry_vpu = (3.00 + 3.00) * 100  # 600
         exit_vpu = (10.0 + 0.0) * 100  # 1000
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -907,7 +907,7 @@ class TestLongStranglePnl:
         entry_vpu = (1.50 + 1.50) * 100
         exit_vpu = (0.0 + 10.0) * 100
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -957,7 +957,7 @@ class TestCalendarSpreadPnl:
         entry_vpu = (5.00 - 2.00) * 100  # 300
         exit_vpu = (3.50 - 0.0) * 100  # 350
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 3 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -1032,7 +1032,7 @@ class TestPoorMansCoveredCallPnl:
         entry_vpu = (12.00 - 1.50) * 100  # 1050
         exit_vpu = (13.00 - 0.0) * 100  # 1300
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 3 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -1078,7 +1078,7 @@ class TestRatioCallBackspreadPnl:
         entry_vpu = (-1 * 1 * 3.50 + 1 * 2 * 2.00) * 100  # 50
         exit_vpu = (-1 * 1 * 15.0 + 1 * 2 * 10.0) * 100  # 500
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 3 * t.quantity * 2
+        expected_comm = _COMM * 3 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -1119,7 +1119,7 @@ class TestRatioPutBackspreadPnl:
         entry_vpu = (-1 * 1 * 3.50 + 1 * 2 * 2.00) * 100  # 50
         exit_vpu = (-1 * 1 * 20.0 + 1 * 2 * 15.0) * 100  # 1000
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 3 * t.quantity * 2
+        expected_comm = _COMM * 3 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -1169,7 +1169,7 @@ class TestJadeLizardPnl:
 
         entry_vpu = (-1 * 2.00 + -1 * 2.50 + 1 * 1.00) * 100  # -350
         expected_gross = (0.0 - entry_vpu) * t.quantity
-        expected_comm = _COMM * 3 * t.quantity * 2
+        expected_comm = _COMM * 3 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -1207,7 +1207,7 @@ class TestSyntheticPutPnl:
         entry_vpu = (1 * 3.00 * 100) + (-1 * 100 * 100)  # -9700
         exit_vpu = (1 * 0.0 * 100) + (-1 * 100 * 90)  # -9000
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 1 * t.quantity * 2
+        expected_comm = _COMM * 1 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)
@@ -1247,7 +1247,7 @@ class TestReverseConversionPnl:
         entry_vpu = (1 * 2.50 * 100) + (-1 * 3.00 * 100) + (-1 * 100 * 100)  # -10050
         exit_vpu = (1 * 0.0 * 100) + (-1 * 0.0 * 100) + (-1 * 100 * 100)  # -10000
         expected_gross = (exit_vpu - entry_vpu) * t.quantity
-        expected_comm = _COMM * 2 * t.quantity * 2
+        expected_comm = _COMM * 2 * t.quantity
         _assert_money_close(t.gross_pnl, expected_gross)
         _assert_money_close(t.total_commissions, expected_comm)
         _assert_money_close(t.net_pnl, expected_gross - expected_comm)

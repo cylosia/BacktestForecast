@@ -111,7 +111,7 @@ class TestLongCallPnl:
         entry_cost = 3.0 * 100 * trade.quantity
         exit_value = 10.0 * 100 * trade.quantity
         expected_gross = exit_value - entry_cost
-        expected_comm = commission * trade.quantity * 2
+        expected_comm = commission * trade.quantity
         expected_net = expected_gross - expected_comm
 
         _assert_money_close(trade.gross_pnl, expected_gross)
@@ -175,8 +175,8 @@ class TestLongPutPnl:
         Underlying drops to 90 at expiration 2025-04-05
         Intrinsic at expiration = max(100 - 90, 0) = 10.00
         Gross PnL per contract = (10.00 - 2.50) * 100 = $750
-        Commission = 0.65 * 1 * 2 = $1.30
-        Net PnL = $750 - $1.30 = $748.70
+        Commission = 0.65 * 1 = $0.65
+        Net PnL = $750 - $0.65 = $749.35
     """
 
     def test_long_put_profitable_at_expiration(self):
@@ -226,7 +226,7 @@ class TestLongPutPnl:
         entry_cost = 2.50 * 100 * trade.quantity
         exit_value = 10.0 * 100 * trade.quantity
         expected_gross = exit_value - entry_cost
-        expected_comm = commission * trade.quantity * 2
+        expected_comm = commission * trade.quantity
         expected_net = expected_gross - expected_comm
 
         _assert_money_close(trade.gross_pnl, expected_gross)

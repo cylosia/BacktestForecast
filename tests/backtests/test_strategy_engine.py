@@ -11,7 +11,13 @@ from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.types import BacktestConfig
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
-from backtestforecast.schemas.backtests import CreateBacktestRunRequest, CustomLegDefinition, StrategyOverrides
+from backtestforecast.schemas.backtests import (
+    CreateBacktestRunRequest,
+    CustomLegDefinition,
+    StrategyOverrides,
+    StrikeSelection,
+    StrikeSelectionMode,
+)
 
 
 @dataclass
@@ -303,6 +309,64 @@ def test_put_calendar_spread_uses_put_contracts_when_overridden() -> None:
     trade = result.trades[0]
     assert trade.exit_date == date(2025, 2, 4)
     assert round(float(trade.net_pnl), 2) == 50.0
+    assert trade.detail_json["legs"][0]["contract_type"] == "put"
+    assert trade.detail_json["legs"][1]["contract_type"] == "put"
+
+
+def test_put_calendar_spread_uses_shared_put_strike_override() -> None:
+    engine = OptionsBacktestEngine()
+    bars = [
+        make_bar(date(2025, 2, 1), 100),
+        make_bar(date(2025, 2, 2), 100),
+        make_bar(date(2025, 2, 3), 100),
+        make_bar(date(2025, 2, 4), 100),
+        make_bar(date(2025, 2, 5), 100),
+    ]
+    contracts = {
+        (date(2025, 2, 2), "put"): [
+            OptionContractRecord("NEARP100", "put", date(2025, 2, 4), 100, 100),
+            OptionContractRecord("NEARP95", "put", date(2025, 2, 4), 95, 100),
+            OptionContractRecord("NEARP90", "put", date(2025, 2, 4), 90, 100),
+            OptionContractRecord("FARP100", "put", date(2025, 2, 18), 100, 100),
+            OptionContractRecord("FARP95", "put", date(2025, 2, 18), 95, 100),
+            OptionContractRecord("FARP90", "put", date(2025, 2, 18), 90, 100),
+        ]
+    }
+    quotes = {
+        ("NEARP90", date(2025, 2, 2)): make_quote(date(2025, 2, 2), 1.0),
+        ("FARP90", date(2025, 2, 2)): make_quote(date(2025, 2, 2), 4.0),
+        ("FARP90", date(2025, 2, 4)): make_quote(date(2025, 2, 4), 3.5),
+    }
+    result = engine.run(
+        BacktestConfig(
+            symbol="SPY",
+            strategy_type="calendar_spread",
+            start_date=date(2025, 2, 1),
+            end_date=date(2025, 2, 3),
+            target_dte=2,
+            dte_tolerance_days=30,
+            max_holding_days=30,
+            account_size=10_000,
+            risk_per_trade_pct=3,
+            commission_per_contract=0,
+            entry_rules=[],
+            strategy_overrides=StrategyOverrides(
+                calendar_contract_type="put",
+                short_put_strike=StrikeSelection(
+                    mode=StrikeSelectionMode.ATM_OFFSET_STEPS,
+                    value=2,
+                ),
+            ),
+        ),
+        bars,
+        set(),
+        FakeGateway(contracts=contracts, quotes=quotes),
+    )
+
+    assert result.summary.trade_count == 1
+    trade = result.trades[0]
+    assert trade.detail_json["legs"][0]["strike_price"] == 90
+    assert trade.detail_json["legs"][1]["strike_price"] == 90
     assert trade.detail_json["legs"][0]["contract_type"] == "put"
     assert trade.detail_json["legs"][1]["contract_type"] == "put"
 
@@ -893,8 +957,8 @@ class TestBullCallSpreadCorrectness:
         # gross = (500 - 250) x 2 = 500
         assert round(float(trade.gross_pnl), 2) == 500.0
 
-        # 2 legs x 2 units x $0.65, charged at entry and exit
-        expected_comm = commission * 2 * 2 * 2  # 5.20
+        # 2 legs x 2 units x $0.65, charged at entry only because both legs settle at expiration
+        expected_comm = commission * 2 * 2  # 2.60
         assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
 
         assert round(float(trade.net_pnl), 2) == round(500.0 - expected_comm, 2)
@@ -983,8 +1047,8 @@ class TestIronCondorCorrectness:
         # gross = (0 - (-400)) x 2 = 800
         assert round(float(trade.gross_pnl), 2) == 800.0
 
-        # 4 legs x 2 units x $0.65 x 2 (entry + exit) = $10.40
-        expected_comm = commission * 4 * 2 * 2
+        # 4 legs x 2 units x $0.65, charged at entry only because all legs settle at expiration
+        expected_comm = commission * 4 * 2
         assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
 
         assert round(float(trade.net_pnl), 2) == round(800.0 - expected_comm, 2)
@@ -1016,7 +1080,7 @@ class TestIronCondorCorrectness:
         wing_width_per_unit = 500
         assert abs(trade.gross_pnl) <= wing_width_per_unit * trade.quantity
 
-        expected_comm = commission * 4 * 2 * 2
+        expected_comm = commission * 4 * 2
         assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
         assert round(float(trade.net_pnl), 2) == round(-200.0 - expected_comm, 2)
 
@@ -1088,8 +1152,8 @@ class TestCashSecuredPutCorrectness:
         premium_collected = self.PREMIUM * 100
         assert round(float(trade.gross_pnl), 2) == premium_collected
 
-        # 1 leg x 1 unit x $0.65 x 2 (entry + exit) = $1.30
-        expected_comm = self.COMMISSION * 1 * 1 * 2
+        # 1 leg x 1 unit x $0.65, charged at entry only because the option expires
+        expected_comm = self.COMMISSION * 1 * 1
         assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
         assert round(float(trade.net_pnl), 2) == round(premium_collected - expected_comm, 2)
 
@@ -1117,10 +1181,117 @@ class TestCashSecuredPutCorrectness:
         expected_gross = -(intrinsic_loss - self.PREMIUM * 100)  # -300
         assert round(float(trade.gross_pnl), 2) == expected_gross
 
-        expected_comm = self.COMMISSION * 1 * 1 * 2
+        expected_comm = self.COMMISSION * 1 * 1
         assert round(float(trade.total_commissions), 2) == round(expected_comm, 2)
         assert round(float(trade.net_pnl), 2) == round(expected_gross - expected_comm, 2)
         assert trade.net_pnl < 0
+
+
+def test_naked_put_waives_buy_to_close_fee_at_or_below_five_cents() -> None:
+    engine = OptionsBacktestEngine()
+    entry_date = date(2025, 7, 2)
+    expiration = date(2025, 7, 10)
+    bars = [
+        make_bar(date(2025, 7, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 7, 3), 101),
+    ]
+    contracts = {
+        (entry_date, "put"): [
+            OptionContractRecord("P95", "put", expiration, 95, 100),
+        ],
+    }
+    quotes = {
+        ("P95", entry_date): make_quote(entry_date, 1.0),
+        ("P95", date(2025, 7, 3)): make_quote(date(2025, 7, 3), 0.03),
+    }
+    commission = 0.65
+    result = engine.run(
+        BacktestConfig(
+            symbol="AAPL",
+            strategy_type="naked_put",
+            start_date=date(2025, 7, 1),
+            end_date=date(2025, 7, 10),
+            target_dte=8,
+            dte_tolerance_days=2,
+            max_holding_days=1,
+            account_size=10_000,
+            risk_per_trade_pct=100,
+            commission_per_contract=commission,
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        FakeGateway(contracts=contracts, quotes=quotes),
+    )
+
+    assert result.summary.trade_count == 1
+    trade = result.trades[0]
+    expected_entry_only = commission * trade.quantity
+    assert round(float(trade.total_commissions), 2) == round(expected_entry_only, 2)
+    assert round(float(trade.detail_json["entry_commissions"]), 2) == round(expected_entry_only, 2)
+    assert round(float(trade.detail_json["exit_commissions"]), 2) == 0.0
+    assert trade.detail_json["commission_waivers"] == [
+        {
+            "ticker": "P95",
+            "reason": "buy_to_close_0.05_or_less",
+            "contracts": trade.quantity,
+            "exit_mid": 0.03,
+        }
+    ]
+
+
+def test_wheel_waives_buy_to_close_fee_at_or_below_five_cents() -> None:
+    engine = OptionsBacktestEngine()
+    entry_date = date(2025, 8, 2)
+    expiration = date(2025, 8, 15)
+    bars = [
+        make_bar(date(2025, 8, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 8, 3), 101),
+    ]
+    contracts = {
+        (entry_date, "put"): [
+            OptionContractRecord("P95", "put", expiration, 95, 100),
+        ],
+    }
+    quotes = {
+        ("P95", entry_date): make_quote(entry_date, 1.0),
+        ("P95", date(2025, 8, 3)): make_quote(date(2025, 8, 3), 0.03),
+    }
+    commission = 0.65
+    result = engine.run(
+        BacktestConfig(
+            symbol="AAPL",
+            strategy_type="wheel_strategy",
+            start_date=date(2025, 8, 1),
+            end_date=date(2025, 8, 15),
+            target_dte=14,
+            dte_tolerance_days=5,
+            max_holding_days=1,
+            account_size=20_000,
+            risk_per_trade_pct=100,
+            commission_per_contract=commission,
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        FakeGateway(contracts=contracts, quotes=quotes),
+    )
+
+    option_trade = next(trade for trade in result.trades if trade.detail_json.get("phase") == "cash_secured_put")
+    expected_entry_only = commission * option_trade.quantity
+    assert round(float(option_trade.total_commissions), 2) == round(expected_entry_only, 2)
+    assert round(float(option_trade.detail_json["entry_commissions"]), 2) == round(expected_entry_only, 2)
+    assert round(float(option_trade.detail_json["exit_commissions"]), 2) == 0.0
+    assert option_trade.detail_json["commission_waivers"] == [
+        {
+            "ticker": "P95",
+            "reason": "buy_to_close_0.05_or_less",
+            "contracts": option_trade.quantity,
+            "exit_mid": 0.03,
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

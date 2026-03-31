@@ -38,6 +38,7 @@ def _leg_multiplier(leg: object) -> float:
 _D0 = Decimal("0")
 _D100 = Decimal("100")
 _D365 = Decimal("365")
+_D_FIVE_CENTS = Decimal("0.05")
 
 
 _D_CACHE: dict[int | float, Decimal] = {
@@ -701,13 +702,17 @@ class OptionsBacktestEngine:
     ) -> tuple[TradeResult, Decimal]:
         """Close a position and return the TradeResult and cash change (exit proceeds minus exit commission)."""
         exit_value_d = exit_value if isinstance(exit_value, Decimal) else _D(exit_value)
-        exit_commission = self._option_commission_total(position, config.commission_per_contract)
-        option_exit_notional: Decimal = sum(
-            (abs(_D(leg.last_mid) * _D(_leg_multiplier(leg)))
-             * _D(leg.quantity_per_unit))
-            for leg in position.option_legs
-        ) or _D0
-        option_exit_notional *= _D(position.quantity)
+        (
+            exit_commission,
+            option_exit_notional,
+            commission_waivers,
+        ) = self._option_exit_cost_profile(
+            position=position,
+            commission_per_contract=config.commission_per_contract,
+            exit_date=exit_date,
+            exit_prices=exit_prices,
+            assignment_detail=assignment_detail,
+        )
         stock_exit_notional: Decimal = (
             sum(abs(_D(leg.last_price) * _D(leg.share_quantity_per_unit)) for leg in position.stock_legs) * _D(position.quantity)
             if position.stock_legs else _D0
@@ -801,6 +806,9 @@ class OptionsBacktestEngine:
             detail_json={
                 **self._build_trade_detail_json(position, exit_prices, float(exit_value_per_unit), assignment_detail),
                 "unit_convention": "per_unit_divided_by_100",
+                "entry_commissions": float(entry_commission_total),
+                "exit_commissions": float(exit_commission),
+                "commission_waivers": commission_waivers,
                 "total_slippage": float(total_slippage),
                 "entry_slippage": float(entry_slippage),
                 "exit_slippage": float(exit_slippage),
@@ -885,6 +893,60 @@ class OptionsBacktestEngine:
             else _D(commission_per_contract)
         )
         return commission * _D(contracts_per_unit) * _D(position.quantity)
+
+    @classmethod
+    def _option_exit_cost_profile(
+        cls,
+        *,
+        position: OpenMultiLegPosition,
+        commission_per_contract: Decimal | float | int,
+        exit_date: date,
+        exit_prices: dict[str, float],
+        assignment_detail: dict[str, Any] | None = None,
+    ) -> tuple[Decimal, Decimal, list[dict[str, Any]]]:
+        commission = (
+            commission_per_contract
+            if isinstance(commission_per_contract, Decimal)
+            else _D(commission_per_contract)
+        )
+        assigned_ticker = assignment_detail["assigned_leg"] if assignment_detail is not None else None
+        total_commission = _D0
+        slippage_notional = _D0
+        waivers: list[dict[str, Any]] = []
+
+        for leg in position.option_legs:
+            leg_exit_mid = _D(exit_prices.get(leg.ticker, leg.last_mid))
+            leg_contracts = _D(leg.quantity_per_unit) * _D(position.quantity)
+            leg_notional = (
+                abs(leg_exit_mid * _D(_leg_multiplier(leg)) * _D(leg.quantity_per_unit))
+                * _D(position.quantity)
+            )
+            waiver_reason: str | None = None
+
+            if assigned_ticker == leg.ticker:
+                waiver_reason = "assignment_or_exercise"
+            elif leg.expiration_date <= exit_date:
+                waiver_reason = "expired_or_settled"
+            elif leg.side < 0 and leg_exit_mid <= _D_FIVE_CENTS:
+                waiver_reason = "buy_to_close_0.05_or_less"
+
+            if waiver_reason is None:
+                total_commission += commission * leg_contracts
+                slippage_notional += leg_notional
+                continue
+
+            waivers.append(
+                {
+                    "ticker": leg.ticker,
+                    "reason": waiver_reason,
+                    "contracts": int(leg.quantity_per_unit * position.quantity),
+                    "exit_mid": float(leg_exit_mid),
+                }
+            )
+            if waiver_reason == "buy_to_close_0.05_or_less":
+                slippage_notional += leg_notional
+
+        return total_commission, slippage_notional, waivers
 
     @staticmethod
     def _build_trade_detail_json(

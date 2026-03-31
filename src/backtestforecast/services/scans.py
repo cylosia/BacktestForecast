@@ -975,7 +975,7 @@ class ScanService:
             max_holding_days=horizon_days,
             account_size=Decimal("10000"),
             risk_per_trade_pct=Decimal("5"),
-            commission_per_contract=Decimal("1"),
+            commission_per_contract=Decimal("0.65"),
             entry_rules=[RsiRule(type="rsi", operator="lte", threshold=Decimal("40"), period=14)],
         )
         bundle = self.execution_service.market_data_service.prepare_backtest(request)

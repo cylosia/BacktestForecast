@@ -74,7 +74,9 @@ export function RiskControls({
           aria-describedby={errors.commissionPerContract ? "commissionPerContract-error" : undefined}
           onChange={(event) => onChange({ commissionPerContract: event.target.value })}
         />
-        <p className="text-xs text-muted-foreground">Use the all-in per-contract commission estimate.</p>
+        <p className="text-xs text-muted-foreground">
+          Schwab-style online pricing is typically $0.65/contract. Buy-to-close orders at $0.05 or less and assignment/expiration exits are modeled with zero option commission.
+        </p>
         {errors.commissionPerContract ? (
           <p id="commissionPerContract-error" className="text-sm text-destructive">{errors.commissionPerContract}</p>
         ) : null}

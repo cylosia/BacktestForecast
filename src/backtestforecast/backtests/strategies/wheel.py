@@ -29,6 +29,7 @@ from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar
 
 logger = structlog.get_logger(__name__)
+BUY_TO_CLOSE_FEE_WAIVER_THRESHOLD = 0.05
 
 
 def _D(v: float | int) -> Decimal:
@@ -147,11 +148,23 @@ class WheelStrategyBacktestEngine:
                 )
                 if should_exit:
                     exit_mid = current_mid
-                    exit_commission = float(config.commission_per_contract) * active_option.quantity
                     entry_commission = float(config.commission_per_contract) * active_option.quantity
                     option_gross_pnl = (active_option.entry_mid - exit_mid) * 100.0 * active_option.quantity
                     entry_slippage = active_option.entry_mid * 100.0 * active_option.quantity * slippage_ratio
-                    exit_slippage = abs(exit_mid) * 100.0 * active_option.quantity * slippage_ratio
+                    exit_commission = self._exit_option_commission(
+                        commission_per_contract=float(config.commission_per_contract),
+                        quantity=active_option.quantity,
+                        exit_mid=exit_mid,
+                        exit_date=bar.trade_date,
+                        expiration_date=active_option.expiration_date,
+                    )
+                    exit_slippage = self._exit_option_slippage(
+                        exit_mid=exit_mid,
+                        quantity=active_option.quantity,
+                        slippage_ratio=slippage_ratio,
+                        exit_date=bar.trade_date,
+                        expiration_date=active_option.expiration_date,
+                    )
                     option_net_pnl = option_gross_pnl - (entry_commission + exit_commission) - (entry_slippage + exit_slippage)
                     option_detail = {
                         "phase": active_option.phase,
@@ -168,6 +181,8 @@ class WheelStrategyBacktestEngine:
                                 "exit_mid": exit_mid,
                             }
                         ],
+                        "entry_commissions": entry_commission,
+                        "exit_commissions": exit_commission,
                         "assumptions": [
                             "Wheel phases are recorded separately so share inventory can persist across cycles.",
                             "Put assignment converts option liability into long shares at strike;"
@@ -219,6 +234,14 @@ class WheelStrategyBacktestEngine:
                                 detail_json={
                                     **option_detail,
                                     "assignment": True,
+                                    "commission_waivers": [
+                                        {
+                                            "ticker": active_option.ticker,
+                                            "reason": "assignment_or_exercise",
+                                            "contracts": active_option.quantity,
+                                            "exit_mid": exit_mid,
+                                        }
+                                    ],
                                     "unit_convention": "per_share_option_premium",
                                     "total_slippage": entry_slippage,
                                     "entry_slippage": entry_slippage,
@@ -267,6 +290,14 @@ class WheelStrategyBacktestEngine:
                                 detail_json={
                                     **option_detail,
                                     "assignment": True,
+                                    "commission_waivers": [
+                                        {
+                                            "ticker": active_option.ticker,
+                                            "reason": "assignment_or_exercise",
+                                            "contracts": active_option.quantity,
+                                            "exit_mid": exit_mid,
+                                        }
+                                    ],
                                     "unit_convention": "per_share_option_premium",
                                     "total_slippage": entry_slippage,
                                     "entry_slippage": entry_slippage,
@@ -337,6 +368,13 @@ class WheelStrategyBacktestEngine:
                                 detail_json={
                                     **option_detail,
                                     "assignment": False,
+                                    "commission_waivers": self._exit_commission_waivers(
+                                        ticker=active_option.ticker,
+                                        quantity=active_option.quantity,
+                                        exit_mid=exit_mid,
+                                        exit_date=bar.trade_date,
+                                        expiration_date=active_option.expiration_date,
+                                    ),
                                     "unit_convention": "per_share_option_premium",
                                     "total_slippage": entry_slippage + exit_slippage,
                                     "entry_slippage": entry_slippage,
@@ -778,3 +816,56 @@ class WheelStrategyBacktestEngine:
             return
         warning_codes.add(code)
         warnings.append({"code": code, "message": message})
+
+    @staticmethod
+    def _exit_option_commission(
+        *,
+        commission_per_contract: float,
+        quantity: int,
+        exit_mid: float,
+        exit_date: date,
+        expiration_date: date,
+    ) -> float:
+        if expiration_date <= exit_date:
+            return 0.0
+        if exit_mid <= BUY_TO_CLOSE_FEE_WAIVER_THRESHOLD:
+            return 0.0
+        return commission_per_contract * quantity
+
+    @staticmethod
+    def _exit_option_slippage(
+        *,
+        exit_mid: float,
+        quantity: int,
+        slippage_ratio: float,
+        exit_date: date,
+        expiration_date: date,
+    ) -> float:
+        if expiration_date <= exit_date:
+            return 0.0
+        return abs(exit_mid) * 100.0 * quantity * slippage_ratio
+
+    @staticmethod
+    def _exit_commission_waivers(
+        *,
+        ticker: str,
+        quantity: int,
+        exit_mid: float,
+        exit_date: date,
+        expiration_date: date,
+    ) -> list[dict[str, Any]]:
+        if expiration_date <= exit_date:
+            return [{
+                "ticker": ticker,
+                "reason": "expired_or_settled",
+                "contracts": quantity,
+                "exit_mid": exit_mid,
+            }]
+        if exit_mid <= BUY_TO_CLOSE_FEE_WAIVER_THRESHOLD:
+            return [{
+                "ticker": ticker,
+                "reason": "buy_to_close_0.05_or_less",
+                "contracts": quantity,
+                "exit_mid": exit_mid,
+            }]
+        return []
