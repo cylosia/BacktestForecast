@@ -64,7 +64,9 @@ export function MultiStepRunPoller({
       </CardHeader>
       {sseStatus === "error" ? (
         <CardContent>
-          <p className="text-sm text-muted-foreground">Unable to stream status updates. Refresh the page for the latest state.</p>
+          <p className="text-sm text-muted-foreground">
+            Something went wrong while checking status. Refresh the page to see the latest results.
+          </p>
         </CardContent>
       ) : null}
     </Card>

@@ -273,11 +273,17 @@ class HistoricalMarketDataStore:
             symbol_rows = session.execute(select(symbol_union.c.symbol).distinct())
             return {str(symbol).upper() for (symbol,) in symbol_rows if symbol}
 
-    def get_freshness_summary(self) -> dict[str, dict[str, str | None]]:
-        def _row_to_payload(latest_date: date | None, latest_source_file_date: date | None) -> dict[str, str | None]:
+    def get_freshness_summary(self) -> dict[str, dict[str, str | int | None]]:
+        def _row_to_payload(
+            latest_date: date | None,
+            latest_source_file_date: date | None,
+            *,
+            row_estimate: int | None = None,
+        ) -> dict[str, str | int | None]:
             return {
                 "latest_date": latest_date.isoformat() if latest_date is not None else None,
                 "latest_source_file_date": latest_source_file_date.isoformat() if latest_source_file_date is not None else None,
+                "row_estimate": row_estimate,
             }
 
         with self._session(readonly=True) as session:
@@ -321,13 +327,46 @@ class HistoricalMarketDataStore:
                 .order_by(HistoricalTreasuryYield.trade_date.desc())
                 .limit(1)
             ).first()
+            row_estimates = {
+                "historical_underlying_day_bars": None,
+                "historical_option_day_bars": None,
+                "historical_ex_dividend_dates": None,
+                "historical_earnings_events": None,
+                "historical_treasury_yields": None,
+            }
+            bind = session.get_bind()
+            if bind is not None and getattr(bind.dialect, "name", "") == "postgresql":
+                for table_name in tuple(row_estimates):
+                    estimate = session.execute(
+                        text(
+                            "SELECT GREATEST(reltuples::bigint, 0) "
+                            "FROM pg_class WHERE relname = :table_name"
+                        ),
+                        {"table_name": table_name},
+                    ).scalar_one_or_none()
+                    row_estimates[table_name] = int(estimate) if estimate is not None else None
 
         return {
-            "underlying_day_bars": _row_to_payload(*(latest_underlying or (None, None))),
-            "option_day_bars": _row_to_payload(*(latest_option or (None, None))),
-            "ex_dividend_dates": _row_to_payload(*(latest_dividend or (None, None))),
-            "earnings_events": _row_to_payload(*(latest_earnings or (None, None))),
-            "treasury_yields": _row_to_payload(*(latest_treasury or (None, None))),
+            "underlying_day_bars": _row_to_payload(
+                *(latest_underlying or (None, None)),
+                row_estimate=row_estimates["historical_underlying_day_bars"],
+            ),
+            "option_day_bars": _row_to_payload(
+                *(latest_option or (None, None)),
+                row_estimate=row_estimates["historical_option_day_bars"],
+            ),
+            "ex_dividend_dates": _row_to_payload(
+                *(latest_dividend or (None, None)),
+                row_estimate=row_estimates["historical_ex_dividend_dates"],
+            ),
+            "earnings_events": _row_to_payload(
+                *(latest_earnings or (None, None)),
+                row_estimate=row_estimates["historical_earnings_events"],
+            ),
+            "treasury_yields": _row_to_payload(
+                *(latest_treasury or (None, None)),
+                row_estimate=row_estimates["historical_treasury_yields"],
+            ),
         }
 
     def get_average_treasury_yield(

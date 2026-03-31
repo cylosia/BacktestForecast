@@ -35,7 +35,13 @@ def main() -> int:
     for dataset, fields in payload.items():
         latest_date = fields.get("latest_date") or "none"
         latest_source_file_date = fields.get("latest_source_file_date") or "none"
-        print(f"{dataset}: latest_date={latest_date} latest_source_file_date={latest_source_file_date}")
+        row_estimate = fields.get("row_estimate")
+        row_estimate_text = row_estimate if row_estimate is not None else "unknown"
+        print(
+            f"{dataset}: latest_date={latest_date} "
+            f"latest_source_file_date={latest_source_file_date} "
+            f"row_estimate={row_estimate_text}"
+        )
     return 0
 
 

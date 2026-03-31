@@ -265,6 +265,13 @@ def test_earnings_event_upsert_and_lookup_preserves_multiple_types_for_same_day(
     assert store.list_earnings_event_dates("F", date(2016, 1, 1), date(2016, 12, 31)) == {date(2016, 1, 27)}
 
 
+def test_freshness_summary_exposes_row_estimate_field() -> None:
+    store = _store()
+    summary = store.get_freshness_summary()
+    assert "row_estimate" in summary["underlying_day_bars"]
+    assert summary["underlying_day_bars"]["row_estimate"] is None
+
+
 def test_get_freshness_summary_reports_latest_dates_without_table_scan_helpers() -> None:
     store = _store()
     store.upsert_underlying_day_bars(

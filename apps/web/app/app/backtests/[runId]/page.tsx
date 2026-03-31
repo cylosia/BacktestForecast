@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { BacktestRunPoller } from "@/components/backtests/backtest-run-poller";
+import { DataQualityBoundaryCard } from "@/components/backtests/data-quality-boundary-card";
 import { EquityCurveChart } from "@/components/backtests/equity-curve-chart";
 import { ExportActions } from "@/components/backtests/export-actions";
 import { ResultSummaryCards } from "@/components/backtests/result-summary-cards";
@@ -87,6 +88,8 @@ export default async function BacktestDetailPage({
             initialStatus={run.status}
           />
         ) : null}
+
+        <DataQualityBoundaryCard dataSource={run.data_source} warnings={run.warnings ?? []} />
 
         {isComplete ? (
           <>

@@ -30,7 +30,11 @@ from backtestforecast.backtests.types import (
 )
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppValidationError, ConflictError, DataUnavailableError, ExternalServiceError, NotFoundError
-from backtestforecast.market_data.service import HistoricalDataBundle, MassiveOptionGateway
+from backtestforecast.market_data.service import (
+    HistoricalDataBundle,
+    MassiveOptionGateway,
+    historical_flatfile_pricing_warning,
+)
 from backtestforecast.models import (
     MultiStepEquityPoint,
     MultiStepRun,
@@ -414,6 +418,15 @@ class MultiStepBacktestService:
             data_source="historical_flatfile" if prefer_local else "massive",
             warnings=list(ex_dividend_result.warnings or []),
         )
+        if prefer_local:
+            bundle = HistoricalDataBundle(
+                bars=bundle.bars,
+                earnings_dates=bundle.earnings_dates,
+                ex_dividend_dates=bundle.ex_dividend_dates,
+                option_gateway=bundle.option_gateway,
+                data_source=bundle.data_source,
+                warnings=[*(bundle.warnings or []), historical_flatfile_pricing_warning()],
+            )
         warnings: list[dict[str, Any]] = [
             _to_warning(
                 "multi_step_alpha_v1",

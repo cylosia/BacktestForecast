@@ -306,6 +306,12 @@ See `apps/api/.env.example` for the full list. Critical production variables:
 - `METRICS_TOKEN` — Prometheus endpoint protection
 - `IP_HASH_SALT` — Must be non-default in production
 
+Operator-safe checks:
+- Provider readiness: `python scripts/check_provider_readiness.py --json`
+- Historical data freshness: `python scripts/check_historical_data_freshness.py --json`
+
+Do not use ad hoc shell probes or `COUNT(*)` against the large historical option table during incidents. The scripts above bootstrap repo env correctly and avoid expensive table scans.
+
 ## Genetic Sweep Worker Starvation
 
 **Symptom:** Worker queue depth grows, other tasks (backtests, scans, exports)

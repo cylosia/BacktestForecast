@@ -27,6 +27,14 @@ def test_freshness_script_bootstraps_repo_and_reads_summary() -> None:
     source = _read("scripts/check_historical_data_freshness.py")
     assert "bootstrap_repo(load_api_env=True)" in source
     assert "get_freshness_summary()" in source
+    assert "row_estimate" in source
+
+
+def test_provider_readiness_script_bootstraps_repo_and_probes_massive() -> None:
+    source = _read("scripts/check_provider_readiness.py")
+    assert "bootstrap_repo(load_api_env=True)" in source
+    assert "_check_massive_health" in source
+    assert "get_market_holidays()" in source
 
 
 def test_shared_script_bootstrap_adds_repo_root_before_imports() -> None:

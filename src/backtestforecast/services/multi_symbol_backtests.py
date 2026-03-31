@@ -20,7 +20,7 @@ from backtestforecast.backtests.types import BacktestConfig, EquityPointResult, 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppValidationError, ConflictError, DataUnavailableError, ExternalServiceError, NotFoundError
 from backtestforecast.indicators.calculations import ema, rsi, sma
-from backtestforecast.market_data.service import HistoricalDataBundle
+from backtestforecast.market_data.service import HistoricalDataBundle, historical_flatfile_pricing_warning
 from backtestforecast.market_data.types import DailyBar
 from backtestforecast.models import (
     MultiSymbolEquityPoint,
@@ -520,6 +520,15 @@ class MultiSymbolBacktestService:
                 data_source="historical_flatfile" if prefer_local else "massive",
                 warnings=list(ex_dividend_result.warnings or []),
             )
+            if prefer_local:
+                bundle = HistoricalDataBundle(
+                    bars=bundle.bars,
+                    earnings_dates=bundle.earnings_dates,
+                    ex_dividend_dates=bundle.ex_dividend_dates,
+                    option_gateway=bundle.option_gateway,
+                    data_source=bundle.data_source,
+                    warnings=[*(bundle.warnings or []), historical_flatfile_pricing_warning()],
+                )
             prepared[symbol] = _PreparedSymbolData(
                 definition=symbol_def,
                 bars=bars,

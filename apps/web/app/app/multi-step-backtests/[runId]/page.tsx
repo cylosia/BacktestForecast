@@ -13,6 +13,7 @@ import {
   strategyLabel,
 } from "@/lib/backtests/format";
 import { MultiStepRunPoller } from "@/components/backtests/multi-step-run-poller";
+import { DataQualityBoundaryCard } from "@/components/backtests/data-quality-boundary-card";
 import { ExportActions } from "@/components/backtests/export-actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -66,6 +67,7 @@ export default async function MultiStepRunPage({
       </div>
 
       <MultiStepRunPoller runId={runId} initialStatus={run.status} />
+      <DataQualityBoundaryCard warnings={run.warnings} />
 
       {run.error_message ? (
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-muted-foreground">

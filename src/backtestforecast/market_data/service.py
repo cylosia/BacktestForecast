@@ -66,6 +66,21 @@ class _BarsFetchResult:
     local_history_start: date | None = None
 
 
+def historical_flatfile_pricing_warning() -> dict[str, Any]:
+    return make_warning(
+        "historical_aggregate_close_pricing",
+        (
+            "Historical flat-file mode uses option daily aggregate close as a quote proxy instead "
+            "of quote-mid or full NBBO history. Treat fills, marks, and spread economics as approximate."
+        ),
+        severity="warning",
+        metadata={
+            "data_source": "historical_flatfile",
+            "degraded_mode": True,
+        },
+    )
+
+
 _GATEWAY_CONTRACT_CACHE_MAX = 2_000
 _GATEWAY_QUOTE_CACHE_MAX = 10_000
 _GATEWAY_SNAPSHOT_CACHE_MAX = 5_000
@@ -804,12 +819,7 @@ class MarketDataService:
 
         warnings = list(ex_dividend_result.warnings or [])
         if data_source == "historical_flatfile":
-            warnings.append(
-                {
-                    "code": "historical_aggregate_close_pricing",
-                    "message": "Historical flat-file mode uses option daily aggregate close as a quote proxy instead of REST quote-mid pricing.",
-                }
-            )
+            warnings.append(historical_flatfile_pricing_warning())
 
         return HistoricalDataBundle(
             bars=bars,

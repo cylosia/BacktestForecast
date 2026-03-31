@@ -141,6 +141,19 @@ class _WarningExecutionService:
         return None
 
 
+class _LocalHistoryMarketDataService(_FakeMarketDataService):
+    def _prefer_local_history(self, end_date: date) -> bool:
+        return True
+
+
+class _LocalHistoryExecutionService:
+    def __init__(self, bars_by_symbol: dict[str, list[DailyBar]]) -> None:
+        self.market_data_service = _LocalHistoryMarketDataService(bars_by_symbol)
+
+    def close(self) -> None:
+        return None
+
+
 class _EarningsBlockingMarketDataService(_FakeMarketDataService):
     def load_earnings_dates_for_rules(self, *, symbol: str, start_date: date, end_date: date, rule_groups: list[list[object]]):
         return {start_date + timedelta(days=1)}
@@ -266,6 +279,52 @@ def test_multi_symbol_service_surfaces_bundle_warnings(db_session: Session) -> N
     assert "ex_dividend_dates_unavailable" in warning_codes
 
 
+def test_multi_symbol_service_surfaces_flatfile_boundary_warning(db_session: Session) -> None:
+    session = db_session
+    user = User(clerk_user_id="user_ms_local", email="multilocal@example.com")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    user = session.scalar(select(User).where(User.id == user.id))
+    assert user is not None
+
+    bars_by_symbol = {
+        "AAA": _bars(date(2024, 1, 2), 40, 100.0),
+        "BBB": _bars(date(2024, 1, 2), 40, 105.0),
+    }
+    service = MultiSymbolBacktestService(session, execution_service=_LocalHistoryExecutionService(bars_by_symbol))
+    request = CreateMultiSymbolRunRequest(
+        name="alpha-local",
+        symbols=[
+            MultiSymbolDefinition(symbol="AAA", risk_per_trade_pct=Decimal("2")),
+            MultiSymbolDefinition(symbol="BBB", risk_per_trade_pct=Decimal("2")),
+        ],
+        strategy_groups=[
+            MultiSymbolStrategyGroup(
+                name="pair",
+                synchronous_entry=True,
+                legs=[
+                    MultiSymbolLegDefinition(symbol="AAA", strategy_type=StrategyType.LONG_CALL, target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                    MultiSymbolLegDefinition(symbol="BBB", strategy_type=StrategyType.LONG_CALL, target_dte=14, dte_tolerance_days=3, max_holding_days=5, quantity_mode="fixed_contracts", fixed_contracts=1),
+                ],
+            )
+        ],
+        entry_rules=[MultiSymbolPriceRule(left_symbol="AAA", left_indicator="close", operator="gt", threshold=Decimal("99"))],
+        start_date=date(2024, 1, 5),
+        end_date=date(2024, 1, 25),
+        account_size=Decimal("100000"),
+        commission_per_contract=Decimal("0.65"),
+    )
+    run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
+    run = service.execute_run_by_id(run.id)
+    assert run.status == "succeeded"
+    detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
+    warning_codes = {warning.code for warning in detail.warnings}
+    assert "historical_aggregate_close_pricing" in warning_codes
+
+
 def test_multi_step_service_executes_multiple_steps(db_session: Session) -> None:
     session = db_session
     user = User(clerk_user_id="user_mt", email="step@example.com")
@@ -357,6 +416,52 @@ def test_multi_step_service_surfaces_bundle_warnings(db_session: Session) -> Non
     warning_codes = {warning.code for warning in detail.warnings}
     assert "multi_step_alpha_v1" in warning_codes
     assert "ex_dividend_dates_unavailable" in warning_codes
+
+
+def test_multi_step_service_surfaces_flatfile_boundary_warning(db_session: Session) -> None:
+    session = db_session
+    user = User(clerk_user_id="user_mt_local", email="steplocal@example.com")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    bars_by_symbol = {"SPY": _bars(date(2024, 1, 2), 40, 100.0)}
+    service = MultiStepBacktestService(session, execution_service=_LocalHistoryExecutionService(bars_by_symbol))
+    request = CreateMultiStepRunRequest(
+        name="workflow-local",
+        symbol="SPY",
+        workflow_type="sequential",
+        start_date=date(2024, 1, 5),
+        end_date=date(2024, 1, 25),
+        account_size=Decimal("100000"),
+        risk_per_trade_pct=Decimal("2"),
+        commission_per_contract=Decimal("0.65"),
+        initial_entry_rules=[RsiRule(type="rsi", operator="gt", threshold=Decimal("0"), period=2)],
+        steps=[
+            WorkflowStepDefinition(
+                step_number=1,
+                name="Open long call",
+                action="open_position",
+                trigger=StepTriggerDefinition(mode="rule_match", rules=[RsiRule(type="rsi", operator="gt", threshold=Decimal("0"), period=2)]),
+                contract_selection=StepContractSelection(strategy_type=StrategyType.LONG_CALL, target_dte=14, dte_tolerance_days=3, max_holding_days=10),
+            ),
+            WorkflowStepDefinition(
+                step_number=2,
+                name="Close position",
+                action="close_position",
+                trigger=StepTriggerDefinition(mode="date_offset", days_after_prior_step=2),
+                contract_selection=StepContractSelection(strategy_type=StrategyType.LONG_CALL, target_dte=14, dte_tolerance_days=3, max_holding_days=10),
+            ),
+        ],
+    )
+    run = service.enqueue(user, request)
+    session.commit()
+    session.refresh(run)
+    run = service.execute_run_by_id(run.id)
+    assert run.status == "succeeded"
+    detail = service.get_run_for_owner(user_id=user.id, run_id=run.id)
+    warning_codes = {warning.code for warning in detail.warnings}
+    assert "historical_aggregate_close_pricing" in warning_codes
 
 
 def test_multi_step_service_honors_avoid_earnings_rules(db_session: Session) -> None:
