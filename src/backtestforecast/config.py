@@ -2,7 +2,9 @@
 
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import ClassVar
+from urllib.parse import urlparse, urlunparse
 
 import structlog
 from pydantic import Field, field_validator, model_validator
@@ -895,6 +897,7 @@ class Settings(BaseSettings):
 _settings_cache: Settings | None = None
 _settings_lock = threading.RLock()
 _invalidation_callbacks: list[Callable[[], None]] = []
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 _MAX_INVALIDATION_CALLBACKS = 100
@@ -912,6 +915,42 @@ def register_invalidation_callback(callback: Callable[[], None]) -> None:
         _invalidation_callbacks.append(callback)
 
 
+def _repo_env_files() -> tuple[str, ...]:
+    candidates = (
+        _REPO_ROOT / ".env",
+        _REPO_ROOT / "apps" / "api" / ".env",
+    )
+    return tuple(str(path) for path in candidates if path.exists())
+
+
+def _rewrite_local_redis_url(url: str | None) -> str | None:
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if parsed.scheme not in {"redis", "rediss"} or parsed.hostname != "localhost":
+        return url
+    host = "127.0.0.1"
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    if parsed.username is not None and parsed.password is not None:
+        netloc = f"{parsed.username}:{parsed.password}@{host}"
+    elif parsed.password is not None:
+        netloc = f":{parsed.password}@{host}"
+    elif parsed.username is not None:
+        netloc = f"{parsed.username}@{host}"
+    else:
+        netloc = host
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def _apply_runtime_local_overrides(settings: Settings) -> Settings:
+    if settings.app_env not in {"development", "test"}:
+        return settings
+    for attr in ("redis_url", "redis_cache_url", "celery_result_backend_url"):
+        setattr(settings, attr, _rewrite_local_redis_url(getattr(settings, attr, None)))
+    return settings
+
+
 def get_settings() -> Settings:
     """Return the application settings singleton.
 
@@ -925,7 +964,9 @@ def get_settings() -> Settings:
     with _settings_lock:
         if _settings_cache is not None:
             return _settings_cache
-        _settings_cache = Settings()
+        env_files = _repo_env_files()
+        settings = Settings(_env_file=env_files or None)
+        _settings_cache = _apply_runtime_local_overrides(settings)
         return _settings_cache
 
 

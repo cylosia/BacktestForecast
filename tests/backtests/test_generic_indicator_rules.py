@@ -158,6 +158,47 @@ def test_request_accepts_generic_indicator_rule_payloads() -> None:
     assert request.entry_rules[2].type == "indicator_series_cross"
 
 
+def test_build_entry_allowed_mask_matches_generic_rule_evaluation() -> None:
+    closes = [100.0] * 8 + [101.0, 102.0, 104.0, 107.0, 111.0, 116.0, 122.0, 129.0]
+    volumes = [1_000_000.0 + (index * 50_000.0) for index in range(len(closes))]
+    rules = [
+        IndicatorTrendRule(
+            type="indicator_trend",
+            series=RsiSeriesSpec(indicator="rsi", period=5),
+            direction="rising",
+            bars=3,
+        ),
+        IndicatorLevelCrossRule(
+            type="indicator_level_cross",
+            series=RocSeries(indicator="roc", period=3),
+            direction="crosses_above",
+            level=Decimal("0"),
+        ),
+        IndicatorSeriesCrossRule(
+            type="indicator_series_cross",
+            left_series=CloseSeries(indicator="close"),
+            right_series=EmaSeries(indicator="ema", period=4),
+            direction="crosses_above",
+        ),
+        IndicatorPersistenceRule(
+            type="indicator_persistence",
+            series=MfiSeries(indicator="mfi", period=5),
+            operator=ComparisonOperator.GTE,
+            level=Decimal("50"),
+            bars=2,
+        ),
+    ]
+
+    expected_evaluator = _build_evaluator(closes, rules, volumes=volumes)
+    expected = [expected_evaluator.is_entry_allowed(index) for index in range(len(expected_evaluator.bars))]
+
+    mask_evaluator = _build_evaluator(closes, rules, volumes=volumes)
+    mask = mask_evaluator.build_entry_allowed_mask()
+
+    assert mask == expected
+    assert [mask_evaluator.is_entry_allowed(index) for index in range(len(mask_evaluator.bars))] == expected
+
+
 def test_indicator_series_cross_rejects_identical_series() -> None:
     with pytest.raises(PydanticValidationError, match="left_series and right_series must be different"):
         CreateBacktestRunRequest(

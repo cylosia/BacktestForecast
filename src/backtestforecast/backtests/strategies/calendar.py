@@ -40,13 +40,43 @@ def resolve_calendar_contract_groups(
     strike_price_lte: float | None = None,
 ) -> tuple[date, list[OptionContractRecord], date, list[OptionContractRecord]]:
     effective_tolerance_days = max(dte_tolerance_days, CALENDAR_MIN_DTE_TOLERANCE_DAYS)
+    ordered_expirations = preferred_expiration_dates(
+        entry_date,
+        target_dte,
+        effective_tolerance_days,
+    )
+    batch_fetch = getattr(option_gateway, "list_contracts_for_expirations", None)
+    if callable(batch_fetch):
+        contracts_by_expiration = batch_fetch(
+            entry_date=entry_date,
+            contract_type=contract_type,
+            expiration_dates=ordered_expirations,
+            strike_price_gte=strike_price_gte,
+            strike_price_lte=strike_price_lte,
+        )
+        near_expiration: date | None = None
+        near_contracts: list[OptionContractRecord] = []
+        for expiration_date in ordered_expirations:
+            contracts = list(contracts_by_expiration.get(expiration_date, []))
+            if contracts:
+                near_expiration = expiration_date
+                near_contracts = contracts
+                break
+        if near_expiration is None:
+            raise DataUnavailableError("No eligible option expirations were available.")
+        minimum_target = (near_expiration - entry_date).days + CALENDAR_MIN_FAR_LEG_EXTRA_DAYS
+        for expiration_date in ordered_expirations:
+            if expiration_date <= near_expiration:
+                continue
+            if (expiration_date - entry_date).days < minimum_target:
+                continue
+            contracts = list(contracts_by_expiration.get(expiration_date, []))
+            if contracts:
+                return near_expiration, near_contracts, expiration_date, contracts
+        raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
+
     exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
     if callable(exact_fetch):
-        ordered_expirations = preferred_expiration_dates(
-            entry_date,
-            target_dte,
-            effective_tolerance_days,
-        )
         near_expiration: date | None = None
         near_contracts: list[OptionContractRecord] = []
         for expiration_date in ordered_expirations:

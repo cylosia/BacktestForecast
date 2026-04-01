@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -181,14 +182,15 @@ class HistoricalOptionGateway:
         strike_price_gte: float | None = None,
         strike_price_lte: float | None = None,
     ) -> list[OptionContractRecord]:
+        contracts_by_expiration = self.list_contracts_for_expirations(
+            entry_date=entry_date,
+            contract_type=contract_type,
+            expiration_dates=preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days),
+            strike_price_gte=strike_price_gte,
+            strike_price_lte=strike_price_lte,
+        )
         for expiration_date in preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days):
-            contracts = self._list_contracts_for_exact_expiration(
-                entry_date=entry_date,
-                contract_type=contract_type,
-                expiration_date=expiration_date,
-                strike_price_gte=strike_price_gte,
-                strike_price_lte=strike_price_lte,
-            )
+            contracts = contracts_by_expiration.get(expiration_date, [])
             if contracts:
                 return contracts
         raise DataUnavailableError("No eligible option expirations were available in local historical data.")
@@ -209,6 +211,68 @@ class HistoricalOptionGateway:
             strike_price_gte=strike_price_gte,
             strike_price_lte=strike_price_lte,
         )
+
+    def list_contracts_for_expirations(
+        self,
+        *,
+        entry_date: date,
+        contract_type: str,
+        expiration_dates: list[date],
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> dict[date, list[OptionContractRecord]]:
+        if not expiration_dates:
+            return {}
+        strike_floor = round(strike_price_gte, 4) if strike_price_gte is not None else None
+        strike_ceiling = round(strike_price_lte, 4) if strike_price_lte is not None else None
+        requested_expirations = list(dict.fromkeys(expiration_dates))
+        results: dict[date, list[OptionContractRecord]] = {}
+        missing: list[date] = []
+
+        with self._shared_state.lock:
+            for expiration_date in requested_expirations:
+                cache_key = (entry_date, contract_type, expiration_date, strike_floor, strike_ceiling)
+                contracts = _cache_hit(self._shared_state.exact_contract_cache, cache_key)
+                if contracts is not None:
+                    results[expiration_date] = contracts
+                else:
+                    missing.append(expiration_date)
+
+        if not missing:
+            return results
+
+        batch_fetch = getattr(self.store, "list_option_contracts_for_expirations", None)
+        if inspect.ismethod(batch_fetch):
+            fetched = batch_fetch(
+                symbol=self.symbol,
+                as_of_date=entry_date,
+                contract_type=contract_type,
+                expiration_dates=missing,
+                strike_price_gte=strike_floor,
+                strike_price_lte=strike_ceiling,
+            )
+            with self._shared_state.lock:
+                for expiration_date in missing:
+                    cache_key = (entry_date, contract_type, expiration_date, strike_floor, strike_ceiling)
+                    contracts = list(fetched.get(expiration_date, []))
+                    _store_lru(
+                        self._shared_state.exact_contract_cache,
+                        cache_key,
+                        contracts,
+                        max_size=_EXACT_CONTRACT_CACHE_MAX,
+                    )
+                    results[expiration_date] = contracts
+            return results
+
+        for expiration_date in missing:
+            results[expiration_date] = self._list_contracts_for_exact_expiration(
+                entry_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_price_gte=strike_floor,
+                strike_price_lte=strike_ceiling,
+            )
+        return results
 
     def get_quote(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         cache_key = (option_ticker, trade_date)
@@ -277,6 +341,49 @@ class HistoricalOptionGateway:
             with self._shared_state.lock:
                 self._shared_state.quotes_inflight.pop(cache_key, None)
                 inflight_event.set()
+
+    def get_quotes(
+        self,
+        option_tickers: list[str],
+        trade_date: date,
+    ) -> dict[str, OptionQuoteRecord | None]:
+        if not option_tickers:
+            return {}
+        requested_tickers = list(dict.fromkeys(option_tickers))
+        quotes: dict[str, OptionQuoteRecord | None] = {}
+        missing: list[str] = []
+        with self._shared_state.lock:
+            for option_ticker in requested_tickers:
+                cache_key = (option_ticker, trade_date)
+                if cache_key in self._shared_state.quote_cache:
+                    self._shared_state.quote_cache.move_to_end(cache_key)
+                    quotes[option_ticker] = self._shared_state.quote_cache[cache_key]
+                else:
+                    missing.append(option_ticker)
+
+        if not missing:
+            return quotes
+
+        batch_fetch = getattr(self.store, "get_option_quotes_for_date", None)
+        if inspect.ismethod(batch_fetch):
+            fetched = batch_fetch(missing, trade_date)
+            with self._shared_state.lock:
+                for option_ticker in missing:
+                    cache_key = (option_ticker, trade_date)
+                    quote = fetched.get(option_ticker)
+                    _store_lru(
+                        self._shared_state.quote_cache,
+                        cache_key,
+                        quote,
+                        max_size=_QUOTE_CACHE_MAX,
+                    )
+                    quotes[option_ticker] = quote
+                    self._shared_state.inflight_errors.pop(("quotes", cache_key), None)
+            return quotes
+
+        for option_ticker in missing:
+            quotes[option_ticker] = self.get_quote(option_ticker, trade_date)
+        return quotes
 
     def set_ex_dividend_dates(self, ex_dividend_dates: set[date]) -> None:
         self._ex_dividend_dates = set(ex_dividend_dates)

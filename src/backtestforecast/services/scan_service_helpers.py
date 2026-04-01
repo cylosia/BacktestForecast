@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+import math
 from typing import Any
 
 from backtestforecast.config import get_settings
@@ -26,7 +27,7 @@ def historical_metric_or_none(summary: dict[str, Any], field: str) -> float | No
         value = float(summary.get(field, 0.0))
     except (TypeError, ValueError):
         return None
-    return value if value.is_finite() else None
+    return value if math.isfinite(value) else None
 
 
 def historical_observation_from_summary(

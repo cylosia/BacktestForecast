@@ -93,6 +93,17 @@ class WheelStrategyBacktestEngine:
         evaluator = EntryRuleEvaluator(
             config=config, bars=sorted_bars, earnings_dates=earnings_dates, option_gateway=option_gateway
         )
+        entry_allowed_mask: list[bool] | None = None
+        try:
+            entry_allowed_mask = evaluator.build_entry_allowed_mask()
+        except Exception:
+            logger.warning("entry_rule_precompute_error", exc_info=True)
+            self._add_warning_once(
+                warnings,
+                warning_codes,
+                "entry_rule_evaluation_error",
+                "One or more entry rule evaluations failed and were treated as not-allowed.",
+            )
 
         for index, bar in enumerate(sorted_bars):
             if bar.trade_date < config.start_date:
@@ -401,14 +412,17 @@ class WheelStrategyBacktestEngine:
                 )
             entry_allowed = False
             if active_option is None and not just_closed_this_bar and bar.trade_date <= config.end_date:
-                try:
-                    entry_allowed = evaluator.is_entry_allowed(index)
-                except Exception:
-                    logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
-                    self._add_warning_once(
-                        warnings, warning_codes, "entry_rule_evaluation_error",
-                        "One or more entry rule evaluations failed and were treated as not-allowed.",
-                    )
+                if entry_allowed_mask is not None:
+                    entry_allowed = entry_allowed_mask[index]
+                else:
+                    try:
+                        entry_allowed = evaluator.is_entry_allowed(index)
+                    except Exception:
+                        logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
+                        self._add_warning_once(
+                            warnings, warning_codes, "entry_rule_evaluation_error",
+                            "One or more entry rule evaluations failed and were treated as not-allowed.",
+                        )
             if entry_allowed:
                 if held_shares is None:
                     position = self._open_short_put(config, bar, index, option_gateway, cash, warnings, warning_codes)

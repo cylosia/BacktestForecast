@@ -3,7 +3,6 @@
 from contextlib import suppress
 from datetime import UTC, timedelta
 import os
-import threading
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -57,6 +56,10 @@ from backtestforecast.observability.metrics import (
     SWEEP_JOBS_TOTAL,
 )
 from backtestforecast.services.backtests import BacktestService
+from backtestforecast.services.backtest_execution import (
+    close_thread_local_shared_execution_service,
+    get_thread_local_shared_execution_service,
+)
 from backtestforecast.services.backtest_workflow_access import count_backtest_family_runs_for_current_month
 from backtestforecast.services.dispatch_recovery import DISPATCH_SLA, repair_stranded_jobs
 from backtestforecast.services.exports import ExportService
@@ -66,8 +69,6 @@ from backtestforecast.services.scans import ScanService
 from backtestforecast.services.sweeps import SweepService
 
 SessionLocal = create_worker_session
-_shared_backtest_execution_service = None
-_shared_backtest_execution_service_lock = threading.Lock()
 
 
 def create_worker_session():
@@ -75,27 +76,14 @@ def create_worker_session():
 
 
 def _get_shared_backtest_execution_service():
-    global _shared_backtest_execution_service
-    with _shared_backtest_execution_service_lock:
-        if _shared_backtest_execution_service is None:
-            from backtestforecast.integrations.massive_client import MassiveClient
-            from backtestforecast.market_data.service import MarketDataService
-            from backtestforecast.services.backtest_execution import BacktestExecutionService
-
-            shared_market_data_service = MarketDataService(MassiveClient())
-            _shared_backtest_execution_service = BacktestExecutionService(
-                market_data_service=shared_market_data_service,
-            )
-        return _shared_backtest_execution_service
+    return get_thread_local_shared_execution_service()
 
 
 def close_shared_backtest_execution_service() -> None:
-    global _shared_backtest_execution_service
-    with _shared_backtest_execution_service_lock:
-        service = _shared_backtest_execution_service
-        _shared_backtest_execution_service = None
-    if service is not None:
-        _close_owned_resource(service, label="worker.shared_backtest_execution_service")
+    try:
+        close_thread_local_shared_execution_service()
+    except Exception:
+        logger.warning("worker.shared_backtest_execution_service_close_failed", exc_info=True)
 
 
 def _build_backtest_service(session):

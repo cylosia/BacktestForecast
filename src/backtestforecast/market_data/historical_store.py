@@ -212,6 +212,65 @@ class HistoricalMarketDataStore:
             )
         return contracts
 
+    def list_option_contracts_for_expirations(
+        self,
+        *,
+        symbol: str,
+        as_of_date: date,
+        contract_type: str,
+        expiration_dates: list[date],
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> dict[date, list[OptionContractRecord]]:
+        if not expiration_dates:
+            return {}
+        requested_expirations = tuple(dict.fromkeys(expiration_dates))
+        with self._session(readonly=True) as session:
+            stmt = (
+                select(
+                    HistoricalOptionDayBar.option_ticker,
+                    HistoricalOptionDayBar.contract_type,
+                    HistoricalOptionDayBar.expiration_date,
+                    HistoricalOptionDayBar.strike_price,
+                )
+                .where(
+                    HistoricalOptionDayBar.underlying_symbol == symbol,
+                    HistoricalOptionDayBar.trade_date == as_of_date,
+                    HistoricalOptionDayBar.contract_type == contract_type,
+                    HistoricalOptionDayBar.expiration_date.in_(requested_expirations),
+                )
+            )
+            if strike_price_gte is not None:
+                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
+            if strike_price_lte is not None:
+                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
+            rows = list(
+                session.execute(
+                    stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)
+                )
+            )
+        contracts_by_expiration: dict[date, list[OptionContractRecord]] = {
+            expiration_date: [] for expiration_date in requested_expirations
+        }
+        seen_by_expiration: dict[date, set[str]] = {
+            expiration_date: set() for expiration_date in requested_expirations
+        }
+        for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
+            seen = seen_by_expiration.setdefault(row_expiration_date, set())
+            if option_ticker in seen:
+                continue
+            seen.add(option_ticker)
+            contracts_by_expiration.setdefault(row_expiration_date, []).append(
+                OptionContractRecord(
+                    ticker=option_ticker,
+                    contract_type=row_contract_type,
+                    expiration_date=row_expiration_date,
+                    strike_price=float(row_strike_price),
+                    shares_per_contract=100.0,
+                )
+            )
+        return contracts_by_expiration
+
     def get_option_quote_for_date(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         with self._session(readonly=True) as session:
             close_price = session.scalar(
@@ -231,6 +290,43 @@ class HistoricalMarketDataStore:
             ask_price=close_price,
             participant_timestamp=None,
         )
+
+    def get_option_quotes_for_date(
+        self,
+        option_tickers: list[str],
+        trade_date: date,
+    ) -> dict[str, OptionQuoteRecord | None]:
+        if not option_tickers:
+            return {}
+        requested_tickers = tuple(dict.fromkeys(option_tickers))
+        with self._session(readonly=True) as session:
+            rows = list(
+                session.execute(
+                    select(
+                        HistoricalOptionDayBar.option_ticker,
+                        HistoricalOptionDayBar.close_price,
+                    ).where(
+                        HistoricalOptionDayBar.trade_date == trade_date,
+                        HistoricalOptionDayBar.option_ticker.in_(requested_tickers),
+                    )
+                )
+            )
+        quotes: dict[str, OptionQuoteRecord | None] = {
+            ticker: None for ticker in requested_tickers
+        }
+        for option_ticker, close_price in rows:
+            if close_price is None:
+                continue
+            close_value = float(close_price)
+            if close_value <= 0:
+                continue
+            quotes[option_ticker] = OptionQuoteRecord(
+                trade_date=trade_date,
+                bid_price=close_value,
+                ask_price=close_value,
+                participant_timestamp=None,
+            )
+        return quotes
 
     def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         with self._session(readonly=True) as session:

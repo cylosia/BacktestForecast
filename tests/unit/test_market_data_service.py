@@ -135,6 +135,24 @@ class TestRedisFailureGracefulDegradation:
         result = svc._fetch_bars_coalesced("AAPL", date(2024, 1, 1), date(2024, 3, 31))
         assert len(result) == 5
 
+    def test_build_redis_cache_returns_none_when_ping_fails(self):
+        fake_settings = MagicMock(
+            option_cache_enabled=True,
+            redis_cache_url="redis://:devpassword@localhost:6379/0",
+            option_cache_ttl_seconds=600,
+        )
+        fake_cache = MagicMock()
+        fake_cache.ping.return_value = False
+
+        with (
+            patch("backtestforecast.market_data.service.get_settings", return_value=fake_settings),
+            patch("backtestforecast.market_data.redis_cache.OptionDataRedisCache", return_value=fake_cache),
+        ):
+            result = MarketDataService._build_redis_cache()
+
+        assert result is None
+        fake_cache.close.assert_called_once()
+
 
 class TestRequestCoalescing:
     def test_concurrent_requests_for_same_key_coalesce(self):
@@ -344,6 +362,46 @@ class TestPrepareBacktestExDividendDates:
         assert first.ex_dividend_dates == {date(2024, 1, 12)}
         assert second.ex_dividend_dates == {date(2024, 1, 12)}
         svc.client.list_ex_dividend_records.assert_called_once()
+
+    def test_prepare_backtest_emits_phase_timing_log(self):
+        bars = _make_bars(60, base_date=date(2023, 12, 1))
+        svc = _make_service(bars)
+        svc.client.list_ex_dividend_records.return_value = []
+
+        request = CreateBacktestRunRequest(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2024, 1, 10),
+            end_date=date(2024, 1, 31),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=10,
+            account_size=10000,
+            risk_per_trade_pct=5,
+            commission_per_contract=1,
+            entry_rules=[{"type": "rsi", "operator": "lte", "threshold": 35, "period": 14}],
+        )
+
+        with patch("backtestforecast.market_data.service.logger") as mock_logger:
+            bundle = svc.prepare_backtest(request)
+
+        assert bundle.data_source == "massive"
+        mock_logger.info.assert_called()
+        event_name = mock_logger.info.call_args.args[0]
+        payload = mock_logger.info.call_args.kwargs
+        assert event_name == "market_data.prepare_backtest_timing"
+        assert payload["symbol"] == "AAPL"
+        assert payload["strategy_type"] == "long_call"
+        assert payload["data_source"] == "massive"
+        assert payload["bars_count"] == len(bundle.bars)
+        assert payload["ex_dividend_count"] == 0
+        assert payload["warning_count"] == 0
+        assert payload["bars_fetch_ms"] >= 0
+        assert payload["bars_validate_ms"] >= 0
+        assert payload["earnings_ms"] >= 0
+        assert payload["ex_dividend_ms"] >= 0
+        assert payload["gateway_ms"] >= 0
+        assert payload["total_ms"] >= 0
 
     def test_load_ex_dividend_data_uses_redis_cache_before_provider(self):
         from backtestforecast.market_data.redis_cache import OptionDataRedisCache

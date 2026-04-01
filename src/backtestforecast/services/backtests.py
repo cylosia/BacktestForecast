@@ -51,7 +51,10 @@ from backtestforecast.schemas.backtests import (
 from backtestforecast.schemas.json_shapes import _TRADE_DETAIL_REQUIRED_KEYS, validate_json_shape
 from backtestforecast.strategy_catalog.catalog import STRATEGY_CATALOG, StrategyTier
 from backtestforecast.services.audit import AuditService
-from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.backtest_execution import (
+    BacktestExecutionService,
+    get_thread_local_shared_execution_service,
+)
 from backtestforecast.services.backtest_service_helpers import (
     merge_warning_sets,
     request_payload_from_snapshot,
@@ -103,12 +106,12 @@ class BacktestService:
         self.run_repository = BacktestRunRepository(session)
         self.audit = AuditService(session)
         self._execution_service = execution_service
-        self._owns_execution_service = execution_service is None
+        self._owns_execution_service = False
 
     @property
     def execution_service(self) -> BacktestExecutionService:
         if self._execution_service is None:
-            self._execution_service = BacktestExecutionService()
+            self._execution_service = get_thread_local_shared_execution_service()
         return self._execution_service
 
     def close(self) -> None:
@@ -406,11 +409,16 @@ class BacktestService:
         )
 
         _exec_start = _time.monotonic()
+        execution_ms: float | None = None
+        persistence_ms: float | None = None
         try:
+            _execution_phase_start = _time.monotonic()
             execution_result = self.execution_service.execute_request(
                 request,
                 resolved_parameters=resolved_parameters,
             )
+            execution_ms = round((_time.monotonic() - _execution_phase_start) * 1000, 3)
+            _persist_phase_start = _time.monotonic()
             with self.session.no_autoflush:
                 self._apply_execution_result(run, execution_result)
                 completed_at = datetime.now(UTC)
@@ -448,6 +456,16 @@ class BacktestService:
                     metadata={"symbol": run.symbol, "strategy_type": run.strategy_type},
                 )
                 self.session.commit()
+                persistence_ms = round((_time.monotonic() - _persist_phase_start) * 1000, 3)
+                logger.info(
+                    "backtest.run_execution_timing",
+                    run_id=str(run.id),
+                    symbol=run.symbol,
+                    strategy_type=run.strategy_type,
+                    execution_ms=execution_ms,
+                    persistence_ms=persistence_ms,
+                    total_ms=round((_time.monotonic() - _exec_start) * 1000, 3),
+                )
         except AppError as exc:
             self.session.rollback()
             self.session.execute(
@@ -550,14 +568,27 @@ class BacktestService:
         )
 
         try:
+            _execution_phase_start = _time.monotonic()
             execution_result = self.execution_service.execute_request(
                 request,
                 resolved_parameters=resolved_parameters,
             )
+            execution_ms = round((_time.monotonic() - _execution_phase_start) * 1000, 3)
+            _persist_phase_start = _time.monotonic()
             self._apply_execution_result(run, execution_result)
             run.status = "succeeded"
             run.completed_at = datetime.now(UTC)
             self.session.commit()
+            persistence_ms = round((_time.monotonic() - _persist_phase_start) * 1000, 3)
+            logger.info(
+                "backtest.create_and_run_timing",
+                run_id=str(run.id),
+                symbol=run.symbol,
+                strategy_type=run.strategy_type,
+                execution_ms=execution_ms,
+                persistence_ms=persistence_ms,
+                total_ms=round((_time.monotonic() - _execution_phase_start) * 1000, 3),
+            )
         except AppError as exc:
             self.session.rollback()
             self.session.execute(

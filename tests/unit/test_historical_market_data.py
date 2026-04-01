@@ -177,6 +177,103 @@ def test_market_data_service_fetches_local_bars_first() -> None:
     assert [bar.trade_date for bar in bars] == [date(2025, 1, 2), date(2025, 1, 3), date(2025, 1, 6)]
 
 
+def test_historical_store_batches_contracts_for_multiple_expirations() -> None:
+    store = _store()
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:AAPL250418C00190000",
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=date(2025, 4, 1),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker="O:AAPL250425C00190000",
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 25),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.50"),
+                high_price=Decimal("5.90"),
+                low_price=Decimal("5.10"),
+                close_price=Decimal("5.70"),
+                volume=Decimal("12"),
+                source_file_date=date(2025, 4, 1),
+            ),
+        ]
+    )
+
+    contracts_by_expiration = store.list_option_contracts_for_expirations(
+        symbol="AAPL",
+        as_of_date=date(2025, 4, 1),
+        contract_type="call",
+        expiration_dates=[date(2025, 4, 18), date(2025, 4, 25)],
+    )
+
+    assert [contract.ticker for contract in contracts_by_expiration[date(2025, 4, 18)]] == [
+        "O:AAPL250418C00190000"
+    ]
+    assert [contract.ticker for contract in contracts_by_expiration[date(2025, 4, 25)]] == [
+        "O:AAPL250425C00190000"
+    ]
+
+
+def test_historical_store_batches_quotes_for_same_trade_date() -> None:
+    store = _store()
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:AAPL250418C00190000",
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=date(2025, 4, 1),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker="O:AAPL250418P00190000",
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="put",
+                strike_price=Decimal("190"),
+                open_price=Decimal("4.10"),
+                high_price=Decimal("4.40"),
+                low_price=Decimal("3.80"),
+                close_price=Decimal("4.25"),
+                volume=Decimal("11"),
+                source_file_date=date(2025, 4, 1),
+            ),
+        ]
+    )
+
+    quotes = store.get_option_quotes_for_date(
+        ["O:AAPL250418C00190000", "O:AAPL250418P00190000", "O:MISSING"],
+        date(2025, 4, 1),
+    )
+
+    assert quotes["O:AAPL250418C00190000"] is not None
+    assert quotes["O:AAPL250418C00190000"].mid_price == 5.25
+    assert quotes["O:AAPL250418P00190000"] is not None
+    assert quotes["O:AAPL250418P00190000"].mid_price == 4.25
+    assert quotes["O:MISSING"] is None
+
+
 def test_ex_dividend_upsert_preserves_multiple_provider_records_for_same_day() -> None:
     store = _store()
     assert store.upsert_ex_dividend_dates(

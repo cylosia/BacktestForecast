@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError
-from backtestforecast.market_data.prefetch import OptionDataPrefetcher
 from backtestforecast.models import SweepJob, SweepResult, User
 from backtestforecast.observability.metrics import (
     SWEEP_CANDIDATE_FAILURES_TOTAL,
@@ -39,7 +38,10 @@ from backtestforecast.schemas.sweeps import (
     SweepResultResponse,
 )
 from backtestforecast.services.audit import AuditService
-from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.backtest_execution import (
+    BacktestExecutionService,
+    get_thread_local_shared_execution_service,
+)
 from backtestforecast.services.dispatch_recovery import (
     observe_job_create_to_running_latency,
     redispatch_if_stale_queued,
@@ -86,14 +88,14 @@ class SweepService:
     ) -> None:
         self.session = session
         self._execution_service = execution_service
-        self._owns_execution_service = execution_service is None
+        self._owns_execution_service = False
         self.repository = SweepJobRepository(session)
         self.audit = AuditService(session)
 
     @property
     def execution_service(self) -> BacktestExecutionService:
         if self._execution_service is None:
-            self._execution_service = BacktestExecutionService()
+            self._execution_service = get_thread_local_shared_execution_service()
         return self._execution_service
 
     def close(self) -> None:
@@ -476,32 +478,47 @@ class SweepService:
     def _execute_sweep(self, job: SweepJob, payload: CreateSweepRequest) -> None:
         warnings: list[dict[str, Any]] = []
 
-        # Phase 1: prepare bundle and prefetch
-        representative = CreateBacktestRunRequest(
-            symbol=payload.symbol,
-            strategy_type=payload.strategy_types[0],
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-            target_dte=payload.target_dte,
-            dte_tolerance_days=payload.dte_tolerance_days,
-            max_holding_days=payload.max_holding_days,
-            account_size=payload.account_size,
-            risk_per_trade_pct=payload.risk_per_trade_pct,
-            commission_per_contract=payload.commission_per_contract,
-            entry_rules=payload.entry_rule_sets[0].entry_rules if payload.entry_rule_sets else [],
+        # Phase 1: prepare one shared bundle and warm the shared gateway once
+        bundle_stage_start = _time.monotonic()
+        service_init_start = _time.monotonic()
+        market_data_service = self.execution_service.market_data_service
+        market_data_service_ms = round((_time.monotonic() - service_init_start) * 1000, 3)
+        representative = self._make_bundle_request(payload)
+        bundle_prepare_start = _time.monotonic()
+        bundle = market_data_service.prepare_backtest(representative)
+        bundle_prepare_ms = round((_time.monotonic() - bundle_prepare_start) * 1000, 3)
+        prefetch_requests = self._make_prefetch_requests(payload)
+        bundle_prefetch_start = _time.monotonic()
+        prefetch_summary = self.execution_service.prefetch_requests_with_shared_bundle(
+            prefetch_requests,
+            bundle=bundle,
         )
-        bundle = self.execution_service.market_data_service.prepare_backtest(representative)
-        prefetcher = OptionDataPrefetcher()
-        prefetch_summary = prefetcher.prefetch_for_symbol(
+        bundle_prefetch_ms = round((_time.monotonic() - bundle_prefetch_start) * 1000, 3)
+        bundle_total_ms = round((_time.monotonic() - bundle_stage_start) * 1000, 3)
+        job.prefetch_summary_json = {
+            **prefetch_summary,
+            "market_data_service_ms": market_data_service_ms,
+            "bundle_prepare_ms": bundle_prepare_ms,
+            "bundle_prefetch_ms": bundle_prefetch_ms,
+            "bundle_total_ms": bundle_total_ms,
+            "bundle_request_count": len(prefetch_requests),
+        }
+        logger.info(
+            "sweep.shared_bundle_ready",
+            job_id=str(job.id),
             symbol=payload.symbol,
-            bars=bundle.bars,
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-            target_dte=payload.target_dte,
-            dte_tolerance_days=payload.dte_tolerance_days,
-            option_gateway=bundle.option_gateway,
+            strategy_count=len(payload.strategy_types),
+            bundle_request_count=len(prefetch_requests),
+            market_data_service_ms=market_data_service_ms,
+            bundle_prepare_ms=bundle_prepare_ms,
+            bundle_prefetch_ms=bundle_prefetch_ms,
+            bundle_total_ms=bundle_total_ms,
+            prefetch_count=prefetch_summary.get("prefetch_count", 0),
+            skipped_count=prefetch_summary.get("skipped_count", 0),
+            dates_processed=prefetch_summary.get("dates_processed", 0),
+            contracts_fetched=prefetch_summary.get("contracts_fetched", 0),
+            quotes_fetched=prefetch_summary.get("quotes_fetched", 0),
         )
-        job.prefetch_summary_json = prefetch_summary.to_dict()
 
         # Phase 2: execute grid
         candidates: list[dict[str, Any]] = []
@@ -711,35 +728,52 @@ class SweepService:
 
         warnings: list[dict[str, Any]] = []
 
-        representative = CreateBacktestRunRequest(
-            symbol=payload.symbol,
+        bundle_stage_start = _time.monotonic()
+        service_init_start = _time.monotonic()
+        market_data_service = self.execution_service.market_data_service
+        market_data_service_ms = round((_time.monotonic() - service_init_start) * 1000, 3)
+        representative = self._make_bundle_request(
+            payload,
             strategy_type=strategy_type,
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-            target_dte=payload.target_dte,
-            dte_tolerance_days=payload.dte_tolerance_days,
-            max_holding_days=payload.max_holding_days,
-            account_size=payload.account_size,
-            risk_per_trade_pct=payload.risk_per_trade_pct,
-            commission_per_contract=payload.commission_per_contract,
-            entry_rules=payload.entry_rule_sets[0].entry_rules if payload.entry_rule_sets else [],
             custom_legs=[
                 CustomLegDefinition(contract_type="call", side="long", strike_offset=0)
                 for _ in range(num_legs)
             ],
         )
-        bundle = self.execution_service.market_data_service.prepare_backtest(representative)
-        prefetcher = OptionDataPrefetcher()
-        prefetch_summary = prefetcher.prefetch_for_symbol(
-            symbol=payload.symbol,
-            bars=bundle.bars,
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-            target_dte=payload.target_dte,
-            dte_tolerance_days=payload.dte_tolerance_days,
-            option_gateway=bundle.option_gateway,
+        bundle_prepare_start = _time.monotonic()
+        bundle = market_data_service.prepare_backtest(representative)
+        bundle_prepare_ms = round((_time.monotonic() - bundle_prepare_start) * 1000, 3)
+        bundle_prefetch_start = _time.monotonic()
+        prefetch_summary = self.execution_service.prefetch_requests_with_shared_bundle(
+            [representative],
+            bundle=bundle,
         )
-        job.prefetch_summary_json = prefetch_summary.to_dict()
+        bundle_prefetch_ms = round((_time.monotonic() - bundle_prefetch_start) * 1000, 3)
+        bundle_total_ms = round((_time.monotonic() - bundle_stage_start) * 1000, 3)
+        job.prefetch_summary_json = {
+            **prefetch_summary,
+            "market_data_service_ms": market_data_service_ms,
+            "bundle_prepare_ms": bundle_prepare_ms,
+            "bundle_prefetch_ms": bundle_prefetch_ms,
+            "bundle_total_ms": bundle_total_ms,
+            "bundle_request_count": 1,
+        }
+        logger.info(
+            "sweep.shared_bundle_ready",
+            job_id=str(job.id),
+            symbol=payload.symbol,
+            strategy_count=1,
+            bundle_request_count=1,
+            market_data_service_ms=market_data_service_ms,
+            bundle_prepare_ms=bundle_prepare_ms,
+            bundle_prefetch_ms=bundle_prefetch_ms,
+            bundle_total_ms=bundle_total_ms,
+            prefetch_count=prefetch_summary.get("prefetch_count", 0),
+            skipped_count=prefetch_summary.get("skipped_count", 0),
+            dates_processed=prefetch_summary.get("dates_processed", 0),
+            contracts_fetched=prefetch_summary.get("contracts_fetched", 0),
+            quotes_fetched=prefetch_summary.get("quotes_fetched", 0),
+        )
 
         genetic_start = _time.monotonic()
         safe_genetic_timeout = max(get_settings().sweep_genetic_timeout_seconds, _CANDIDATE_TIMEOUT_SECONDS * 2)
@@ -911,6 +945,53 @@ class SweepService:
         widths = max(len(payload.width_grid), 1)
         exits = max(len(payload.exit_rule_sets), 1)
         return strategies * entry_sets * deltas * widths * exits
+
+    @staticmethod
+    def _combined_entry_rules(payload: CreateSweepRequest) -> list[Any]:
+        combined: list[Any] = []
+        for rule_set in payload.entry_rule_sets:
+            combined.extend(rule_set.entry_rules)
+        return combined
+
+    def _make_bundle_request(
+        self,
+        payload: CreateSweepRequest,
+        *,
+        strategy_type: Any | None = None,
+        custom_legs: list[Any] | None = None,
+    ) -> CreateBacktestRunRequest:
+        return CreateBacktestRunRequest(
+            symbol=payload.symbol,
+            strategy_type=strategy_type or payload.strategy_types[0],
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            target_dte=payload.target_dte,
+            dte_tolerance_days=payload.dte_tolerance_days,
+            max_holding_days=payload.max_holding_days,
+            account_size=payload.account_size,
+            risk_per_trade_pct=payload.risk_per_trade_pct,
+            commission_per_contract=payload.commission_per_contract,
+            entry_rules=self._combined_entry_rules(payload),
+            custom_legs=custom_legs,
+        )
+
+    def _make_prefetch_requests(self, payload: CreateSweepRequest) -> list[CreateBacktestRunRequest]:
+        return [
+            CreateBacktestRunRequest(
+                symbol=payload.symbol,
+                strategy_type=strategy_type,
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+                target_dte=payload.target_dte,
+                dte_tolerance_days=payload.dte_tolerance_days,
+                max_holding_days=payload.max_holding_days,
+                account_size=payload.account_size,
+                risk_per_trade_pct=payload.risk_per_trade_pct,
+                commission_per_contract=payload.commission_per_contract,
+                entry_rules=[],
+            )
+            for strategy_type in dict.fromkeys(payload.strategy_types)
+        ]
 
     @staticmethod
     def _build_overrides(

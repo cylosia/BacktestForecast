@@ -180,3 +180,51 @@ def test_execute_request_normalizes_decimal_optional_numeric_fields(monkeypatch)
         "stop_loss_pct": 20.0,
         "dividend_yield": 0.03,
     }
+
+
+def test_thread_local_shared_execution_service_reuses_warmed_instance(monkeypatch) -> None:
+    from backtestforecast.services import backtest_execution as module
+
+    fake_market_data_service = MagicMock()
+    fake_market_data_service.client = MagicMock()
+
+    monkeypatch.setattr(module, "MassiveClient", lambda: object())
+    monkeypatch.setattr(module, "MarketDataService", lambda client: fake_market_data_service)
+    module.close_thread_local_shared_execution_service()
+
+    first = module.get_thread_local_shared_execution_service()
+    second = module.get_thread_local_shared_execution_service()
+
+    assert first is second
+    assert first.market_data_service is fake_market_data_service
+
+    module.close_thread_local_shared_execution_service()
+    fake_market_data_service.close.assert_called_once_with()
+    fake_market_data_service.client.close.assert_called_once_with()
+
+
+def test_thread_local_shared_execution_service_rebuilds_after_close(monkeypatch) -> None:
+    from backtestforecast.services import backtest_execution as module
+
+    created_market_data_services: list[MagicMock] = []
+
+    def _market_data_service(_client: object) -> MagicMock:
+        fake_market_data_service = MagicMock()
+        fake_market_data_service.client = MagicMock()
+        created_market_data_services.append(fake_market_data_service)
+        return fake_market_data_service
+
+    monkeypatch.setattr(module, "MassiveClient", lambda: object())
+    monkeypatch.setattr(module, "MarketDataService", _market_data_service)
+    module.close_thread_local_shared_execution_service()
+
+    first = module.get_thread_local_shared_execution_service()
+    assert first.market_data_service is created_market_data_services[0]
+    module.close_thread_local_shared_execution_service()
+    second = module.get_thread_local_shared_execution_service()
+    assert second.market_data_service is created_market_data_services[1]
+
+    assert first is not second
+    assert len(created_market_data_services) == 2
+
+    module.close_thread_local_shared_execution_service()

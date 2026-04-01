@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import heapq
+import time as _time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -19,6 +20,7 @@ from backtestforecast.billing.entitlements import (
 from backtestforecast.config import get_settings
 from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError, QuotaExceededError
 from backtestforecast.forecasts.analog import HistoricalAnalogForecaster
+from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import ScannerJob, ScannerRecommendation, User
 from backtestforecast.observability.metrics import (
@@ -56,7 +58,10 @@ from backtestforecast.schemas.scans import (
     ScannerRecommendationResponse,
 )
 from backtestforecast.services.audit import AuditService
-from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.backtest_execution import (
+    BacktestExecutionService,
+    get_thread_local_shared_execution_service,
+)
 from backtestforecast.services.dispatch_recovery import (
     observe_job_create_to_running_latency,
     redispatch_if_stale_queued,
@@ -129,7 +134,7 @@ class ScanService:
     ) -> None:
         self.session = session
         self._execution_service = execution_service
-        self._owns_execution_service = execution_service is None
+        self._owns_execution_service = False
         self._forecaster = forecaster
         self.repository = ScannerJobRepository(session)
         self.audit = AuditService(session)
@@ -140,7 +145,7 @@ class ScanService:
     @property
     def execution_service(self) -> BacktestExecutionService:
         if self._execution_service is None:
-            self._execution_service = BacktestExecutionService()
+            self._execution_service = get_thread_local_shared_execution_service()
         return self._execution_service
 
     def close(self) -> None:
@@ -441,17 +446,10 @@ class ScanService:
                     if not is_strategy_rule_set_compatible(strategy.value, rule_set.entry_rules):
                         continue
 
-                    request = CreateBacktestRunRequest(
+                    request = self._build_request(
+                        payload,
                         symbol=symbol,
                         strategy_type=strategy,
-                        start_date=payload.start_date,
-                        end_date=payload.end_date,
-                        target_dte=payload.target_dte,
-                        dte_tolerance_days=payload.dte_tolerance_days,
-                        max_holding_days=payload.max_holding_days,
-                        account_size=payload.account_size,
-                        risk_per_trade_pct=payload.risk_per_trade_pct,
-                        commission_per_contract=payload.commission_per_contract,
                         entry_rules=rule_set.entry_rules,
                     )
                     candidate_rule_set_hash = rule_set_hash(rule_set.entry_rules)
@@ -1050,6 +1048,7 @@ class ScanService:
         payload: CreateScannerJobRequest,
         warnings: list[dict[str, Any]],
     ) -> dict[str, HistoricalDataBundle]:
+        prepare_start = _time.perf_counter()
         if not payload.symbols:
             raise AppValidationError("At least one symbol is required.")
         if not payload.rule_sets:
@@ -1065,21 +1064,16 @@ class ScanService:
                 "code": "fallback_entry_rules",
                 "message": "No entry rules were provided in any rule set. A default RSI rule was used for indicator warmup only.",
             })
-        representative = CreateBacktestRunRequest(
+        representative = self._build_request(
+            payload,
             symbol=payload.symbols[0],
             strategy_type=payload.strategy_types[0],
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-            target_dte=payload.target_dte,
-            dte_tolerance_days=payload.dte_tolerance_days,
-            max_holding_days=payload.max_holding_days,
-            account_size=payload.account_size,
-            risk_per_trade_pct=payload.risk_per_trade_pct,
-            commission_per_contract=payload.commission_per_contract,
             entry_rules=all_rules or _get_fallback_entry_rules(),
         )
         bundles: dict[str, HistoricalDataBundle] = {}
+        service_init_start = _time.perf_counter()
         mds = self.execution_service.market_data_service
+        service_init_ms = round((_time.perf_counter() - service_init_start) * 1000, 3)
 
         def _fetch_one(symbol: str) -> tuple[str, HistoricalDataBundle | None, dict[str, Any] | None]:
             try:
@@ -1095,6 +1089,7 @@ class ScanService:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         settings = get_settings()
+        fetch_start = _time.perf_counter()
         # Cap concurrency to avoid overwhelming upstream APIs with parallel requests.
         # If the upstream returns 429s, individual _fetch_one calls will fail and
         # the warning is surfaced to the user.
@@ -1131,7 +1126,189 @@ class ScanService:
             except Exception:
                 pool.shutdown(wait=False, cancel_futures=True)
                 logger.warning("scan.threadpool_graceful_shutdown_failed", exc_info=True)
+        fetch_ms = round((_time.perf_counter() - fetch_start) * 1000, 3)
+        prefetch_start = _time.perf_counter()
+        prefetch_summary = self._prefetch_bundles(payload, bundles, warnings)
+        prefetch_ms = round((_time.perf_counter() - prefetch_start) * 1000, 3)
+        total_ms = round((_time.perf_counter() - prepare_start) * 1000, 3)
+        logger.info(
+            "scan.bundle_stage_timing",
+            symbols_requested=len(payload.symbols),
+            bundles_ready=len(bundles),
+            market_data_service_ms=service_init_ms,
+            fetch_ms=fetch_ms,
+            prefetch_ms=prefetch_ms,
+            total_ms=total_ms,
+            prefetch_symbols=prefetch_summary["prefetch_symbols"],
+            prefetch_request_count=prefetch_summary["request_count"],
+            prefetch_count=prefetch_summary["prefetch_count"],
+            skipped_count=prefetch_summary["skipped_count"],
+            dates_processed=prefetch_summary["dates_processed"],
+            contracts_fetched=prefetch_summary["contracts_fetched"],
+            quotes_fetched=prefetch_summary["quotes_fetched"],
+            prefetch_failures=prefetch_summary["prefetch_failures"],
+            warning_count=len(warnings),
+        )
         return bundles
+
+    def _build_request(
+        self,
+        payload: CreateScannerJobRequest,
+        *,
+        symbol: str,
+        strategy_type,
+        entry_rules,
+    ) -> CreateBacktestRunRequest:
+        return CreateBacktestRunRequest(
+            symbol=symbol,
+            strategy_type=strategy_type,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            target_dte=payload.target_dte,
+            dte_tolerance_days=payload.dte_tolerance_days,
+            max_holding_days=payload.max_holding_days,
+            account_size=payload.account_size,
+            risk_per_trade_pct=payload.risk_per_trade_pct,
+            commission_per_contract=payload.commission_per_contract,
+            entry_rules=entry_rules,
+        )
+
+    def _prefetch_bundles(
+        self,
+        payload: CreateScannerJobRequest,
+        bundles: dict[str, HistoricalDataBundle],
+        warnings: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        aggregate = {
+            "prefetch_symbols": 0,
+            "request_count": 0,
+            "prefetch_count": 0,
+            "skipped_count": 0,
+            "dates_processed": 0,
+            "contracts_fetched": 0,
+            "quotes_fetched": 0,
+            "prefetch_failures": 0,
+        }
+        execution_service = self.execution_service
+        scheduled: list[tuple[str, HistoricalDataBundle, list[CreateBacktestRunRequest]]] = []
+        for symbol, bundle in bundles.items():
+            requests = self._prefetch_requests_for_symbol(payload, symbol)
+            if not requests:
+                continue
+            aggregate["prefetch_symbols"] += 1
+            aggregate["request_count"] += len(requests)
+            scheduled.append((symbol, bundle, requests))
+
+        if not scheduled:
+            return aggregate
+
+        settings = get_settings()
+
+        def _prefetch_one(
+            symbol: str,
+            bundle: HistoricalDataBundle,
+            requests: list[CreateBacktestRunRequest],
+        ) -> tuple[str, list[CreateBacktestRunRequest], dict[str, object]]:
+            summary = execution_service.prefetch_requests_with_shared_bundle(
+                requests,
+                bundle=bundle,
+            )
+            return symbol, requests, summary
+
+        can_parallelize = (
+            len(scheduled) > 1
+            and all(
+                not isinstance(bundle.option_gateway, HistoricalOptionGateway)
+                for _symbol, bundle, _requests in scheduled
+            )
+        )
+
+        def _merge_prefetch_success(
+            result_symbol: str,
+            result_requests: list[CreateBacktestRunRequest],
+            summary: dict[str, object],
+        ) -> None:
+            aggregate["prefetch_count"] += int(summary.get("prefetch_count", 0))
+            aggregate["skipped_count"] += int(summary.get("skipped_count", 0))
+            aggregate["dates_processed"] += int(summary.get("dates_processed", 0))
+            aggregate["contracts_fetched"] += int(summary.get("contracts_fetched", 0))
+            aggregate["quotes_fetched"] += int(summary.get("quotes_fetched", 0))
+            logger.info(
+                "scan.bundle_prefetch_completed",
+                symbol=result_symbol,
+                strategy_count=len(result_requests),
+                prefetch_count=summary.get("prefetch_count", 0),
+                skipped_count=summary.get("skipped_count", 0),
+                dates_processed=summary.get("dates_processed", 0),
+                contracts_fetched=summary.get("contracts_fetched", 0),
+                quotes_fetched=summary.get("quotes_fetched", 0),
+            )
+
+        def _record_prefetch_failure(symbol: str) -> None:
+            logger.warning("scan.bundle_prefetch_failed", symbol=symbol, exc_info=True)
+            warnings.append(
+                {
+                    "code": "symbol_prefetch_failed",
+                    "message": (
+                        f"{symbol} option prefetch could not be completed; "
+                        "candidate execution continued without a warmed bundle."
+                    ),
+                }
+            )
+            aggregate["prefetch_failures"] += 1
+
+        if not can_parallelize:
+            for symbol, bundle, requests in scheduled:
+                try:
+                    result_symbol, result_requests, summary = _prefetch_one(symbol, bundle, requests)
+                    _merge_prefetch_success(result_symbol, result_requests, summary)
+                except Exception:
+                    _record_prefetch_failure(symbol)
+            return aggregate
+
+        max_workers = min(len(scheduled), settings.prefetch_max_workers)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(_prefetch_one, symbol, bundle, requests): (symbol, requests)
+                for symbol, bundle, requests in scheduled
+            }
+            for future in as_completed(futures):
+                symbol, _requests = futures[future]
+                try:
+                    result_symbol, result_requests, summary = future.result()
+                    _merge_prefetch_success(result_symbol, result_requests, summary)
+                except Exception:
+                    _record_prefetch_failure(symbol)
+        return aggregate
+
+    def _prefetch_requests_for_symbol(
+        self,
+        payload: CreateScannerJobRequest,
+        symbol: str,
+    ) -> list[CreateBacktestRunRequest]:
+        requests: list[CreateBacktestRunRequest] = []
+        for strategy in payload.strategy_types:
+            compatible_rule_set = next(
+                (
+                    rule_set
+                    for rule_set in payload.rule_sets
+                    if is_strategy_rule_set_compatible(strategy.value, rule_set.entry_rules)
+                ),
+                None,
+            )
+            if compatible_rule_set is None:
+                continue
+            requests.append(
+                self._build_request(
+                    payload,
+                    symbol=symbol,
+                    strategy_type=strategy,
+                    entry_rules=compatible_rule_set.entry_rules,
+                )
+            )
+        return requests
 
     def _batch_historical_performance(
         self,

@@ -113,6 +113,15 @@ def test_execute_sweep_persists_results_with_historical_gateway(db_session: Sess
 
     execution_service = MagicMock()
     execution_service.market_data_service.prepare_backtest.return_value = bundle
+    execution_service.prefetch_requests_with_shared_bundle.return_value = {
+        "prefetch_count": 1,
+        "skipped_count": 0,
+        "dates_processed": 1,
+        "contracts_fetched": 1,
+        "quotes_fetched": 0,
+        "errors": [],
+        "requests": [],
+    }
     execution_service.execute_request.return_value = result
 
     service = SweepService(db_session, execution_service=execution_service)
@@ -130,6 +139,78 @@ def test_execute_sweep_persists_results_with_historical_gateway(db_session: Sess
     assert refreshed_job.result_count == 1
     assert refreshed_job.prefetch_summary_json is not None
     assert refreshed_job.prefetch_summary_json["dates_processed"] == 1
+    assert refreshed_job.prefetch_summary_json["bundle_request_count"] == 1
+    assert refreshed_job.prefetch_summary_json["market_data_service_ms"] >= 0
+    assert refreshed_job.prefetch_summary_json["bundle_prepare_ms"] >= 0
+    assert refreshed_job.prefetch_summary_json["bundle_prefetch_ms"] >= 0
+    assert refreshed_job.prefetch_summary_json["bundle_total_ms"] >= 0
     assert len(persisted_results) == 1
     assert persisted_results[0].strategy_type == "long_put"
     assert persisted_results[0].summary_json["trade_count"] == 12
+
+
+def test_execute_sweep_builds_one_shared_bundle_request_for_all_entry_rules(db_session: Session) -> None:
+    payload = CreateSweepRequest(
+        symbol="F",
+        strategy_types=["long_put", "bear_put_debit_spread"],
+        start_date=date(2015, 1, 2),
+        end_date=date(2015, 2, 27),
+        target_dte=14,
+        dte_tolerance_days=5,
+        max_holding_days=7,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rule_sets=[
+            {
+                "name": "rsi40",
+                "entry_rules": [{"type": "rsi", "operator": "lte", "threshold": Decimal("40"), "period": 14}],
+            },
+            {
+                "name": "rsi45",
+                "entry_rules": [{"type": "rsi", "operator": "lte", "threshold": Decimal("45"), "period": 14}],
+            },
+        ],
+        max_results=1,
+    )
+    user = _create_user(db_session)
+    job = _create_running_job(db_session, user, payload)
+
+    bundle = HistoricalDataBundle(
+        bars=[DailyBar(date(2015, 1, 2), 15.1, 15.3, 14.9, 15.0, 10_000_000)],
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+        data_source="historical_flatfile",
+        warnings=[],
+    )
+    result = SimpleNamespace(summary=_summary(), trades=[], equity_curve=[], warnings=[])
+
+    execution_service = MagicMock()
+    execution_service.market_data_service.prepare_backtest.return_value = bundle
+    execution_service.prefetch_requests_with_shared_bundle.return_value = {
+        "prefetch_count": 2,
+        "skipped_count": 0,
+        "dates_processed": 2,
+        "contracts_fetched": 4,
+        "quotes_fetched": 0,
+        "errors": [],
+        "requests": [],
+    }
+    execution_service.execute_request.return_value = result
+
+    service = SweepService(db_session, execution_service=execution_service)
+    service._execute_sweep(job, payload)
+
+    prepared_request = execution_service.market_data_service.prepare_backtest.call_args.args[0]
+    warmed_requests = execution_service.prefetch_requests_with_shared_bundle.call_args.args[0]
+
+    assert job.prefetch_summary_json is not None
+    assert job.prefetch_summary_json["bundle_request_count"] == 2
+    assert job.prefetch_summary_json["market_data_service_ms"] >= 0
+    assert job.prefetch_summary_json["bundle_prepare_ms"] >= 0
+    assert job.prefetch_summary_json["bundle_prefetch_ms"] >= 0
+    assert job.prefetch_summary_json["bundle_total_ms"] >= 0
+    assert len(prepared_request.entry_rules) == 2
+    assert {request.strategy_type.value for request in warmed_requests} == {"long_put", "bear_put_debit_spread"}
+    assert execution_service.execute_request.call_count == 4

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+import backtestforecast.config as config_module
 from backtestforecast.config import Settings
 
 
@@ -72,3 +73,39 @@ class TestSettingsValidation:
     def test_redis_cache_url_defaults_to_redis_url(self):
         settings = Settings(redis_url="redis://localhost:6379/0", redis_password=None)
         assert settings.redis_cache_url == settings.redis_url == "redis://localhost:6379/0"
+
+    def test_apply_runtime_local_overrides_rewrites_localhost_redis_urls(self):
+        settings = Settings(
+            app_env="development",
+            redis_url="redis://localhost:6379/0",
+            redis_cache_url="redis://localhost:6380/1",
+            celery_result_backend_url="redis://localhost:6379/2",
+        )
+
+        rewritten = config_module._apply_runtime_local_overrides(settings)
+
+        assert rewritten.redis_url == "redis://127.0.0.1:6379/0"
+        assert rewritten.redis_cache_url == "redis://127.0.0.1:6380/1"
+        assert rewritten.celery_result_backend_url == "redis://127.0.0.1:6379/2"
+
+    def test_get_settings_loads_repo_env_files(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        class _FakeSettings:
+            def __init__(self, **kwargs):
+                captured["env_file"] = kwargs.get("_env_file")
+                self.app_env = "development"
+                self.massive_api_key = "test-env-key"
+                self.redis_url = "redis://localhost:6379/0"
+                self.redis_cache_url = None
+                self.celery_result_backend_url = None
+
+        monkeypatch.setattr(config_module, "Settings", _FakeSettings)
+        monkeypatch.setattr(config_module, "_repo_env_files", lambda: ("repo.env", "apps/api/.env"))
+        monkeypatch.setattr(config_module, "_settings_cache", None)
+
+        settings = config_module.get_settings()
+
+        assert captured["env_file"] == ("repo.env", "apps/api/.env")
+        assert settings.massive_api_key == "test-env-key"
+        assert settings.redis_url == "redis://127.0.0.1:6379/0"

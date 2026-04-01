@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import threading
+import time
+from collections import Counter
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -121,10 +125,10 @@ def test_prewarm_long_option_bundle_uses_exact_lookup_and_quotes():
     assert summary.dates_processed == 2
     assert summary.contracts_fetched == 2
     assert summary.quotes_fetched == 2
-    assert gateway.exact_calls == [
+    assert sorted(gateway.exact_calls) == sorted([
         (date(2025, 4, 1), "call", 7, 2, 170.0, 230.0),
         (date(2025, 4, 2), "call", 7, 2, 171.7, 232.3),
-    ]
+    ])
 
 
 def test_prewarm_long_option_bundle_can_warm_future_mark_to_market_quotes():
@@ -147,14 +151,14 @@ def test_prewarm_long_option_bundle_can_warm_future_mark_to_market_quotes():
     assert summary.dates_processed == 3
     assert summary.contracts_fetched == 3
     assert summary.quotes_fetched == 6
-    assert gateway.quote_calls == [
+    assert Counter(gateway.quote_calls) == Counter([
         ("O:AAPL250404C00200000", date(2025, 4, 1)),
         ("O:AAPL250404C00200000", date(2025, 4, 2)),
         ("O:AAPL250404C00200000", date(2025, 4, 3)),
         ("O:AAPL250404C00200000", date(2025, 4, 2)),
         ("O:AAPL250404C00200000", date(2025, 4, 3)),
         ("O:AAPL250404C00200000", date(2025, 4, 3)),
-    ]
+    ])
 
 
 def test_prewarm_targeted_option_bundle_uses_exact_expiration_single_type_with_quote_cap():
@@ -188,10 +192,10 @@ def test_prewarm_targeted_option_bundle_uses_exact_expiration_single_type_with_q
     assert summary.dates_processed == 2
     assert summary.contracts_fetched == 2
     assert summary.quotes_fetched == 3
-    assert gateway.exact_calls == [
+    assert sorted(gateway.exact_calls) == sorted([
         (date(2025, 4, 1), "call", 3, 1, 160.0, 240.0),
         (date(2025, 4, 2), "call", 3, 1, 161.6, 242.4),
-    ]
+    ])
 
 
 def test_prewarm_targeted_option_bundle_uses_shared_expiration_lookup_for_two_sided_strategies():
@@ -217,10 +221,10 @@ def test_prewarm_targeted_option_bundle_uses_shared_expiration_lookup_for_two_si
     assert summary.dates_processed == 1
     assert summary.contracts_fetched == 2
     assert summary.quotes_fetched == 2
-    assert gateway.exact_expiration_calls == [
+    assert sorted(gateway.exact_expiration_calls) == sorted([
         (date(2025, 4, 1), "call", date(2025, 4, 4), 160.0, 240.0),
         (date(2025, 4, 1), "put", date(2025, 4, 4), 160.0, 240.0),
-    ]
+    ])
 
 
 def test_prewarm_targeted_option_bundle_uses_exact_near_and_far_expirations_for_calendar():
@@ -246,10 +250,57 @@ def test_prewarm_targeted_option_bundle_uses_exact_near_and_far_expirations_for_
     assert summary.dates_processed == 1
     assert summary.contracts_fetched == 2
     assert summary.quotes_fetched == 2
-    assert gateway.exact_expiration_calls == [
+    assert sorted(gateway.exact_expiration_calls) == sorted([
         (date(2025, 4, 1), "call", date(2025, 4, 4), 160.0, 240.0),
         (date(2025, 4, 1), "call", date(2025, 4, 5), 160.0, 240.0),
+    ])
+
+
+def test_prewarm_targeted_option_bundle_uses_multiple_threads(monkeypatch):
+    observed_threads: set[int] = set()
+
+    class _ConcurrentGateway(_TargetedGateway):
+        def list_contracts_for_preferred_expiration(self, **kwargs):
+            observed_threads.add(threading.current_thread().ident or 0)
+            time.sleep(0.02)
+            return super().list_contracts_for_preferred_expiration(**kwargs)
+
+    monkeypatch.setattr(
+        "backtestforecast.market_data.prewarm.get_settings",
+        lambda: SimpleNamespace(prefetch_max_workers=4),
+    )
+
+    gateway = _ConcurrentGateway()
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type=StrategyType.COVERED_CALL,
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 9),
+        target_dte=3,
+        dte_tolerance_days=1,
+        max_holding_days=7,
+        account_size=Decimal("100000"),
+        risk_per_trade_pct=Decimal("100"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[],
+    )
+    bars = [
+        DailyBar(date(2025, 4, 1), 200, 201, 199, 200, 1_000_000),
+        DailyBar(date(2025, 4, 2), 202, 203, 201, 202, 1_000_000),
+        DailyBar(date(2025, 4, 3), 203, 204, 202, 203, 1_000_000),
+        DailyBar(date(2025, 4, 4), 204, 205, 203, 204, 1_000_000),
     ]
+    bundle = HistoricalDataBundle(bars=bars, earnings_dates=set(), ex_dividend_dates=set(), option_gateway=gateway)
+
+    summary = prewarm_targeted_option_bundle(
+        request,
+        bundle=bundle,
+        include_quotes=False,
+    )
+
+    assert summary.dates_processed == 4
+    assert summary.contracts_fetched == 4
+    assert len(observed_threads) > 1
 
 
 def test_resolve_long_option_contract_type_rejects_other_strategies():

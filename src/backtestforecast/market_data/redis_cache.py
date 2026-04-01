@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import contextlib
 import json
 import threading
 import time
@@ -139,15 +140,22 @@ class OptionDataRedisCache:
         self._ttl = ttl_seconds
         self._client: redis.Redis | None = None
         self._closed = False
+        self._disabled = False
+        self._disabled_reason: str | None = None
         self._lock = threading.Lock()
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
+            self._disabled = True
             self._client = None
             self._pool.disconnect()
 
     def _conn(self) -> redis.Redis:
+        if getattr(self, "_disabled", False):
+            raise RuntimeError(
+                f"OptionDataRedisCache is disabled: {getattr(self, '_disabled_reason', 'unavailable')}"
+            )
         client = self._client
         if client is not None:
             return client
@@ -157,6 +165,48 @@ class OptionDataRedisCache:
             if self._client is None:
                 self._client = redis.Redis(connection_pool=self._pool)
             return self._client
+
+    def ping(self) -> bool:
+        if getattr(self, "_disabled", False):
+            return False
+        try:
+            return bool(self._conn().ping())
+        except Exception as exc:
+            self._disable_for_exception(exc, operation="ping")
+            return False
+
+    def _disable_for_exception(self, exc: Exception, *, operation: str) -> bool:
+        if not self._should_disable_for_exception(exc):
+            return False
+        lock = getattr(self, "_lock", None)
+        context = lock if lock is not None else contextlib.nullcontext()
+        with context:
+            if getattr(self, "_disabled", False):
+                return True
+            self._disabled = True
+            self._disabled_reason = f"{operation}:{type(exc).__name__}"
+            self._client = None
+            pool = getattr(self, "_pool", None)
+            if pool is not None:
+                with contextlib.suppress(Exception):
+                    pool.disconnect()
+        logger.warning(
+            "redis_cache.disabled",
+            operation=operation,
+            exc_type=type(exc).__name__,
+            reason=str(exc),
+        )
+        return True
+
+    @staticmethod
+    def _should_disable_for_exception(exc: Exception) -> bool:
+        if isinstance(exc, redis.exceptions.AuthenticationError):
+            return True
+        if isinstance(exc, redis.exceptions.ResponseError):
+            message = str(exc).upper()
+            if "NOAUTH" in message or "AUTH" in message:
+                return True
+        return False
 
     # -- contracts -----------------------------------------------------------
 
@@ -168,13 +218,17 @@ class OptionDataRedisCache:
         exp_gte: date,
         exp_lte: date,
     ) -> list[OptionContractRecord] | None:
+        if getattr(self, "_disabled", False):
+            return None
         key = _contract_key(symbol, as_of_date, contract_type, exp_gte, exp_lte)
         try:
             raw = self._conn().get(key)
             if raw is None:
                 return None
             return _deserialize_contracts(raw)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="get_contracts"):
+                return None
             logger.debug("redis_cache.get_contracts_failed", symbol=symbol, exc_info=True)
             try:
                 self._conn().delete(key)
@@ -193,6 +247,8 @@ class OptionDataRedisCache:
         *,
         ttl_seconds: int | None = None,
     ) -> None:
+        if getattr(self, "_disabled", False):
+            return
         try:
             key = _contract_key(symbol, as_of_date, contract_type, exp_gte, exp_lte)
             pipe = self._conn().pipeline(transaction=False)
@@ -201,7 +257,9 @@ class OptionDataRedisCache:
             pipe.set(f"{key}:ts", str(int(time.time())), ex=ttl)
             pipe.execute()
             self.track_symbol_write(symbol, cache_key=key)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="set_contracts"):
+                return
             logger.debug("redis_cache.set_contracts_failed", symbol=symbol, exc_info=True)
 
     def get_exact_contracts(
@@ -213,6 +271,8 @@ class OptionDataRedisCache:
         strike_price_gte: float | None = None,
         strike_price_lte: float | None = None,
     ) -> list[OptionContractRecord] | None:
+        if getattr(self, "_disabled", False):
+            return None
         key = _exact_contract_key(
             symbol,
             as_of_date,
@@ -226,7 +286,9 @@ class OptionDataRedisCache:
             if raw is None:
                 return None
             return _deserialize_contracts(raw)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="get_exact_contracts"):
+                return None
             logger.debug("redis_cache.get_exact_contracts_failed", symbol=symbol, exc_info=True)
             try:
                 self._conn().delete(key)
@@ -246,6 +308,8 @@ class OptionDataRedisCache:
         strike_price_lte: float | None = None,
         ttl_seconds: int | None = None,
     ) -> None:
+        if getattr(self, "_disabled", False):
+            return
         try:
             key = _exact_contract_key(
                 symbol,
@@ -261,7 +325,9 @@ class OptionDataRedisCache:
             pipe.set(f"{key}:ts", str(int(time.time())), ex=ttl)
             pipe.execute()
             self.track_symbol_write(symbol, cache_key=key)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="set_exact_contracts"):
+                return
             logger.debug("redis_cache.set_exact_contracts_failed", symbol=symbol, exc_info=True)
 
     # -- quotes --------------------------------------------------------------
@@ -272,13 +338,17 @@ class OptionDataRedisCache:
         trade_date: date,
     ) -> OptionQuoteRecord | None | _CacheMiss:
         """Return the cached quote, ``None`` (cached negative), or ``CACHE_MISS``."""
+        if getattr(self, "_disabled", False):
+            return CACHE_MISS
         key = _quote_key(option_ticker, trade_date)
         try:
             raw = self._conn().get(key)
             if raw is None:
                 return CACHE_MISS
             return _deserialize_quote(raw)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="get_quote"):
+                return CACHE_MISS
             logger.debug("redis_cache.get_quote_failed", ticker=option_ticker, exc_info=True)
             try:
                 self._conn().delete(key)
@@ -294,6 +364,8 @@ class OptionDataRedisCache:
         *,
         ttl_seconds: int | None = None,
     ) -> None:
+        if getattr(self, "_disabled", False):
+            return
         try:
             key = _quote_key(option_ticker, trade_date)
             pipe = self._conn().pipeline(transaction=False)
@@ -316,7 +388,9 @@ class OptionDataRedisCache:
                         fallback_symbol=symbol,
                     )
             self.track_symbol_write(symbol, cache_key=key)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="set_quote"):
+                return
             logger.debug("redis_cache.set_quote_failed", ticker=option_ticker, exc_info=True)
 
     # -- ex-dividend dates ---------------------------------------------------
@@ -327,13 +401,17 @@ class OptionDataRedisCache:
         start_date: date,
         end_date: date,
     ) -> tuple[set[date], bool] | _CacheMiss:
+        if getattr(self, "_disabled", False):
+            return CACHE_MISS
         key = _ex_dividend_key(symbol, start_date, end_date)
         try:
             raw = self._conn().get(key)
             if raw is None:
                 return CACHE_MISS
             return _deserialize_ex_dividend_dates(raw)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="get_ex_dividend_dates"):
+                return CACHE_MISS
             logger.debug("redis_cache.get_ex_dividend_dates_failed", symbol=symbol, exc_info=True)
             try:
                 self._conn().delete(key)
@@ -351,13 +429,17 @@ class OptionDataRedisCache:
         degraded: bool = False,
         ttl_seconds: int | None = None,
     ) -> None:
+        if getattr(self, "_disabled", False):
+            return
         try:
             key = _ex_dividend_key(symbol, start_date, end_date)
             ttl = ttl_seconds if ttl_seconds is not None else self._ttl
             pipe = self._conn().pipeline(transaction=False)
             pipe.set(key, _serialize_ex_dividend_dates(dates, degraded=degraded), ex=ttl)
             pipe.execute()
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="set_ex_dividend_dates"):
+                return
             logger.debug("redis_cache.set_ex_dividend_dates_failed", symbol=symbol, exc_info=True)
 
     def _symbol_meta_key(self, symbol: str) -> str:
@@ -375,6 +457,8 @@ class OptionDataRedisCache:
         so ``invalidate_symbol`` can delete by set membership (O(M)) instead
         of SCAN (O(N)).
         """
+        if getattr(self, "_disabled", False):
+            return
         now_s = str(int(time.time()))
         try:
             r = self._conn()
@@ -389,7 +473,9 @@ class OptionDataRedisCache:
                 pipe.sadd(keys_set, cache_key, f"{cache_key}:ts")
                 pipe.expire(keys_set, self._ttl + 3600)
             pipe.execute()
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="track_symbol_write"):
+                return
             logger.debug("redis_cache.track_symbol_write_failed", symbol=symbol, exc_info=True)
 
     def get_oldest_cache_age_seconds(self, symbol: str) -> float | None:
@@ -397,6 +483,8 @@ class OptionDataRedisCache:
 
         Uses the per-symbol metadata hash instead of SCAN. O(1).
         """
+        if getattr(self, "_disabled", False):
+            return None
         try:
             r = self._conn()
             ts_raw = r.hget(self._symbol_meta_key(symbol), "oldest_ts")
@@ -412,6 +500,8 @@ class OptionDataRedisCache:
         Uses the per-symbol metadata hash instead of SCAN. O(1).
         """
         info: dict[str, object] = {"symbol": symbol, "stale_entries": 0, "total_entries": 0}
+        if getattr(self, "_disabled", False):
+            return info
         try:
             r = self._conn()
             meta = r.hgetall(self._symbol_meta_key(symbol))
@@ -433,7 +523,9 @@ class OptionDataRedisCache:
                     else:
                         info["stale_entries"] = entry_count
                 info["oldest_age_seconds"] = round(oldest_age, 1)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="check_freshness"):
+                return info
             logger.debug("redis_cache.freshness_check_failed", symbol=symbol, exc_info=True)
         return info
 
@@ -446,6 +538,8 @@ class OptionDataRedisCache:
         tracking was added).
         """
         deleted = 0
+        if getattr(self, "_disabled", False):
+            return deleted
         try:
             r = self._conn()
             meta_key = self._symbol_meta_key(symbol)
@@ -471,7 +565,9 @@ class OptionDataRedisCache:
                         break
                 r.delete(meta_key, keys_set)
             logger.info("redis_cache.symbol_invalidated", symbol=symbol, keys_deleted=deleted)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="invalidate_symbol"):
+                return deleted
             logger.warning("redis_cache.invalidate_failed", symbol=symbol, exc_info=True)
         return deleted
 
@@ -482,6 +578,8 @@ class OptionDataRedisCache:
         hit the upstream API until the cache is repopulated.
         """
         deleted = 0
+        if getattr(self, "_disabled", False):
+            return deleted
         try:
             r = self._conn()
             pattern = f"{_KEY_PREFIX}:*"
@@ -494,6 +592,8 @@ class OptionDataRedisCache:
                 if cursor == 0:
                     break
             logger.warning("redis_cache.all_invalidated", keys_deleted=deleted)
-        except Exception:
+        except Exception as exc:
+            if self._disable_for_exception(exc, operation="invalidate_all"):
+                return deleted
             logger.warning("redis_cache.invalidate_all_failed", exc_info=True)
         return deleted

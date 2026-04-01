@@ -5,7 +5,7 @@ import math
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -75,6 +75,18 @@ class HistoricalDataBundle:
     option_gateway: Any
     data_source: str = "massive"
     warnings: list[dict[str, Any]] | None = None
+    prefetched_signatures: set[tuple[Any, ...]] = field(default_factory=set, compare=False, repr=False)
+    prefetched_summaries: dict[tuple[Any, ...], dict[str, Any]] = field(default_factory=dict, compare=False, repr=False)
+
+    def has_prefetched(self, signature: tuple[Any, ...]) -> bool:
+        return signature in self.prefetched_signatures
+
+    def get_prefetch_summary(self, signature: tuple[Any, ...]) -> dict[str, Any] | None:
+        return self.prefetched_summaries.get(signature)
+
+    def remember_prefetch(self, signature: tuple[Any, ...], summary: dict[str, Any]) -> None:
+        self.prefetched_signatures.add(signature)
+        self.prefetched_summaries[signature] = dict(summary)
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,7 +639,16 @@ class MarketDataService:
         if not redis_url:
             return None
         try:
-            return OptionDataRedisCache(redis_url, ttl_seconds=settings.option_cache_ttl_seconds)
+            cache = OptionDataRedisCache(redis_url, ttl_seconds=settings.option_cache_ttl_seconds)
+            if not cache.ping():
+                with contextlib.suppress(Exception):
+                    cache.close()
+                logger.warning(
+                    "market_data.redis_cache_unavailable",
+                    redis_url=redis_url.split("@")[-1] if "@" in redis_url else redis_url,
+                )
+                return None
+            return cache
         except Exception:
             logger.warning("market_data.redis_cache_init_failed", exc_info=True)
             return None
@@ -791,14 +812,19 @@ class MarketDataService:
                     self._bars_inflight.pop(cache_key, None)
 
     def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
+        total_start = time.perf_counter()
         warmup_trading_days = self._resolve_warmup_trading_days(request)
         extended_start = request.start_date - timedelta(days=(warmup_trading_days * 3))
         extended_end = request.end_date + timedelta(
             days=max(request.max_holding_days, request.target_dte + request.dte_tolerance_days) + 45
         )
 
+        bars_fetch_start = time.perf_counter()
         bars_fetch = self._fetch_bars_with_metadata(request.symbol, extended_start, extended_end)
+        bars_fetch_ms = round((time.perf_counter() - bars_fetch_start) * 1000, 3)
+        bars_validate_start = time.perf_counter()
         bars = self._validate_bars(bars_fetch.bars, request.symbol)
+        bars_validate_ms = round((time.perf_counter() - bars_validate_start) * 1000, 3)
 
         if not bars:
             raise DataUnavailableError(f"No daily bar data was returned for {request.symbol}.")
@@ -816,7 +842,9 @@ class MarketDataService:
                 f"Not enough pre-start history was returned to compute indicators for {request.symbol}."
             )
 
+        earnings_start = time.perf_counter()
         earnings_dates = self._load_earnings_dates_if_required(request)
+        earnings_ms = round((time.perf_counter() - earnings_start) * 1000, 3)
         data_source = (
             "historical_flatfile"
             if (
@@ -829,23 +857,27 @@ class MarketDataService:
             )
             else "massive"
         )
+        ex_dividend_start = time.perf_counter()
         ex_dividend_result = self._load_ex_dividend_data(
             request.symbol,
             start_date=bars[0].trade_date,
             end_date=bars[-1].trade_date,
         )
+        ex_dividend_ms = round((time.perf_counter() - ex_dividend_start) * 1000, 3)
         ex_dividend_dates = ex_dividend_result.dates
+        gateway_start = time.perf_counter()
         option_gateway = self.build_option_gateway(
             request.symbol,
             prefer_local=(data_source == "historical_flatfile"),
         )
         option_gateway.set_ex_dividend_dates(ex_dividend_dates)
+        gateway_ms = round((time.perf_counter() - gateway_start) * 1000, 3)
 
         warnings = list(ex_dividend_result.warnings or [])
         if data_source == "historical_flatfile":
             warnings.append(historical_flatfile_pricing_warning())
 
-        return HistoricalDataBundle(
+        bundle = HistoricalDataBundle(
             bars=bars,
             earnings_dates=earnings_dates,
             ex_dividend_dates=ex_dividend_dates,
@@ -853,6 +885,31 @@ class MarketDataService:
             data_source=data_source,
             warnings=warnings,
         )
+        total_ms = round((time.perf_counter() - total_start) * 1000, 3)
+        logger.info(
+            "market_data.prepare_backtest_timing",
+            symbol=request.symbol,
+            strategy_type=request.strategy_type.value,
+            warmup_trading_days=warmup_trading_days,
+            extended_start=extended_start.isoformat(),
+            extended_end=extended_end.isoformat(),
+            requested_start=request.start_date.isoformat(),
+            requested_end=request.end_date.isoformat(),
+            bars_count=len(bars),
+            data_source=data_source,
+            local_history_complete=bars_fetch.local_history_complete,
+            local_history_start=bars_fetch.local_history_start.isoformat() if bars_fetch.local_history_start else None,
+            earnings_count=len(earnings_dates),
+            ex_dividend_count=len(ex_dividend_dates),
+            warning_count=len(warnings),
+            bars_fetch_ms=bars_fetch_ms,
+            bars_validate_ms=bars_validate_ms,
+            earnings_ms=earnings_ms,
+            ex_dividend_ms=ex_dividend_ms,
+            gateway_ms=gateway_ms,
+            total_ms=total_ms,
+        )
+        return bundle
 
     @staticmethod
     def _collect_avoid_earnings_rules(rule_groups: list[list[Any]]) -> list[AvoidEarningsRule]:

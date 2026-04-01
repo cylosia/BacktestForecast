@@ -115,6 +115,48 @@ def test_rsi_insufficient_data():
     assert ev.is_entry_allowed(2) is False
 
 
+def test_build_entry_allowed_mask_matches_legacy_rule_evaluation():
+    closes = [100 - (i * 0.6) for i in range(18)] + [90 + (i * 2.5) for i in range(18)]
+    volumes = [1_000_000.0] * 20 + [2_500_000.0] * 16
+    bars = _make_bars(closes, volumes)
+    earnings_date = bars[22].trade_date
+    rules = [
+        RsiRule(type="rsi", operator=ComparisonOperator.GTE, threshold=Decimal("55"), period=14),
+        MovingAverageCrossoverRule(
+            type="sma_crossover",
+            fast_period=3,
+            slow_period=10,
+            direction="bullish",
+        ),
+        VolumeSpikeRule(
+            type="volume_spike",
+            lookback_period=5,
+            multiplier=Decimal("1.2"),
+            operator=ComparisonOperator.GTE,
+        ),
+        AvoidEarningsRule(type="avoid_earnings", days_before=2, days_after=1),
+    ]
+
+    expected_evaluator = _build_evaluator(
+        closes,
+        rules,
+        volumes=volumes,
+        earnings_dates={earnings_date},
+    )
+    expected = [expected_evaluator.is_entry_allowed(index) for index in range(len(bars))]
+
+    mask_evaluator = _build_evaluator(
+        closes,
+        rules,
+        volumes=volumes,
+        earnings_dates={earnings_date},
+    )
+    mask = mask_evaluator.build_entry_allowed_mask()
+
+    assert mask == expected
+    assert [mask_evaluator.is_entry_allowed(index) for index in range(len(bars))] == expected
+
+
 # ---------------------------------------------------------------------------
 # 2. SMA Crossover
 # ---------------------------------------------------------------------------

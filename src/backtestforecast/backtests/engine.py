@@ -23,7 +23,7 @@ from backtestforecast.backtests.types import (
     TradeResult,
 )
 from backtestforecast.errors import AppValidationError, DataUnavailableError
-from backtestforecast.market_data.types import DailyBar
+from backtestforecast.market_data.types import DailyBar, OptionQuoteRecord
 
 logger = structlog.get_logger(__name__)
 
@@ -183,6 +183,23 @@ class OptionsBacktestEngine:
         evaluator = EntryRuleEvaluator(
             config=config, bars=sorted_bars, earnings_dates=earnings_dates, option_gateway=option_gateway
         )
+        entry_allowed_mask: list[bool] | None = None
+        try:
+            entry_allowed_mask = evaluator.build_entry_allowed_mask()
+        except Exception:
+            logger.warning("entry_rule_precompute_error", exc_info=True)
+            self._add_warning_once(
+                warnings,
+                warning_codes,
+                "entry_rule_evaluation_error",
+                "One or more entry rule evaluations failed and were treated as not-allowed.",
+            )
+        build_position_supports_custom_legs = (
+            config.custom_legs is not None
+            and "custom_legs" in inspect.signature(strategy.build_position).parameters
+        )
+        custom_legs = list(config.custom_legs) if build_position_supports_custom_legs else None
+        last_bar_date = sorted_bars[-1].trade_date
 
         for index, bar in enumerate(sorted_bars):
             if bar.trade_date < config.start_date:
@@ -226,7 +243,7 @@ class OptionsBacktestEngine:
                     position=position,
                     max_holding_days=config.max_holding_days,
                     backtest_end_date=config.end_date,
-                    last_bar_date=sorted_bars[-1].trade_date,
+                    last_bar_date=last_bar_date,
                     position_value=float(position_value),
                     entry_cost=float(entry_cost),
                     capital_at_risk=capital_at_risk,
@@ -270,14 +287,17 @@ class OptionsBacktestEngine:
                     "the same bar to avoid infinite open/close loops.",
                 )
             if position is None and not just_closed_this_bar and bar.trade_date <= config.end_date:
-                try:
-                    entry_allowed = evaluator.is_entry_allowed(index)
-                except Exception:
-                    logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
-                    self._add_warning_once(
-                        warnings, warning_codes, "entry_rule_evaluation_error",
-                        "One or more entry rule evaluations failed and were treated as not-allowed.",
-                    )
+                if entry_allowed_mask is not None:
+                    entry_allowed = entry_allowed_mask[index]
+                else:
+                    try:
+                        entry_allowed = evaluator.is_entry_allowed(index)
+                    except Exception:
+                        logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
+                        self._add_warning_once(
+                            warnings, warning_codes, "entry_rule_evaluation_error",
+                            "One or more entry rule evaluations failed and were treated as not-allowed.",
+                        )
             if entry_allowed:
                 if not self._can_afford_minimum_strategy_package(strategy, config, bar, cash):
                     self._add_warning_once(
@@ -290,17 +310,21 @@ class OptionsBacktestEngine:
                     entry_allowed = False
             if entry_allowed:
                 try:
-                    build_kwargs: dict = {}
-                    build_position_params = inspect.signature(strategy.build_position).parameters
-                    if config.custom_legs is not None and "custom_legs" in build_position_params:
-                        build_kwargs["custom_legs"] = list(config.custom_legs)
-                    candidate = strategy.build_position(
-                        config,
-                        bar,
-                        index,
-                        option_gateway,
-                        **build_kwargs,
-                    )
+                    if custom_legs is not None:
+                        candidate = strategy.build_position(
+                            config,
+                            bar,
+                            index,
+                            option_gateway,
+                            custom_legs=custom_legs,
+                        )
+                    else:
+                        candidate = strategy.build_position(
+                            config,
+                            bar,
+                            index,
+                            option_gateway,
+                        )
                 except DataUnavailableError:
                     self._add_warning_once(
                         warnings,
@@ -477,9 +501,17 @@ class OptionsBacktestEngine:
         """
         option_value = _D0
         missing_quote_tickers: list[str] = []
+        quote_lookup = self._load_option_quotes_for_bar(
+            position=position,
+            bar=bar,
+            option_gateway=option_gateway,
+        )
         for leg in position.option_legs:
-            current_mid = self._resolve_option_mid(
-                leg, bar, option_gateway, missing_quote_tickers,
+            current_mid = self._resolve_option_mid_from_quote(
+                leg,
+                bar,
+                quote_lookup.get(leg.ticker),
+                missing_quote_tickers,
             )
             leg.last_mid = current_mid
             multiplier = _leg_multiplier(leg)
@@ -595,6 +627,25 @@ class OptionsBacktestEngine:
 
         return None, None
 
+    @staticmethod
+    def _load_option_quotes_for_bar(
+        *,
+        position: OpenMultiLegPosition,
+        bar: DailyBar,
+        option_gateway: OptionDataGateway,
+    ) -> dict[str, OptionQuoteRecord | None]:
+        tickers = [leg.ticker for leg in position.option_legs]
+        batch_fetch = getattr(option_gateway, "get_quotes", None)
+        if callable(batch_fetch):
+            try:
+                return dict(batch_fetch(tickers, bar.trade_date))
+            except Exception:
+                logger.warning("engine.batch_quote_fetch_failed", trade_date=str(bar.trade_date), exc_info=True)
+        return {
+            leg.ticker: option_gateway.get_quote(leg.ticker, bar.trade_date)
+            for leg in position.option_legs
+        }
+
     def _resolve_option_mid(
         self,
         leg: Any,
@@ -609,6 +660,15 @@ class OptionsBacktestEngine:
         *missing_quote_tickers* when a live quote was unavailable.
         """
         quote = option_gateway.get_quote(leg.ticker, bar.trade_date)
+        return self._resolve_option_mid_from_quote(leg, bar, quote, missing_quote_tickers)
+
+    def _resolve_option_mid_from_quote(
+        self,
+        leg: Any,
+        bar: DailyBar,
+        quote: OptionQuoteRecord | None,
+        missing_quote_tickers: list[str],
+    ) -> float:
         if quote is None:
             if bar.trade_date >= leg.expiration_date:
                 return float(self._intrinsic_value(

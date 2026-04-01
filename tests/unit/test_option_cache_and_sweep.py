@@ -114,6 +114,31 @@ class TestOptionDataRedisCacheGracefulDegradation:
         result = cache.get_contracts("TSLA", date(2025, 1, 1), "put", date(2025, 1, 5), date(2025, 1, 15))
         assert result is None
 
+    def test_auth_error_disables_cache_after_first_failure(self):
+        import redis
+
+        from backtestforecast.market_data.redis_cache import OptionDataRedisCache
+
+        cache = OptionDataRedisCache.__new__(OptionDataRedisCache)
+        cache._ttl = 600
+        cache._disabled = False
+        cache._disabled_reason = None
+        cache._client = None
+        cache._pool = MagicMock()
+        cache._lock = threading.Lock()
+
+        mock_conn = MagicMock()
+        mock_conn.get.side_effect = redis.exceptions.AuthenticationError("AUTH called without any password configured")
+        cache._conn = MagicMock(return_value=mock_conn)
+
+        first = cache.get_contracts("TSLA", date(2025, 1, 1), "put", date(2025, 1, 5), date(2025, 1, 15))
+        second = cache.get_contracts("TSLA", date(2025, 1, 1), "put", date(2025, 1, 5), date(2025, 1, 15))
+
+        assert first is None
+        assert second is None
+        assert cache._disabled is True
+        assert mock_conn.get.call_count == 1
+
     def test_set_contracts_does_not_raise_on_redis_error(self):
         from backtestforecast.market_data.redis_cache import OptionDataRedisCache
 
@@ -390,6 +415,7 @@ class TestHistoricalGatewayRunScopedCache:
 
     def test_preferred_expiration_cache_reuses_exact_queries(self):
         from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+        from backtestforecast.backtests.strategies.common import preferred_expiration_dates
 
         store = MagicMock()
         target_contracts = [
@@ -397,12 +423,10 @@ class TestHistoricalGatewayRunScopedCache:
         ]
 
         def fetch_exact(**kwargs):
-            if kwargs["expiration_date"] == date(2025, 4, 8):
-                return []
-            if kwargs["expiration_date"] == date(2025, 4, 9):
-                return []
             if kwargs["expiration_date"] == date(2025, 4, 7):
                 return target_contracts
+            if kwargs["expiration_date"] in preferred_expiration_dates(date(2025, 4, 1), 7, 2):
+                return []
             raise AssertionError(f"unexpected expiration probe {kwargs['expiration_date']}")
 
         store.list_option_contracts_for_expiration.side_effect = fetch_exact
@@ -423,10 +447,49 @@ class TestHistoricalGatewayRunScopedCache:
 
         assert result1 == target_contracts
         assert result2 == target_contracts
-        assert [
+        expiration_calls = [
             call.kwargs["expiration_date"]
             for call in store.list_option_contracts_for_expiration.call_args_list
-        ] == [date(2025, 4, 8), date(2025, 4, 9), date(2025, 4, 7)]
+        ]
+        assert expiration_calls.count(date(2025, 4, 7)) == 1
+        assert result1 == target_contracts
+        assert result2 == target_contracts
+
+    def test_list_contracts_for_expirations_batches_store_calls(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        class _Store:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def list_option_contracts_for_expirations(self, **kwargs):
+                self.calls += 1
+                return {
+                    date(2025, 4, 18): [
+                        OptionContractRecord("O:APR18", "call", date(2025, 4, 18), 250.0, 100.0),
+                    ],
+                    date(2025, 4, 25): [
+                        OptionContractRecord("O:APR25", "call", date(2025, 4, 25), 250.0, 100.0),
+                    ],
+                }
+
+        store = _Store()
+        gw = HistoricalOptionGateway(store, "TSLA")
+
+        first = gw.list_contracts_for_expirations(
+            entry_date=date(2025, 3, 14),
+            contract_type="call",
+            expiration_dates=[date(2025, 4, 18), date(2025, 4, 25)],
+        )
+        second = gw.list_contracts_for_expirations(
+            entry_date=date(2025, 3, 14),
+            contract_type="call",
+            expiration_dates=[date(2025, 4, 18), date(2025, 4, 25)],
+        )
+
+        assert first[date(2025, 4, 18)][0].ticker == "O:APR18"
+        assert second[date(2025, 4, 25)][0].ticker == "O:APR25"
+        assert store.calls == 1
 
     def test_get_quote_caches_missing_result(self):
         from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
@@ -502,6 +565,31 @@ class TestHistoricalGatewayRunScopedCache:
         assert len(results) == 2
         assert all(result is not None for result in results)
         assert store.get_option_quote_for_date.call_count == 1
+
+    def test_get_quotes_batches_store_calls(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        class _Store:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def get_option_quotes_for_date(self, option_tickers, trade_date):
+                self.calls += 1
+                return {
+                    ticker: OptionQuoteRecord(trade_date, 3.0 + index, 3.2 + index, None)
+                    for index, ticker in enumerate(option_tickers)
+                }
+
+        store = _Store()
+        gw = HistoricalOptionGateway(store, "TSLA")
+
+        first = gw.get_quotes(["O:A", "O:B"], date(2025, 3, 14))
+        second = gw.get_quotes(["O:A", "O:B"], date(2025, 3, 14))
+
+        assert first["O:A"] is not None
+        assert first["O:B"] is not None
+        assert second["O:A"].mid_price == first["O:A"].mid_price
+        assert store.calls == 1
 
 
 # ---------------------------------------------------------------------------

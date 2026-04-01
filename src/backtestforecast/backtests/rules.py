@@ -109,6 +109,7 @@ class EntryRuleEvaluator:
     williams_r_cache: dict[int, list[float | None]] = field(default_factory=dict)
     generic_series_cache: dict[str, list[float | None]] = field(default_factory=dict)
     _sorted_earnings: list[date] = field(init=False)
+    _entry_allowed_mask: list[bool] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.closes = [bar.close_price for bar in self.bars]
@@ -118,6 +119,11 @@ class EntryRuleEvaluator:
         self._sorted_earnings = sorted(self.earnings_dates)
 
     def is_entry_allowed(self, index: int) -> bool:
+        if self._entry_allowed_mask is not None:
+            if index < 0 or index >= len(self._entry_allowed_mask):
+                return False
+            return self._entry_allowed_mask[index]
+
         if index <= 0 and self._has_crossover_rule(self.config.entry_rules):
             return False
 
@@ -172,6 +178,259 @@ class EntryRuleEvaluator:
                 )
                 return False
         return True
+
+    def build_entry_allowed_mask(self) -> list[bool]:
+        cached = self._entry_allowed_mask
+        if cached is not None:
+            return cached
+
+        if not self.bars:
+            self._entry_allowed_mask = []
+            return self._entry_allowed_mask
+
+        combined_mask = [True] * len(self.bars)
+        for rule in self.config.entry_rules:
+            rule_mask = self._build_rule_mask(rule)
+            combined_mask = [
+                left and right for left, right in zip(combined_mask, rule_mask, strict=False)
+            ]
+
+        self._entry_allowed_mask = combined_mask
+        return combined_mask
+
+    def _build_rule_mask(self, rule: object) -> list[bool]:
+        if isinstance(rule, RsiRule):
+            return self._build_rsi_mask(rule)
+        if isinstance(rule, MovingAverageCrossoverRule):
+            return self._build_moving_average_mask(rule)
+        if isinstance(rule, MacdRule):
+            return self._build_macd_mask(rule)
+        if isinstance(rule, BollingerBandsRule):
+            return self._build_bollinger_mask(rule)
+        if isinstance(rule, (IvRankRule, IvPercentileRule)):
+            return self._build_iv_mask(rule)
+        if isinstance(rule, VolumeSpikeRule):
+            return self._build_volume_mask(rule)
+        if isinstance(rule, SupportResistanceRule):
+            return self._build_support_resistance_mask(rule)
+        if isinstance(rule, AvoidEarningsRule):
+            return self._build_avoid_earnings_mask(rule)
+        if isinstance(rule, IndicatorThresholdRule):
+            return self._build_indicator_threshold_mask(rule)
+        if isinstance(rule, IndicatorTrendRule):
+            return self._build_indicator_trend_mask(rule)
+        if isinstance(rule, IndicatorLevelCrossRule):
+            return self._build_indicator_level_cross_mask(rule)
+        if isinstance(rule, IndicatorSeriesCrossRule):
+            return self._build_indicator_series_cross_mask(rule)
+        if isinstance(rule, IndicatorPersistenceRule):
+            return self._build_indicator_persistence_mask(rule)
+        logger.warning("unknown_entry_rule_type", rule_type=type(rule).__name__)
+        return [False] * len(self.bars)
+
+    def _build_rsi_mask(self, rule: RsiRule) -> list[bool]:
+        return self._mask_from_series_level(
+            self.rsi_cache.setdefault(rule.period, rsi(self.closes, rule.period)),
+            float(rule.threshold),
+            rule.operator,
+        )
+
+    def _build_moving_average_mask(self, rule: MovingAverageCrossoverRule) -> list[bool]:
+        if rule.type == "sma_crossover":
+            fast_series = self.sma_cache.setdefault(rule.fast_period, sma(self.closes, rule.fast_period))
+            slow_series = self.sma_cache.setdefault(rule.slow_period, sma(self.closes, rule.slow_period))
+        else:
+            fast_series = self.ema_cache.setdefault(rule.fast_period, ema(self.closes, rule.fast_period))
+            slow_series = self.ema_cache.setdefault(rule.slow_period, ema(self.closes, rule.slow_period))
+
+        mask = [False] * len(self.bars)
+        for index in range(1, len(self.bars)):
+            previous_fast = fast_series[index - 1]
+            previous_slow = slow_series[index - 1]
+            current_fast = fast_series[index]
+            current_slow = slow_series[index]
+            if previous_fast is None or previous_slow is None or current_fast is None or current_slow is None:
+                continue
+            if rule.direction == "bullish":
+                mask[index] = previous_fast <= previous_slow and current_fast > current_slow
+            else:
+                mask[index] = previous_fast >= previous_slow and current_fast < current_slow
+        return mask
+
+    def _build_macd_mask(self, rule: MacdRule) -> list[bool]:
+        macd_line, signal_line, _histogram = self.macd_cache.setdefault(
+            (rule.fast_period, rule.slow_period, rule.signal_period),
+            macd(self.closes, rule.fast_period, rule.slow_period, rule.signal_period),
+        )
+        mask = [False] * len(self.bars)
+        for index in range(1, len(self.bars)):
+            prev_macd = macd_line[index - 1]
+            prev_signal = signal_line[index - 1]
+            curr_macd = macd_line[index]
+            curr_signal = signal_line[index]
+            if prev_macd is None or prev_signal is None or curr_macd is None or curr_signal is None:
+                continue
+            if rule.direction == "bullish":
+                mask[index] = prev_macd <= prev_signal and curr_macd > curr_signal
+            else:
+                mask[index] = prev_macd >= prev_signal and curr_macd < curr_signal
+        return mask
+
+    def _build_bollinger_mask(self, rule: BollingerBandsRule) -> list[bool]:
+        cache_key = (rule.period, float(rule.standard_deviations))
+        lower, middle, upper = self.bollinger_cache.setdefault(
+            cache_key,
+            bollinger_bands(self.closes, rule.period, float(rule.standard_deviations)),
+        )
+        target_series = {
+            BollingerBand.LOWER: lower,
+            BollingerBand.MIDDLE: middle,
+            BollingerBand.UPPER: upper,
+        }[rule.band]
+        return [
+            target_value is not None and compare(close, target_value, rule.operator)
+            for close, target_value in zip(self.closes, target_series, strict=False)
+        ]
+
+    def _build_iv_mask(self, rule: IvRankRule | IvPercentileRule) -> list[bool]:
+        if isinstance(rule, IvRankRule):
+            metric_series = self.iv_rank_series_cache.setdefault(
+                rule.lookback_days,
+                self._build_iv_metric_series(rule.lookback_days, percentile=False),
+            )
+        else:
+            metric_series = self.iv_percentile_series_cache.setdefault(
+                rule.lookback_days,
+                self._build_iv_metric_series(rule.lookback_days, percentile=True),
+            )
+        return self._mask_from_series_level(metric_series, float(rule.threshold), rule.operator)
+
+    def _build_volume_mask(self, rule: VolumeSpikeRule) -> list[bool]:
+        ratio_series = self.volume_ratio_cache.setdefault(
+            rule.lookback_period,
+            self._build_volume_ratio_series(rule.lookback_period),
+        )
+        return self._mask_from_series_level(ratio_series, float(rule.multiplier), rule.operator)
+
+    def _build_support_resistance_mask(self, rule: SupportResistanceRule) -> list[bool]:
+        mask = [False] * len(self.bars)
+        support_series = self.rolling_support_cache.setdefault(
+            rule.lookback_period, rolling_min(self.closes, rule.lookback_period)
+        )
+        resistance_series = self.rolling_resistance_cache.setdefault(
+            rule.lookback_period, rolling_max(self.closes, rule.lookback_period)
+        )
+        tolerance_ratio = float(rule.tolerance_pct) / 100.0
+        for index in range(rule.lookback_period, len(self.bars)):
+            prior_support = support_series[index - 1]
+            prior_resistance = resistance_series[index - 1]
+            current_close = self.closes[index]
+            previous_close = self.closes[index - 1]
+            if rule.mode == SupportResistanceMode.NEAR_SUPPORT:
+                if prior_support is None or prior_support == 0:
+                    continue
+                mask[index] = abs(current_close - prior_support) / prior_support <= tolerance_ratio
+            elif rule.mode == SupportResistanceMode.NEAR_RESISTANCE:
+                if prior_resistance is None or prior_resistance == 0:
+                    continue
+                mask[index] = abs(current_close - prior_resistance) / prior_resistance <= tolerance_ratio
+            elif rule.mode == SupportResistanceMode.BREAKOUT_ABOVE_RESISTANCE:
+                if prior_resistance is None:
+                    continue
+                mask[index] = previous_close <= prior_resistance and current_close > (
+                    prior_resistance * (1.0 + tolerance_ratio)
+                )
+            else:
+                if prior_support is None:
+                    continue
+                mask[index] = previous_close >= prior_support and current_close < (
+                    prior_support * (1.0 - tolerance_ratio)
+                )
+        return mask
+
+    def _build_avoid_earnings_mask(self, rule: AvoidEarningsRule) -> list[bool]:
+        return [self._evaluate_avoid_earnings_rule(rule, index) for index in range(len(self.bars))]
+
+    def _build_indicator_threshold_mask(self, rule: IndicatorThresholdRule) -> list[bool]:
+        return self._mask_from_series_level(
+            self._get_indicator_series(rule.series),
+            float(rule.level),
+            rule.operator,
+        )
+
+    def _build_indicator_trend_mask(self, rule: IndicatorTrendRule) -> list[bool]:
+        mask = [False] * len(self.bars)
+        start_index = rule.bars - 1
+        if start_index < 0:
+            return mask
+        series = self._get_indicator_series(rule.series)
+        for index in range(start_index, len(self.bars)):
+            window = series[index - rule.bars + 1 : index + 1]
+            if any(value is None for value in window):
+                continue
+            values = [float(value) for value in window if value is not None]
+            if rule.direction == IndicatorTrendDirection.RISING:
+                mask[index] = all(left < right for left, right in zip(values, values[1:], strict=False))
+            else:
+                mask[index] = all(left > right for left, right in zip(values, values[1:], strict=False))
+        return mask
+
+    def _build_indicator_level_cross_mask(self, rule: IndicatorLevelCrossRule) -> list[bool]:
+        mask = [False] * len(self.bars)
+        series = self._get_indicator_series(rule.series)
+        level = float(rule.level)
+        for index in range(1, len(self.bars)):
+            previous = series[index - 1]
+            current = series[index]
+            if previous is None or current is None:
+                continue
+            if rule.direction == "crosses_above":
+                mask[index] = previous <= level and current > level
+            else:
+                mask[index] = previous >= level and current < level
+        return mask
+
+    def _build_indicator_series_cross_mask(self, rule: IndicatorSeriesCrossRule) -> list[bool]:
+        mask = [False] * len(self.bars)
+        left_series = self._get_indicator_series(rule.left_series)
+        right_series = self._get_indicator_series(rule.right_series)
+        for index in range(1, len(self.bars)):
+            previous_left = left_series[index - 1]
+            current_left = left_series[index]
+            previous_right = right_series[index - 1]
+            current_right = right_series[index]
+            if any(value is None for value in (previous_left, current_left, previous_right, current_right)):
+                continue
+            if rule.direction == "crosses_above":
+                mask[index] = previous_left <= previous_right and current_left > current_right
+            else:
+                mask[index] = previous_left >= previous_right and current_left < current_right
+        return mask
+
+    def _build_indicator_persistence_mask(self, rule: IndicatorPersistenceRule) -> list[bool]:
+        mask = [False] * len(self.bars)
+        start_index = rule.bars - 1
+        if start_index < 0:
+            return mask
+        series = self._get_indicator_series(rule.series)
+        level = float(rule.level)
+        for index in range(start_index, len(self.bars)):
+            window = series[index - rule.bars + 1 : index + 1]
+            if any(value is None for value in window):
+                continue
+            mask[index] = all(compare(float(value), level, rule.operator) for value in window if value is not None)
+        return mask
+
+    @staticmethod
+    def _mask_from_series_level(
+        series: Sequence[float | None],
+        level: float,
+        operator: ComparisonOperator,
+    ) -> list[bool]:
+        return [
+            value is not None and compare(float(value), level, operator)
+            for value in series
+        ]
 
     def _evaluate_rsi_rule(self, rule: RsiRule, index: int) -> bool:
         series = self.rsi_cache.setdefault(rule.period, rsi(self.closes, rule.period))

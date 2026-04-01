@@ -2,8 +2,10 @@
 
 import bisect
 import math
-from collections import defaultdict
+import threading
+from collections import OrderedDict, defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
@@ -25,11 +27,86 @@ if TYPE_CHECKING:
     from backtestforecast.backtests.types import OptionDataGateway
 
 
-def group_contracts_by_expiration(contracts: Iterable[OptionContractRecord]) -> dict[date, list[OptionContractRecord]]:
+_CHAIN_CONTEXT_CACHE_MAX = 4_096
+_CHAIN_CONTEXT_LOCK = threading.Lock()
+
+
+@dataclass(slots=True)
+class _ChainContext:
+    contract_count: int
+    first_ticker: str | None
+    last_ticker: str | None
+    grouped_by_expiration: dict[date, list[OptionContractRecord]]
+    expirations_sorted: tuple[date, ...]
+    unique_strikes_sorted: tuple[float, ...]
+    contracts_by_strike: dict[int, OptionContractRecord]
+
+
+_CHAIN_CONTEXT_CACHE: OrderedDict[int, _ChainContext] = OrderedDict()
+
+
+def _normalized_strike_key(strike: float) -> int:
+    return int(round(strike * 10_000))
+
+
+def _sequence_signature(contracts: list[OptionContractRecord] | tuple[OptionContractRecord, ...]) -> tuple[int, str | None, str | None]:
+    if not contracts:
+        return 0, None, None
+    return len(contracts), contracts[0].ticker, contracts[-1].ticker
+
+
+def _build_chain_context(
+    contracts: list[OptionContractRecord] | tuple[OptionContractRecord, ...],
+) -> _ChainContext:
     grouped: dict[date, list[OptionContractRecord]] = defaultdict(list)
+    contracts_by_strike: dict[int, OptionContractRecord] = {}
     for contract in contracts:
         grouped[contract.expiration_date].append(contract)
-    return grouped
+        contracts_by_strike.setdefault(_normalized_strike_key(contract.strike_price), contract)
+    contract_count, first_ticker, last_ticker = _sequence_signature(contracts)
+    return _ChainContext(
+        contract_count=contract_count,
+        first_ticker=first_ticker,
+        last_ticker=last_ticker,
+        grouped_by_expiration=dict(grouped),
+        expirations_sorted=tuple(sorted(grouped)),
+        unique_strikes_sorted=tuple(sorted({contract.strike_price for contract in contracts})),
+        contracts_by_strike=contracts_by_strike,
+    )
+
+
+def _contracts_with_context(
+    contracts: Iterable[OptionContractRecord],
+) -> tuple[list[OptionContractRecord] | tuple[OptionContractRecord, ...], _ChainContext]:
+    if isinstance(contracts, (list, tuple)):
+        cache_key = id(contracts)
+        contract_count, first_ticker, last_ticker = _sequence_signature(contracts)
+        with _CHAIN_CONTEXT_LOCK:
+            cached = _CHAIN_CONTEXT_CACHE.get(cache_key)
+            if cached is not None:
+                if (
+                    cached.contract_count == contract_count
+                    and cached.first_ticker == first_ticker
+                    and cached.last_ticker == last_ticker
+                ):
+                    _CHAIN_CONTEXT_CACHE.move_to_end(cache_key)
+                    return contracts, cached
+                _CHAIN_CONTEXT_CACHE.pop(cache_key, None)
+        context = _build_chain_context(contracts)
+        with _CHAIN_CONTEXT_LOCK:
+            _CHAIN_CONTEXT_CACHE[cache_key] = context
+            _CHAIN_CONTEXT_CACHE.move_to_end(cache_key)
+            while len(_CHAIN_CONTEXT_CACHE) > _CHAIN_CONTEXT_CACHE_MAX:
+                _CHAIN_CONTEXT_CACHE.popitem(last=False)
+        return contracts, context
+
+    materialized = list(contracts)
+    return materialized, _build_chain_context(materialized)
+
+
+def group_contracts_by_expiration(contracts: Iterable[OptionContractRecord]) -> dict[date, list[OptionContractRecord]]:
+    _contracts, context = _contracts_with_context(contracts)
+    return context.grouped_by_expiration
 
 
 def choose_primary_expiration(
@@ -37,7 +114,8 @@ def choose_primary_expiration(
     entry_date: date,
     target_dte: int,
 ) -> date:
-    expirations = {contract.expiration_date for contract in contracts}
+    _contracts, context = _contracts_with_context(contracts)
+    expirations = context.expirations_sorted
     if not expirations:
         raise DataUnavailableError("No eligible option expirations were available.")
     return min(
@@ -75,9 +153,8 @@ def choose_secondary_expiration(
     base_expiration: date,
     min_extra_days: int = 14,
 ) -> date | None:
-    expirations = sorted(
-        {contract.expiration_date for contract in contracts if contract.expiration_date > base_expiration}
-    )
+    _contracts, context = _contracts_with_context(contracts)
+    expirations = [expiration for expiration in context.expirations_sorted if expiration > base_expiration]
     if not expirations:
         return None
     minimum_target = (base_expiration - entry_date).days + min_extra_days
@@ -88,7 +165,8 @@ def choose_secondary_expiration(
 
 
 def contracts_for_expiration(contracts: Iterable[OptionContractRecord], expiration: date) -> list[OptionContractRecord]:
-    return [contract for contract in contracts if contract.expiration_date == expiration]
+    _contracts, context = _contracts_with_context(contracts)
+    return context.grouped_by_expiration.get(expiration, [])
 
 
 def select_preferred_expiration_contracts(
@@ -136,9 +214,28 @@ def select_preferred_common_expiration_contracts(
     target_dte: int,
     dte_tolerance_days: int,
 ) -> tuple[date, list[OptionContractRecord], list[OptionContractRecord]]:
+    batch_fetch = getattr(option_gateway, "list_contracts_for_expirations", None)
+    ordered_expirations = preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days)
+    if callable(batch_fetch):
+        calls_by_expiration = batch_fetch(
+            entry_date=entry_date,
+            contract_type="call",
+            expiration_dates=ordered_expirations,
+        )
+        puts_by_expiration = batch_fetch(
+            entry_date=entry_date,
+            contract_type="put",
+            expiration_dates=ordered_expirations,
+        )
+        for expiration_date in ordered_expirations:
+            calls = list(calls_by_expiration.get(expiration_date, []))
+            puts = list(puts_by_expiration.get(expiration_date, []))
+            if calls and puts:
+                return expiration_date, calls, puts
+
     exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
     if callable(exact_fetch):
-        for expiration_date in preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days):
+        for expiration_date in ordered_expirations:
             calls = list(
                 exact_fetch(
                     entry_date=entry_date,
@@ -170,7 +267,8 @@ def select_preferred_common_expiration_contracts(
 
 
 def sorted_unique_strikes(contracts: Iterable[OptionContractRecord]) -> list[float]:
-    return sorted({contract.strike_price for contract in contracts})
+    _contracts, context = _contracts_with_context(contracts)
+    return list(context.unique_strikes_sorted)
 
 
 def choose_atm_strike(strikes: list[float], underlying_close: float) -> float:
@@ -220,7 +318,14 @@ def offset_strike(strikes: list[float], base_strike: float, steps: int, *, preso
 
 
 def require_contract_for_strike(contracts: Iterable[OptionContractRecord], strike: float) -> OptionContractRecord:
-    for contract in contracts:
+    contract_sequence, context = _contracts_with_context(contracts)
+    cached = context.contracts_by_strike.get(_normalized_strike_key(strike))
+    if cached is not None:
+        tolerance = max(0.005, cached.strike_price * 0.0001)
+        if abs(cached.strike_price - strike) < tolerance:
+            return cached
+
+    for contract in contract_sequence:
         tolerance = max(0.005, contract.strike_price * 0.0001)
         if abs(contract.strike_price - strike) < tolerance:
             return contract
@@ -232,9 +337,9 @@ def choose_common_atm_strike(
     put_contracts: Iterable[OptionContractRecord],
     underlying_close: float,
 ) -> float:
-    common_strikes = sorted(
-        {contract.strike_price for contract in call_contracts} & {contract.strike_price for contract in put_contracts}
-    )
+    _call_contracts, call_context = _contracts_with_context(call_contracts)
+    _put_contracts, put_context = _contracts_with_context(put_contracts)
+    common_strikes = sorted(set(call_context.unique_strikes_sorted) & set(put_context.unique_strikes_sorted))
     if not common_strikes:
         raise DataUnavailableError("No common call/put strike was available for the selected expiration.")
     return choose_atm_strike(common_strikes, underlying_close)

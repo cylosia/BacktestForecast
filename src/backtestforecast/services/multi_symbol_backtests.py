@@ -45,7 +45,10 @@ from backtestforecast.schemas.multi_symbol_backtests import (
     MultiSymbolTradeGroupResponse,
     MultiSymbolTradeResponse,
 )
-from backtestforecast.services.backtest_execution import BacktestExecutionService
+from backtestforecast.services.backtest_execution import (
+    BacktestExecutionService,
+    get_thread_local_shared_execution_service,
+)
 from backtestforecast.services.backtest_workflow_access import enforce_backtest_workflow_quota
 from backtestforecast.services.dispatch_recovery import redispatch_if_stale_queued
 from backtestforecast.services.job_cancellation import mark_job_cancelled, publish_cancellation_event, revoke_celery_task
@@ -241,13 +244,13 @@ class MultiSymbolBacktestService:
     ) -> None:
         self.session = session
         self._execution_service = execution_service
-        self._owns_execution_service = execution_service is None
+        self._owns_execution_service = False
         self._engine = OptionsBacktestEngine()
 
     @property
     def execution_service(self) -> BacktestExecutionService:
         if self._execution_service is None:
-            self._execution_service = BacktestExecutionService()
+            self._execution_service = get_thread_local_shared_execution_service()
         return self._execution_service
 
     def close(self) -> None:

@@ -132,6 +132,8 @@ def test_execution_service_passes_prepared_ex_dividend_dates_to_engine(mock_mass
     )
 
     market_data = MarketDataService(mock_massive_client)
+    market_data._historical_store = None
+    market_data._redis_cache = None
     engine = _CapturingEngine()
     service = BacktestExecutionService(market_data_service=market_data, engine=engine)
 
