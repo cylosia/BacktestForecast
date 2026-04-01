@@ -122,6 +122,7 @@ def test_execute_sweep_persists_results_with_historical_gateway(db_session: Sess
         "errors": [],
         "requests": [],
     }
+    execution_service.resolve_execution_inputs.return_value = (SimpleNamespace(), None)
     execution_service.execute_request.return_value = result
 
     service = SweepService(db_session, execution_service=execution_service)
@@ -197,6 +198,7 @@ def test_execute_sweep_builds_one_shared_bundle_request_for_all_entry_rules(db_s
         "errors": [],
         "requests": [],
     }
+    execution_service.resolve_execution_inputs.return_value = (SimpleNamespace(), None)
     execution_service.execute_request.return_value = result
 
     service = SweepService(db_session, execution_service=execution_service)
@@ -214,3 +216,145 @@ def test_execute_sweep_builds_one_shared_bundle_request_for_all_entry_rules(db_s
     assert len(prepared_request.entry_rules) == 2
     assert {request.strategy_type.value for request in warmed_requests} == {"long_put", "bear_put_debit_spread"}
     assert execution_service.execute_request.call_count == 4
+
+
+def test_execute_sweep_batches_exit_rule_variants_per_structural_candidate(db_session: Session) -> None:
+    payload = CreateSweepRequest(
+        symbol="F",
+        strategy_types=["long_put"],
+        start_date=date(2015, 1, 2),
+        end_date=date(2015, 2, 27),
+        target_dte=14,
+        dte_tolerance_days=5,
+        max_holding_days=7,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rule_sets=[{"name": "default", "entry_rules": []}],
+        exit_rule_sets=[
+            {"name": "pt50", "profit_target_pct": Decimal("50")},
+            {"name": "pt75_sl100", "profit_target_pct": Decimal("75"), "stop_loss_pct": Decimal("100")},
+        ],
+        max_results=2,
+    )
+    user = _create_user(db_session)
+    job = _create_running_job(db_session, user, payload)
+
+    bundle = HistoricalDataBundle(
+        bars=[DailyBar(date(2015, 1, 2), 15.1, 15.3, 14.9, 15.0, 10_000_000)],
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+        data_source="historical_flatfile",
+        warnings=[],
+    )
+    result_a = SimpleNamespace(summary=_summary(), trades=[], equity_curve=[], warnings=[])
+    result_b = SimpleNamespace(summary=_summary(), trades=[], equity_curve=[], warnings=[])
+
+    execution_service = MagicMock()
+    execution_service.market_data_service.prepare_backtest.return_value = bundle
+    execution_service.prefetch_requests_with_shared_bundle.return_value = {
+        "prefetch_count": 1,
+        "skipped_count": 0,
+        "dates_processed": 1,
+        "contracts_fetched": 1,
+        "quotes_fetched": 0,
+        "errors": [],
+        "requests": [],
+    }
+    execution_service.resolve_execution_inputs.return_value = (SimpleNamespace(), None)
+    execution_service.execute_exit_policy_variants.return_value = [result_a, result_b]
+
+    service = SweepService(db_session, execution_service=execution_service)
+    service._execute_sweep(job, payload)
+    db_session.commit()
+    db_session.expire_all()
+
+    persisted_results = list(
+        db_session.scalars(select(SweepResult).where(SweepResult.sweep_job_id == job.id).order_by(SweepResult.rank))
+    )
+
+    assert execution_service.execute_exit_policy_variants.call_count == 1
+    assert execution_service.execute_request.call_count == 0
+    assert len(persisted_results) == 2
+    assert persisted_results[0].parameter_snapshot_json["exit_rule_set_name"] == "pt50"
+    assert persisted_results[1].parameter_snapshot_json["exit_rule_set_name"] == "pt75_sl100"
+
+
+def test_execute_sweep_parallelizes_structural_candidates_with_cloned_warm_bundles(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    payload = CreateSweepRequest(
+        symbol="F",
+        strategy_types=["long_put", "bear_put_debit_spread"],
+        start_date=date(2015, 1, 2),
+        end_date=date(2015, 2, 27),
+        target_dte=14,
+        dte_tolerance_days=5,
+        max_holding_days=7,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rule_sets=[
+            {"name": "default_a", "entry_rules": []},
+            {"name": "default_b", "entry_rules": []},
+            {"name": "default_c", "entry_rules": []},
+        ],
+        max_results=6,
+    )
+    user = _create_user(db_session)
+    job = _create_running_job(db_session, user, payload)
+
+    bundle = HistoricalDataBundle(
+        bars=[DailyBar(date(2015, 1, 2), 15.1, 15.3, 14.9, 15.0, 10_000_000)],
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+        data_source="historical_flatfile",
+        warnings=[],
+    )
+    bundle.remember_prefetch(("shared",), {"dates_processed": 1})
+    bundle.entry_rule_cache.entry_allowed_masks["seed"] = [True]
+
+    execution_service = MagicMock()
+    execution_service.market_data_service.prepare_backtest.return_value = bundle
+    execution_service.prefetch_requests_with_shared_bundle.return_value = {
+        "prefetch_count": 2,
+        "skipped_count": 0,
+        "dates_processed": 2,
+        "contracts_fetched": 2,
+        "quotes_fetched": 0,
+        "errors": [],
+        "requests": [],
+    }
+    execution_service.resolve_execution_inputs.return_value = (SimpleNamespace(), None)
+
+    result = SimpleNamespace(summary=_summary(), trades=[], equity_curve=[], warnings=[])
+    worker_bundles: list[HistoricalDataBundle] = []
+
+    class _WorkerExecutionService:
+        def execute_request(self, request, *, bundle, resolved_parameters=None, risk_free_rate_curve=None):
+            worker_bundles.append(bundle)
+            return result
+
+    monkeypatch.setattr(
+        SweepService,
+        "_grid_parallel_worker_count",
+        lambda self, bundle, work_item_count: 2,
+    )
+    monkeypatch.setattr(
+        "backtestforecast.services.sweeps.get_thread_local_shared_execution_service",
+        lambda: _WorkerExecutionService(),
+    )
+
+    service = SweepService(db_session, execution_service=execution_service)
+    service._execute_sweep(job, payload)
+    db_session.commit()
+
+    assert execution_service.execute_request.call_count == 0
+    assert len(worker_bundles) == 6
+    assert all(worker_bundle is not bundle for worker_bundle in worker_bundles)
+    assert all(worker_bundle.option_gateway is bundle.option_gateway for worker_bundle in worker_bundles)
+    assert all(worker_bundle.prefetched_signatures == bundle.prefetched_signatures for worker_bundle in worker_bundles)
+    assert all(worker_bundle.entry_rule_cache is not bundle.entry_rule_cache for worker_bundle in worker_bundles)

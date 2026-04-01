@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from backtestforecast.backtests.run_warnings import make_warning
+from backtestforecast.backtests.rules import EntryRuleComputationCache
 from backtestforecast.config import get_settings
 from backtestforecast.errors import DataUnavailableError, ExternalServiceError
 from backtestforecast.backtests.strategies.common import preferred_expiration_dates
@@ -77,6 +78,7 @@ class HistoricalDataBundle:
     warnings: list[dict[str, Any]] | None = None
     prefetched_signatures: set[tuple[Any, ...]] = field(default_factory=set, compare=False, repr=False)
     prefetched_summaries: dict[tuple[Any, ...], dict[str, Any]] = field(default_factory=dict, compare=False, repr=False)
+    entry_rule_cache: EntryRuleComputationCache = field(default_factory=EntryRuleComputationCache, compare=False, repr=False)
 
     def has_prefetched(self, signature: tuple[Any, ...]) -> bool:
         return signature in self.prefetched_signatures
@@ -87,6 +89,22 @@ class HistoricalDataBundle:
     def remember_prefetch(self, signature: tuple[Any, ...], summary: dict[str, Any]) -> None:
         self.prefetched_signatures.add(signature)
         self.prefetched_summaries[signature] = dict(summary)
+
+    def clone_for_execution(self) -> HistoricalDataBundle:
+        return HistoricalDataBundle(
+            bars=self.bars,
+            earnings_dates=self.earnings_dates,
+            ex_dividend_dates=self.ex_dividend_dates,
+            option_gateway=self.option_gateway,
+            data_source=self.data_source,
+            warnings=list(self.warnings) if self.warnings is not None else None,
+            prefetched_signatures=set(self.prefetched_signatures),
+            prefetched_summaries={
+                signature: dict(summary)
+                for signature, summary in self.prefetched_summaries.items()
+            },
+            entry_rule_cache=EntryRuleComputationCache(),
+        )
 
 
 @dataclass(frozen=True, slots=True)

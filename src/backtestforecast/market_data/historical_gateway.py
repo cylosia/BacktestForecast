@@ -385,6 +385,35 @@ class HistoricalOptionGateway:
             quotes[option_ticker] = self.get_quote(option_ticker, trade_date)
         return quotes
 
+    def get_quote_series(
+        self,
+        option_tickers: list[str],
+        start_date: date,
+        end_date: date,
+    ) -> dict[str, dict[date, OptionQuoteRecord | None]]:
+        if not option_tickers:
+            return {}
+        requested_tickers = list(dict.fromkeys(option_tickers))
+        series_lookup = getattr(self.store, "get_option_quote_series", None)
+        if not inspect.ismethod(series_lookup):
+            return {ticker: {} for ticker in requested_tickers}
+        series = series_lookup(requested_tickers, start_date, end_date)
+        normalized: dict[str, dict[date, OptionQuoteRecord | None]] = {
+            ticker: dict(series.get(ticker, {}))
+            for ticker in requested_tickers
+        }
+        with self._shared_state.lock:
+            for option_ticker, quotes_by_date in normalized.items():
+                for trade_date, quote in quotes_by_date.items():
+                    _store_lru(
+                        self._shared_state.quote_cache,
+                        (option_ticker, trade_date),
+                        quote,
+                        max_size=_QUOTE_CACHE_MAX,
+                    )
+                    self._shared_state.inflight_errors.pop(("quotes", (option_ticker, trade_date)), None)
+        return normalized
+
     def set_ex_dividend_dates(self, ex_dividend_dates: set[date]) -> None:
         self._ex_dividend_dates = set(ex_dividend_dates)
 

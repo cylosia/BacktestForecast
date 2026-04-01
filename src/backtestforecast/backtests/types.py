@@ -270,6 +270,8 @@ class OpenMultiLegPosition:
     entry_reason: str = "entry_rules_met"
     entry_commission_total: Decimal = Decimal("0")
     detail_json: dict[str, Any] = field(default_factory=dict)
+    quote_series_lookup: dict[str, dict[date, OptionQuoteRecord | None]] = field(default_factory=dict, repr=False)
+    quote_series_loaded_tickers: set[str] = field(default_factory=set, repr=False)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,6 +2,7 @@
 
 import contextlib
 import time as _time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -12,7 +13,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backtestforecast.config import get_settings
+from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
 from backtestforecast.errors import AppError, AppValidationError, ConflictError, NotFoundError
+from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.models import SweepJob, SweepResult, User
 from backtestforecast.observability.metrics import (
     SWEEP_CANDIDATE_FAILURES_TOTAL,
@@ -79,6 +83,16 @@ _SWEEP_QUEUE = "sweeps"
 
 _CANDIDATE_TIMEOUT_SECONDS = 120
 _MAX_EQUITY_POINTS = 500
+
+
+@dataclass(frozen=True, slots=True)
+class _SweepGridWorkItem:
+    strategy_type: Any
+    entry_rule_set_name: str
+    entry_rules: list[Any]
+    delta_val: int | None
+    width_val: tuple[SpreadWidthMode, Decimal] | None
+    exit_group: list[Any]
 
 class SweepService:
     def __init__(
@@ -519,6 +533,9 @@ class SweepService:
             contracts_fetched=prefetch_summary.get("contracts_fetched", 0),
             quotes_fetched=prefetch_summary.get("quotes_fetched", 0),
         )
+        resolved_parameters, risk_free_rate_curve = self.execution_service.resolve_execution_inputs(
+            representative,
+        )
 
         # Phase 2: execute grid
         candidates: list[dict[str, Any]] = []
@@ -531,125 +548,47 @@ class SweepService:
         delta_values = [item.value for item in payload.delta_grid] if payload.delta_grid else [None]
         width_values = [(item.mode, item.value) for item in payload.width_grid] if payload.width_grid else [None]
         exit_sets = payload.exit_rule_sets if payload.exit_rule_sets else [None]
-
-        for strategy_type in payload.strategy_types:
-            if timed_out:
-                break
-            for entry_rule_set in payload.entry_rule_sets:
-                if timed_out:
-                    break
-                for delta_val in delta_values:
-                    if timed_out:
-                        break
-                    for width_val in width_values:
-                        if timed_out:
-                            break
-                        for exit_set in exit_sets:
-                            if timed_out:
-                                break
-
-                            elapsed = _time.monotonic() - sweep_start
-                            if elapsed > sweep_timeout - _CANDIDATE_TIMEOUT_SECONDS:
-                                timed_out = True
-                                warnings.append({
-                                    "code": "timeout",
-                                    "message": "Sweep time limit approaching; remaining candidates were skipped.",
-                                })
-                                break
-
-                            overrides = self._build_overrides(delta_val, width_val)
-                            request = CreateBacktestRunRequest(
-                                symbol=payload.symbol,
-                                strategy_type=strategy_type,
-                                start_date=payload.start_date,
-                                end_date=payload.end_date,
-                                target_dte=payload.target_dte,
-                                dte_tolerance_days=payload.dte_tolerance_days,
-                                max_holding_days=payload.max_holding_days,
-                                account_size=payload.account_size,
-                                risk_per_trade_pct=payload.risk_per_trade_pct,
-                                commission_per_contract=payload.commission_per_contract,
-                                entry_rules=entry_rule_set.entry_rules,
-                                slippage_pct=payload.slippage_pct,
-                                profit_target_pct=exit_set.profit_target_pct if exit_set else None,
-                                stop_loss_pct=exit_set.stop_loss_pct if exit_set else None,
-                                strategy_overrides=overrides,
-                            )
-
-                            try:
-                                result = self.execution_service.execute_request(request, bundle=bundle)
-                                candidates.append(self._build_candidate(
-                                    result=result,
-                                    strategy_type=strategy_type.value,
-                                    delta_val=delta_val,
-                                    width_val=width_val,
-                                    entry_rule_set_name=entry_rule_set.name,
-                                    exit_set=exit_set,
-                                ))
-                                local_evaluated_count += 1
-                                if local_evaluated_count % 50 == 0:
-                                    _update_heartbeat(self.session, SweepJob, job.id)
-                                    nested_progress = None
-                                    try:
-                                        nested_progress = self.session.begin_nested()
-                                        from sqlalchemy import update as _progress_update
-                                        self.session.execute(
-                                            _progress_update(SweepJob)
-                                            .where(SweepJob.id == job.id)
-                                            .values(evaluated_candidate_count=local_evaluated_count)
-                                        )
-                                        nested_progress.commit()
-                                    except Exception:
-                                        if nested_progress is not None:
-                                            with contextlib.suppress(Exception):
-                                                nested_progress.rollback()
-                                        logger.warning(
-                                            "sweep.progress_commit_failed",
-                                            evaluated=local_evaluated_count,
-                                            candidates_in_memory=len(candidates),
-                                        )
-                                _TRIM_INTERVAL = 200
-                                max_results = payload.max_results or 20
-                                if (
-                                    len(candidates) > 0
-                                    and len(candidates) % _TRIM_INTERVAL == 0
-                                    and len(candidates) > max_results * 2
-                                ):
-                                    candidates.sort(key=lambda c: c.get("score", 0), reverse=True)
-                                    keep = max(max_results * 3, _TRIM_INTERVAL)
-                                    for c in candidates[keep:]:
-                                        c["trades_json"] = []
-                                        c["equity_curve"] = []
-
-                                if len(candidates) >= _MAX_CANDIDATES_IN_MEMORY:
-                                    timed_out = True
-                                    warnings.append({
-                                        "code": "candidate_cap",
-                                        "message": f"In-memory candidate cap of {_MAX_CANDIDATES_IN_MEMORY:,} reached; remaining candidates were skipped.",
-                                    })
-                                    break
-                            except AppError as exc:
-                                SWEEP_CANDIDATE_FAILURES_TOTAL.labels(reason=exc.code).inc()
-                                warnings.append({
-                                    "code": "candidate_failed",
-                                    "message": (
-                                        f"{strategy_type.value} / delta={delta_val} / "
-                                        f"{entry_rule_set.name}: {exc.code}"
-                                    ),
-                                    "error_code": exc.code,
-                                })
-                            except Exception:
-                                SWEEP_CANDIDATE_FAILURES_TOTAL.labels(reason="internal").inc()
-                                logger.warning(
-                                    "sweep.candidate_failed",
-                                    strategy=strategy_type.value,
-                                    delta=delta_val,
-                                    exc_info=True,
-                                )
-                                warnings.append({
-                                    "code": "candidate_failed_internal",
-                                    "message": f"{strategy_type.value} / delta={delta_val} / {entry_rule_set.name} failed",
-                                })
+        grouped_exit_sets = (
+            [exit_sets]
+            if len(payload.exit_rule_sets) > 1
+            else [[exit_set] for exit_set in exit_sets]
+        )
+        work_items = self._build_grid_work_items(
+            payload,
+            delta_values=delta_values,
+            width_values=width_values,
+            grouped_exit_sets=grouped_exit_sets,
+        )
+        parallel_workers = self._grid_parallel_worker_count(bundle, len(work_items))
+        if parallel_workers > 1:
+            local_evaluated_count, timed_out = self._execute_grid_work_items_parallel(
+                job=job,
+                payload=payload,
+                work_items=work_items,
+                bundle=bundle,
+                resolved_parameters=resolved_parameters,
+                risk_free_rate_curve=risk_free_rate_curve,
+                candidates=candidates,
+                warnings=warnings,
+                sweep_start=sweep_start,
+                sweep_timeout=sweep_timeout,
+                max_candidates_in_memory=_MAX_CANDIDATES_IN_MEMORY,
+                max_workers=parallel_workers,
+            )
+        else:
+            local_evaluated_count, timed_out = self._execute_grid_work_items_serial(
+                job=job,
+                payload=payload,
+                work_items=work_items,
+                bundle=bundle,
+                resolved_parameters=resolved_parameters,
+                risk_free_rate_curve=risk_free_rate_curve,
+                candidates=candidates,
+                warnings=warnings,
+                sweep_start=sweep_start,
+                sweep_timeout=sweep_timeout,
+                max_candidates_in_memory=_MAX_CANDIDATES_IN_MEMORY,
+            )
 
         # Phase 3: rank and store
         job.evaluated_candidate_count = local_evaluated_count
@@ -887,8 +826,8 @@ class SweepService:
             }
             if exit_set is not None:
                 parameters["exit_rule_set_name"] = exit_set.name
-                parameters["profit_target_pct"] = exit_set.profit_target_pct
-                parameters["stop_loss_pct"] = exit_set.stop_loss_pct
+                parameters["profit_target_pct"] = self._json_scalar(exit_set.profit_target_pct)
+                parameters["stop_loss_pct"] = self._json_scalar(exit_set.stop_loss_pct)
 
             validate_json_shape(
                 summary,
@@ -952,6 +891,382 @@ class SweepService:
         for rule_set in payload.entry_rule_sets:
             combined.extend(rule_set.entry_rules)
         return combined
+
+    def _build_grid_work_items(
+        self,
+        payload: CreateSweepRequest,
+        *,
+        delta_values: list[int | None],
+        width_values: list[tuple[SpreadWidthMode, Decimal] | None],
+        grouped_exit_sets: list[list[Any]],
+    ) -> list[_SweepGridWorkItem]:
+        work_items: list[_SweepGridWorkItem] = []
+        for strategy_type in payload.strategy_types:
+            for entry_rule_set in payload.entry_rule_sets:
+                for delta_val in delta_values:
+                    for width_val in width_values:
+                        for exit_group in grouped_exit_sets:
+                            work_items.append(
+                                _SweepGridWorkItem(
+                                    strategy_type=strategy_type,
+                                    entry_rule_set_name=entry_rule_set.name,
+                                    entry_rules=list(entry_rule_set.entry_rules),
+                                    delta_val=delta_val,
+                                    width_val=width_val,
+                                    exit_group=list(exit_group),
+                                )
+                            )
+        return work_items
+
+    def _grid_parallel_worker_count(
+        self,
+        bundle: HistoricalDataBundle,
+        work_item_count: int,
+    ) -> int:
+        if work_item_count < 6:
+            return 1
+        settings = get_settings()
+        if isinstance(bundle.option_gateway, HistoricalOptionGateway):
+            max_workers = min(settings.pipeline_max_workers, 2)
+        else:
+            max_workers = min(settings.pipeline_max_workers, 4)
+        return max(1, min(work_item_count, max_workers))
+
+    @staticmethod
+    def _remaining_grid_timeout(
+        *,
+        sweep_start: float,
+        sweep_timeout: float,
+    ) -> float:
+        return sweep_timeout - (_time.monotonic() - sweep_start) - _CANDIDATE_TIMEOUT_SECONDS
+
+    def _execute_grid_work_items_serial(
+        self,
+        *,
+        job: SweepJob,
+        payload: CreateSweepRequest,
+        work_items: list[_SweepGridWorkItem],
+        bundle: HistoricalDataBundle,
+        resolved_parameters: ResolvedExecutionParameters,
+        risk_free_rate_curve: object | None,
+        candidates: list[dict[str, Any]],
+        warnings: list[dict[str, Any]],
+        sweep_start: float,
+        sweep_timeout: float,
+        max_candidates_in_memory: int,
+    ) -> tuple[int, bool]:
+        local_evaluated_count = 0
+        timed_out = False
+        for work_item in work_items:
+            if self._remaining_grid_timeout(sweep_start=sweep_start, sweep_timeout=sweep_timeout) <= 0:
+                timed_out = True
+                warnings.append({
+                    "code": "timeout",
+                    "message": "Sweep time limit approaching; remaining candidates were skipped.",
+                })
+                break
+            try:
+                completed_candidates = self._execute_grid_work_item(
+                    payload=payload,
+                    work_item=work_item,
+                    bundle=bundle,
+                    resolved_parameters=resolved_parameters,
+                    risk_free_rate_curve=risk_free_rate_curve,
+                    execution_service=self.execution_service,
+                    clone_bundle=False,
+                )
+            except AppError as exc:
+                SWEEP_CANDIDATE_FAILURES_TOTAL.labels(reason=exc.code).inc()
+                warnings.append({
+                    "code": "candidate_failed",
+                    "message": (
+                        f"{work_item.strategy_type.value} / delta={work_item.delta_val} / "
+                        f"{work_item.entry_rule_set_name}: {exc.code}"
+                    ),
+                    "error_code": exc.code,
+                })
+                continue
+            except Exception:
+                SWEEP_CANDIDATE_FAILURES_TOTAL.labels(reason="internal").inc()
+                logger.warning(
+                    "sweep.candidate_failed",
+                    strategy=work_item.strategy_type.value,
+                    delta=work_item.delta_val,
+                    exc_info=True,
+                )
+                warnings.append({
+                    "code": "candidate_failed_internal",
+                    "message": (
+                        f"{work_item.strategy_type.value} / delta={work_item.delta_val} / "
+                        f"{work_item.entry_rule_set_name} failed"
+                    ),
+                })
+                continue
+            local_evaluated_count, hit_cap = self._record_grid_candidates(
+                job=job,
+                payload=payload,
+                candidates=candidates,
+                completed_candidates=completed_candidates,
+                local_evaluated_count=local_evaluated_count,
+                max_candidates_in_memory=max_candidates_in_memory,
+            )
+            if hit_cap:
+                timed_out = True
+                warnings.append({
+                    "code": "candidate_cap",
+                    "message": f"In-memory candidate cap of {max_candidates_in_memory:,} reached; remaining candidates were skipped.",
+                })
+                break
+        return local_evaluated_count, timed_out
+
+    def _execute_grid_work_items_parallel(
+        self,
+        *,
+        job: SweepJob,
+        payload: CreateSweepRequest,
+        work_items: list[_SweepGridWorkItem],
+        bundle: HistoricalDataBundle,
+        resolved_parameters: ResolvedExecutionParameters,
+        risk_free_rate_curve: object | None,
+        candidates: list[dict[str, Any]],
+        warnings: list[dict[str, Any]],
+        sweep_start: float,
+        sweep_timeout: float,
+        max_candidates_in_memory: int,
+        max_workers: int,
+    ) -> tuple[int, bool]:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        local_evaluated_count = 0
+        timed_out = False
+        pending_items = iter(work_items)
+        queued_limit = max_workers * 2
+
+        def _submit_next(pool: ThreadPoolExecutor, futures: dict[Any, _SweepGridWorkItem]) -> None:
+            nonlocal timed_out
+            while len(futures) < queued_limit and not timed_out:
+                remaining = self._remaining_grid_timeout(sweep_start=sweep_start, sweep_timeout=sweep_timeout)
+                if remaining <= 0:
+                    timed_out = True
+                    warnings.append({
+                        "code": "timeout",
+                        "message": "Sweep time limit approaching; remaining candidates were skipped.",
+                    })
+                    return
+                try:
+                    work_item = next(pending_items)
+                except StopIteration:
+                    return
+                future = pool.submit(
+                    self._execute_grid_work_item,
+                    payload=payload,
+                    work_item=work_item,
+                    bundle=bundle,
+                    resolved_parameters=resolved_parameters,
+                    risk_free_rate_curve=risk_free_rate_curve,
+                    execution_service=None,
+                    clone_bundle=True,
+                )
+                futures[future] = work_item
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures: dict[Any, _SweepGridWorkItem] = {}
+            _submit_next(pool, futures)
+            while futures:
+                remaining = self._remaining_grid_timeout(sweep_start=sweep_start, sweep_timeout=sweep_timeout)
+                if remaining <= 0:
+                    timed_out = True
+                    warnings.append({
+                        "code": "timeout",
+                        "message": "Sweep time limit approaching; remaining candidates were skipped.",
+                    })
+                    for future in futures:
+                        future.cancel()
+                    break
+                try:
+                    completed_future = next(as_completed(list(futures), timeout=remaining))
+                except TimeoutError:
+                    timed_out = True
+                    warnings.append({
+                        "code": "timeout",
+                        "message": "Sweep time limit approaching; remaining candidates were skipped.",
+                    })
+                    for future in futures:
+                        future.cancel()
+                    break
+                work_item = futures.pop(completed_future)
+                try:
+                    completed_candidates = completed_future.result()
+                except AppError as exc:
+                    SWEEP_CANDIDATE_FAILURES_TOTAL.labels(reason=exc.code).inc()
+                    warnings.append({
+                        "code": "candidate_failed",
+                        "message": (
+                            f"{work_item.strategy_type.value} / delta={work_item.delta_val} / "
+                            f"{work_item.entry_rule_set_name}: {exc.code}"
+                        ),
+                        "error_code": exc.code,
+                    })
+                    _submit_next(pool, futures)
+                    continue
+                except Exception:
+                    SWEEP_CANDIDATE_FAILURES_TOTAL.labels(reason="internal").inc()
+                    logger.warning(
+                        "sweep.candidate_failed",
+                        strategy=work_item.strategy_type.value,
+                        delta=work_item.delta_val,
+                        exc_info=True,
+                    )
+                    warnings.append({
+                        "code": "candidate_failed_internal",
+                        "message": (
+                            f"{work_item.strategy_type.value} / delta={work_item.delta_val} / "
+                            f"{work_item.entry_rule_set_name} failed"
+                        ),
+                    })
+                    _submit_next(pool, futures)
+                    continue
+                local_evaluated_count, hit_cap = self._record_grid_candidates(
+                    job=job,
+                    payload=payload,
+                    candidates=candidates,
+                    completed_candidates=completed_candidates,
+                    local_evaluated_count=local_evaluated_count,
+                    max_candidates_in_memory=max_candidates_in_memory,
+                )
+                if hit_cap:
+                    timed_out = True
+                    warnings.append({
+                        "code": "candidate_cap",
+                        "message": f"In-memory candidate cap of {max_candidates_in_memory:,} reached; remaining candidates were skipped.",
+                    })
+                    for future in futures:
+                        future.cancel()
+                    break
+                _submit_next(pool, futures)
+        return local_evaluated_count, timed_out
+
+    def _execute_grid_work_item(
+        self,
+        *,
+        payload: CreateSweepRequest,
+        work_item: _SweepGridWorkItem,
+        bundle: HistoricalDataBundle,
+        resolved_parameters: ResolvedExecutionParameters,
+        risk_free_rate_curve: object | None,
+        execution_service: BacktestExecutionService | None,
+        clone_bundle: bool,
+    ) -> list[dict[str, Any]]:
+        overrides = self._build_overrides(work_item.delta_val, work_item.width_val)
+        request = CreateBacktestRunRequest(
+            symbol=payload.symbol,
+            strategy_type=work_item.strategy_type,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            target_dte=payload.target_dte,
+            dte_tolerance_days=payload.dte_tolerance_days,
+            max_holding_days=payload.max_holding_days,
+            account_size=payload.account_size,
+            risk_per_trade_pct=payload.risk_per_trade_pct,
+            commission_per_contract=payload.commission_per_contract,
+            entry_rules=work_item.entry_rules,
+            slippage_pct=payload.slippage_pct,
+            strategy_overrides=overrides,
+        )
+        executor = execution_service or get_thread_local_shared_execution_service()
+        execution_bundle = bundle.clone_for_execution() if clone_bundle else bundle
+        if len(work_item.exit_group) > 1:
+            results = executor.execute_exit_policy_variants(
+                request,
+                exit_policies=[
+                    (exit_set.profit_target_pct, exit_set.stop_loss_pct)
+                    for exit_set in work_item.exit_group
+                    if exit_set is not None
+                ],
+                bundle=execution_bundle,
+                resolved_parameters=resolved_parameters,
+                risk_free_rate_curve=risk_free_rate_curve,
+            )
+            exit_result_pairs = list(zip(work_item.exit_group, results, strict=False))
+        else:
+            exit_set = work_item.exit_group[0]
+            result = executor.execute_request(
+                request.model_copy(
+                    update={
+                        "profit_target_pct": exit_set.profit_target_pct if exit_set else None,
+                        "stop_loss_pct": exit_set.stop_loss_pct if exit_set else None,
+                    }
+                ),
+                bundle=execution_bundle,
+                resolved_parameters=resolved_parameters,
+                risk_free_rate_curve=risk_free_rate_curve,
+            )
+            exit_result_pairs = [(exit_set, result)]
+
+        return [
+            self._build_candidate(
+                result=result,
+                strategy_type=work_item.strategy_type.value,
+                delta_val=work_item.delta_val,
+                width_val=work_item.width_val,
+                entry_rule_set_name=work_item.entry_rule_set_name,
+                exit_set=exit_set,
+            )
+            for exit_set, result in exit_result_pairs
+        ]
+
+    def _record_grid_candidates(
+        self,
+        *,
+        job: SweepJob,
+        payload: CreateSweepRequest,
+        candidates: list[dict[str, Any]],
+        completed_candidates: list[dict[str, Any]],
+        local_evaluated_count: int,
+        max_candidates_in_memory: int,
+    ) -> tuple[int, bool]:
+        previous_evaluated_count = local_evaluated_count
+        for candidate in completed_candidates:
+            candidates.append(candidate)
+            local_evaluated_count += 1
+            _TRIM_INTERVAL = 200
+            max_results = payload.max_results or 20
+            if (
+                len(candidates) > 0
+                and len(candidates) % _TRIM_INTERVAL == 0
+                and len(candidates) > max_results * 2
+            ):
+                candidates.sort(key=lambda c: c.get("score", 0), reverse=True)
+                keep = max(max_results * 3, _TRIM_INTERVAL)
+                for stale_candidate in candidates[keep:]:
+                    stale_candidate["trades_json"] = []
+                    stale_candidate["equity_curve"] = []
+
+            if len(candidates) >= max_candidates_in_memory:
+                return local_evaluated_count, True
+
+        if (local_evaluated_count // 50) > (previous_evaluated_count // 50):
+            _update_heartbeat(self.session, SweepJob, job.id)
+            nested_progress = None
+            try:
+                nested_progress = self.session.begin_nested()
+                from sqlalchemy import update as _progress_update
+                self.session.execute(
+                    _progress_update(SweepJob)
+                    .where(SweepJob.id == job.id)
+                    .values(evaluated_candidate_count=local_evaluated_count)
+                )
+                nested_progress.commit()
+            except Exception:
+                if nested_progress is not None:
+                    with contextlib.suppress(Exception):
+                        nested_progress.rollback()
+                logger.warning(
+                    "sweep.progress_commit_failed",
+                    evaluated=local_evaluated_count,
+                    candidates_in_memory=len(candidates),
+                )
+        return local_evaluated_count, False
 
     def _make_bundle_request(
         self,
@@ -1047,8 +1362,8 @@ class SweepService:
             parameters["width_value"] = float(width_val[1])
         if exit_set is not None:
             parameters["exit_rule_set_name"] = exit_set.name
-            parameters["profit_target_pct"] = exit_set.profit_target_pct
-            parameters["stop_loss_pct"] = exit_set.stop_loss_pct
+            parameters["profit_target_pct"] = self._json_scalar(exit_set.profit_target_pct)
+            parameters["stop_loss_pct"] = self._json_scalar(exit_set.stop_loss_pct)
 
         trades = [self._serialize_trade(t) for t in result.trades[:50]]
         equity_curve = self._downsample_equity_curve(result.equity_curve)
@@ -1075,6 +1390,12 @@ class SweepService:
     @staticmethod
     def _score_candidate(candidate: dict[str, Any]) -> float:
         return candidate.get("score", 0.0)
+
+    @staticmethod
+    def _json_scalar(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return float(value)
+        return value
 
     def _persist_result(
         self,

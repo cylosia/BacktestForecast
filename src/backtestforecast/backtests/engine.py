@@ -1,14 +1,16 @@
 ﻿from __future__ import annotations
 
+import copy
 import inspect
 import math
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
 import structlog
 
-from backtestforecast.backtests.rules import EntryRuleEvaluator
+from backtestforecast.backtests.rules import EntryRuleComputationCache, EntryRuleEvaluator
 from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
 from backtestforecast.backtests.strategies.wheel import WheelStrategyBacktestEngine
 from backtestforecast.backtests.summary import build_summary
@@ -63,6 +65,18 @@ def _D(v: float | int) -> Decimal:
     return result
 
 
+@dataclass(slots=True)
+class _ExitPolicyLane:
+    config: BacktestConfig
+    cash: Decimal
+    peak_equity: Decimal
+    position: OpenMultiLegPosition | None = None
+    trades: list[TradeResult] = field(default_factory=list)
+    equity_curve: list[EquityPointResult] = field(default_factory=list)
+    warnings: list[dict[str, Any]] = field(default_factory=list)
+    warning_codes: set[str] = field(default_factory=set)
+
+
 class OptionsBacktestEngine:
     def __init__(self) -> None:
         self._wheel_engine: WheelStrategyBacktestEngine | None = None
@@ -115,10 +129,15 @@ class OptionsBacktestEngine:
         option_gateway: OptionDataGateway,
         *,
         ex_dividend_dates: set[date] | None = None,
+        shared_entry_rule_cache: EntryRuleComputationCache | None = None,
     ) -> BacktestExecutionResult:
         if config.strategy_type == "wheel_strategy":
             return self.wheel_engine.run(
-                config=config, bars=bars, earnings_dates=earnings_dates, option_gateway=option_gateway
+                config=config,
+                bars=bars,
+                earnings_dates=earnings_dates,
+                option_gateway=option_gateway,
+                shared_entry_rule_cache=shared_entry_rule_cache,
             )
 
         strategy = STRATEGY_REGISTRY.get(config.strategy_type)
@@ -177,11 +196,14 @@ class OptionsBacktestEngine:
         cash = Decimal(str(config.account_size))
         peak_equity = cash
         position: OpenMultiLegPosition | None = None
-        realized_vol = self._estimate_realized_vol(sorted_bars)
         trades: list[TradeResult] = []
         equity_curve: list[EquityPointResult] = []
         evaluator = EntryRuleEvaluator(
-            config=config, bars=sorted_bars, earnings_dates=earnings_dates, option_gateway=option_gateway
+            config=config,
+            bars=sorted_bars,
+            earnings_dates=earnings_dates,
+            option_gateway=option_gateway,
+            shared_cache=shared_entry_rule_cache,
         )
         entry_allowed_mask: list[bool] | None = None
         try:
@@ -342,6 +364,12 @@ class OptionsBacktestEngine:
                             "One or more entry dates were skipped because no valid same-day option quote was returned.",
                         )
                     else:
+                        self._attach_position_quote_series(
+                            candidate,
+                            option_gateway=option_gateway,
+                            start_date=bar.trade_date,
+                            end_date=last_bar_date,
+                        )
                         ev_per_unit = self._entry_value_per_unit(candidate)
                         contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
                         commission_per_unit = float(config.commission_per_contract) * contracts_per_unit
@@ -480,6 +508,538 @@ class OptionsBacktestEngine:
             warnings=warnings,
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
+
+    def run_exit_policy_variants(
+        self,
+        *,
+        configs: list[BacktestConfig],
+        bars: list[DailyBar],
+        earnings_dates: set[date],
+        option_gateway: OptionDataGateway,
+        ex_dividend_dates: set[date] | None = None,
+        shared_entry_rule_cache: EntryRuleComputationCache | None = None,
+    ) -> list[BacktestExecutionResult]:
+        if not configs:
+            return []
+        if len(configs) == 1:
+            return [
+                self.run(
+                    config=configs[0],
+                    bars=bars,
+                    earnings_dates=earnings_dates,
+                    option_gateway=option_gateway,
+                    ex_dividend_dates=ex_dividend_dates,
+                    shared_entry_rule_cache=shared_entry_rule_cache,
+                )
+            ]
+
+        base_config = configs[0]
+        if base_config.strategy_type == "wheel_strategy":
+            return [
+                self.run(
+                    config=config,
+                    bars=bars,
+                    earnings_dates=earnings_dates,
+                    option_gateway=option_gateway,
+                    ex_dividend_dates=ex_dividend_dates,
+                    shared_entry_rule_cache=shared_entry_rule_cache,
+                )
+                for config in configs
+            ]
+
+        comparable_fields = (
+            "symbol",
+            "strategy_type",
+            "start_date",
+            "end_date",
+            "target_dte",
+            "dte_tolerance_days",
+            "max_holding_days",
+            "account_size",
+            "risk_per_trade_pct",
+            "commission_per_contract",
+            "entry_rules",
+            "risk_free_rate",
+            "risk_free_rate_curve",
+            "dividend_yield",
+            "slippage_pct",
+            "strategy_overrides",
+            "custom_legs",
+        )
+        for config in configs[1:]:
+            if any(getattr(config, name) != getattr(base_config, name) for name in comparable_fields):
+                raise AppValidationError(
+                    "exit-policy variants must share the same structural backtest configuration"
+                )
+
+        strategy = STRATEGY_REGISTRY.get(base_config.strategy_type)
+        if strategy is None:
+            raise AppValidationError(f"Unsupported strategy_type: {base_config.strategy_type}")
+
+        sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
+        pre_filter_len = len(sorted_bars)
+        sorted_bars = [bar for bar in sorted_bars if bar.close_price > 0]
+        if not sorted_bars:
+            return [
+                BacktestExecutionResult(
+                    summary=build_summary(
+                        float(config.account_size),
+                        float(config.account_size),
+                        [],
+                        [],
+                        risk_free_rate=config.risk_free_rate,
+                        risk_free_rate_curve=config.risk_free_rate_curve,
+                    ),
+                    trades=[],
+                    equity_curve=[],
+                )
+                for config in configs
+            ]
+
+        ex_dividend_dates = set(ex_dividend_dates or ())
+        if not ex_dividend_dates and hasattr(option_gateway, "get_ex_dividend_dates"):
+            try:
+                ex_dividend_dates = option_gateway.get_ex_dividend_dates(
+                    sorted_bars[0].trade_date, sorted_bars[-1].trade_date,
+                )
+            except Exception:
+                logger.warning("engine.ex_dividend_dates_unavailable", exc_info=True)
+
+        lanes = [
+            _ExitPolicyLane(
+                config=config,
+                cash=Decimal(str(config.account_size)),
+                peak_equity=Decimal(str(config.account_size)),
+            )
+            for config in configs
+        ]
+        for lane in lanes:
+            if len(sorted_bars) < pre_filter_len:
+                self._add_warning_once(
+                    lane.warnings,
+                    lane.warning_codes,
+                    "non_positive_close_filtered",
+                    f"{pre_filter_len - len(sorted_bars)} bar(s) with non-positive close price were excluded.",
+                )
+
+        evaluator = EntryRuleEvaluator(
+            config=base_config,
+            bars=sorted_bars,
+            earnings_dates=earnings_dates,
+            option_gateway=option_gateway,
+            shared_cache=shared_entry_rule_cache,
+        )
+        entry_allowed_mask: list[bool] | None = None
+        try:
+            entry_allowed_mask = evaluator.build_entry_allowed_mask()
+        except Exception:
+            logger.warning("entry_rule_precompute_error", exc_info=True)
+            for lane in lanes:
+                self._add_warning_once(
+                    lane.warnings,
+                    lane.warning_codes,
+                    "entry_rule_evaluation_error",
+                    "One or more entry rule evaluations failed and were treated as not-allowed.",
+                )
+
+        build_position_supports_custom_legs = (
+            base_config.custom_legs is not None
+            and "custom_legs" in inspect.signature(strategy.build_position).parameters
+        )
+        custom_legs = list(base_config.custom_legs) if build_position_supports_custom_legs else None
+        last_bar_date = sorted_bars[-1].trade_date
+
+        for index, bar in enumerate(sorted_bars):
+            if bar.trade_date < base_config.start_date:
+                continue
+
+            position_values = [_D0 for _ in lanes]
+            exit_prices_by_lane: list[dict[str, float]] = [{} for _ in lanes]
+
+            for lane_index, lane in enumerate(lanes):
+                if lane.position is not None:
+                    snapshot = self._mark_position(
+                        lane.position,
+                        bar,
+                        option_gateway,
+                        lane.warnings,
+                        lane.warning_codes,
+                        ex_dividend_dates,
+                    )
+                    position_values[lane_index] = snapshot.position_value
+                    exit_prices = {leg.ticker: leg.last_mid for leg in lane.position.option_legs}
+                    for stock_leg in lane.position.stock_legs:
+                        exit_prices[stock_leg.symbol] = stock_leg.last_price
+                    exit_prices_by_lane[lane_index] = exit_prices
+
+                    entry_cost = self._entry_value_per_unit(lane.position) * _D(lane.position.quantity)
+                    if not position_values[lane_index].is_finite():
+                        logger.warning("engine.nan_position_value_exit_guard", bar_date=str(bar.trade_date))
+                        position_values[lane_index] = entry_cost
+                    if not entry_cost.is_finite():
+                        logger.warning("engine.nan_entry_cost", bar_date=str(bar.trade_date))
+                        entry_cost = _D0
+                        position_values[lane_index] = _D0
+                    if math.isnan(lane.position.capital_required_per_unit):
+                        logger.warning(
+                            "engine.nan_capital_required_per_unit",
+                            ticker=lane.position.display_ticker,
+                            bar_date=str(bar.trade_date),
+                        )
+                        self._add_warning_once(
+                            lane.warnings,
+                            lane.warning_codes,
+                            "nan_capital_required",
+                            "Skipped stop/profit check: capital_required_per_unit is NaN.",
+                        )
+                        capital_at_risk = 0.0
+                    else:
+                        capital_at_risk = lane.position.capital_required_per_unit * lane.position.quantity
+                    should_exit, exit_reason = self._resolve_exit(
+                        bar=bar,
+                        position=lane.position,
+                        max_holding_days=lane.config.max_holding_days,
+                        backtest_end_date=lane.config.end_date,
+                        last_bar_date=last_bar_date,
+                        position_value=float(position_values[lane_index]),
+                        entry_cost=float(entry_cost),
+                        capital_at_risk=capital_at_risk,
+                        profit_target_pct=lane.config.profit_target_pct,
+                        stop_loss_pct=lane.config.stop_loss_pct,
+                        current_bar_index=index,
+                    )
+                    assignment_detail = snapshot.assignment_detail
+                    if snapshot.assignment_exit_reason is not None:
+                        should_exit = True
+                        exit_reason = snapshot.assignment_exit_reason
+                    if should_exit:
+                        trade, cash_delta = self._close_position(
+                            lane.position,
+                            lane.config,
+                            position_values[lane_index],
+                            bar.trade_date,
+                            bar.close_price,
+                            exit_prices_by_lane[lane_index],
+                            exit_reason,
+                            lane.warnings,
+                            lane.warning_codes,
+                            current_bar_index=index,
+                            assignment_detail=assignment_detail,
+                            trade_warnings=snapshot.warnings,
+                        )
+                        lane.cash += cash_delta
+                        lane.trades.append(trade)
+                        lane.position = None
+                        position_values[lane_index] = _D0
+                        exit_prices_by_lane[lane_index] = {}
+
+            eligible_lanes: list[_ExitPolicyLane] = []
+            for lane in lanes:
+                just_closed_this_bar = (
+                    lane.position is None
+                    and len(lane.trades) > 0
+                    and lane.trades[-1].exit_date == bar.trade_date
+                )
+                if just_closed_this_bar:
+                    self._add_warning_once(
+                        lane.warnings,
+                        lane.warning_codes,
+                        "same_day_reentry_blocked",
+                        "One or more entry signals were suppressed because a position was "
+                        "closed on the same trading day. The engine does not re-enter on "
+                        "the same bar to avoid infinite open/close loops.",
+                    )
+                    continue
+                if lane.position is not None or bar.trade_date > lane.config.end_date:
+                    continue
+                entry_allowed = False
+                if entry_allowed_mask is not None:
+                    entry_allowed = entry_allowed_mask[index]
+                else:
+                    try:
+                        entry_allowed = evaluator.is_entry_allowed(index)
+                    except Exception:
+                        logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
+                        self._add_warning_once(
+                            lane.warnings,
+                            lane.warning_codes,
+                            "entry_rule_evaluation_error",
+                            "One or more entry rule evaluations failed and were treated as not-allowed.",
+                        )
+                if entry_allowed:
+                    eligible_lanes.append(lane)
+
+            if eligible_lanes:
+                affordable_lanes = [
+                    lane for lane in eligible_lanes
+                    if self._can_afford_minimum_strategy_package(strategy, lane.config, bar, lane.cash)
+                ]
+                for lane in eligible_lanes:
+                    if lane not in affordable_lanes:
+                        self._add_warning_once(
+                            lane.warnings,
+                            lane.warning_codes,
+                            "capital_requirement_exceeded",
+                            "One or more signals were skipped because available cash or"
+                            " configured risk budget could not support the strategy package.",
+                        )
+
+                if affordable_lanes:
+                    try:
+                        if custom_legs is not None:
+                            candidate_template = strategy.build_position(
+                                base_config,
+                                bar,
+                                index,
+                                option_gateway,
+                                custom_legs=custom_legs,
+                            )
+                        else:
+                            candidate_template = strategy.build_position(
+                                base_config,
+                                bar,
+                                index,
+                                option_gateway,
+                            )
+                    except DataUnavailableError:
+                        for lane in affordable_lanes:
+                            self._add_warning_once(
+                                lane.warnings,
+                                lane.warning_codes,
+                                "missing_contract_chain",
+                                "One or more entry dates could not be evaluated because no eligible"
+                                " option contract chain was returned.",
+                            )
+                    else:
+                        if candidate_template is None:
+                            for lane in affordable_lanes:
+                                self._add_warning_once(
+                                    lane.warnings,
+                                    lane.warning_codes,
+                                    "missing_entry_quote",
+                                    "One or more entry dates were skipped because no valid same-day option quote was returned.",
+                                )
+                        else:
+                            self._attach_position_quote_series(
+                                candidate_template,
+                                option_gateway=option_gateway,
+                                start_date=bar.trade_date,
+                                end_date=last_bar_date,
+                            )
+                            ev_per_unit = self._entry_value_per_unit(candidate_template)
+                            contracts_per_unit = sum(
+                                leg.quantity_per_unit for leg in candidate_template.option_legs
+                            )
+                            gross_notional_per_unit = (
+                                sum(
+                                    abs(leg.entry_mid * _leg_multiplier(leg)) * leg.quantity_per_unit
+                                    for leg in candidate_template.option_legs
+                                )
+                                + sum(
+                                    abs(leg.entry_price * leg.share_quantity_per_unit)
+                                    for leg in candidate_template.stock_legs
+                                )
+                            )
+                            for lane in affordable_lanes:
+                                commission_per_unit = (
+                                    float(lane.config.commission_per_contract) * contracts_per_unit
+                                )
+                                quantity = self._resolve_position_size(
+                                    available_cash=lane.cash,
+                                    account_size=float(lane.config.account_size),
+                                    risk_per_trade_pct=float(lane.config.risk_per_trade_pct),
+                                    capital_required_per_unit=candidate_template.capital_required_per_unit,
+                                    max_loss_per_unit=candidate_template.max_loss_per_unit,
+                                    entry_cost_per_unit=float(abs(ev_per_unit)),
+                                    commission_per_unit=commission_per_unit,
+                                    slippage_pct=lane.config.slippage_pct,
+                                    gross_notional_per_unit=gross_notional_per_unit,
+                                )
+                                if quantity <= 0:
+                                    self._add_warning_once(
+                                        lane.warnings,
+                                        lane.warning_codes,
+                                        "capital_requirement_exceeded",
+                                        "One or more signals were skipped because available cash or"
+                                        " configured risk budget could not support the strategy package.",
+                                    )
+                                    continue
+                                candidate = copy.deepcopy(candidate_template)
+                                candidate.quantity = quantity
+                                candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
+                                entry_commission = self._option_commission_total(
+                                    candidate,
+                                    lane.config.commission_per_contract,
+                                )
+                                candidate.entry_commission_total = entry_commission
+                                slippage_cost_d = (
+                                    _D(gross_notional_per_unit)
+                                    * _D(quantity)
+                                    * (_D(lane.config.slippage_pct) / _D100)
+                                )
+                                total_entry_cost = (
+                                    (ev_per_unit * _D(quantity))
+                                    + entry_commission
+                                    + slippage_cost_d
+                                )
+                                if lane.cash - total_entry_cost < 0:
+                                    self._add_warning_once(
+                                        lane.warnings,
+                                        lane.warning_codes,
+                                        "negative_cash_rejected",
+                                        "One or more entries were skipped because the total cost "
+                                        "(including slippage) would have exceeded available cash.",
+                                    )
+                                    continue
+                                lane.cash -= total_entry_cost
+                                lane.position = candidate
+                                if (
+                                    strategy.margin_warning_message
+                                    and candidate.capital_required_per_unit > float(abs(ev_per_unit))
+                                ):
+                                    self._add_warning_once(
+                                        lane.warnings,
+                                        lane.warning_codes,
+                                        "margin_reserved",
+                                        strategy.margin_warning_message,
+                                    )
+
+            all_flat_after_end = True
+            for lane_index, lane in enumerate(lanes):
+                if lane.position is not None:
+                    position_values[lane_index] = self._current_position_value(lane.position, bar.close_price)
+                    if not position_values[lane_index].is_finite():
+                        logger.warning(
+                            "engine.nan_position_value",
+                            ticker=lane.position.display_ticker,
+                            bar_date=str(bar.trade_date),
+                        )
+                        position_values[lane_index] = _D0
+                equity = lane.cash + position_values[lane_index]
+                if equity < _D0:
+                    self._add_warning_once(
+                        lane.warnings,
+                        lane.warning_codes,
+                        "negative_equity",
+                        "Account equity went negative. This indicates a margin call scenario "
+                        "where losses exceeded the account balance. Drawdown percentages above "
+                        "100% may occur.",
+                    )
+                lane.peak_equity = max(lane.peak_equity, equity)
+                drawdown_pct = (
+                    (lane.peak_equity - equity) / lane.peak_equity * _D100
+                    if lane.peak_equity > _D0
+                    else _D0
+                )
+                lane.equity_curve.append(
+                    EquityPointResult(
+                        trade_date=bar.trade_date,
+                        equity=equity,
+                        cash=lane.cash,
+                        position_value=position_values[lane_index],
+                        drawdown_pct=drawdown_pct,
+                    )
+                )
+                if lane.position is not None or bar.trade_date <= lane.config.end_date:
+                    all_flat_after_end = False
+
+            if all_flat_after_end:
+                break
+
+        results: list[BacktestExecutionResult] = []
+        for lane in lanes:
+            if lane.position is not None:
+                snapshot = self._mark_position(
+                    lane.position,
+                    sorted_bars[-1],
+                    option_gateway,
+                    lane.warnings,
+                    lane.warning_codes,
+                    ex_dividend_dates,
+                )
+                final_position_value = snapshot.position_value
+                if not final_position_value.is_finite():
+                    logger.warning(
+                        "engine.nan_position_value_force_close_guard",
+                        bar_date=str(sorted_bars[-1].trade_date),
+                    )
+                    final_position_value = self._entry_value_per_unit(lane.position) * _D(lane.position.quantity)
+                    if not final_position_value.is_finite():
+                        final_position_value = _D0
+                exit_prices_fc = {leg.ticker: leg.last_mid for leg in lane.position.option_legs}
+                for stock_leg in lane.position.stock_legs:
+                    exit_prices_fc[stock_leg.symbol] = stock_leg.last_price
+                trade, cash_delta = self._close_position(
+                    lane.position,
+                    lane.config,
+                    final_position_value,
+                    sorted_bars[-1].trade_date,
+                    sorted_bars[-1].close_price,
+                    exit_prices_fc,
+                    "data_exhausted",
+                    lane.warnings,
+                    lane.warning_codes,
+                    current_bar_index=len(sorted_bars) - 1,
+                    trade_warnings=snapshot.warnings,
+                )
+                lane.cash += cash_delta
+                lane.trades.append(trade)
+                lane.position = None
+                equity = lane.cash
+                lane.peak_equity = max(lane.peak_equity, equity)
+                drawdown_pct = (
+                    (lane.peak_equity - equity) / lane.peak_equity * _D100
+                    if lane.peak_equity > _D0
+                    else _D0
+                )
+                force_close_point = EquityPointResult(
+                    trade_date=sorted_bars[-1].trade_date,
+                    equity=equity,
+                    cash=lane.cash,
+                    position_value=_D0,
+                    drawdown_pct=drawdown_pct,
+                )
+                if lane.equity_curve and lane.equity_curve[-1].trade_date == sorted_bars[-1].trade_date:
+                    lane.equity_curve[-1] = force_close_point
+                else:
+                    lane.equity_curve.append(force_close_point)
+                self._add_warning_once(
+                    lane.warnings,
+                    lane.warning_codes,
+                    "position_force_closed",
+                    "An open position was force-closed because no more market data was available.",
+                )
+                self._add_warning_once(
+                    lane.warnings,
+                    lane.warning_codes,
+                    "data_exhausted_pricing",
+                    "Position force-closed at last available bar price. Actual settlement price may differ significantly.",
+                )
+
+            ending_equity_f = (
+                float(lane.equity_curve[-1].equity)
+                if lane.equity_curve
+                else float(lane.config.account_size)
+            )
+            summary = build_summary(
+                float(lane.config.account_size),
+                ending_equity_f,
+                lane.trades,
+                lane.equity_curve,
+                risk_free_rate=lane.config.risk_free_rate,
+                risk_free_rate_curve=lane.config.risk_free_rate_curve,
+                warnings=lane.warnings,
+            )
+            results.append(
+                BacktestExecutionResult(
+                    summary=summary,
+                    trades=lane.trades,
+                    equity_curve=lane.equity_curve,
+                    warnings=lane.warnings,
+                )
+            )
+
+        return results
 
     def _mark_position(
         self,
@@ -635,16 +1195,67 @@ class OptionsBacktestEngine:
         option_gateway: OptionDataGateway,
     ) -> dict[str, OptionQuoteRecord | None]:
         tickers = [leg.ticker for leg in position.option_legs]
+        quote_series_lookup = position.quote_series_lookup
+        loaded_tickers = position.quote_series_loaded_tickers
+        if quote_series_lookup and loaded_tickers:
+            quotes: dict[str, OptionQuoteRecord | None] = {}
+            missing: list[str] = []
+            for ticker in tickers:
+                if ticker in loaded_tickers:
+                    quotes[ticker] = quote_series_lookup.get(ticker, {}).get(bar.trade_date)
+                else:
+                    missing.append(ticker)
+            if not missing:
+                return quotes
+        else:
+            quotes = {}
+            missing = tickers
         batch_fetch = getattr(option_gateway, "get_quotes", None)
-        if callable(batch_fetch):
+        if callable(batch_fetch) and missing:
             try:
-                return dict(batch_fetch(tickers, bar.trade_date))
+                fetched = dict(batch_fetch(missing, bar.trade_date))
+                for ticker, quote in fetched.items():
+                    quotes[ticker] = quote
+                    if quote_series_lookup is not None:
+                        quote_series_lookup.setdefault(ticker, {})[bar.trade_date] = quote
+                return quotes
             except Exception:
                 logger.warning("engine.batch_quote_fetch_failed", trade_date=str(bar.trade_date), exc_info=True)
-        return {
-            leg.ticker: option_gateway.get_quote(leg.ticker, bar.trade_date)
-            for leg in position.option_legs
-        }
+        for ticker in missing:
+            quote = option_gateway.get_quote(ticker, bar.trade_date)
+            quotes[ticker] = quote
+            if quote_series_lookup is not None:
+                quote_series_lookup.setdefault(ticker, {})[bar.trade_date] = quote
+        return quotes
+
+    @staticmethod
+    def _attach_position_quote_series(
+        position: OpenMultiLegPosition,
+        *,
+        option_gateway: OptionDataGateway,
+        start_date: date,
+        end_date: date,
+    ) -> None:
+        if position.quote_series_lookup or not position.option_legs or end_date < start_date:
+            return
+        fetch_series = getattr(option_gateway, "get_quote_series", None)
+        if not callable(fetch_series):
+            return
+        tickers = [leg.ticker for leg in position.option_legs]
+        try:
+            tickers = [leg.ticker for leg in position.option_legs]
+            position.quote_series_lookup = {
+                ticker: dict(quotes_by_date)
+                for ticker, quotes_by_date in fetch_series(tickers, start_date, end_date).items()
+            }
+            position.quote_series_loaded_tickers = set(tickers)
+        except Exception:
+            logger.warning(
+                "engine.batch_quote_series_fetch_failed",
+                trade_date=str(start_date),
+                end_date=str(end_date),
+                exc_info=True,
+            )
 
     def _resolve_option_mid(
         self,

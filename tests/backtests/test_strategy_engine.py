@@ -1241,6 +1241,137 @@ def test_naked_put_waives_buy_to_close_fee_at_or_below_five_cents() -> None:
     ]
 
 
+def test_run_exit_policy_variants_matches_individual_runs() -> None:
+    entry_date = date(2025, 9, 2)
+    expiration = date(2025, 10, 17)
+    bars = [
+        make_bar(date(2025, 9, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 9, 3), 100),
+        make_bar(date(2025, 9, 4), 100),
+        make_bar(date(2025, 9, 5), 100),
+    ]
+    contracts = {
+        (entry_date, "call"): [
+            OptionContractRecord("C100", "call", expiration, 100, 100),
+        ],
+    }
+    quotes = {
+        ("C100", entry_date): make_quote(entry_date, 2.0),
+        ("C100", date(2025, 9, 3)): make_quote(date(2025, 9, 3), 3.2),
+        ("C100", date(2025, 9, 4)): make_quote(date(2025, 9, 4), 3.7),
+        ("C100", date(2025, 9, 5)): make_quote(date(2025, 9, 5), 3.5),
+    }
+    gateway = FakeGateway(contracts=contracts, quotes=quotes)
+
+    base_kwargs = dict(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=entry_date,
+        end_date=entry_date,
+        target_dte=30,
+        dte_tolerance_days=30,
+        max_holding_days=10,
+        account_size=10_000,
+        risk_per_trade_pct=5,
+        commission_per_contract=0.65,
+        entry_rules=[],
+    )
+    config_pt50 = BacktestConfig(**base_kwargs, profit_target_pct=50)
+    config_pt75 = BacktestConfig(**base_kwargs, profit_target_pct=75)
+
+    expected_engine = OptionsBacktestEngine()
+    expected = [
+        expected_engine.run(config_pt50, bars, set(), gateway),
+        expected_engine.run(config_pt75, bars, set(), gateway),
+    ]
+
+    actual_engine = OptionsBacktestEngine()
+    actual = actual_engine.run_exit_policy_variants(
+        configs=[config_pt50, config_pt75],
+        bars=bars,
+        earnings_dates=set(),
+        option_gateway=gateway,
+    )
+
+    assert len(actual) == 2
+    for actual_result, expected_result in zip(actual, expected, strict=True):
+        assert actual_result.summary.trade_count == expected_result.summary.trade_count
+        assert actual_result.summary.ending_equity == expected_result.summary.ending_equity
+        assert len(actual_result.trades) == len(expected_result.trades) == 1
+        assert actual_result.trades[0].exit_date == expected_result.trades[0].exit_date
+        assert actual_result.trades[0].exit_reason == expected_result.trades[0].exit_reason
+        assert actual_result.trades[0].net_pnl == expected_result.trades[0].net_pnl
+
+
+def test_engine_run_prefers_quote_series_for_open_position_marks() -> None:
+    entry_date = date(2025, 9, 2)
+    expiration = date(2025, 10, 17)
+    bars = [
+        make_bar(date(2025, 9, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 9, 3), 101),
+        make_bar(date(2025, 9, 4), 102),
+        make_bar(date(2025, 9, 5), 103),
+    ]
+    contract = OptionContractRecord("C100", "call", expiration, 100, 100)
+
+    class _SeriesGateway:
+        def __init__(self) -> None:
+            self.quote_calls: list[date] = []
+            self.series_calls = 0
+
+        def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+            return [contract]
+
+        def get_quote(self, option_ticker, trade_date):
+            self.quote_calls.append(trade_date)
+            if trade_date != entry_date:
+                raise AssertionError("later mark dates should use quote series, not get_quote")
+            return make_quote(trade_date, 2.0)
+
+        def get_quote_series(self, option_tickers, start_date, end_date):
+            self.series_calls += 1
+            assert option_tickers == ["C100"]
+            assert start_date == entry_date
+            assert end_date == date(2025, 9, 5)
+            return {
+                "C100": {
+                    date(2025, 9, 3): make_quote(date(2025, 9, 3), 2.8),
+                    date(2025, 9, 4): make_quote(date(2025, 9, 4), 3.1),
+                    date(2025, 9, 5): make_quote(date(2025, 9, 5), 3.4),
+                }
+            }
+
+        def get_chain_delta_lookup(self, contracts):
+            return {}
+
+    gateway = _SeriesGateway()
+    engine = OptionsBacktestEngine()
+    result = engine.run(
+        BacktestConfig(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=entry_date,
+            end_date=entry_date,
+            target_dte=30,
+            dte_tolerance_days=30,
+            max_holding_days=10,
+            account_size=10_000,
+            risk_per_trade_pct=5,
+            commission_per_contract=0.65,
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        gateway,
+    )
+
+    assert result.summary.trade_count == 1
+    assert gateway.series_calls == 1
+    assert gateway.quote_calls == [entry_date]
+
+
 def test_wheel_waives_buy_to_close_fee_at_or_below_five_cents() -> None:
     engine = OptionsBacktestEngine()
     entry_date = date(2025, 8, 2)

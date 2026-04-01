@@ -8,7 +8,7 @@ from typing import Any
 
 import structlog
 
-from backtestforecast.backtests.rules import EntryRuleEvaluator
+from backtestforecast.backtests.rules import EntryRuleComputationCache, EntryRuleEvaluator
 from backtestforecast.backtests.strategies.common import (
     get_overrides,
     maybe_build_contract_delta_lookup,
@@ -64,6 +64,8 @@ class WheelStrategyBacktestEngine:
         bars: list[DailyBar],
         earnings_dates: set[date],
         option_gateway: OptionDataGateway,
+        *,
+        shared_entry_rule_cache: EntryRuleComputationCache | None = None,
     ) -> BacktestExecutionResult:
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         if not sorted_bars:
@@ -91,7 +93,11 @@ class WheelStrategyBacktestEngine:
         profit_target_pct = float(config.profit_target_pct) if config.profit_target_pct is not None else None
         stop_loss_pct = float(config.stop_loss_pct) if config.stop_loss_pct is not None else None
         evaluator = EntryRuleEvaluator(
-            config=config, bars=sorted_bars, earnings_dates=earnings_dates, option_gateway=option_gateway
+            config=config,
+            bars=sorted_bars,
+            earnings_dates=earnings_dates,
+            option_gateway=option_gateway,
+            shared_cache=shared_entry_rule_cache,
         )
         entry_allowed_mask: list[bool] | None = None
         try:

@@ -591,6 +591,47 @@ class TestHistoricalGatewayRunScopedCache:
         assert second["O:A"].mid_price == first["O:A"].mid_price
         assert store.calls == 1
 
+    def test_get_quote_series_batches_store_calls_and_warms_quote_cache(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        class _Store:
+            def __init__(self) -> None:
+                self.series_calls = 0
+                self.date_calls = 0
+
+            def get_option_quote_series(self, option_tickers, start_date, end_date):
+                self.series_calls += 1
+                return {
+                    ticker: {
+                        start_date: OptionQuoteRecord(start_date, 3.0 + index, 3.2 + index, None),
+                        end_date: OptionQuoteRecord(end_date, 4.0 + index, 4.2 + index, None),
+                    }
+                    for index, ticker in enumerate(option_tickers)
+                }
+
+            def get_option_quotes_for_date(self, option_tickers, trade_date):
+                self.date_calls += 1
+                return {
+                    ticker: OptionQuoteRecord(trade_date, 9.0, 9.2, None)
+                    for ticker in option_tickers
+                }
+
+        store = _Store()
+        gw = HistoricalOptionGateway(store, "TSLA")
+
+        series = gw.get_quote_series(
+            ["O:A", "O:B"],
+            date(2025, 3, 14),
+            date(2025, 3, 17),
+        )
+        quotes = gw.get_quotes(["O:A", "O:B"], date(2025, 3, 14))
+
+        assert store.series_calls == 1
+        assert store.date_calls == 0
+        assert series["O:A"][date(2025, 3, 14)].mid_price == pytest.approx(3.1)
+        assert quotes["O:A"] is not None
+        assert quotes["O:A"].mid_price == pytest.approx(3.1)
+
 
 # ---------------------------------------------------------------------------
 # Prefetcher

@@ -241,6 +241,22 @@ def supports_targeted_exact_quote_prewarm(strategy_type: StrategyType) -> bool:
     )
 
 
+def targeted_exact_quote_prewarm_signature(request: CreateBacktestRunRequest) -> dict[str, object] | None:
+    if request.strategy_type in _TARGETED_SINGLE_TYPE_STRATEGIES:
+        return {
+            "group": "single_type",
+            "contract_type": _TARGETED_SINGLE_TYPE_STRATEGIES[request.strategy_type],
+        }
+    if request.strategy_type in _TARGETED_SHARED_EXPIRATION_STRATEGIES:
+        return {"group": "shared_expiration"}
+    if request.strategy_type in _TARGETED_CALENDAR_STRATEGIES:
+        return {
+            "group": "calendar",
+            "contract_type": getattr(request.strategy_overrides, "calendar_contract_type", None) or "call",
+        }
+    return None
+
+
 def prewarm_targeted_option_bundle(
     request: CreateBacktestRunRequest,
     *,

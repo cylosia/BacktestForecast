@@ -41,7 +41,12 @@ class _StubMarketDataService:
 
 
 class _CapturingEngine:
-    def run(self, *, config, bars, earnings_dates, ex_dividend_dates, option_gateway):
+    def __init__(self) -> None:
+        self.shared_entry_rule_cache = None
+        self.exit_variant_configs = None
+
+    def run(self, *, config, bars, earnings_dates, ex_dividend_dates, option_gateway, shared_entry_rule_cache=None):
+        self.shared_entry_rule_cache = shared_entry_rule_cache
         curve = [
             EquityPointResult(
                 trade_date=bars[0].trade_date,
@@ -60,6 +65,46 @@ class _CapturingEngine:
         ]
         summary = build_summary(10000.0, 10100.0, [], curve, risk_free_rate=config.risk_free_rate)
         return BacktestExecutionResult(summary=summary, trades=[], equity_curve=curve, warnings=[])
+
+    def run_exit_policy_variants(
+        self,
+        *,
+        configs,
+        bars,
+        earnings_dates,
+        ex_dividend_dates,
+        option_gateway,
+        shared_entry_rule_cache=None,
+    ):
+        self.shared_entry_rule_cache = shared_entry_rule_cache
+        self.exit_variant_configs = list(configs)
+        results = []
+        for idx, config in enumerate(configs, 1):
+            curve = [
+                EquityPointResult(
+                    trade_date=bars[0].trade_date,
+                    equity=Decimal("10000"),
+                    cash=Decimal("10000"),
+                    position_value=Decimal("0"),
+                    drawdown_pct=Decimal("0"),
+                ),
+                EquityPointResult(
+                    trade_date=bars[-1].trade_date,
+                    equity=Decimal(str(10000 + (idx * 100))),
+                    cash=Decimal(str(10000 + (idx * 100))),
+                    position_value=Decimal("0"),
+                    drawdown_pct=Decimal("0"),
+                ),
+            ]
+            summary = build_summary(
+                10000.0,
+                float(curve[-1].equity),
+                [],
+                curve,
+                risk_free_rate=config.risk_free_rate,
+            )
+            results.append(BacktestExecutionResult(summary=summary, trades=[], equity_curve=curve, warnings=[]))
+        return results
 
 
 def test_execution_service_prefetches_contracts_for_single_backtests(monkeypatch) -> None:
@@ -185,6 +230,50 @@ def test_engine_mark_position_uses_batch_quote_fetch_when_available() -> None:
     assert snapshot.position_missing_quote is False
 
 
+def test_engine_mark_position_uses_attached_quote_series_before_gateway_fetch() -> None:
+    engine = OptionsBacktestEngine()
+    trade_date = date(2025, 4, 2)
+    position = OpenMultiLegPosition(
+        display_ticker="O:TEST",
+        strategy_type="calendar_spread",
+        underlying_symbol="AAPL",
+        entry_date=date(2025, 4, 1),
+        entry_index=0,
+        quantity=1,
+        dte_at_open=7,
+        option_legs=[
+            OpenOptionLeg("O:LEG1", "call", 1, 100.0, date(2025, 4, 18), 1, 1.0, 1.0),
+            OpenOptionLeg("O:LEG2", "call", -1, 105.0, date(2025, 4, 18), 1, 0.5, 0.5),
+        ],
+        quote_series_lookup={
+            "O:LEG1": {trade_date: OptionQuoteRecord(trade_date, 1.2, 1.4, None)},
+            "O:LEG2": {trade_date: OptionQuoteRecord(trade_date, 0.6, 0.8, None)},
+        },
+        quote_series_loaded_tickers={"O:LEG1", "O:LEG2"},
+    )
+    bar = SimpleNamespace(trade_date=trade_date, close_price=102.0)
+
+    class _Gateway:
+        def get_quotes(self, option_tickers, trade_date):
+            raise AssertionError("batch fetch should not run when quote series is attached")
+
+        def get_quote(self, option_ticker, trade_date):
+            raise AssertionError("single fetch should not run when quote series is attached")
+
+    snapshot = engine._mark_position(
+        position,
+        bar,
+        _Gateway(),
+        warnings=[],
+        warning_codes=set(),
+        ex_dividend_dates=set(),
+    )
+
+    assert position.option_legs[0].last_mid == pytest.approx(1.3)
+    assert position.option_legs[1].last_mid == pytest.approx(0.7)
+    assert snapshot.position_missing_quote is False
+
+
 def test_execution_service_logs_phase_timings(monkeypatch) -> None:
     import backtestforecast.services.backtest_execution as module
 
@@ -253,6 +342,130 @@ def test_execution_service_logs_phase_timings(monkeypatch) -> None:
     assert logged["engine_ms"] == 8.0
     assert logged["staleness_ms"] == 1.0
     assert logged["total_ms"] == 22.0
+
+
+def test_execution_service_passes_bundle_entry_rule_cache_to_supported_engines(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    settings = SimpleNamespace(
+        option_cache_warn_age_seconds=259_200,
+        backtest_option_prefetch_enabled=False,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=4,
+        backtest_prefetch_timeout_seconds=77,
+    )
+
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "build_backtest_risk_free_rate_curve", lambda *args, **kwargs: None)
+
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 4, 1)),
+        SimpleNamespace(trade_date=date(2025, 4, 2)),
+    ]
+    bundle = HistoricalDataBundle(
+        bars=bars,
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+    )
+    engine = _CapturingEngine()
+    service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle),
+        engine=engine,
+    )
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2025-04-01",
+        end_date="2025-04-02",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
+    )
+    resolved = ResolvedExecutionParameters(
+        risk_free_rate=0.01,
+        risk_free_rate_source="configured_fallback",
+        risk_free_rate_field_name="yield_3_month",
+        risk_free_rate_model="curve_default",
+        dividend_yield=0.0,
+        source_of_truth="test",
+    )
+
+    service.execute_request(request, bundle=bundle, resolved_parameters=resolved)
+
+    assert engine.shared_entry_rule_cache is bundle.entry_rule_cache
+
+
+def test_execution_service_uses_multi_exit_engine_path_when_supported(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    settings = SimpleNamespace(
+        option_cache_warn_age_seconds=259_200,
+        backtest_option_prefetch_enabled=False,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=4,
+        backtest_prefetch_timeout_seconds=77,
+    )
+
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "build_backtest_risk_free_rate_curve", lambda *args, **kwargs: None)
+
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 4, 1)),
+        SimpleNamespace(trade_date=date(2025, 4, 2)),
+    ]
+    bundle = HistoricalDataBundle(
+        bars=bars,
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+    )
+    engine = _CapturingEngine()
+    service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle),
+        engine=engine,
+    )
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2025-04-01",
+        end_date="2025-04-02",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
+    )
+    resolved = ResolvedExecutionParameters(
+        risk_free_rate=0.01,
+        risk_free_rate_source="configured_fallback",
+        risk_free_rate_field_name="yield_3_month",
+        risk_free_rate_model="curve_default",
+        dividend_yield=0.0,
+        source_of_truth="test",
+    )
+
+    results = service.execute_exit_policy_variants(
+        request,
+        exit_policies=[
+            (Decimal("50"), None),
+            (Decimal("75"), Decimal("100")),
+        ],
+        bundle=bundle,
+        resolved_parameters=resolved,
+    )
+
+    assert [result.summary.ending_equity for result in results] == [10100.0, 10200.0]
+    assert engine.shared_entry_rule_cache is bundle.entry_rule_cache
+    assert engine.exit_variant_configs is not None
+    assert [config.profit_target_pct for config in engine.exit_variant_configs] == [50.0, 75.0]
+    assert [config.stop_loss_pct for config in engine.exit_variant_configs] == [None, 100.0]
 
 
 def test_execution_service_uses_targeted_exact_prefetch_for_supported_non_long_strategies(monkeypatch) -> None:
@@ -494,6 +707,73 @@ def test_execution_service_prefetch_requests_with_shared_bundle_deduplicates(mon
     assert summary["prefetch_count"] == 1
     assert summary["skipped_count"] == 1
     assert summary["dates_processed"] == 2
+    assert len(summary["requests"]) == 2
+
+
+def test_execution_service_prefetch_requests_reuse_equivalent_strategy_groups(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    prewarm_calls: list[str] = []
+
+    def _fake_targeted_prewarm(
+        request,
+        *,
+        bundle,
+        include_quotes,
+        max_dates,
+        warm_future_quotes,
+    ):
+        prewarm_calls.append(request.strategy_type.value)
+        return SimpleNamespace(
+            to_dict=lambda: {"dates_processed": 2, "contracts_fetched": 10, "quotes_fetched": 0, "errors": []}
+        )
+
+    settings = SimpleNamespace(
+        option_cache_warn_age_seconds=259_200,
+        backtest_option_prefetch_enabled=True,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=4,
+        backtest_prefetch_timeout_seconds=77,
+    )
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "prewarm_targeted_option_bundle", _fake_targeted_prewarm)
+    monkeypatch.setattr(module, "_logger", SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None))
+
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 4, 1)),
+        SimpleNamespace(trade_date=date(2025, 4, 2)),
+        SimpleNamespace(trade_date=date(2025, 4, 3)),
+    ]
+    bundle = HistoricalDataBundle(
+        bars=bars,
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+    )
+    service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle),
+        engine=_CapturingEngine(),
+    )
+    common_kwargs = dict(
+        symbol="SPY",
+        start_date="2025-04-01",
+        end_date="2025-04-03",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[],
+    )
+    request_one = CreateBacktestRunRequest(strategy_type="bull_call_debit_spread", **common_kwargs)
+    request_two = CreateBacktestRunRequest(strategy_type="bear_call_credit_spread", **common_kwargs)
+
+    summary = service.prefetch_requests_with_shared_bundle([request_one, request_two], bundle=bundle)
+
+    assert prewarm_calls == ["bull_call_debit_spread"]
+    assert summary["prefetch_count"] == 1
+    assert summary["skipped_count"] == 1
     assert len(summary["requests"]) == 2
 
 

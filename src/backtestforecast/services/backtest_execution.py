@@ -1,9 +1,11 @@
 ﻿from __future__ import annotations
 
+import inspect
 import json
 import threading
 import time as _time
 from dataclasses import dataclass
+from decimal import Decimal
 
 import structlog
 
@@ -17,6 +19,7 @@ from backtestforecast.market_data.prewarm import (
     prewarm_long_option_bundle,
     prewarm_targeted_option_bundle,
     supports_targeted_exact_quote_prewarm,
+    targeted_exact_quote_prewarm_signature,
 )
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest, StrategyType
@@ -62,6 +65,12 @@ class BacktestExecutionService:
         self._closed = False
         self._market_data_service = market_data_service
         self.engine = engine or OptionsBacktestEngine()
+        self._engine_supports_shared_entry_rule_cache = (
+            "shared_entry_rule_cache" in inspect.signature(self.engine.run).parameters
+        )
+        self._engine_supports_exit_policy_variants = callable(
+            getattr(self.engine, "run_exit_policy_variants", None)
+        )
 
     def close(self) -> None:
         if self._closed:
@@ -90,6 +99,7 @@ class BacktestExecutionService:
         request: CreateBacktestRunRequest,
         bundle: HistoricalDataBundle | None = None,
         resolved_parameters: ResolvedExecutionParameters | None = None,
+        risk_free_rate_curve: object | None = None,
     ) -> BacktestExecutionResult:
         if self._closed:
             raise RuntimeError("BacktestExecutionService has been closed and cannot be reused.")
@@ -98,56 +108,32 @@ class BacktestExecutionService:
         prepare_start = _time.perf_counter()
         resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
         prepare_ms = round((_time.perf_counter() - prepare_start) * 1000, 3)
-        provider_client = self._market_data_service.client if self._market_data_service is not None else None
         prefetch_start = _time.perf_counter()
         self._maybe_prefetch_option_data(request, resolved_bundle, settings)
         prefetch_ms = round((_time.perf_counter() - prefetch_start) * 1000, 3)
         parameter_start = _time.perf_counter()
-        parameters = resolved_parameters
-        if parameters is None:
-            resolved_risk_free_rate = resolve_backtest_risk_free_rate(
-                request,
-                client=provider_client,
-            )
-            parameters = ResolvedExecutionParameters.from_request_resolution(
-                request,
-                resolved_risk_free_rate,
-            )
-        resolved_risk_free_rate_curve = build_backtest_risk_free_rate_curve(
+        parameters, resolved_risk_free_rate_curve = self.resolve_execution_inputs(
             request,
-            default_rate=parameters.risk_free_rate or 0.0,
-            client=provider_client,
+            resolved_parameters=resolved_parameters,
+            risk_free_rate_curve=risk_free_rate_curve,
         )
         parameter_ms = round((_time.perf_counter() - parameter_start) * 1000, 3)
-        config = BacktestConfig(
-            symbol=request.symbol,
-            strategy_type=request.strategy_type.value,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            target_dte=request.target_dte,
-            dte_tolerance_days=request.dte_tolerance_days,
-            max_holding_days=request.max_holding_days,
-            account_size=request.account_size,
-            risk_per_trade_pct=request.risk_per_trade_pct,
-            commission_per_contract=request.commission_per_contract,
-            entry_rules=request.entry_rules,
-            risk_free_rate=parameters.risk_free_rate or 0.0,
+        config = self._build_config(
+            request=request,
+            parameters=parameters,
             risk_free_rate_curve=resolved_risk_free_rate_curve,
-            dividend_yield=float(parameters.dividend_yield),
-            slippage_pct=float(request.slippage_pct),
-            strategy_overrides=request.strategy_overrides,
-            custom_legs=request.custom_legs,
-            profit_target_pct=float(request.profit_target_pct) if request.profit_target_pct is not None else None,
-            stop_loss_pct=float(request.stop_loss_pct) if request.stop_loss_pct is not None else None,
         )
         engine_start = _time.perf_counter()
-        result = self.engine.run(
-            config=config,
-            bars=resolved_bundle.bars,
-            earnings_dates=resolved_bundle.earnings_dates,
-            ex_dividend_dates=resolved_bundle.ex_dividend_dates,
-            option_gateway=resolved_bundle.option_gateway,
-        )
+        engine_kwargs = {
+            "config": config,
+            "bars": resolved_bundle.bars,
+            "earnings_dates": resolved_bundle.earnings_dates,
+            "ex_dividend_dates": resolved_bundle.ex_dividend_dates,
+            "option_gateway": resolved_bundle.option_gateway,
+        }
+        if self._engine_supports_shared_entry_rule_cache:
+            engine_kwargs["shared_entry_rule_cache"] = resolved_bundle.entry_rule_cache
+        result = self.engine.run(**engine_kwargs)
         engine_ms = round((_time.perf_counter() - engine_start) * 1000, 3)
         if resolved_bundle.warnings:
             result.warnings.extend(resolved_bundle.warnings)
@@ -172,6 +158,178 @@ class BacktestExecutionService:
             total_ms=total_ms,
         )
         return result
+
+    def execute_exit_policy_variants(
+        self,
+        request: CreateBacktestRunRequest,
+        *,
+        exit_policies: list[tuple[Decimal | None, Decimal | None]],
+        bundle: HistoricalDataBundle | None = None,
+        resolved_parameters: ResolvedExecutionParameters | None = None,
+        risk_free_rate_curve: object | None = None,
+    ) -> list[BacktestExecutionResult]:
+        if self._closed:
+            raise RuntimeError("BacktestExecutionService has been closed and cannot be reused.")
+        if not exit_policies:
+            return []
+        if len(exit_policies) == 1:
+            profit_target_pct, stop_loss_pct = exit_policies[0]
+            variant_request = request.model_copy(
+                update={
+                    "profit_target_pct": profit_target_pct,
+                    "stop_loss_pct": stop_loss_pct,
+                }
+            )
+            return [
+                self.execute_request(
+                    variant_request,
+                    bundle=bundle,
+                    resolved_parameters=resolved_parameters,
+                    risk_free_rate_curve=risk_free_rate_curve,
+                )
+            ]
+
+        total_start = _time.perf_counter()
+        settings = get_settings()
+        prepare_start = _time.perf_counter()
+        resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
+        prepare_ms = round((_time.perf_counter() - prepare_start) * 1000, 3)
+        prefetch_start = _time.perf_counter()
+        self._maybe_prefetch_option_data(request, resolved_bundle, settings)
+        prefetch_ms = round((_time.perf_counter() - prefetch_start) * 1000, 3)
+        parameter_start = _time.perf_counter()
+        parameters, resolved_risk_free_rate_curve = self.resolve_execution_inputs(
+            request,
+            resolved_parameters=resolved_parameters,
+            risk_free_rate_curve=risk_free_rate_curve,
+        )
+        parameter_ms = round((_time.perf_counter() - parameter_start) * 1000, 3)
+
+        if not self._engine_supports_exit_policy_variants:
+            results: list[BacktestExecutionResult] = []
+            for profit_target_pct, stop_loss_pct in exit_policies:
+                variant_request = request.model_copy(
+                    update={
+                        "profit_target_pct": profit_target_pct,
+                        "stop_loss_pct": stop_loss_pct,
+                    }
+                )
+                results.append(
+                    self.execute_request(
+                        variant_request,
+                        bundle=resolved_bundle,
+                        resolved_parameters=parameters,
+                        risk_free_rate_curve=resolved_risk_free_rate_curve,
+                    )
+                )
+            return results
+
+        configs = [
+            self._build_config(
+                request=request.model_copy(
+                    update={
+                        "profit_target_pct": profit_target_pct,
+                        "stop_loss_pct": stop_loss_pct,
+                    }
+                ),
+                parameters=parameters,
+                risk_free_rate_curve=resolved_risk_free_rate_curve,
+            )
+            for profit_target_pct, stop_loss_pct in exit_policies
+        ]
+        engine_start = _time.perf_counter()
+        engine_kwargs = {
+            "configs": configs,
+            "bars": resolved_bundle.bars,
+            "earnings_dates": resolved_bundle.earnings_dates,
+            "ex_dividend_dates": resolved_bundle.ex_dividend_dates,
+            "option_gateway": resolved_bundle.option_gateway,
+        }
+        if self._engine_supports_shared_entry_rule_cache:
+            engine_kwargs["shared_entry_rule_cache"] = resolved_bundle.entry_rule_cache
+        results = self.engine.run_exit_policy_variants(**engine_kwargs)
+        engine_ms = round((_time.perf_counter() - engine_start) * 1000, 3)
+        staleness_start = _time.perf_counter()
+        for result in results:
+            if resolved_bundle.warnings:
+                result.warnings.extend(resolved_bundle.warnings)
+            object.__setattr__(result, "data_source", resolved_bundle.data_source)
+            self._check_data_staleness(request.symbol, result, settings)
+        staleness_ms = round((_time.perf_counter() - staleness_start) * 1000, 3)
+        total_ms = round((_time.perf_counter() - total_start) * 1000, 3)
+        _logger.info(
+            "backtest.execute_exit_variants_timing",
+            symbol=request.symbol,
+            strategy_type=request.strategy_type.value,
+            variant_count=len(exit_policies),
+            bars=len(resolved_bundle.bars),
+            trade_dates=sum(1 for bar in resolved_bundle.bars if request.start_date <= bar.trade_date <= request.end_date),
+            used_prepared_bundle=bundle is not None,
+            data_source=resolved_bundle.data_source,
+            prepare_ms=prepare_ms,
+            prefetch_ms=prefetch_ms,
+            parameter_ms=parameter_ms,
+            engine_ms=engine_ms,
+            staleness_ms=staleness_ms,
+            total_ms=total_ms,
+        )
+        return results
+
+    def resolve_execution_inputs(
+        self,
+        request: CreateBacktestRunRequest,
+        *,
+        resolved_parameters: ResolvedExecutionParameters | None = None,
+        risk_free_rate_curve: object | None = None,
+    ) -> tuple[ResolvedExecutionParameters, object | None]:
+        provider_client = self._market_data_service.client if self._market_data_service is not None else None
+        parameters = resolved_parameters
+        if parameters is None:
+            resolved_risk_free_rate = resolve_backtest_risk_free_rate(
+                request,
+                client=provider_client,
+            )
+            parameters = ResolvedExecutionParameters.from_request_resolution(
+                request,
+                resolved_risk_free_rate,
+            )
+        resolved_curve = risk_free_rate_curve
+        if resolved_curve is None:
+            resolved_curve = build_backtest_risk_free_rate_curve(
+                request,
+                default_rate=parameters.risk_free_rate or 0.0,
+                client=provider_client,
+            )
+        return parameters, resolved_curve
+
+    @staticmethod
+    def _build_config(
+        *,
+        request: CreateBacktestRunRequest,
+        parameters: ResolvedExecutionParameters,
+        risk_free_rate_curve: object | None,
+    ) -> BacktestConfig:
+        return BacktestConfig(
+            symbol=request.symbol,
+            strategy_type=request.strategy_type.value,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            target_dte=request.target_dte,
+            dte_tolerance_days=request.dte_tolerance_days,
+            max_holding_days=request.max_holding_days,
+            account_size=request.account_size,
+            risk_per_trade_pct=request.risk_per_trade_pct,
+            commission_per_contract=request.commission_per_contract,
+            entry_rules=request.entry_rules,
+            risk_free_rate=parameters.risk_free_rate or 0.0,
+            risk_free_rate_curve=risk_free_rate_curve,
+            dividend_yield=float(parameters.dividend_yield),
+            slippage_pct=float(request.slippage_pct),
+            strategy_overrides=request.strategy_overrides,
+            custom_legs=request.custom_legs,
+            profit_target_pct=float(request.profit_target_pct) if request.profit_target_pct is not None else None,
+            stop_loss_pct=float(request.stop_loss_pct) if request.stop_loss_pct is not None else None,
+        )
 
     def prefetch_requests_with_shared_bundle(
         self,
@@ -282,11 +440,10 @@ class BacktestExecutionService:
         if supports_targeted_exact_quote_prewarm(request.strategy_type):
             mode = "targeted_strategy_exact_contracts"
             override_signature = self._json_signature(
-                self._targeted_strategy_override_signature(request)
+                targeted_exact_quote_prewarm_signature(request)
             )
             signature = (
                 mode,
-                request.strategy_type.value,
                 request.symbol,
                 request.start_date.isoformat(),
                 request.end_date.isoformat(),
@@ -386,15 +543,6 @@ class BacktestExecutionService:
             return {"long_call_strike": overrides.long_call_strike.model_dump(mode="json", exclude_none=True)}
         if request.strategy_type == StrategyType.LONG_PUT and overrides.long_put_strike is not None:
             return {"long_put_strike": overrides.long_put_strike.model_dump(mode="json", exclude_none=True)}
-        return None
-
-    @staticmethod
-    def _targeted_strategy_override_signature(request: CreateBacktestRunRequest) -> dict[str, object] | None:
-        overrides = request.strategy_overrides
-        if overrides is None:
-            return None
-        if request.strategy_type == StrategyType.CALENDAR_SPREAD:
-            return {"calendar_contract_type": overrides.calendar_contract_type}
         return None
 
     def _check_data_staleness(

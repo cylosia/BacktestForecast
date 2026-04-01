@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import backtestforecast.backtests.rules as rules_mod
-from backtestforecast.backtests.rules import EntryRuleEvaluator
+from backtestforecast.backtests.rules import EntryRuleComputationCache, EntryRuleEvaluator
 from backtestforecast.backtests.types import BacktestConfig
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
 from backtestforecast.schemas.backtests import (
@@ -66,6 +66,7 @@ def _build_evaluator(
     earnings_dates: set[date] | None = None,
     target_dte: int = 30,
     gateway: StubGateway | None = None,
+    shared_cache: EntryRuleComputationCache | None = None,
 ) -> EntryRuleEvaluator:
     bars = _make_bars(closes, volumes)
     config = BacktestConfig(
@@ -86,6 +87,7 @@ def _build_evaluator(
         bars=bars,
         earnings_dates=earnings_dates or set(),
         option_gateway=gateway or StubGateway(),
+        shared_cache=shared_cache,
     )
 
 
@@ -155,6 +157,36 @@ def test_build_entry_allowed_mask_matches_legacy_rule_evaluation():
 
     assert mask == expected
     assert [mask_evaluator.is_entry_allowed(index) for index in range(len(bars))] == expected
+
+
+def test_shared_entry_rule_cache_reuses_indicator_series_and_entry_masks(monkeypatch):
+    closes = [100 - (i * 0.4) for i in range(20)] + [92 + (i * 1.8) for i in range(20)]
+    shared_cache = EntryRuleComputationCache()
+    original_rsi = rules_mod.rsi
+    call_count = 0
+
+    def _counting_rsi(values, period):
+        nonlocal call_count
+        call_count += 1
+        return original_rsi(values, period)
+
+    monkeypatch.setattr(rules_mod, "rsi", _counting_rsi)
+
+    first_rule = RsiRule(type="rsi", operator=ComparisonOperator.GTE, threshold=Decimal("55"), period=14)
+    second_rule = RsiRule(type="rsi", operator=ComparisonOperator.GTE, threshold=Decimal("60"), period=14)
+
+    evaluator_one = _build_evaluator(closes, [first_rule], shared_cache=shared_cache)
+    first_mask = evaluator_one.build_entry_allowed_mask()
+
+    evaluator_two = _build_evaluator(closes, [first_rule], shared_cache=shared_cache)
+    second_mask = evaluator_two.build_entry_allowed_mask()
+
+    evaluator_three = _build_evaluator(closes, [second_rule], shared_cache=shared_cache)
+    third_mask = evaluator_three.build_entry_allowed_mask()
+
+    assert first_mask == second_mask
+    assert third_mask != []
+    assert call_count == 1
 
 
 # ---------------------------------------------------------------------------

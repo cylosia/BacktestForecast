@@ -7,6 +7,7 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import Any, TypeVar
 
 import structlog
 
@@ -69,10 +70,39 @@ from backtestforecast.schemas.backtests import (
 )
 
 logger = structlog.get_logger(__name__)
+_CacheValueT = TypeVar("_CacheValueT")
 
 # Calendar days for time-to-expiry in BSM pricing (365).
 # Trading days (252) are used separately for annualising Sharpe/Sortino.
 CALENDAR_DAYS_PER_YEAR = 365.0
+
+
+@dataclass(slots=True)
+class EntryRuleComputationCache:
+    rsi_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    sma_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    ema_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    macd_cache: dict[tuple[int, int, int], tuple[list[float | None], list[float | None], list[float | None]]] = (
+        field(default_factory=dict)
+    )
+    bollinger_cache: dict[
+        int | tuple[int, float], tuple[list[float | None], list[float | None], list[float | None]]
+    ] = field(default_factory=dict)
+    rolling_support_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    rolling_resistance_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    iv_series_cache: dict[str, list[float | None]] = field(default_factory=dict)
+    iv_rank_series_cache: dict[tuple[str, int], list[float | None]] = field(default_factory=dict)
+    iv_percentile_series_cache: dict[tuple[str, int], list[float | None]] = field(default_factory=dict)
+    volume_ratio_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    cci_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    roc_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    mfi_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    stochastic_k_cache: dict[tuple[int, int, int], list[float | None]] = field(default_factory=dict)
+    stochastic_d_cache: dict[tuple[int, int, int], list[float | None]] = field(default_factory=dict)
+    adx_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    williams_r_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    generic_series_cache: dict[str, list[float | None]] = field(default_factory=dict)
+    entry_allowed_masks: dict[str, list[bool]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -81,6 +111,7 @@ class EntryRuleEvaluator:
     bars: list[DailyBar]
     earnings_dates: set[date]
     option_gateway: OptionDataGateway
+    shared_cache: EntryRuleComputationCache | None = None
     closes: list[float] = field(init=False)
     highs: list[float] = field(init=False)
     lows: list[float] = field(init=False)
@@ -96,9 +127,9 @@ class EntryRuleEvaluator:
     ] = field(default_factory=dict)
     rolling_support_cache: dict[int, list[float | None]] = field(default_factory=dict)
     rolling_resistance_cache: dict[int, list[float | None]] = field(default_factory=dict)
-    iv_series_cache: list[float | None] | None = None
-    iv_rank_series_cache: dict[int, list[float | None]] = field(default_factory=dict)
-    iv_percentile_series_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    iv_series_cache: dict[str, list[float | None]] = field(default_factory=dict)
+    iv_rank_series_cache: dict[tuple[str, int], list[float | None]] = field(default_factory=dict)
+    iv_percentile_series_cache: dict[tuple[str, int], list[float | None]] = field(default_factory=dict)
     volume_ratio_cache: dict[int, list[float | None]] = field(default_factory=dict)
     cci_cache: dict[int, list[float | None]] = field(default_factory=dict)
     roc_cache: dict[int, list[float | None]] = field(default_factory=dict)
@@ -117,8 +148,30 @@ class EntryRuleEvaluator:
         self.lows = [bar.low_price for bar in self.bars]
         self.volumes = [bar.volume for bar in self.bars]
         self._sorted_earnings = sorted(self.earnings_dates)
+        if self.shared_cache is not None:
+            self.rsi_cache = self.shared_cache.rsi_cache
+            self.sma_cache = self.shared_cache.sma_cache
+            self.ema_cache = self.shared_cache.ema_cache
+            self.macd_cache = self.shared_cache.macd_cache
+            self.bollinger_cache = self.shared_cache.bollinger_cache
+            self.rolling_support_cache = self.shared_cache.rolling_support_cache
+            self.rolling_resistance_cache = self.shared_cache.rolling_resistance_cache
+            self.iv_series_cache = self.shared_cache.iv_series_cache
+            self.iv_rank_series_cache = self.shared_cache.iv_rank_series_cache
+            self.iv_percentile_series_cache = self.shared_cache.iv_percentile_series_cache
+            self.volume_ratio_cache = self.shared_cache.volume_ratio_cache
+            self.cci_cache = self.shared_cache.cci_cache
+            self.roc_cache = self.shared_cache.roc_cache
+            self.mfi_cache = self.shared_cache.mfi_cache
+            self.stochastic_k_cache = self.shared_cache.stochastic_k_cache
+            self.stochastic_d_cache = self.shared_cache.stochastic_d_cache
+            self.adx_cache = self.shared_cache.adx_cache
+            self.williams_r_cache = self.shared_cache.williams_r_cache
+            self.generic_series_cache = self.shared_cache.generic_series_cache
 
     def is_entry_allowed(self, index: int) -> bool:
+        if self._entry_allowed_mask is None and self.shared_cache is not None:
+            self._entry_allowed_mask = self.shared_cache.entry_allowed_masks.get(self._entry_mask_cache_key())
         if self._entry_allowed_mask is not None:
             if index < 0 or index >= len(self._entry_allowed_mask):
                 return False
@@ -184,6 +237,13 @@ class EntryRuleEvaluator:
         if cached is not None:
             return cached
 
+        cache_key = self._entry_mask_cache_key()
+        if self.shared_cache is not None:
+            shared_cached = self.shared_cache.entry_allowed_masks.get(cache_key)
+            if shared_cached is not None:
+                self._entry_allowed_mask = shared_cached
+                return shared_cached
+
         if not self.bars:
             self._entry_allowed_mask = []
             return self._entry_allowed_mask
@@ -196,6 +256,8 @@ class EntryRuleEvaluator:
             ]
 
         self._entry_allowed_mask = combined_mask
+        if self.shared_cache is not None:
+            self.shared_cache.entry_allowed_masks[cache_key] = combined_mask
         return combined_mask
 
     def _build_rule_mask(self, rule: object) -> list[bool]:
@@ -230,18 +292,18 @@ class EntryRuleEvaluator:
 
     def _build_rsi_mask(self, rule: RsiRule) -> list[bool]:
         return self._mask_from_series_level(
-            self.rsi_cache.setdefault(rule.period, rsi(self.closes, rule.period)),
+            self._get_cached(self.rsi_cache, rule.period, lambda: rsi(self.closes, rule.period)),
             float(rule.threshold),
             rule.operator,
         )
 
     def _build_moving_average_mask(self, rule: MovingAverageCrossoverRule) -> list[bool]:
         if rule.type == "sma_crossover":
-            fast_series = self.sma_cache.setdefault(rule.fast_period, sma(self.closes, rule.fast_period))
-            slow_series = self.sma_cache.setdefault(rule.slow_period, sma(self.closes, rule.slow_period))
+            fast_series = self._get_cached(self.sma_cache, rule.fast_period, lambda: sma(self.closes, rule.fast_period))
+            slow_series = self._get_cached(self.sma_cache, rule.slow_period, lambda: sma(self.closes, rule.slow_period))
         else:
-            fast_series = self.ema_cache.setdefault(rule.fast_period, ema(self.closes, rule.fast_period))
-            slow_series = self.ema_cache.setdefault(rule.slow_period, ema(self.closes, rule.slow_period))
+            fast_series = self._get_cached(self.ema_cache, rule.fast_period, lambda: ema(self.closes, rule.fast_period))
+            slow_series = self._get_cached(self.ema_cache, rule.slow_period, lambda: ema(self.closes, rule.slow_period))
 
         mask = [False] * len(self.bars)
         for index in range(1, len(self.bars)):
@@ -258,9 +320,10 @@ class EntryRuleEvaluator:
         return mask
 
     def _build_macd_mask(self, rule: MacdRule) -> list[bool]:
-        macd_line, signal_line, _histogram = self.macd_cache.setdefault(
+        macd_line, signal_line, _histogram = self._get_cached(
+            self.macd_cache,
             (rule.fast_period, rule.slow_period, rule.signal_period),
-            macd(self.closes, rule.fast_period, rule.slow_period, rule.signal_period),
+            lambda: macd(self.closes, rule.fast_period, rule.slow_period, rule.signal_period),
         )
         mask = [False] * len(self.bars)
         for index in range(1, len(self.bars)):
@@ -278,9 +341,10 @@ class EntryRuleEvaluator:
 
     def _build_bollinger_mask(self, rule: BollingerBandsRule) -> list[bool]:
         cache_key = (rule.period, float(rule.standard_deviations))
-        lower, middle, upper = self.bollinger_cache.setdefault(
+        lower, middle, upper = self._get_cached(
+            self.bollinger_cache,
             cache_key,
-            bollinger_bands(self.closes, rule.period, float(rule.standard_deviations)),
+            lambda: bollinger_bands(self.closes, rule.period, float(rule.standard_deviations)),
         )
         target_series = {
             BollingerBand.LOWER: lower,
@@ -293,32 +357,36 @@ class EntryRuleEvaluator:
         ]
 
     def _build_iv_mask(self, rule: IvRankRule | IvPercentileRule) -> list[bool]:
+        iv_cache_key = self._iv_cache_key()
         if isinstance(rule, IvRankRule):
-            metric_series = self.iv_rank_series_cache.setdefault(
-                rule.lookback_days,
-                self._build_iv_metric_series(rule.lookback_days, percentile=False),
+            metric_series = self._get_cached(
+                self.iv_rank_series_cache,
+                (iv_cache_key, rule.lookback_days),
+                lambda: self._build_iv_metric_series(rule.lookback_days, percentile=False),
             )
         else:
-            metric_series = self.iv_percentile_series_cache.setdefault(
-                rule.lookback_days,
-                self._build_iv_metric_series(rule.lookback_days, percentile=True),
+            metric_series = self._get_cached(
+                self.iv_percentile_series_cache,
+                (iv_cache_key, rule.lookback_days),
+                lambda: self._build_iv_metric_series(rule.lookback_days, percentile=True),
             )
         return self._mask_from_series_level(metric_series, float(rule.threshold), rule.operator)
 
     def _build_volume_mask(self, rule: VolumeSpikeRule) -> list[bool]:
-        ratio_series = self.volume_ratio_cache.setdefault(
+        ratio_series = self._get_cached(
+            self.volume_ratio_cache,
             rule.lookback_period,
-            self._build_volume_ratio_series(rule.lookback_period),
+            lambda: self._build_volume_ratio_series(rule.lookback_period),
         )
         return self._mask_from_series_level(ratio_series, float(rule.multiplier), rule.operator)
 
     def _build_support_resistance_mask(self, rule: SupportResistanceRule) -> list[bool]:
         mask = [False] * len(self.bars)
-        support_series = self.rolling_support_cache.setdefault(
-            rule.lookback_period, rolling_min(self.closes, rule.lookback_period)
+        support_series = self._get_cached(
+            self.rolling_support_cache, rule.lookback_period, lambda: rolling_min(self.closes, rule.lookback_period)
         )
-        resistance_series = self.rolling_resistance_cache.setdefault(
-            rule.lookback_period, rolling_max(self.closes, rule.lookback_period)
+        resistance_series = self._get_cached(
+            self.rolling_resistance_cache, rule.lookback_period, lambda: rolling_max(self.closes, rule.lookback_period)
         )
         tolerance_ratio = float(rule.tolerance_pct) / 100.0
         for index in range(rule.lookback_period, len(self.bars)):
@@ -432,8 +500,21 @@ class EntryRuleEvaluator:
             for value in series
         ]
 
+    @staticmethod
+    def _get_cached(
+        cache: dict[Any, _CacheValueT],
+        key: Any,
+        factory: Callable[[], _CacheValueT],
+    ) -> _CacheValueT:
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        value = factory()
+        cache[key] = value
+        return value
+
     def _evaluate_rsi_rule(self, rule: RsiRule, index: int) -> bool:
-        series = self.rsi_cache.setdefault(rule.period, rsi(self.closes, rule.period))
+        series = self._get_cached(self.rsi_cache, rule.period, lambda: rsi(self.closes, rule.period))
         current_value = series[index]
         if current_value is None:
             return False
@@ -441,11 +522,11 @@ class EntryRuleEvaluator:
 
     def _evaluate_moving_average_rule(self, rule: MovingAverageCrossoverRule, index: int) -> bool:
         if rule.type == "sma_crossover":
-            fast_series = self.sma_cache.setdefault(rule.fast_period, sma(self.closes, rule.fast_period))
-            slow_series = self.sma_cache.setdefault(rule.slow_period, sma(self.closes, rule.slow_period))
+            fast_series = self._get_cached(self.sma_cache, rule.fast_period, lambda: sma(self.closes, rule.fast_period))
+            slow_series = self._get_cached(self.sma_cache, rule.slow_period, lambda: sma(self.closes, rule.slow_period))
         else:
-            fast_series = self.ema_cache.setdefault(rule.fast_period, ema(self.closes, rule.fast_period))
-            slow_series = self.ema_cache.setdefault(rule.slow_period, ema(self.closes, rule.slow_period))
+            fast_series = self._get_cached(self.ema_cache, rule.fast_period, lambda: ema(self.closes, rule.fast_period))
+            slow_series = self._get_cached(self.ema_cache, rule.slow_period, lambda: ema(self.closes, rule.slow_period))
 
         previous_fast = fast_series[index - 1]
         previous_slow = slow_series[index - 1]
@@ -460,9 +541,10 @@ class EntryRuleEvaluator:
         return previous_fast >= previous_slow and current_fast < current_slow
 
     def _evaluate_macd_rule(self, rule: MacdRule, index: int) -> bool:
-        series = self.macd_cache.setdefault(
+        series = self._get_cached(
+            self.macd_cache,
             (rule.fast_period, rule.slow_period, rule.signal_period),
-            macd(self.closes, rule.fast_period, rule.slow_period, rule.signal_period),
+            lambda: macd(self.closes, rule.fast_period, rule.slow_period, rule.signal_period),
         )
         macd_line, signal_line, _histogram = series
         prev_macd = macd_line[index - 1]
@@ -477,9 +559,10 @@ class EntryRuleEvaluator:
 
     def _evaluate_bollinger_rule(self, rule: BollingerBandsRule, index: int) -> bool:
         cache_key = (rule.period, float(rule.standard_deviations))
-        lower, middle, upper = self.bollinger_cache.setdefault(
+        lower, middle, upper = self._get_cached(
+            self.bollinger_cache,
             cache_key,
-            bollinger_bands(self.closes, rule.period, float(rule.standard_deviations)),
+            lambda: bollinger_bands(self.closes, rule.period, float(rule.standard_deviations)),
         )
         target_series = {
             BollingerBand.LOWER: lower,
@@ -492,15 +575,18 @@ class EntryRuleEvaluator:
         return compare(self.closes[index], target_value, rule.operator)
 
     def _evaluate_iv_rule(self, rule: IvRankRule | IvPercentileRule, index: int) -> bool:
+        iv_cache_key = self._iv_cache_key()
         if isinstance(rule, IvRankRule):
-            metric_series = self.iv_rank_series_cache.setdefault(
-                rule.lookback_days,
-                self._build_iv_metric_series(rule.lookback_days, percentile=False),
+            metric_series = self._get_cached(
+                self.iv_rank_series_cache,
+                (iv_cache_key, rule.lookback_days),
+                lambda: self._build_iv_metric_series(rule.lookback_days, percentile=False),
             )
         else:
-            metric_series = self.iv_percentile_series_cache.setdefault(
-                rule.lookback_days,
-                self._build_iv_metric_series(rule.lookback_days, percentile=True),
+            metric_series = self._get_cached(
+                self.iv_percentile_series_cache,
+                (iv_cache_key, rule.lookback_days),
+                lambda: self._build_iv_metric_series(rule.lookback_days, percentile=True),
             )
         current_value = metric_series[index]
         if current_value is None:
@@ -519,11 +605,11 @@ class EntryRuleEvaluator:
     def _evaluate_support_resistance_rule(self, rule: SupportResistanceRule, index: int) -> bool:
         if index < rule.lookback_period:
             return False
-        support_series = self.rolling_support_cache.setdefault(
-            rule.lookback_period, rolling_min(self.closes, rule.lookback_period)
+        support_series = self._get_cached(
+            self.rolling_support_cache, rule.lookback_period, lambda: rolling_min(self.closes, rule.lookback_period)
         )
-        resistance_series = self.rolling_resistance_cache.setdefault(
-            rule.lookback_period, rolling_max(self.closes, rule.lookback_period)
+        resistance_series = self._get_cached(
+            self.rolling_resistance_cache, rule.lookback_period, lambda: rolling_max(self.closes, rule.lookback_period)
         )
         prior_support = support_series[index - 1]
         prior_resistance = resistance_series[index - 1]
@@ -664,15 +750,16 @@ class EntryRuleEvaluator:
         if isinstance(spec, CloseSeries):
             return [float(value) for value in self.closes]
         if isinstance(spec, RsiSeriesSpec):
-            return self.rsi_cache.setdefault(spec.period, rsi(self.closes, spec.period))
+            return self._get_cached(self.rsi_cache, spec.period, lambda: rsi(self.closes, spec.period))
         if isinstance(spec, SmaSeries):
-            return self.sma_cache.setdefault(spec.period, sma(self.closes, spec.period))
+            return self._get_cached(self.sma_cache, spec.period, lambda: sma(self.closes, spec.period))
         if isinstance(spec, EmaSeries):
-            return self.ema_cache.setdefault(spec.period, ema(self.closes, spec.period))
+            return self._get_cached(self.ema_cache, spec.period, lambda: ema(self.closes, spec.period))
         if isinstance(spec, (MacdLineSeries, MacdSignalSeries, MacdHistogramSeries)):
-            line, signal, histogram = self.macd_cache.setdefault(
+            line, signal, histogram = self._get_cached(
+                self.macd_cache,
                 (spec.fast_period, spec.slow_period, spec.signal_period),
-                macd(self.closes, spec.fast_period, spec.slow_period, spec.signal_period),
+                lambda: macd(self.closes, spec.fast_period, spec.slow_period, spec.signal_period),
             )
             if isinstance(spec, MacdLineSeries):
                 return line
@@ -680,9 +767,10 @@ class EntryRuleEvaluator:
                 return signal
             return histogram
         if isinstance(spec, BollingerBandSeries):
-            lower, middle, upper = self.bollinger_cache.setdefault(
+            lower, middle, upper = self._get_cached(
+                self.bollinger_cache,
                 (spec.period, float(spec.standard_deviations)),
-                bollinger_bands(self.closes, spec.period, float(spec.standard_deviations)),
+                lambda: bollinger_bands(self.closes, spec.period, float(spec.standard_deviations)),
             )
             return {
                 BollingerBand.LOWER: lower,
@@ -690,31 +778,36 @@ class EntryRuleEvaluator:
                 BollingerBand.UPPER: upper,
             }[spec.band]
         if isinstance(spec, IvRankSeries):
-            return self.iv_rank_series_cache.setdefault(
-                spec.lookback_days,
-                self._build_iv_metric_series(spec.lookback_days, percentile=False),
+            return self._get_cached(
+                self.iv_rank_series_cache,
+                (self._iv_cache_key(), spec.lookback_days),
+                lambda: self._build_iv_metric_series(spec.lookback_days, percentile=False),
             )
         if isinstance(spec, IvPercentileSeries):
-            return self.iv_percentile_series_cache.setdefault(
-                spec.lookback_days,
-                self._build_iv_metric_series(spec.lookback_days, percentile=True),
+            return self._get_cached(
+                self.iv_percentile_series_cache,
+                (self._iv_cache_key(), spec.lookback_days),
+                lambda: self._build_iv_metric_series(spec.lookback_days, percentile=True),
             )
         if isinstance(spec, VolumeRatioSeries):
-            return self.volume_ratio_cache.setdefault(
+            return self._get_cached(
+                self.volume_ratio_cache,
                 spec.lookback_period,
-                self._build_volume_ratio_series(spec.lookback_period),
+                lambda: self._build_volume_ratio_series(spec.lookback_period),
             )
         if isinstance(spec, CciSeries):
-            return self.cci_cache.setdefault(
+            return self._get_cached(
+                self.cci_cache,
                 spec.period,
-                cci(self.highs, self.lows, self.closes, spec.period),
+                lambda: cci(self.highs, self.lows, self.closes, spec.period),
             )
         if isinstance(spec, RocSeries):
-            return self.roc_cache.setdefault(spec.period, roc(self.closes, spec.period))
+            return self._get_cached(self.roc_cache, spec.period, lambda: roc(self.closes, spec.period))
         if isinstance(spec, MfiSeries):
-            return self.mfi_cache.setdefault(
+            return self._get_cached(
+                self.mfi_cache,
                 spec.period,
-                mfi(self.highs, self.lows, self.closes, self.volumes, spec.period),
+                lambda: mfi(self.highs, self.lows, self.closes, self.volumes, spec.period),
             )
         if isinstance(spec, (StochasticKSeries, StochasticDSeries)):
             stochastic_key = (spec.k_period, spec.d_period, spec.smooth_k)
@@ -733,11 +826,14 @@ class EntryRuleEvaluator:
                 return self.stochastic_k_cache[stochastic_key]
             return self.stochastic_d_cache[stochastic_key]
         if isinstance(spec, AdxSeries):
-            return self.adx_cache.setdefault(spec.period, adx(self.highs, self.lows, self.closes, spec.period))
+            return self._get_cached(
+                self.adx_cache, spec.period, lambda: adx(self.highs, self.lows, self.closes, spec.period)
+            )
         if isinstance(spec, WilliamsRSeries):
-            return self.williams_r_cache.setdefault(
+            return self._get_cached(
+                self.williams_r_cache,
                 spec.period,
-                williams_r(self.highs, self.lows, self.closes, spec.period),
+                lambda: williams_r(self.highs, self.lows, self.closes, spec.period),
             )
         raise TypeError(f"Unsupported indicator series type: {type(spec).__name__}")
 
@@ -750,8 +846,11 @@ class EntryRuleEvaluator:
         )
 
     def _get_iv_series(self) -> list[float | None]:
-        if self.iv_series_cache is None:
-            self.iv_series_cache = build_estimated_iv_series(
+        cache_key = self._iv_cache_key()
+        cached = self.iv_series_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        series = build_estimated_iv_series(
                 bars=self.bars,
                 option_gateway=self.option_gateway,
                 target_dte=self.config.target_dte,
@@ -759,8 +858,31 @@ class EntryRuleEvaluator:
                 risk_free_rate=self.config.risk_free_rate,
                 risk_free_rate_resolver=self.config.resolve_risk_free_rate,
                 dividend_yield=self.config.dividend_yield,
-            )
-        return self.iv_series_cache
+        )
+        self.iv_series_cache[cache_key] = series
+        return series
+
+    def _entry_mask_cache_key(self) -> str:
+        payload = {
+            "entry_rules": [
+                rule.model_dump(mode="json") if hasattr(rule, "model_dump") else repr(rule)
+                for rule in self.config.entry_rules
+            ],
+            "target_dte": self.config.target_dte,
+            "dte_tolerance_days": self.config.dte_tolerance_days,
+            "risk_free_rate": self.config.risk_free_rate,
+            "dividend_yield": self.config.dividend_yield,
+        }
+        return json.dumps(payload, sort_keys=True, default=str)
+
+    def _iv_cache_key(self) -> str:
+        payload = {
+            "target_dte": self.config.target_dte,
+            "dte_tolerance_days": self.config.dte_tolerance_days,
+            "risk_free_rate": self.config.risk_free_rate,
+            "dividend_yield": self.config.dividend_yield,
+        }
+        return json.dumps(payload, sort_keys=True, default=str)
 
 
 def compare(left: float, right: float, operator: ComparisonOperator) -> bool:

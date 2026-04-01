@@ -328,6 +328,46 @@ class HistoricalMarketDataStore:
             )
         return quotes
 
+    def get_option_quote_series(
+        self,
+        option_tickers: list[str],
+        start_date: date,
+        end_date: date,
+    ) -> dict[str, dict[date, OptionQuoteRecord | None]]:
+        if not option_tickers:
+            return {}
+        requested_tickers = tuple(dict.fromkeys(option_tickers))
+        with self._session(readonly=True) as session:
+            rows = list(
+                session.execute(
+                    select(
+                        HistoricalOptionDayBar.option_ticker,
+                        HistoricalOptionDayBar.trade_date,
+                        HistoricalOptionDayBar.close_price,
+                    ).where(
+                        HistoricalOptionDayBar.option_ticker.in_(requested_tickers),
+                        HistoricalOptionDayBar.trade_date >= start_date,
+                        HistoricalOptionDayBar.trade_date <= end_date,
+                    )
+                )
+            )
+        series: dict[str, dict[date, OptionQuoteRecord | None]] = {
+            ticker: {} for ticker in requested_tickers
+        }
+        for option_ticker, trade_date, close_price in rows:
+            if close_price is None:
+                continue
+            close_value = float(close_price)
+            if close_value <= 0:
+                continue
+            series.setdefault(option_ticker, {})[trade_date] = OptionQuoteRecord(
+                trade_date=trade_date,
+                bid_price=close_value,
+                ask_price=close_value,
+                participant_timestamp=None,
+            )
+        return series
+
     def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
         with self._session(readonly=True) as session:
             rows = list(
