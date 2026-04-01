@@ -10,11 +10,17 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TS_SCHEMA_PATH = PROJECT_ROOT / "packages" / "api-client" / "src" / "schema.d.ts"
+API_CLIENT_INDEX_PATH = PROJECT_ROOT / "packages" / "api-client" / "src" / "index.ts"
 
 
 def _read_ts_schema() -> str:
     assert TS_SCHEMA_PATH.exists(), f"TypeScript schema not found: {TS_SCHEMA_PATH}"
     return TS_SCHEMA_PATH.read_text(encoding="utf-8")
+
+
+def _read_api_client_index() -> str:
+    assert API_CLIENT_INDEX_PATH.exists(), f"TypeScript api-client index not found: {API_CLIENT_INDEX_PATH}"
+    return API_CLIENT_INDEX_PATH.read_text(encoding="utf-8")
 
 
 def test_ts_schema_has_decided_trades():
@@ -99,6 +105,61 @@ def test_trade_json_response_has_trading_days():
     """TradeJsonResponse (scanner/sweep) must also have the trading days field."""
     from backtestforecast.schemas.backtests import TradeJsonResponse
     assert "holding_period_trading_days" in TradeJsonResponse.model_fields
+
+
+def test_ts_schema_has_generic_indicator_rule_types() -> None:
+    """The generated TS schema must expose the StrategyQuant-style generic indicator rule family."""
+    ts = _read_ts_schema()
+    required = {
+        "IndicatorCrossDirection",
+        "IndicatorTrendDirection",
+        '"IndicatorThresholdRule-Input"',
+        '"IndicatorTrendRule-Input"',
+        '"IndicatorLevelCrossRule-Input"',
+        '"IndicatorSeriesCrossRule-Input"',
+        '"IndicatorPersistenceRule-Input"',
+        "CciSeries",
+        "RocSeries",
+        "MfiSeries",
+        "StochasticKSeries",
+        "StochasticDSeries",
+        "AdxSeries",
+        "WilliamsRSeries",
+    }
+    missing = {name for name in required if name not in ts}
+    assert not missing, (
+        f"TypeScript schema missing generic indicator rule coverage: {sorted(missing)}. "
+        "Regenerate with: pnpm --filter @backtestforecast/api-client generate"
+    )
+
+
+def test_api_client_index_exports_generic_indicator_rule_types() -> None:
+    """The shared api-client index must export the new indicator series and generic rule types."""
+    index_ts = _read_api_client_index()
+    required = {
+        "export type IndicatorCrossDirection",
+        "export type IndicatorTrendDirection",
+        "export type IndicatorSeriesInput =",
+        "export type IndicatorSeries =",
+        "export type IndicatorThresholdRuleInput",
+        "export type IndicatorThresholdRule",
+        "export type IndicatorTrendRuleInput",
+        "export type IndicatorTrendRule",
+        "export type IndicatorLevelCrossRuleInput",
+        "export type IndicatorLevelCrossRule",
+        "export type IndicatorSeriesCrossRuleInput",
+        "export type IndicatorSeriesCrossRule",
+        "export type IndicatorPersistenceRuleInput",
+        "export type IndicatorPersistenceRule",
+        "export type EntryRuleInput =",
+        "| IndicatorThresholdRule",
+        "| IndicatorTrendRule",
+        "| IndicatorLevelCrossRule",
+        "| IndicatorSeriesCrossRule",
+        "| IndicatorPersistenceRule",
+    }
+    missing = {name for name in required if name not in index_ts}
+    assert not missing, f"api-client index missing generic indicator exports: {sorted(missing)}"
 
 
 # ---- Expanded schema coverage ----

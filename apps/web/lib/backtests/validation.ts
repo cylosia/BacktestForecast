@@ -3,10 +3,13 @@ import type {
   ComparisonOperator,
   CreateBacktestRunRequest,
   CrossoverDirection,
+  EntryRuleInput,
   MovingAverageRuleType,
   StrategyType,
 } from "@backtestforecast/api-client";
 import type { ValidationFieldError } from "@/lib/api/shared";
+import type { EditableAdvancedRule } from "@/lib/backtests/advanced-rules";
+import { buildAdvancedRuleInput } from "@/lib/backtests/advanced-rules";
 import { currentEasternDate, daysAgoET } from "@/lib/utils";
 import {
   ACCOUNT_SIZE_MAX,
@@ -71,6 +74,7 @@ export interface BacktestFormValues {
   supportResistanceMode: string;
   supportResistancePeriod: string;
   calendarContractType: "call" | "put";
+  advancedRules: EditableAdvancedRule[];
 }
 
 export type BacktestFormErrors = Partial<Record<keyof BacktestFormValues | "form", string>>;
@@ -166,6 +170,7 @@ export function getDefaultBacktestFormValues(): BacktestFormValues {
     supportResistanceMode: "near_support",
     supportResistancePeriod: "20",
     calendarContractType: "call",
+    advancedRules: [],
   };
 }
 
@@ -277,8 +282,8 @@ export function validateBacktestForm(values: BacktestFormValues): {
     errors.dteToleranceDays = "DTE tolerance must be less than target DTE.";
   }
 
-  const entryRules: CreateBacktestRunRequest["entry_rules"] = [];
-  const hasEnabledEntryRule = [
+  const entryRules: EntryRuleInput[] = [];
+  const hasConfiguredEntryRule = [
     values.rsiEnabled,
     values.movingAverageEnabled,
     values.macdEnabled,
@@ -288,6 +293,7 @@ export function validateBacktestForm(values: BacktestFormValues): {
     values.ivPercentileEnabled,
     values.volumeSpikeEnabled,
     values.supportResistanceEnabled,
+    values.advancedRules.length > 0,
   ].some(Boolean);
 
   if (values.rsiEnabled) {
@@ -484,7 +490,16 @@ export function validateBacktestForm(values: BacktestFormValues): {
     }
   }
 
-  if (!hasEnabledEntryRule) {
+  values.advancedRules.forEach((rule, index) => {
+    const built = buildAdvancedRuleInput(rule);
+    if (built.error) {
+      errors.advancedRules ??= `Advanced rule ${index + 1}: ${built.error}`;
+      return;
+    }
+    entryRules.push(built.rule!);
+  });
+
+  if (!hasConfiguredEntryRule) {
     errors.form = "At least one valid entry rule must be configured.";
   }
 

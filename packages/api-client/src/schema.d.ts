@@ -153,6 +153,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/analysis/{analysis_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Analysis */
+        post: operations["cancel_analysis_v1_analysis__analysis_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/analysis/{analysis_id}/remediation-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Analysis Remediation Actions */
+        get: operations["get_analysis_remediation_actions_v1_analysis__analysis_id__remediation_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/analysis/{analysis_id}/status": {
         parameters: {
             query?: never;
@@ -229,6 +263,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/backtests/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Backtest */
+        post: operations["cancel_backtest_v1_backtests__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/backtests/{run_id}/remediation-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Backtest Remediation Actions */
+        get: operations["get_backtest_remediation_actions_v1_backtests__run_id__remediation_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/backtests/{run_id}/status": {
         parameters: {
             query?: never;
@@ -274,6 +342,23 @@ export interface paths {
         put?: never;
         /** Create Portal Session */
         post: operations["create_portal_session_v1_billing_portal_session_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/pricing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pricing Contract */
+        get: operations["get_pricing_contract_v1_billing_pricing_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -330,9 +415,8 @@ export interface paths {
          * Get Pipeline History
          * @description Return recent pipeline run history (Pro+ gated).
          *
-         *     Supports optional cursor-based pagination via the ``cursor`` parameter
-         *     which should be the ``created_at`` ISO timestamp of the last item from
-         *     the previous page.
+         *     Supports optional cursor-based pagination via the ``cursor`` parameter.
+         *     Pass the exact ``next_cursor`` returned by the previous page.
          */
         get: operations["get_pipeline_history_v1_daily_picks_history_get"];
         put?: never;
@@ -386,6 +470,40 @@ export interface paths {
         };
         /** Export Events */
         get: operations["export_events_v1_events_exports__export_job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/events/multi_step_backtests/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Multi Step Backtest Events */
+        get: operations["multi_step_backtest_events_v1_events_multi_step_backtests__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/events/multi_symbol_backtests/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Multi Symbol Backtest Events */
+        get: operations["multi_symbol_backtest_events_v1_events_multi_symbol_backtests__run_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -467,6 +585,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/exports/{export_job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Export */
+        post: operations["cancel_export_v1_exports__export_job_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/exports/{export_job_id}/remediation-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Export Remediation Actions */
+        get: operations["get_export_remediation_actions_v1_exports__export_job_id__remediation_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/exports/{export_job_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Failed Export */
+        post: operations["retry_failed_export_v1_exports__export_job_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/exports/{export_job_id}/status": {
         parameters: {
             query?: never;
@@ -535,6 +704,146 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/multi-step-backtests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Multi Step Backtests */
+        get: operations["list_multi_step_backtests_v1_multi_step_backtests_get"];
+        put?: never;
+        /** Create Multi Step Backtest */
+        post: operations["create_multi_step_backtest_v1_multi_step_backtests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/multi-step-backtests/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Multi Step Backtest */
+        get: operations["get_multi_step_backtest_v1_multi_step_backtests__run_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Multi Step Backtest */
+        delete: operations["delete_multi_step_backtest_v1_multi_step_backtests__run_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/multi-step-backtests/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Multi Step Backtest */
+        post: operations["cancel_multi_step_backtest_v1_multi_step_backtests__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/multi-step-backtests/{run_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Multi Step Backtest Status */
+        get: operations["get_multi_step_backtest_status_v1_multi_step_backtests__run_id__status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/multi-symbol-backtests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Multi Symbol Backtests */
+        get: operations["list_multi_symbol_backtests_v1_multi_symbol_backtests_get"];
+        put?: never;
+        /** Create Multi Symbol Backtest */
+        post: operations["create_multi_symbol_backtest_v1_multi_symbol_backtests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/multi-symbol-backtests/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Multi Symbol Backtest */
+        get: operations["get_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Multi Symbol Backtest */
+        delete: operations["delete_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/multi-symbol-backtests/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Multi Symbol Backtest */
+        post: operations["cancel_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/multi-symbol-backtests/{run_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Multi Symbol Backtest Status */
+        get: operations["get_multi_symbol_backtest_status_v1_multi_symbol_backtests__run_id__status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/scans": {
         parameters: {
             query?: never;
@@ -574,6 +883,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/scans/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Scan */
+        post: operations["cancel_scan_v1_scans__job_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/scans/{job_id}/recommendations": {
         parameters: {
             query?: never;
@@ -583,6 +909,23 @@ export interface paths {
         };
         /** Get Scan Recommendations */
         get: operations["get_scan_recommendations_v1_scans__job_id__recommendations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/scans/{job_id}/remediation-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Scan Remediation Actions */
+        get: operations["get_scan_remediation_actions_v1_scans__job_id__remediation_actions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -659,6 +1002,40 @@ export interface paths {
          * @description Delete a sweep job and its results.
          */
         delete: operations["delete_sweep_v1_sweeps__job_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sweeps/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Sweep */
+        post: operations["cancel_sweep_v1_sweeps__job_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sweeps/{job_id}/remediation-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Sweep Remediation Actions */
+        get: operations["get_sweep_remediation_actions_v1_sweeps__job_id__remediation_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -767,6 +1144,19 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** AdxSeries */
+        AdxSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "adx";
+            /**
+             * Period
+             * @default 14
+             */
+            period: number;
+        };
         /** AnalysisDetailResponse */
         AnalysisDetailResponse: {
             /** Close Price */
@@ -786,15 +1176,14 @@ export interface components {
             error_code?: string | null;
             /** Error Message */
             error_message?: string | null;
-            /** Forecast */
             forecast?: components["schemas"]["AnalysisForecast"] | null;
-            /** Integrity Warnings */
-            integrity_warnings?: string[];
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Integrity Warnings */
+            integrity_warnings?: string[];
             /** Landscape */
             landscape?: components["schemas"]["LandscapeCell"][] | null;
             regime?: components["schemas"]["RegimeDetail"] | null;
@@ -817,12 +1206,30 @@ export interface components {
         };
         /** AnalysisForecast */
         AnalysisForecast: {
-            /** As Of Date */
-            as_of_date: string;
             /** Analog Count */
             analog_count: number;
+            /**
+             * Analog Dates
+             * @description Up to 5 representative analog dates (subset of all analogs used).
+             */
+            analog_dates?: string[];
+            /**
+             * Analog Dates Shown
+             * @description Number of analog dates included in analog_dates (max 5).
+             */
+            analog_dates_shown?: number | null;
+            /**
+             * Analog Dates Total
+             * @description Total number of analogs used in the forecast calculation.
+             */
+            analog_dates_total?: number | null;
             /** Analogs Used */
             analogs_used?: number | null;
+            /**
+             * As Of Date
+             * Format: date
+             */
+            as_of_date: string;
             /** Disclaimer */
             disclaimer: string;
             /** Expected Return High Pct */
@@ -838,19 +1245,13 @@ export interface components {
             /** Positive Outcome Rate Pct */
             positive_outcome_rate_pct?: string | null;
             /** Strategy Type */
-            strategy_type: string;
+            strategy_type?: string | null;
             /** Summary */
             summary: string;
             /** Symbol */
             symbol: string;
             /** Trading Days Used */
             trading_days_used?: number | null;
-            /** Analog Dates */
-            analog_dates?: string[];
-            /** Analog Dates Shown */
-            analog_dates_shown?: number | null;
-            /** Analog Dates Total */
-            analog_dates_total?: number | null;
         };
         /** AnalysisListResponse */
         AnalysisListResponse: {
@@ -861,7 +1262,10 @@ export interface components {
              * @default 50
              */
             limit: number;
-            /** Next Cursor */
+            /**
+             * Next Cursor
+             * @description Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.
+             */
             next_cursor?: string | null;
             /**
              * Offset
@@ -870,6 +1274,7 @@ export interface components {
             offset: number;
             /**
              * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
              * @default 0
              */
             total: number;
@@ -918,13 +1323,10 @@ export interface components {
             /** Config */
             config?: {
                 [key: string]: unknown;
-            };
+            } | null;
             /** Equity Curve */
-            equity_curve?: {
-                [key: string]: unknown;
-            }[];
-            /** Forecast */
-            forecast?: components["schemas"]["AnalysisForecast"];
+            equity_curve?: components["schemas"]["EquityCurvePointResponse"][];
+            forecast?: components["schemas"]["AnalysisForecast"] | null;
             /**
              * Max Holding Days
              * @default 0
@@ -950,17 +1352,14 @@ export interface components {
              * @default
              */
             strategy_type: string;
-            /** Summary */
-            summary?: components["schemas"]["BacktestSummaryResponse"];
+            summary?: components["schemas"]["BacktestSummaryResponse"] | null;
             /**
              * Target Dte
              * @default 0
              */
             target_dte: number;
             /** Trades */
-            trades?: {
-                [key: string]: unknown;
-            }[];
+            trades?: components["schemas"]["TradeJsonResponse"][];
         };
         /** AvoidEarningsRule */
         AvoidEarningsRule: {
@@ -998,7 +1397,7 @@ export interface components {
              * @default massive
              * @enum {string}
              */
-            data_source: "massive" | "manual";
+            data_source: "massive" | "manual" | "historical_flatfile";
             /**
              * Date From
              * Format: date
@@ -1019,6 +1418,12 @@ export interface components {
             engine_version: "options-multileg-v1" | "options-multileg-v2";
             /** Equity Curve */
             equity_curve: components["schemas"]["EquityCurvePointResponse"][];
+            /**
+             * Equity Curve Points Omitted
+             * @description Number of persisted equity points omitted from the returned equity-curve slice.
+             * @default 0
+             */
+            equity_curve_points_omitted: number;
             /**
              * Equity Curve Truncated
              * @default false
@@ -1044,20 +1449,12 @@ export interface components {
              * Risk Free Rate Curve Points
              * @description Per-date risk-free-rate points used for curve-based execution when they were persisted with the run. Empty for scalar runs or older runs that predate curve snapshot persistence.
              */
-            risk_free_rate_curve_points?: {
-                /**
-                 * Trade Date
-                 * Format: date
-                 */
-                trade_date: string;
-                /** Rate */
-                rate: string;
-            }[];
+            risk_free_rate_curve_points?: components["schemas"]["RiskFreeRatePointResponse"][];
             /**
              * Risk Free Rate Model
              * @description Whether the run used a single scalar risk-free rate or a date-varying curve with this value as the anchor/default.
              */
-            risk_free_rate_model?: "scalar" | "curve_default" | "unknown" | null;
+            risk_free_rate_model?: ("scalar" | "curve_default" | "unknown") | null;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: string;
             /** Started At */
@@ -1066,16 +1463,27 @@ export interface components {
             /** Strategy Type */
             strategy_type: string;
             summary: components["schemas"]["BacktestSummaryResponse"];
+            /**
+             * Summary Provenance
+             * @description Indicates that summary metrics were serialized from persisted run aggregates, not recomputed from returned trade or equity slices.
+             * @default persisted_run_aggregates
+             * @constant
+             */
+            summary_provenance: "persisted_run_aggregates";
             /** Symbol */
             symbol: string;
             /** Target Dte */
             target_dte: number;
+            /**
+             * Trade Items Omitted
+             * @description Number of persisted trades omitted from the returned trade slice.
+             * @default 0
+             */
+            trade_items_omitted: number;
             /** Trades */
             trades: components["schemas"]["BacktestTradeResponse"][];
             /** Warnings */
-            warnings: {
-                [key: string]: unknown;
-            }[];
+            warnings: components["schemas"]["WarningResponse"][];
         };
         /**
          * BacktestRunHistoryItemResponse
@@ -1112,6 +1520,13 @@ export interface components {
             /** Strategy Type */
             strategy_type: string;
             summary: components["schemas"]["BacktestSummaryResponse"];
+            /**
+             * Summary Provenance
+             * @description Indicates that summary metrics were serialized from persisted run aggregates, not recomputed from returned trade or equity slices.
+             * @default persisted_run_aggregates
+             * @constant
+             */
+            summary_provenance: "persisted_run_aggregates";
             /** Symbol */
             symbol: string;
             /** Target Dte */
@@ -1128,7 +1543,7 @@ export interface components {
             limit: number;
             /**
              * Next Cursor
-             * @description Opaque cursor for keyset pagination. Pass as `cursor` on the next request to fetch the next page.
+             * @description Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.
              */
             next_cursor?: string | null;
             /**
@@ -1138,6 +1553,7 @@ export interface components {
             offset: number;
             /**
              * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
              * @default 0
              */
             total: number;
@@ -1167,7 +1583,7 @@ export interface components {
          *     on BacktestRunDetailResponse) AND manual construction from JSON blobs
          *     (scanner/sweep ``summary_json`` fields). Fields like ``decided_trades``
          *     that don't exist on the ORM model will silently default to ``None``.
-         *     Do not add validators that assume ORM context — they will break the
+         *     Do not add validators that assume ORM context - they will break the
          *     JSON construction path.
          */
         BacktestSummaryResponse: {
@@ -1269,7 +1685,7 @@ export interface components {
             entry_date: string;
             /**
              * Entry Mid
-             * @description Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value × 100 × quantity.
+             * @description Per-unit position value divided by 100 (contract multiplier). NOT the raw option mid-price. To reconstruct cost: value x 100 x quantity.
              */
             entry_mid: string;
             /** Entry Reason */
@@ -1335,6 +1751,44 @@ export interface components {
          * @enum {string}
          */
         BollingerBand: "lower" | "middle" | "upper";
+        /** BollingerBandSeries */
+        "BollingerBandSeries-Input": {
+            band: components["schemas"]["BollingerBand"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "bollinger_band";
+            /**
+             * Period
+             * @default 20
+             */
+            period: number;
+            /**
+             * Standard Deviations
+             * @default 2
+             */
+            standard_deviations: number | string;
+        };
+        /** BollingerBandSeries */
+        "BollingerBandSeries-Output": {
+            band: components["schemas"]["BollingerBand"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "bollinger_band";
+            /**
+             * Period
+             * @default 20
+             */
+            period: number;
+            /**
+             * Standard Deviations
+             * @default 2
+             */
+            standard_deviations: string;
+        };
         /** BollingerBandsRule */
         "BollingerBandsRule-Input": {
             band: components["schemas"]["BollingerBand"];
@@ -1375,6 +1829,19 @@ export interface components {
              */
             type: "bollinger_bands";
         };
+        /** CciSeries */
+        CciSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "cci";
+            /**
+             * Period
+             * @default 20
+             */
+            period: number;
+        };
         /** CheckoutSessionResponse */
         CheckoutSessionResponse: {
             billing_interval: components["schemas"]["BillingInterval"];
@@ -1385,6 +1852,14 @@ export interface components {
             /** Session Id */
             session_id: string;
             tier: components["schemas"]["PlanTier"];
+        };
+        /** CloseSeries */
+        CloseSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "close";
         };
         /** CompareBacktestsRequest */
         CompareBacktestsRequest: {
@@ -1415,7 +1890,10 @@ export interface components {
         ComparisonOperator: "lt" | "lte" | "gt" | "gte";
         /** CreateAnalysisRequest */
         CreateAnalysisRequest: {
-            /** Idempotency Key */
+            /**
+             * Idempotency Key
+             * @description Optional client-generated key for retry-safe analysis creation. Reusing the key returns the existing analysis job rather than creating a duplicate.
+             */
             idempotency_key?: string | null;
             /** Symbol */
             symbol: string;
@@ -1444,13 +1922,19 @@ export interface components {
              * @description Backtest end date. Must be after start_date.
              */
             end_date: string;
-            /** Entry Rules */
-            entry_rules: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"])[];
-            /** Idempotency Key */
+            /**
+             * Entry Rules
+             * @description Entry rules for the backtest. Internal scan/sweep flows may intentionally use an empty list; the public create-backtest API rejects empty entry_rules.
+             */
+            entry_rules: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"] | components["schemas"]["IndicatorThresholdRule-Input"] | components["schemas"]["IndicatorTrendRule-Input"] | components["schemas"]["IndicatorLevelCrossRule-Input"] | components["schemas"]["IndicatorSeriesCrossRule-Input"] | components["schemas"]["IndicatorPersistenceRule-Input"])[];
+            /**
+             * Idempotency Key
+             * @description Optional client-generated key for retry-safe create semantics. Reusing the same payload/key returns the existing queued/running/completed job instead of creating a duplicate.
+             */
             idempotency_key?: string | null;
             /**
              * Max Holding Days
-             * @description Maximum holding period in trading days (weekdays only). 30 trading days ≈ 6 calendar weeks.
+             * @description Maximum holding period in trading days (weekdays only). 30 trading days ~= 6 calendar weeks.
              */
             max_holding_days: number;
             /**
@@ -1460,7 +1944,7 @@ export interface components {
             profit_target_pct?: number | string | null;
             /**
              * Risk Free Rate
-             * @description Annualized risk-free rate for Sharpe/Sortino calculations. If not provided, uses the server default (see /v1/meta). Set to 0.0 for ZIRP-era backtests.
+             * @description Annualized risk-free rate for Sharpe/Sortino calculations. If not provided, resolves from Massive Treasury yields for the backtest window and falls back to the configured server default if Massive is unavailable. Set to 0.0 for ZIRP-era backtests.
              */
             risk_free_rate?: number | string | null;
             /** Risk Per Trade Pct */
@@ -1483,7 +1967,7 @@ export interface components {
              */
             stop_loss_pct?: number | string | null;
             /** @description Optional overrides for strike placement and spread width */
-            strategy_overrides?: components["schemas"]["StrategyOverrides"] | null;
+            strategy_overrides?: components["schemas"]["StrategyOverrides-Input"] | null;
             strategy_type: components["schemas"]["StrategyType"];
             /**
              * Symbol
@@ -1506,13 +1990,92 @@ export interface components {
         /** CreateExportRequest */
         CreateExportRequest: {
             format: components["schemas"]["ExportFormat"];
-            /** Idempotency Key */
+            /**
+             * Idempotency Key
+             * @description Optional client-generated key for retry-safe export creation. Retries with the same key return the existing export job instead of creating duplicates.
+             */
             idempotency_key?: string | null;
             /**
              * Run Id
              * Format: uuid
              */
             run_id: string;
+        };
+        /** CreateMultiStepRunRequest */
+        CreateMultiStepRunRequest: {
+            /** Account Size */
+            account_size: number | string;
+            /** Commission Per Contract */
+            commission_per_contract: number | string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /** Idempotency Key */
+            idempotency_key?: string | null;
+            /** Initial Entry Rules */
+            initial_entry_rules: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"] | components["schemas"]["IndicatorThresholdRule-Input"] | components["schemas"]["IndicatorTrendRule-Input"] | components["schemas"]["IndicatorLevelCrossRule-Input"] | components["schemas"]["IndicatorSeriesCrossRule-Input"] | components["schemas"]["IndicatorPersistenceRule-Input"])[];
+            /** Name */
+            name?: string | null;
+            /** Risk Per Trade Pct */
+            risk_per_trade_pct: number | string;
+            /**
+             * Slippage Pct
+             * @default 0
+             */
+            slippage_pct: number | string;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /** Steps */
+            steps: components["schemas"]["WorkflowStepDefinition"][];
+            /** Symbol */
+            symbol: string;
+            /** Workflow Type */
+            workflow_type: string;
+        };
+        /** CreateMultiSymbolRunRequest */
+        CreateMultiSymbolRunRequest: {
+            /** Account Size */
+            account_size: number | string;
+            /**
+             * Capital Allocation Mode
+             * @default equal_weight
+             * @enum {string}
+             */
+            capital_allocation_mode: "equal_weight" | "explicit";
+            /** Commission Per Contract */
+            commission_per_contract: number | string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /** Entry Rules */
+            entry_rules: components["schemas"]["MultiSymbolPriceRule"][];
+            /** Exit Rules */
+            exit_rules?: components["schemas"]["MultiSymbolPriceRule"][];
+            /** Idempotency Key */
+            idempotency_key?: string | null;
+            /** Name */
+            name?: string | null;
+            /**
+             * Slippage Pct
+             * @default 0
+             */
+            slippage_pct: number | string;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /** Strategy Groups */
+            strategy_groups: components["schemas"]["MultiSymbolStrategyGroup"][];
+            /** Symbols */
+            symbols: components["schemas"]["MultiSymbolDefinition-Input"][];
         };
         /** CreatePortalSessionRequest */
         CreatePortalSessionRequest: {
@@ -1538,7 +2101,10 @@ export interface components {
              * Format: date
              */
             end_date: string;
-            /** Idempotency Key */
+            /**
+             * Idempotency Key
+             * @description Optional client-generated key for retry-safe create semantics. Reusing the same key lets the API return or repair the existing job instead of creating a duplicate scan.
+             */
             idempotency_key?: string | null;
             /** Max Holding Days */
             max_holding_days: number;
@@ -1600,7 +2166,10 @@ export interface components {
             /** Exit Rule Sets */
             exit_rule_sets?: components["schemas"]["ExitRuleSet"][];
             genetic_config?: components["schemas"]["GeneticSweepConfig"] | null;
-            /** Idempotency Key */
+            /**
+             * Idempotency Key
+             * @description Optional client-generated key for retry-safe sweep creation. Retries with the same key return or repair the existing queued job instead of creating a duplicate sweep.
+             */
             idempotency_key?: string | null;
             /** Max Holding Days */
             max_holding_days: number;
@@ -1652,7 +2221,7 @@ export interface components {
          *     ``features`` and ``usage`` are computed fields that do not correspond to
          *     database columns on the User model.  Callers must construct this response
          *     explicitly (see ``BacktestService.to_current_user_response``) rather than
-         *     passing an ORM User object directly — ``from_attributes`` is enabled only
+         *     passing an ORM User object directly - ``from_attributes`` is enabled only
          *     for the flat scalar fields inherited from the User row.
          */
         CurrentUserResponse: {
@@ -1699,6 +2268,11 @@ export interface components {
             /** Contract Type */
             contract_type?: ("call" | "put") | null;
             /**
+             * Expiration Date
+             * @description Optional explicit expiration date for option legs. When set, the builder resolves this exact date instead of using expiration_offset.
+             */
+            expiration_date?: string | null;
+            /**
              * Expiration Offset
              * @description 0=primary expiration, 1=next available, 2=second-next.
              * @default 0
@@ -1720,18 +2294,38 @@ export interface components {
              * @default 0
              */
             strike_offset: number;
+            /** @description Optional explicit strike selection for custom option legs. When set, the builder ignores strike_offset for strike resolution. */
+            strike_selection?: components["schemas"]["StrikeSelection-Input"] | null;
         };
         /**
          * DailyPickForecast
          * @description Known keys produced by the forecaster for daily pick forecasts.
          */
         DailyPickForecast: {
-            /** As Of Date */
-            as_of_date: string;
             /** Analog Count */
             analog_count: number;
+            /**
+             * Analog Dates
+             * @description Up to 5 representative analog dates (subset of all analogs used).
+             */
+            analog_dates?: string[];
+            /**
+             * Analog Dates Shown
+             * @description Number of analog dates included in analog_dates (max 5).
+             */
+            analog_dates_shown?: number | null;
+            /**
+             * Analog Dates Total
+             * @description Total number of analogs used in the forecast calculation.
+             */
+            analog_dates_total?: number | null;
             /** Analogs Used */
             analogs_used?: number | null;
+            /**
+             * As Of Date
+             * Format: date
+             */
+            as_of_date: string;
             /** Disclaimer */
             disclaimer: string;
             /** Expected Return High Pct */
@@ -1745,19 +2339,13 @@ export interface components {
             /** Positive Outcome Rate Pct */
             positive_outcome_rate_pct?: string | null;
             /** Strategy Type */
-            strategy_type: string;
+            strategy_type?: string | null;
             /** Summary */
             summary: string;
             /** Symbol */
             symbol: string;
             /** Trading Days Used */
             trading_days_used?: number | null;
-            /** Analog Dates */
-            analog_dates?: string[];
-            /** Analog Dates Shown */
-            analog_dates_shown?: number | null;
-            /** Analog Dates Total */
-            analog_dates_total?: number | null;
         };
         /** DailyPickItemResponse */
         DailyPickItemResponse: {
@@ -1766,8 +2354,8 @@ export interface components {
             /** Config Snapshot */
             config_snapshot?: {
                 [key: string]: unknown;
-            };
-            forecast?: components["schemas"]["DailyPickForecast"];
+            } | null;
+            forecast?: components["schemas"]["DailyPickForecast"] | null;
             /** Rank */
             rank: number;
             /** Regime Labels */
@@ -1776,7 +2364,7 @@ export interface components {
             score: string;
             /** Strategy Type */
             strategy_type: string;
-            summary?: components["schemas"]["DailyPickSummary"];
+            summary?: components["schemas"]["DailyPickSummary"] | null;
             /** Symbol */
             symbol: string;
             /** Target Dte */
@@ -1788,6 +2376,11 @@ export interface components {
          */
         DailyPickSummary: {
             /**
+             * Decided Trades
+             * @default 0
+             */
+            decided_trades: number;
+            /**
              * Expectancy
              * @default 0
              */
@@ -1798,9 +2391,9 @@ export interface components {
              */
             max_drawdown_pct: number;
             /** Profit Factor */
-            profit_factor?: string | null;
+            profit_factor?: number | string | null;
             /** Sharpe Ratio */
-            sharpe_ratio?: string | null;
+            sharpe_ratio?: number | string | null;
             /**
              * Total Net Pnl
              * @default 0
@@ -1846,6 +2439,16 @@ export interface components {
              * @description Target absolute delta (1-99)
              */
             value: number;
+        };
+        /** EmaSeries */
+        EmaSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "ema";
+            /** Period */
+            period: number;
         };
         /** EquityCurvePointResponse */
         EquityCurvePointResponse: {
@@ -1902,7 +2505,10 @@ export interface components {
              * @default 50
              */
             limit: number;
-            /** Next Cursor */
+            /**
+             * Next Cursor
+             * @description Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.
+             */
             next_cursor?: string | null;
             /**
              * Offset
@@ -1911,17 +2517,13 @@ export interface components {
             offset: number;
             /**
              * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
              * @default 0
              */
             total: number;
         };
         /** ExportJobResponse */
         ExportJobResponse: {
-            /**
-             * Backtest Run Id
-             * Format: uuid
-             */
-            backtest_run_id: string;
             /** Completed At */
             completed_at?: string | null;
             /**
@@ -1948,19 +2550,16 @@ export interface components {
             /** Risk Free Rate */
             risk_free_rate?: string | null;
             /** Risk Free Rate Curve Points */
-            risk_free_rate_curve_points?: {
-                /**
-                 * Trade Date
-                 * Format: date
-                 */
-                trade_date: string;
-                /** Rate */
-                rate: string;
-            }[];
+            risk_free_rate_curve_points?: components["schemas"]["RiskFreeRatePointResponse"][];
             /** Risk Free Rate Model */
-            risk_free_rate_model?: "scalar" | "curve_default" | "unknown" | null;
+            risk_free_rate_model?: ("scalar" | "curve_default" | "unknown") | null;
             /** Risk Free Rate Source */
             risk_free_rate_source?: string | null;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
             /** Sha256 Hex */
             sha256_hex?: string | null;
             /**
@@ -2016,16 +2615,6 @@ export interface components {
              */
             backtests: boolean;
             /**
-             * Multi Symbol Backtests
-             * @default false
-             */
-            multi_symbol_backtests: boolean;
-            /**
-             * Multi Step Backtests
-             * @default false
-             */
-            multi_step_backtests: boolean;
-            /**
              * Billing
              * @default true
              */
@@ -2045,6 +2634,16 @@ export interface components {
              * @default true
              */
             forecasts: boolean;
+            /**
+             * Multi Step Backtests
+             * @default false
+             */
+            multi_step_backtests: boolean;
+            /**
+             * Multi Symbol Backtests
+             * @default false
+             */
+            multi_symbol_backtests: boolean;
             /**
              * Scanner
              * @default true
@@ -2169,6 +2768,11 @@ export interface components {
         };
         /** HistoricalPerformanceResponse */
         HistoricalPerformanceResponse: {
+            /**
+             * Effective Sample Size
+             * @default 0
+             */
+            effective_sample_size: string;
             /** Last Observed At */
             last_observed_at?: string | null;
             /**
@@ -2187,11 +2791,6 @@ export interface components {
              */
             weighted_max_drawdown_pct: string;
             /**
-             * Weighted Total Net Pnl
-             * @default 0
-             */
-            weighted_total_net_pnl: string;
-            /**
              * Weighted Total Roi Pct
              * @default 0
              */
@@ -2201,6 +2800,162 @@ export interface components {
              * @default 0
              */
             weighted_win_rate: string;
+        };
+        /**
+         * IndicatorCrossDirection
+         * @enum {string}
+         */
+        IndicatorCrossDirection: "crosses_above" | "crosses_below";
+        /** IndicatorLevelCrossRule */
+        "IndicatorLevelCrossRule-Input": {
+            direction: components["schemas"]["IndicatorCrossDirection"];
+            /** Level */
+            level: number | string;
+            /** Series */
+            series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Input"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_level_cross";
+        };
+        /** IndicatorLevelCrossRule */
+        "IndicatorLevelCrossRule-Output": {
+            direction: components["schemas"]["IndicatorCrossDirection"];
+            /** Level */
+            level: string;
+            /** Series */
+            series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Output"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_level_cross";
+        };
+        /** IndicatorPersistenceRule */
+        "IndicatorPersistenceRule-Input": {
+            /**
+             * Bars
+             * @default 3
+             */
+            bars: number;
+            /** Level */
+            level: number | string;
+            operator: components["schemas"]["ComparisonOperator"];
+            /** Series */
+            series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Input"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_persistence";
+        };
+        /** IndicatorPersistenceRule */
+        "IndicatorPersistenceRule-Output": {
+            /**
+             * Bars
+             * @default 3
+             */
+            bars: number;
+            /** Level */
+            level: string;
+            operator: components["schemas"]["ComparisonOperator"];
+            /** Series */
+            series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Output"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_persistence";
+        };
+        /** IndicatorSeriesCrossRule */
+        "IndicatorSeriesCrossRule-Input": {
+            direction: components["schemas"]["IndicatorCrossDirection"];
+            /** Left Series */
+            left_series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Input"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /** Right Series */
+            right_series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Input"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_series_cross";
+        };
+        /** IndicatorSeriesCrossRule */
+        "IndicatorSeriesCrossRule-Output": {
+            direction: components["schemas"]["IndicatorCrossDirection"];
+            /** Left Series */
+            left_series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Output"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /** Right Series */
+            right_series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Output"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_series_cross";
+        };
+        /** IndicatorThresholdRule */
+        "IndicatorThresholdRule-Input": {
+            /** Level */
+            level: number | string;
+            operator: components["schemas"]["ComparisonOperator"];
+            /** Series */
+            series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Input"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_threshold";
+        };
+        /** IndicatorThresholdRule */
+        "IndicatorThresholdRule-Output": {
+            /** Level */
+            level: string;
+            operator: components["schemas"]["ComparisonOperator"];
+            /** Series */
+            series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Output"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_threshold";
+        };
+        /**
+         * IndicatorTrendDirection
+         * @enum {string}
+         */
+        IndicatorTrendDirection: "rising" | "falling";
+        /** IndicatorTrendRule */
+        "IndicatorTrendRule-Input": {
+            /**
+             * Bars
+             * @default 3
+             */
+            bars: number;
+            direction: components["schemas"]["IndicatorTrendDirection"];
+            /** Series */
+            series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Input"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_trend";
+        };
+        /** IndicatorTrendRule */
+        "IndicatorTrendRule-Output": {
+            /**
+             * Bars
+             * @default 3
+             */
+            bars: number;
+            direction: components["schemas"]["IndicatorTrendDirection"];
+            /** Series */
+            series: components["schemas"]["CloseSeries"] | components["schemas"]["RsiSeriesSpec"] | components["schemas"]["SmaSeries"] | components["schemas"]["EmaSeries"] | components["schemas"]["MacdLineSeries"] | components["schemas"]["MacdSignalSeries"] | components["schemas"]["MacdHistogramSeries"] | components["schemas"]["BollingerBandSeries-Output"] | components["schemas"]["IvRankSeries"] | components["schemas"]["IvPercentileSeries"] | components["schemas"]["VolumeRatioSeries"] | components["schemas"]["CciSeries"] | components["schemas"]["RocSeries"] | components["schemas"]["MfiSeries"] | components["schemas"]["StochasticKSeries"] | components["schemas"]["StochasticDSeries"] | components["schemas"]["AdxSeries"] | components["schemas"]["WilliamsRSeries"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "indicator_trend";
         };
         /** IvPercentileRule */
         "IvPercentileRule-Input": {
@@ -2234,6 +2989,19 @@ export interface components {
              */
             type: "iv_percentile";
         };
+        /** IvPercentileSeries */
+        IvPercentileSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "iv_percentile";
+            /**
+             * Lookback Days
+             * @default 252
+             */
+            lookback_days: number;
+        };
         /** IvRankRule */
         "IvRankRule-Input": {
             /**
@@ -2265,6 +3033,19 @@ export interface components {
              * @enum {string}
              */
             type: "iv_rank";
+        };
+        /** IvRankSeries */
+        IvRankSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "iv_rank";
+            /**
+             * Lookback Days
+             * @default 252
+             */
+            lookback_days: number;
         };
         /**
          * JobStatus
@@ -2326,6 +3107,52 @@ export interface components {
              */
             win_rate: number;
         };
+        /** MacdHistogramSeries */
+        MacdHistogramSeries: {
+            /**
+             * Fast Period
+             * @default 12
+             */
+            fast_period: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "macd_histogram";
+            /**
+             * Signal Period
+             * @default 9
+             */
+            signal_period: number;
+            /**
+             * Slow Period
+             * @default 26
+             */
+            slow_period: number;
+        };
+        /** MacdLineSeries */
+        MacdLineSeries: {
+            /**
+             * Fast Period
+             * @default 12
+             */
+            fast_period: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "macd_line";
+            /**
+             * Signal Period
+             * @default 9
+             */
+            signal_period: number;
+            /**
+             * Slow Period
+             * @default 26
+             */
+            slow_period: number;
+        };
         /** MacdRule */
         MacdRule: {
             direction: components["schemas"]["CrossoverDirection"];
@@ -2350,10 +3177,35 @@ export interface components {
              */
             type: "macd";
         };
+        /** MacdSignalSeries */
+        MacdSignalSeries: {
+            /**
+             * Fast Period
+             * @default 12
+             */
+            fast_period: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "macd_signal";
+            /**
+             * Signal Period
+             * @default 9
+             */
+            signal_period: number;
+            /**
+             * Slow Period
+             * @default 26
+             */
+            slow_period: number;
+        };
         /** MetaResponse */
         MetaResponse: {
             /** Billing Enabled */
             billing_enabled?: boolean | null;
+            /** Daily Picks Schedule Utc */
+            daily_picks_schedule_utc?: string | null;
             /** Environment */
             environment?: string | null;
             features?: components["schemas"]["FeatureFlagsResponse"] | null;
@@ -2361,6 +3213,19 @@ export interface components {
             service: string;
             /** Version */
             version: string;
+        };
+        /** MfiSeries */
+        MfiSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "mfi";
+            /**
+             * Period
+             * @default 14
+             */
+            period: number;
         };
         /** MovingAverageCrossoverRule */
         MovingAverageCrossoverRule: {
@@ -2374,6 +3239,473 @@ export interface components {
              * @enum {string}
              */
             type: "ema_crossover" | "sma_crossover";
+        };
+        /** MultiStepEventResponse */
+        MultiStepEventResponse: {
+            /**
+             * Event At
+             * Format: date-time
+             */
+            event_at: string;
+            /**
+             * Event Type
+             * @enum {string}
+             */
+            event_type: "triggered" | "filled" | "skipped" | "failed" | "liquidated";
+            /** Message */
+            message?: string | null;
+            /** Payload Json */
+            payload_json?: {
+                [key: string]: unknown;
+            };
+            /** Step Number */
+            step_number: number;
+        };
+        /** MultiStepRunDetailResponse */
+        MultiStepRunDetailResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /** Equity Curve */
+            equity_curve?: components["schemas"]["EquityCurvePointResponse"][];
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Events */
+            events?: components["schemas"]["MultiStepEventResponse"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /** Started At */
+            started_at?: string | null;
+            status: components["schemas"]["RunJobStatus"];
+            /** Steps */
+            steps?: components["schemas"]["MultiStepStepOutcomeResponse"][];
+            summary: components["schemas"]["BacktestSummaryResponse"];
+            /** Symbol */
+            symbol: string;
+            /** Trades */
+            trades?: components["schemas"]["MultiStepTradeResponse"][];
+            /** Warnings */
+            warnings?: components["schemas"]["WarningResponse"][];
+            /** Workflow Type */
+            workflow_type: string;
+        };
+        /** MultiStepRunHistoryItemResponse */
+        MultiStepRunHistoryItemResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name?: string | null;
+            status: components["schemas"]["RunJobStatus"];
+            summary: components["schemas"]["BacktestSummaryResponse"];
+            /** Symbol */
+            symbol: string;
+            /** Workflow Type */
+            workflow_type: string;
+        };
+        /** MultiStepRunListResponse */
+        MultiStepRunListResponse: {
+            /** Items */
+            items: components["schemas"]["MultiStepRunHistoryItemResponse"][];
+            /**
+             * Limit
+             * @default 50
+             */
+            limit: number;
+            /**
+             * Next Cursor
+             * @description Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.
+             */
+            next_cursor?: string | null;
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
+            /**
+             * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
+             * @default 0
+             */
+            total: number;
+        };
+        /** MultiStepRunStatusResponse */
+        MultiStepRunStatusResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Started At */
+            started_at?: string | null;
+            status: components["schemas"]["RunJobStatus"];
+        };
+        /** MultiStepStepOutcomeResponse */
+        MultiStepStepOutcomeResponse: {
+            /** Action */
+            action: string;
+            /** Executed At */
+            executed_at?: string | null;
+            /** Failure Reason */
+            failure_reason?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "waiting" | "executed" | "failed" | "liquidated" | "skipped";
+            /** Step Number */
+            step_number: number;
+            /** Triggered At */
+            triggered_at?: string | null;
+        };
+        /** MultiStepTradeResponse */
+        MultiStepTradeResponse: {
+            /** Detail Json */
+            detail_json?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Entry Date
+             * Format: date
+             */
+            entry_date: string;
+            /** Entry Reason */
+            entry_reason: string;
+            /**
+             * Exit Date
+             * Format: date
+             */
+            exit_date: string;
+            /** Exit Reason */
+            exit_reason: string;
+            /** Gross Pnl */
+            gross_pnl: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Net Pnl */
+            net_pnl: string;
+            /** Option Ticker */
+            option_ticker: string;
+            /** Quantity */
+            quantity: number;
+            /** Step Number */
+            step_number: number;
+            /** Strategy Type */
+            strategy_type: string;
+            /** Total Commissions */
+            total_commissions: string;
+        };
+        /** MultiSymbolDefinition */
+        "MultiSymbolDefinition-Input": {
+            /** Capital Allocation Pct */
+            capital_allocation_pct?: number | string | null;
+            /**
+             * Max Open Positions
+             * @default 1
+             */
+            max_open_positions: number;
+            /** Risk Per Trade Pct */
+            risk_per_trade_pct: number | string;
+            /** Symbol */
+            symbol: string;
+        };
+        /** MultiSymbolDefinition */
+        "MultiSymbolDefinition-Output": {
+            /** Capital Allocation Pct */
+            capital_allocation_pct?: string | null;
+            /**
+             * Max Open Positions
+             * @default 1
+             */
+            max_open_positions: number;
+            /** Risk Per Trade Pct */
+            risk_per_trade_pct: string;
+            /** Symbol */
+            symbol: string;
+        };
+        /** MultiSymbolLegDefinition */
+        MultiSymbolLegDefinition: {
+            /** Custom Legs */
+            custom_legs?: components["schemas"]["CustomLegDefinition"][] | null;
+            /**
+             * Dte Tolerance Days
+             * @default 5
+             */
+            dte_tolerance_days: number;
+            /** Fixed Contracts */
+            fixed_contracts?: number | null;
+            /** Max Holding Days */
+            max_holding_days: number;
+            /**
+             * Quantity Mode
+             * @enum {string}
+             */
+            quantity_mode: "risk_based" | "fixed_contracts";
+            strategy_overrides?: components["schemas"]["StrategyOverrides-Input"] | null;
+            strategy_type: components["schemas"]["StrategyType"];
+            /** Symbol */
+            symbol: string;
+            /** Target Dte */
+            target_dte: number;
+        };
+        /** MultiSymbolPriceRule */
+        MultiSymbolPriceRule: {
+            /** Left Indicator */
+            left_indicator: string;
+            /** Left Symbol */
+            left_symbol: string;
+            /** Lookback Period */
+            lookback_period?: number | null;
+            /**
+             * Operator
+             * @enum {string}
+             */
+            operator: "lt" | "lte" | "gt" | "gte" | "eq" | "neq";
+            /** Right Indicator */
+            right_indicator?: string | null;
+            /** Right Symbol */
+            right_symbol?: string | null;
+            /** Threshold */
+            threshold?: number | string | null;
+        };
+        /** MultiSymbolRunDetailResponse */
+        MultiSymbolRunDetailResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /** Equity Curve */
+            equity_curve?: components["schemas"]["EquityCurvePointResponse"][];
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /** Started At */
+            started_at?: string | null;
+            status: components["schemas"]["RunJobStatus"];
+            summary: components["schemas"]["BacktestSummaryResponse"];
+            /** Symbol Equity Curves */
+            symbol_equity_curves?: {
+                [key: string]: components["schemas"]["EquityCurvePointResponse"][];
+            };
+            /** Symbol Summaries */
+            symbol_summaries?: components["schemas"]["MultiSymbolRunSymbolSummaryResponse"][];
+            /** Symbols */
+            symbols?: components["schemas"]["MultiSymbolDefinition-Output"][];
+            /** Trade Groups */
+            trade_groups?: components["schemas"]["MultiSymbolTradeGroupResponse"][];
+            /** Warnings */
+            warnings?: components["schemas"]["WarningResponse"][];
+        };
+        /** MultiSymbolRunHistoryItemResponse */
+        MultiSymbolRunHistoryItemResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name?: string | null;
+            status: components["schemas"]["RunJobStatus"];
+            summary: components["schemas"]["BacktestSummaryResponse"];
+            /** Symbols */
+            symbols?: string[];
+        };
+        /** MultiSymbolRunListResponse */
+        MultiSymbolRunListResponse: {
+            /** Items */
+            items: components["schemas"]["MultiSymbolRunHistoryItemResponse"][];
+            /**
+             * Limit
+             * @default 50
+             */
+            limit: number;
+            /**
+             * Next Cursor
+             * @description Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.
+             */
+            next_cursor?: string | null;
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
+            /**
+             * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
+             * @default 0
+             */
+            total: number;
+        };
+        /** MultiSymbolRunStatusResponse */
+        MultiSymbolRunStatusResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Started At */
+            started_at?: string | null;
+            status: components["schemas"]["RunJobStatus"];
+        };
+        /** MultiSymbolRunSymbolSummaryResponse */
+        MultiSymbolRunSymbolSummaryResponse: {
+            summary: components["schemas"]["BacktestSummaryResponse"];
+            /** Symbol */
+            symbol: string;
+        };
+        /** MultiSymbolStrategyGroup */
+        MultiSymbolStrategyGroup: {
+            /** Legs */
+            legs: components["schemas"]["MultiSymbolLegDefinition"][];
+            /** Name */
+            name: string;
+            /**
+             * Synchronous Entry
+             * @default true
+             */
+            synchronous_entry: boolean;
+        };
+        /** MultiSymbolTradeGroupResponse */
+        MultiSymbolTradeGroupResponse: {
+            /**
+             * Entry Date
+             * Format: date
+             */
+            entry_date: string;
+            /** Exit Date */
+            exit_date?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed" | "cancelled";
+            /** Trades */
+            trades?: components["schemas"]["MultiSymbolTradeResponse"][];
+        };
+        /** MultiSymbolTradeResponse */
+        MultiSymbolTradeResponse: {
+            /** Detail Json */
+            detail_json?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Entry Date
+             * Format: date
+             */
+            entry_date: string;
+            /** Entry Reason */
+            entry_reason: string;
+            /**
+             * Exit Date
+             * Format: date
+             */
+            exit_date: string;
+            /** Exit Reason */
+            exit_reason: string;
+            /** Gross Pnl */
+            gross_pnl: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Net Pnl */
+            net_pnl: string;
+            /** Option Ticker */
+            option_ticker: string;
+            /** Quantity */
+            quantity: number;
+            /** Strategy Type */
+            strategy_type: string;
+            /** Symbol */
+            symbol: string;
+            /** Total Commissions */
+            total_commissions: string;
+            /**
+             * Trade Group Id
+             * Format: uuid
+             */
+            trade_group_id: string;
         };
         /** PipelineHistoryItemResponse */
         PipelineHistoryItemResponse: {
@@ -2406,23 +3738,26 @@ export interface components {
             /** Items */
             items: components["schemas"]["PipelineHistoryItemResponse"][];
             /**
-             * Total
-             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
-             * @default 0
+             * Limit
+             * @default 50
              */
-            total?: number;
+            limit: number;
+            /**
+             * Next Cursor
+             * @description Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.
+             */
+            next_cursor?: string | null;
             /**
              * Offset
              * @default 0
              */
-            offset?: number;
+            offset: number;
             /**
-             * Limit
-             * @default 50
+             * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
+             * @default 0
              */
-            limit?: number;
-            /** Next Cursor */
-            next_cursor?: string | null;
+            total: number;
         };
         /** PipelineStatsResponse */
         PipelineStatsResponse: {
@@ -2452,6 +3787,46 @@ export interface components {
         PortalSessionResponse: {
             /** Portal Url */
             portal_url: string;
+        };
+        /** PricingContractResponse */
+        PricingContractResponse: {
+            /**
+             * Checkout Authoritative
+             * @default true
+             */
+            checkout_authoritative: boolean;
+            /**
+             * Currency
+             * @default USD
+             */
+            currency: string;
+            /** Plans */
+            plans: components["schemas"]["PricingPlanResponse"][];
+        };
+        /** PricingIntervalResponse */
+        PricingIntervalResponse: {
+            /** Available */
+            available: boolean;
+            /** Display Price */
+            display_price: string;
+            /** Price Id */
+            price_id?: string | null;
+            /** Unit Amount Usd */
+            unit_amount_usd?: number | null;
+        };
+        /** PricingPlanResponse */
+        PricingPlanResponse: {
+            /** Description */
+            description: string;
+            /** Features */
+            features: string[];
+            /** Headline */
+            headline: string;
+            monthly?: components["schemas"]["PricingIntervalResponse"] | null;
+            tier: components["schemas"]["PlanTier"];
+            /** Title */
+            title: string;
+            yearly?: components["schemas"]["PricingIntervalResponse"] | null;
         };
         /** RankingBreakdownResponse */
         RankingBreakdownResponse: {
@@ -2489,6 +3864,60 @@ export interface components {
             /** Volume Ratio */
             volume_ratio?: number | null;
         };
+        /** RemediationActionResponse */
+        RemediationActionResponse: {
+            /** Action */
+            action: string;
+            /**
+             * Allowed
+             * @default true
+             */
+            allowed: boolean;
+            /** Description */
+            description: string;
+            /** Href */
+            href: string;
+            /** Label */
+            label: string;
+            /** Method */
+            method: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** RemediationActionsResponse */
+        RemediationActionsResponse: {
+            /** Actions */
+            actions?: components["schemas"]["RemediationActionResponse"][];
+            /** Resource Id */
+            resource_id: string;
+            /** Resource Type */
+            resource_type: string;
+            /** Status */
+            status: string;
+        };
+        /** RiskFreeRatePointResponse */
+        RiskFreeRatePointResponse: {
+            /** Rate */
+            rate: string;
+            /**
+             * Trade Date
+             * Format: date
+             */
+            trade_date: string;
+        };
+        /** RocSeries */
+        RocSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "roc";
+            /**
+             * Period
+             * @default 10
+             */
+            period: number;
+        };
         /** RsiRule */
         "RsiRule-Input": {
             operator: components["schemas"]["ComparisonOperator"];
@@ -2521,10 +3950,23 @@ export interface components {
              */
             type: "rsi";
         };
+        /** RsiSeriesSpec */
+        RsiSeriesSpec: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "rsi";
+            /**
+             * Period
+             * @default 14
+             */
+            period: number;
+        };
         /** RuleSetDefinition */
         RuleSetDefinition: {
             /** Entry Rules */
-            entry_rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"])[];
+            entry_rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"] | components["schemas"]["IndicatorThresholdRule-Input"] | components["schemas"]["IndicatorTrendRule-Input"] | components["schemas"]["IndicatorLevelCrossRule-Input"] | components["schemas"]["IndicatorSeriesCrossRule-Input"] | components["schemas"]["IndicatorPersistenceRule-Input"])[];
             /** Name */
             name: string;
         };
@@ -2545,7 +3987,7 @@ export interface components {
             limit: number;
             /**
              * Next Cursor
-             * @description Opaque cursor for keyset pagination.
+             * @description Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.
              */
             next_cursor?: string | null;
             /**
@@ -2555,6 +3997,7 @@ export interface components {
             offset: number;
             /**
              * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
              * @default 0
              */
             total: number;
@@ -2614,9 +4057,7 @@ export interface components {
             started_at?: string | null;
             status: components["schemas"]["RunJobStatus"];
             /** Warnings */
-            warnings?: {
-                [key: string]: unknown;
-            }[];
+            warnings?: components["schemas"]["WarningResponse"][];
         };
         /** ScannerJobStatusResponse */
         ScannerJobStatusResponse: {
@@ -2627,6 +4068,10 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
             /**
              * Id
              * Format: uuid
@@ -2657,6 +4102,7 @@ export interface components {
             offset: number;
             /**
              * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
              * @default 0
              */
             total: number;
@@ -2665,8 +4111,13 @@ export interface components {
         ScannerRecommendationResponse: {
             /** Equity Curve */
             equity_curve?: components["schemas"]["EquityCurvePointResponse"][];
-            forecast: components["schemas"]["HistoricalAnalogForecastResponse"];
-            historical_performance: components["schemas"]["HistoricalPerformanceResponse"];
+            /**
+             * Equity Curve Points Omitted
+             * @default 0
+             */
+            equity_curve_points_omitted: number;
+            forecast?: components["schemas"]["HistoricalAnalogForecastResponse"] | null;
+            historical_performance?: components["schemas"]["HistoricalPerformanceResponse"] | null;
             /**
              * Id
              * Format: uuid
@@ -2674,7 +4125,7 @@ export interface components {
             id: string;
             /** Rank */
             rank: number;
-            ranking_breakdown: components["schemas"]["RankingBreakdownResponse"];
+            ranking_breakdown?: components["schemas"]["RankingBreakdownResponse"] | null;
             /** Request Snapshot */
             request_snapshot?: {
                 [key: string]: unknown;
@@ -2688,6 +4139,11 @@ export interface components {
             summary: components["schemas"]["BacktestSummaryResponse"];
             /** Symbol */
             symbol: string;
+            /**
+             * Trade Items Omitted
+             * @default 0
+             */
+            trade_items_omitted: number;
             /** Trades */
             trades?: components["schemas"]["TradeJsonResponse"][];
             /**
@@ -2696,15 +4152,23 @@ export interface components {
              */
             trades_truncated: boolean;
             /** Warnings */
-            warnings?: {
-                [key: string]: unknown;
-            }[];
+            warnings?: components["schemas"]["WarningResponse"][];
+        };
+        /** SmaSeries */
+        SmaSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "sma";
+            /** Period */
+            period: number;
         };
         /**
          * SpreadWidthConfig
          * @description Configuration for how wide a spread's wings are.
          */
-        SpreadWidthConfig: {
+        "SpreadWidthConfig-Input": {
             /** @default strike_steps */
             mode: components["schemas"]["SpreadWidthMode"];
             /**
@@ -2714,11 +4178,100 @@ export interface components {
             value: number | string;
         };
         /**
+         * SpreadWidthConfig
+         * @description Configuration for how wide a spread's wings are.
+         */
+        "SpreadWidthConfig-Output": {
+            /** @default strike_steps */
+            mode: components["schemas"]["SpreadWidthMode"];
+            /**
+             * Value
+             * @default 1
+             */
+            value: string;
+        };
+        /**
          * SpreadWidthMode
          * @description How to determine the width of a spread (distance between short and long strikes).
          * @enum {string}
          */
         SpreadWidthMode: "strike_steps" | "dollar_width" | "pct_width";
+        /** StepContractSelection */
+        StepContractSelection: {
+            /** Custom Legs */
+            custom_legs?: components["schemas"]["CustomLegDefinition"][] | null;
+            /**
+             * Dte Tolerance Days
+             * @default 5
+             */
+            dte_tolerance_days: number;
+            /** Max Holding Days */
+            max_holding_days: number;
+            strategy_overrides?: components["schemas"]["StrategyOverrides-Input"] | null;
+            strategy_type: components["schemas"]["StrategyType"];
+            /** Target Dte */
+            target_dte: number;
+        };
+        /** StepTriggerDefinition */
+        StepTriggerDefinition: {
+            /** Days After Prior Step */
+            days_after_prior_step?: number | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "date_offset" | "after_expiration" | "rule_match" | "event_and_rule";
+            /** Require Prior Step Status */
+            require_prior_step_status?: ("filled" | "expired" | "closed") | null;
+            /** Rules */
+            rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"] | components["schemas"]["IndicatorThresholdRule-Input"] | components["schemas"]["IndicatorTrendRule-Input"] | components["schemas"]["IndicatorLevelCrossRule-Input"] | components["schemas"]["IndicatorSeriesCrossRule-Input"] | components["schemas"]["IndicatorPersistenceRule-Input"])[];
+        };
+        /** StochasticDSeries */
+        StochasticDSeries: {
+            /**
+             * D Period
+             * @default 3
+             */
+            d_period: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "stochastic_d";
+            /**
+             * K Period
+             * @default 14
+             */
+            k_period: number;
+            /**
+             * Smooth K
+             * @default 3
+             */
+            smooth_k: number;
+        };
+        /** StochasticKSeries */
+        StochasticKSeries: {
+            /**
+             * D Period
+             * @default 3
+             */
+            d_period: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "stochastic_k";
+            /**
+             * K Period
+             * @default 14
+             */
+            k_period: number;
+            /**
+             * Smooth K
+             * @default 3
+             */
+            smooth_k: number;
+        };
         /** StrategyCatalogGroupResponse */
         StrategyCatalogGroupResponse: {
             /** Category */
@@ -2768,19 +4321,46 @@ export interface components {
          *     Named fields correspond to standard leg roles. Strategies ignore fields
          *     that don't apply to them (e.g., a long call ignores ``short_call_strike``).
          */
-        StrategyOverrides: {
-            /** @description Override the option type used by calendar_spread. Defaults to 'call'. */
-            calendar_contract_type?: "call" | "put" | null;
+        "StrategyOverrides-Input": {
+            /**
+             * Calendar Contract Type
+             * @description Override the option type used by calendar_spread. Defaults to 'call'.
+             */
+            calendar_contract_type?: ("call" | "put") | null;
             /** @description Override long call placement (for diagonals, PMCC) */
-            long_call_strike?: components["schemas"]["StrikeSelection"] | null;
+            long_call_strike?: components["schemas"]["StrikeSelection-Input"] | null;
             /** @description Override long put placement */
-            long_put_strike?: components["schemas"]["StrikeSelection"] | null;
+            long_put_strike?: components["schemas"]["StrikeSelection-Input"] | null;
             /** @description Override short call placement */
-            short_call_strike?: components["schemas"]["StrikeSelection"] | null;
+            short_call_strike?: components["schemas"]["StrikeSelection-Input"] | null;
             /** @description Override short put placement */
-            short_put_strike?: components["schemas"]["StrikeSelection"] | null;
+            short_put_strike?: components["schemas"]["StrikeSelection-Input"] | null;
             /** @description Override wing/spread width for strategies with protection legs */
-            spread_width?: components["schemas"]["SpreadWidthConfig"] | null;
+            spread_width?: components["schemas"]["SpreadWidthConfig-Input"] | null;
+        };
+        /**
+         * StrategyOverrides
+         * @description Optional overrides for how a strategy selects strikes and widths.
+         *
+         *     Named fields correspond to standard leg roles. Strategies ignore fields
+         *     that don't apply to them (e.g., a long call ignores ``short_call_strike``).
+         */
+        "StrategyOverrides-Output": {
+            /**
+             * Calendar Contract Type
+             * @description Override the option type used by calendar_spread. Defaults to 'call'.
+             */
+            calendar_contract_type?: ("call" | "put") | null;
+            /** @description Override long call placement (for diagonals, PMCC) */
+            long_call_strike?: components["schemas"]["StrikeSelection-Output"] | null;
+            /** @description Override long put placement */
+            long_put_strike?: components["schemas"]["StrikeSelection-Output"] | null;
+            /** @description Override short call placement */
+            short_call_strike?: components["schemas"]["StrikeSelection-Output"] | null;
+            /** @description Override short put placement */
+            short_put_strike?: components["schemas"]["StrikeSelection-Output"] | null;
+            /** @description Override wing/spread width for strategies with protection legs */
+            spread_width?: components["schemas"]["SpreadWidthConfig-Output"] | null;
         };
         /**
          * StrategyType
@@ -2791,14 +4371,27 @@ export interface components {
          * StrikeSelection
          * @description Configuration for where a strategy leg's strike is placed relative to the underlying.
          */
-        StrikeSelection: {
+        "StrikeSelection-Input": {
             /** @default nearest_otm */
             mode: components["schemas"]["StrikeSelectionMode"];
             /**
              * Value
-             * @description Interpretation depends on mode: pct_from_spot → percentage, atm_offset_steps → integer steps, delta_target → absolute delta (0-100).
+             * @description Interpretation depends on mode: pct_from_spot -> percentage, atm_offset_steps -> integer steps, delta_target -> absolute delta (0-100).
              */
             value?: number | string | null;
+        };
+        /**
+         * StrikeSelection
+         * @description Configuration for where a strategy leg's strike is placed relative to the underlying.
+         */
+        "StrikeSelection-Output": {
+            /** @default nearest_otm */
+            mode: components["schemas"]["StrikeSelectionMode"];
+            /**
+             * Value
+             * @description Interpretation depends on mode: pct_from_spot -> percentage, atm_offset_steps -> integer steps, delta_target -> absolute delta (0-100).
+             */
+            value?: string | null;
         };
         /**
          * StrikeSelectionMode
@@ -2858,7 +4451,10 @@ export interface components {
              * @default 50
              */
             limit: number;
-            /** Next Cursor */
+            /**
+             * Next Cursor
+             * @description Opaque cursor for keyset pagination. Pass this value as `cursor` on the next request to fetch the next page.
+             */
             next_cursor?: string | null;
             /**
              * Offset
@@ -2867,6 +4463,7 @@ export interface components {
             offset: number;
             /**
              * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
              * @default 0
              */
             total: number;
@@ -2918,9 +4515,7 @@ export interface components {
             /** Symbol */
             symbol: string;
             /** Warnings */
-            warnings?: {
-                [key: string]: unknown;
-            }[];
+            warnings?: components["schemas"]["WarningResponse"][];
         };
         /** SweepJobStatusResponse */
         SweepJobStatusResponse: {
@@ -2931,6 +4526,10 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
             /**
              * Id
              * Format: uuid
@@ -2961,6 +4560,7 @@ export interface components {
             offset: number;
             /**
              * Total
+             * @description Total number of matching records for the current filters before page slicing. This value does not shrink after applying a cursor.
              * @default 0
              */
             total: number;
@@ -3018,9 +4618,7 @@ export interface components {
              */
             trades_truncated: boolean;
             /** Warnings */
-            warnings?: {
-                [key: string]: unknown;
-            }[];
+            warnings?: components["schemas"]["WarningResponse"][];
             /** Width Mode */
             width_mode?: string | null;
             /** Width Value */
@@ -3028,7 +4626,7 @@ export interface components {
         };
         /**
          * TemplateConfig
-         * @description The reusable portion of a backtest configuration — everything except symbol and dates.
+         * @description The reusable portion of a backtest configuration - everything except symbol and dates.
          */
         "TemplateConfig-Input": {
             /** Account Size */
@@ -3043,19 +4641,20 @@ export interface components {
              */
             dte_tolerance_days: number;
             /** Entry Rules */
-            entry_rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"])[];
+            entry_rules?: (components["schemas"]["RsiRule-Input"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Input"] | components["schemas"]["IvRankRule-Input"] | components["schemas"]["IvPercentileRule-Input"] | components["schemas"]["VolumeSpikeRule-Input"] | components["schemas"]["SupportResistanceRule-Input"] | components["schemas"]["AvoidEarningsRule"] | components["schemas"]["IndicatorThresholdRule-Input"] | components["schemas"]["IndicatorTrendRule-Input"] | components["schemas"]["IndicatorLevelCrossRule-Input"] | components["schemas"]["IndicatorSeriesCrossRule-Input"] | components["schemas"]["IndicatorPersistenceRule-Input"])[];
             /** Max Holding Days */
             max_holding_days: number;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: number | string;
-            strategy_overrides?: components["schemas"]["StrategyOverrides"] | null;
+            /** @description Optional strategy-specific overrides such as put-calendar selection. */
+            strategy_overrides?: components["schemas"]["StrategyOverrides-Input"] | null;
             strategy_type: components["schemas"]["StrategyType"];
             /** Target Dte */
             target_dte: number;
         };
         /**
          * TemplateConfig
-         * @description The reusable portion of a backtest configuration — everything except symbol and dates.
+         * @description The reusable portion of a backtest configuration - everything except symbol and dates.
          */
         "TemplateConfig-Output": {
             /** Account Size */
@@ -3070,12 +4669,13 @@ export interface components {
              */
             dte_tolerance_days: number;
             /** Entry Rules */
-            entry_rules?: (components["schemas"]["RsiRule-Output"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Output"] | components["schemas"]["IvRankRule-Output"] | components["schemas"]["IvPercentileRule-Output"] | components["schemas"]["VolumeSpikeRule-Output"] | components["schemas"]["SupportResistanceRule-Output"] | components["schemas"]["AvoidEarningsRule"])[];
+            entry_rules?: (components["schemas"]["RsiRule-Output"] | components["schemas"]["MovingAverageCrossoverRule"] | components["schemas"]["MacdRule"] | components["schemas"]["BollingerBandsRule-Output"] | components["schemas"]["IvRankRule-Output"] | components["schemas"]["IvPercentileRule-Output"] | components["schemas"]["VolumeSpikeRule-Output"] | components["schemas"]["SupportResistanceRule-Output"] | components["schemas"]["AvoidEarningsRule"] | components["schemas"]["IndicatorThresholdRule-Output"] | components["schemas"]["IndicatorTrendRule-Output"] | components["schemas"]["IndicatorLevelCrossRule-Output"] | components["schemas"]["IndicatorSeriesCrossRule-Output"] | components["schemas"]["IndicatorPersistenceRule-Output"])[];
             /** Max Holding Days */
             max_holding_days: number;
             /** Risk Per Trade Pct */
             risk_per_trade_pct: string;
-            strategy_overrides?: components["schemas"]["StrategyOverrides"] | null;
+            /** @description Optional strategy-specific overrides such as put-calendar selection. */
+            strategy_overrides?: components["schemas"]["StrategyOverrides-Output"] | null;
             strategy_type: components["schemas"]["StrategyType"];
             /** Target Dte */
             target_dte: number;
@@ -3091,7 +4691,7 @@ export interface components {
         };
         /** TemplateResponse */
         TemplateResponse: {
-            config: components["schemas"]["TemplateConfig-Output"];
+            config_json: components["schemas"]["TemplateConfig-Output"];
             /**
              * Created At
              * Format: date-time
@@ -3226,6 +4826,19 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** VolumeRatioSeries */
+        VolumeRatioSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "volume_ratio";
+            /**
+             * Lookback Period
+             * @default 20
+             */
+            lookback_period: number;
+        };
         /** VolumeSpikeRule */
         "VolumeSpikeRule-Input": {
             /**
@@ -3266,6 +4879,17 @@ export interface components {
              */
             type: "volume_spike";
         };
+        /** WarningResponse */
+        WarningResponse: {
+            /** Code */
+            code: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Message */
+            message: string;
+            /** Severity */
+            severity?: string | null;
+        };
         /**
          * WebhookResponse
          * @description Typed response for the Stripe webhook endpoint.
@@ -3285,6 +4909,39 @@ export interface components {
             mode: components["schemas"]["SpreadWidthMode"];
             /** Value */
             value: number | string;
+        };
+        /** WilliamsRSeries */
+        WilliamsRSeries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            indicator: "williams_r";
+            /**
+             * Period
+             * @default 14
+             */
+            period: number;
+        };
+        /** WorkflowStepDefinition */
+        WorkflowStepDefinition: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "open_position" | "sell_premium" | "roll" | "close_position" | "hedge";
+            contract_selection: components["schemas"]["StepContractSelection"];
+            /**
+             * Failure Policy
+             * @default liquidate
+             * @constant
+             */
+            failure_policy: "liquidate";
+            /** Name */
+            name: string;
+            /** Step Number */
+            step_number: number;
+            trigger: components["schemas"]["StepTriggerDefinition"];
         };
         /** _GdprAnalysis */
         _GdprAnalysis: {
@@ -3412,6 +5069,8 @@ export interface components {
         };
         /** _GdprTotals */
         _GdprTotals: {
+            /** Audit Events */
+            audit_events: number;
             /** Backtests */
             backtests: number;
             /** Export Jobs */
@@ -3499,7 +5158,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3573,7 +5232,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3647,7 +5306,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3722,7 +5381,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3808,7 +5467,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3889,7 +5548,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3960,7 +5619,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4038,7 +5697,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4114,7 +5773,154 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_analysis_v1_analysis__analysis_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisSummaryResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_analysis_remediation_actions_v1_analysis__analysis_id__remediation_actions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemediationActionsResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4192,7 +5998,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4273,7 +6079,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4344,7 +6150,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4415,7 +6221,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4495,7 +6301,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4571,7 +6377,154 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_backtest_v1_backtests__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestRunStatusResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_backtest_remediation_actions_v1_backtests__run_id__remediation_actions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemediationActionsResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4649,7 +6602,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4720,7 +6673,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4791,7 +6744,81 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_pricing_contract_v1_billing_pricing_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PricingContractResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4862,7 +6889,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4942,7 +6969,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4975,7 +7002,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
-                /** @description created_at ISO cursor from previous page */
+                /** @description Opaque cursor from the previous page's `next_cursor` value. */
                 cursor?: string | null;
             };
             header?: {
@@ -5022,7 +7049,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5101,7 +7128,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5180,7 +7207,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5259,7 +7286,165 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    multi_step_backtest_events_v1_events_multi_step_backtests__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server-Sent Events stream. Events: status, timeout, error, done. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    multi_symbol_backtest_events_v1_events_multi_symbol_backtests__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server-Sent Events stream. Events: status, timeout, error, done. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5338,7 +7523,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5417,7 +7602,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5497,7 +7682,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5568,7 +7753,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5651,7 +7836,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5727,7 +7912,223 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_export_v1_exports__export_job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                export_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJobResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_export_remediation_actions_v1_exports__export_job_id__remediation_actions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                export_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemediationActionsResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    retry_failed_export_v1_exports__export_job_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                export_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJobResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5805,7 +8206,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5886,7 +8287,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5962,7 +8363,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6036,7 +8437,911 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_multi_step_backtests_v1_multi_step_backtests_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiStepRunListResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_multi_step_backtest_v1_multi_step_backtests_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMultiStepRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiStepRunDetailResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_multi_step_backtest_v1_multi_step_backtests__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiStepRunDetailResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_multi_step_backtest_v1_multi_step_backtests__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_multi_step_backtest_v1_multi_step_backtests__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiStepRunStatusResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_multi_step_backtest_status_v1_multi_step_backtests__run_id__status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiStepRunStatusResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_multi_symbol_backtests_v1_multi_symbol_backtests_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiSymbolRunListResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_multi_symbol_backtest_v1_multi_symbol_backtests_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMultiSymbolRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiSymbolRunDetailResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiSymbolRunDetailResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiSymbolRunStatusResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_multi_symbol_backtest_status_v1_multi_symbol_backtests__run_id__status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiSymbolRunStatusResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6117,7 +9422,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6188,7 +9493,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6266,7 +9571,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6342,7 +9647,76 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_scan_v1_scans__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScannerJobStatusResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6423,7 +9797,85 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_scan_remediation_actions_v1_scans__job_id__remediation_actions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemediationActionsResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6501,7 +9953,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6577,7 +10029,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6658,7 +10110,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6729,7 +10181,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6807,7 +10259,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6883,7 +10335,154 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_sweep_v1_sweeps__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweepJobStatusResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limit exceeded. See Retry-After header. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_sweep_remediation_actions_v1_sweeps__job_id__remediation_actions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemediationActionsResponse"];
+                };
+            };
+            /** @description Authentication required or session expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Insufficient permissions or feature locked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -6964,7 +10563,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7042,7 +10641,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7121,7 +10720,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7192,7 +10791,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7270,7 +10869,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7346,7 +10945,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7419,7 +11018,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Validation error — request payload did not match the expected schema. */
+            /** @description Validation error - request payload did not match the expected schema. */
             422: {
                 headers: {
                     [name: string]: unknown;

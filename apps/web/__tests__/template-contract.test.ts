@@ -7,7 +7,7 @@ const TEMPLATE: TemplateResponse = {
   name: "Conservative CSP",
   description: null,
   strategy_type: "cash_secured_put",
-  config: {
+  config_json: {
     strategy_type: "cash_secured_put",
     target_dte: 45,
     dte_tolerance_days: 10,
@@ -30,9 +30,9 @@ describe("template response contract", () => {
     expect(() =>
       validateTemplateResponse({
         ...TEMPLATE,
-        config: { strategy_type: "cash_secured_put" },
+        config_json: { strategy_type: "cash_secured_put" },
       }),
-    ).toThrow(/template\.config/i);
+    ).toThrow(/template\.config_json/i);
   });
 
   it("accepts a valid template list response", () => {
@@ -53,20 +53,21 @@ describe("template response contract", () => {
     ).toThrow(/items\[0\]/i);
   });
 
-  it("uses the typed config field and rejects legacy-only payloads", () => {
+  it("uses the typed config_json field and rejects legacy-only payloads", () => {
+    expect(validateTemplateResponse(TEMPLATE)).toEqual(TEMPLATE);
     expect(() =>
       validateTemplateResponse({
         ...TEMPLATE,
-        config: undefined,
-        config_json: TEMPLATE.config,
+        config_json: undefined,
+        config: TEMPLATE.config_json,
       }),
-    ).toThrow(/template\.config/i);
+    ).toThrow(/template\.config_json/i);
   });
 
   it("matches the expected template contract snapshot", () => {
     expect({
       templateKeys: Object.keys(TEMPLATE).sort(),
-      configKeys: Object.keys(TEMPLATE.config).sort(),
+      configKeys: Object.keys(TEMPLATE.config_json).sort(),
     }).toMatchInlineSnapshot(`
       {
         "configKeys": [
@@ -80,7 +81,7 @@ describe("template response contract", () => {
           "target_dte",
         ],
         "templateKeys": [
-          "config",
+          "config_json",
           "created_at",
           "description",
           "id",

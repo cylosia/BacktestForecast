@@ -1,4 +1,5 @@
 import type { TemplateConfig, TemplateResponse } from "@backtestforecast/api-client";
+import { draftFromEntryRule, isGenericEntryRuleType } from "@/lib/backtests/advanced-rules";
 import type { BacktestFormValues } from "@/lib/backtests/validation";
 
 const KNOWN_STRATEGY_TYPES = new Set([
@@ -20,6 +21,8 @@ const KNOWN_RULE_TYPES = new Set([
   "rsi", "sma_crossover", "ema_crossover", "macd",
   "bollinger_bands", "iv_rank", "iv_percentile",
   "volume_spike", "support_resistance", "avoid_earnings",
+  "indicator_threshold", "indicator_trend", "indicator_level_cross",
+  "indicator_series_cross", "indicator_persistence",
 ]);
 
 export function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
@@ -38,7 +41,7 @@ export function isValidTemplateConfig(obj: unknown): obj is TemplateConfig {
 }
 
 export function templateToFormValues(template: TemplateResponse): Partial<BacktestFormValues> | null {
-  const config = template.config;
+  const config = template.config_json;
   if (!isValidTemplateConfig(config)) return null;
   const typed = config;
 
@@ -64,6 +67,7 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
     supportResistanceEnabled: false,
     avoidEarningsEnabled: false,
     calendarContractType: typed.strategy_overrides?.calendar_contract_type === "put" ? "put" : "call",
+    advancedRules: [],
   };
 
   if (typed.default_symbol) {
@@ -76,6 +80,13 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
   for (const rule of allRules) {
     if (!KNOWN_RULE_TYPES.has(rule.type)) {
       skippedRuleCount++;
+      continue;
+    }
+    if (isGenericEntryRuleType(rule.type)) {
+      const advancedRule = draftFromEntryRule(rule);
+      if (advancedRule) {
+        patch.advancedRules!.push(advancedRule);
+      }
       continue;
     }
     if (rule.type === "rsi") {

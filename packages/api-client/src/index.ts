@@ -18,23 +18,121 @@ export type StrikeSelectionMode = components["schemas"]["StrikeSelectionMode"];
 export type SpreadWidthMode = components["schemas"]["SpreadWidthMode"];
 export type SupportResistanceMode = components["schemas"]["SupportResistanceMode"];
 export type BollingerBand = components["schemas"]["BollingerBand"];
+export type IndicatorCrossDirection = components["schemas"]["IndicatorCrossDirection"];
+export type IndicatorTrendDirection = components["schemas"]["IndicatorTrendDirection"];
 
 export type MovingAverageRuleType = "sma_crossover" | "ema_crossover";
 export type PlanTier = components["schemas"]["PlanTier"];
 
 // ---------------------------------------------------------------------------
+// Indicator series types
+// ---------------------------------------------------------------------------
+
+export type CloseSeries = components["schemas"]["CloseSeries"];
+export type RsiSeriesSpec = components["schemas"]["RsiSeriesSpec"];
+export type SmaSeries = components["schemas"]["SmaSeries"];
+export type EmaSeries = components["schemas"]["EmaSeries"];
+export type MacdLineSeries = components["schemas"]["MacdLineSeries"];
+export type MacdSignalSeries = components["schemas"]["MacdSignalSeries"];
+export type MacdHistogramSeries = components["schemas"]["MacdHistogramSeries"];
+export type BollingerBandSeriesInput = components["schemas"]["BollingerBandSeries-Input"];
+export type BollingerBandSeries = components["schemas"]["BollingerBandSeries-Output"];
+export type IvRankSeries = components["schemas"]["IvRankSeries"];
+export type IvPercentileSeries = components["schemas"]["IvPercentileSeries"];
+export type VolumeRatioSeries = components["schemas"]["VolumeRatioSeries"];
+export type CciSeries = components["schemas"]["CciSeries"];
+export type RocSeries = components["schemas"]["RocSeries"];
+export type MfiSeries = components["schemas"]["MfiSeries"];
+export type StochasticKSeries = components["schemas"]["StochasticKSeries"];
+export type StochasticDSeries = components["schemas"]["StochasticDSeries"];
+export type AdxSeries = components["schemas"]["AdxSeries"];
+export type WilliamsRSeries = components["schemas"]["WilliamsRSeries"];
+
+export type IndicatorSeriesInput =
+  | CloseSeries
+  | RsiSeriesSpec
+  | SmaSeries
+  | EmaSeries
+  | MacdLineSeries
+  | MacdSignalSeries
+  | MacdHistogramSeries
+  | BollingerBandSeriesInput
+  | IvRankSeries
+  | IvPercentileSeries
+  | VolumeRatioSeries
+  | CciSeries
+  | RocSeries
+  | MfiSeries
+  | StochasticKSeries
+  | StochasticDSeries
+  | AdxSeries
+  | WilliamsRSeries;
+
+export type IndicatorSeries =
+  | CloseSeries
+  | RsiSeriesSpec
+  | SmaSeries
+  | EmaSeries
+  | MacdLineSeries
+  | MacdSignalSeries
+  | MacdHistogramSeries
+  | BollingerBandSeries
+  | IvRankSeries
+  | IvPercentileSeries
+  | VolumeRatioSeries
+  | CciSeries
+  | RocSeries
+  | MfiSeries
+  | StochasticKSeries
+  | StochasticDSeries
+  | AdxSeries
+  | WilliamsRSeries;
+
+// ---------------------------------------------------------------------------
 // Entry rule types
 // ---------------------------------------------------------------------------
 
+export type RsiRuleInput = components["schemas"]["RsiRule-Input"];
 export type RsiRule = components["schemas"]["RsiRule-Output"];
 export type MovingAverageCrossoverRule = components["schemas"]["MovingAverageCrossoverRule"];
 export type MacdRule = components["schemas"]["MacdRule"];
+export type BollingerBandsRuleInput = components["schemas"]["BollingerBandsRule-Input"];
 export type BollingerBandsRule = components["schemas"]["BollingerBandsRule-Output"];
+export type IvRankRuleInput = components["schemas"]["IvRankRule-Input"];
 export type IvRankRule = components["schemas"]["IvRankRule-Output"];
+export type IvPercentileRuleInput = components["schemas"]["IvPercentileRule-Input"];
 export type IvPercentileRule = components["schemas"]["IvPercentileRule-Output"];
+export type VolumeSpikeRuleInput = components["schemas"]["VolumeSpikeRule-Input"];
 export type VolumeSpikeRule = components["schemas"]["VolumeSpikeRule-Output"];
+export type SupportResistanceRuleInput = components["schemas"]["SupportResistanceRule-Input"];
 export type SupportResistanceRule = components["schemas"]["SupportResistanceRule-Output"];
 export type AvoidEarningsRule = components["schemas"]["AvoidEarningsRule"];
+export type IndicatorThresholdRuleInput = components["schemas"]["IndicatorThresholdRule-Input"];
+export type IndicatorThresholdRule = components["schemas"]["IndicatorThresholdRule-Output"];
+export type IndicatorTrendRuleInput = components["schemas"]["IndicatorTrendRule-Input"];
+export type IndicatorTrendRule = components["schemas"]["IndicatorTrendRule-Output"];
+export type IndicatorLevelCrossRuleInput = components["schemas"]["IndicatorLevelCrossRule-Input"];
+export type IndicatorLevelCrossRule = components["schemas"]["IndicatorLevelCrossRule-Output"];
+export type IndicatorSeriesCrossRuleInput = components["schemas"]["IndicatorSeriesCrossRule-Input"];
+export type IndicatorSeriesCrossRule = components["schemas"]["IndicatorSeriesCrossRule-Output"];
+export type IndicatorPersistenceRuleInput = components["schemas"]["IndicatorPersistenceRule-Input"];
+export type IndicatorPersistenceRule = components["schemas"]["IndicatorPersistenceRule-Output"];
+
+export type EntryRuleInput =
+  | RsiRuleInput
+  | MovingAverageCrossoverRule
+  | MacdRule
+  | BollingerBandsRuleInput
+  | IvRankRuleInput
+  | IvPercentileRuleInput
+  | VolumeSpikeRuleInput
+  | SupportResistanceRuleInput
+  | AvoidEarningsRule
+  | IndicatorThresholdRuleInput
+  | IndicatorTrendRuleInput
+  | IndicatorLevelCrossRuleInput
+  | IndicatorSeriesCrossRuleInput
+  | IndicatorPersistenceRuleInput;
 
 export type EntryRule =
   | RsiRule
@@ -45,16 +143,24 @@ export type EntryRule =
   | IvPercentileRule
   | VolumeSpikeRule
   | SupportResistanceRule
-  | AvoidEarningsRule;
+  | AvoidEarningsRule
+  | IndicatorThresholdRule
+  | IndicatorTrendRule
+  | IndicatorLevelCrossRule
+  | IndicatorSeriesCrossRule
+  | IndicatorPersistenceRule;
 
 // ---------------------------------------------------------------------------
 // Strategy configuration types
 // ---------------------------------------------------------------------------
 
 export type CustomLegDefinition = components["schemas"]["CustomLegDefinition"];
-export type StrikeSelection = components["schemas"]["StrikeSelection"];
-export type SpreadWidthConfig = components["schemas"]["SpreadWidthConfig"];
-export type StrategyOverrides = components["schemas"]["StrategyOverrides"];
+export type StrikeSelectionInput = components["schemas"]["StrikeSelection-Input"];
+export type StrikeSelection = components["schemas"]["StrikeSelection-Output"];
+export type SpreadWidthConfigInput = components["schemas"]["SpreadWidthConfig-Input"];
+export type SpreadWidthConfig = components["schemas"]["SpreadWidthConfig-Output"];
+export type StrategyOverridesInput = components["schemas"]["StrategyOverrides-Input"];
+export type StrategyOverrides = components["schemas"]["StrategyOverrides-Output"];
 
 // ---------------------------------------------------------------------------
 // User / billing

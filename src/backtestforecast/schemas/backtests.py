@@ -102,6 +102,16 @@ class SupportResistanceMode(StrEnum):
     BREAKDOWN_BELOW_SUPPORT = "breakdown_below_support"
 
 
+class IndicatorTrendDirection(StrEnum):
+    RISING = "rising"
+    FALLING = "falling"
+
+
+class IndicatorCrossDirection(StrEnum):
+    CROSSES_ABOVE = "crosses_above"
+    CROSSES_BELOW = "crosses_below"
+
+
 RunStatus = RunJobStatus
 
 
@@ -196,6 +206,213 @@ class AvoidEarningsRule(BaseModel):
         return self
 
 
+class CloseSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["close"]
+
+
+class RsiSeriesSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["rsi"]
+    period: int = Field(default=14, ge=2, le=100)
+
+
+class SmaSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["sma"]
+    period: int = Field(ge=2, le=400)
+
+
+class EmaSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["ema"]
+    period: int = Field(ge=2, le=400)
+
+
+class MacdLineSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["macd_line"]
+    fast_period: int = Field(default=12, ge=2, le=100)
+    slow_period: int = Field(default=26, ge=3, le=200)
+    signal_period: int = Field(default=9, ge=2, le=100)
+
+    @model_validator(mode="after")
+    def validate_period_order(self) -> MacdLineSeries:
+        if self.fast_period >= self.slow_period:
+            raise ValueError("fast_period must be less than slow_period")
+        return self
+
+
+class MacdSignalSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["macd_signal"]
+    fast_period: int = Field(default=12, ge=2, le=100)
+    slow_period: int = Field(default=26, ge=3, le=200)
+    signal_period: int = Field(default=9, ge=2, le=100)
+
+    @model_validator(mode="after")
+    def validate_period_order(self) -> MacdSignalSeries:
+        if self.fast_period >= self.slow_period:
+            raise ValueError("fast_period must be less than slow_period")
+        return self
+
+
+class MacdHistogramSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["macd_histogram"]
+    fast_period: int = Field(default=12, ge=2, le=100)
+    slow_period: int = Field(default=26, ge=3, le=200)
+    signal_period: int = Field(default=9, ge=2, le=100)
+
+    @model_validator(mode="after")
+    def validate_period_order(self) -> MacdHistogramSeries:
+        if self.fast_period >= self.slow_period:
+            raise ValueError("fast_period must be less than slow_period")
+        return self
+
+
+class BollingerBandSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["bollinger_band"]
+    band: BollingerBand
+    period: int = Field(default=20, ge=5, le=200)
+    standard_deviations: Decimal = Field(default=Decimal("2"), gt=0, le=Decimal("5"))
+
+
+class IvRankSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["iv_rank"]
+    lookback_days: int = Field(default=252, ge=20, le=756)
+
+
+class IvPercentileSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["iv_percentile"]
+    lookback_days: int = Field(default=252, ge=20, le=756)
+
+
+class VolumeRatioSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["volume_ratio"]
+    lookback_period: int = Field(default=20, ge=2, le=252)
+
+
+class CciSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["cci"]
+    period: int = Field(default=20, ge=2, le=252)
+
+
+class RocSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["roc"]
+    period: int = Field(default=10, ge=1, le=252)
+
+
+class MfiSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["mfi"]
+    period: int = Field(default=14, ge=2, le=252)
+
+
+class StochasticKSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["stochastic_k"]
+    k_period: int = Field(default=14, ge=2, le=252)
+    d_period: int = Field(default=3, ge=1, le=100)
+    smooth_k: int = Field(default=3, ge=1, le=100)
+
+
+class StochasticDSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["stochastic_d"]
+    k_period: int = Field(default=14, ge=2, le=252)
+    d_period: int = Field(default=3, ge=1, le=100)
+    smooth_k: int = Field(default=3, ge=1, le=100)
+
+
+class AdxSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["adx"]
+    period: int = Field(default=14, ge=2, le=252)
+
+
+class WilliamsRSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    indicator: Literal["williams_r"]
+    period: int = Field(default=14, ge=2, le=252)
+
+
+IndicatorSeries = Annotated[
+    CloseSeries
+    | RsiSeriesSpec
+    | SmaSeries
+    | EmaSeries
+    | MacdLineSeries
+    | MacdSignalSeries
+    | MacdHistogramSeries
+    | BollingerBandSeries
+    | IvRankSeries
+    | IvPercentileSeries
+    | VolumeRatioSeries
+    | CciSeries
+    | RocSeries
+    | MfiSeries
+    | StochasticKSeries
+    | StochasticDSeries
+    | AdxSeries
+    | WilliamsRSeries,
+    Field(discriminator="indicator"),
+]
+
+
+class IndicatorThresholdRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["indicator_threshold"]
+    series: IndicatorSeries
+    operator: ComparisonOperator
+    level: Decimal
+
+
+class IndicatorTrendRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["indicator_trend"]
+    series: IndicatorSeries
+    direction: IndicatorTrendDirection
+    bars: int = Field(default=3, ge=2, le=50)
+
+
+class IndicatorLevelCrossRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["indicator_level_cross"]
+    series: IndicatorSeries
+    direction: IndicatorCrossDirection
+    level: Decimal
+
+
+class IndicatorSeriesCrossRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["indicator_series_cross"]
+    left_series: IndicatorSeries
+    right_series: IndicatorSeries
+    direction: IndicatorCrossDirection
+
+    @model_validator(mode="after")
+    def validate_distinct_series(self) -> IndicatorSeriesCrossRule:
+        if self.left_series.model_dump(mode="json") == self.right_series.model_dump(mode="json"):
+            raise ValueError("left_series and right_series must be different")
+        return self
+
+
+class IndicatorPersistenceRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["indicator_persistence"]
+    series: IndicatorSeries
+    operator: ComparisonOperator
+    level: Decimal
+    bars: int = Field(default=3, ge=2, le=50)
+
+
 EntryRule = Annotated[
     RsiRule
     | MovingAverageCrossoverRule
@@ -205,7 +422,12 @@ EntryRule = Annotated[
     | IvPercentileRule
     | VolumeSpikeRule
     | SupportResistanceRule
-    | AvoidEarningsRule,
+    | AvoidEarningsRule
+    | IndicatorThresholdRule
+    | IndicatorTrendRule
+    | IndicatorLevelCrossRule
+    | IndicatorSeriesCrossRule
+    | IndicatorPersistenceRule,
     Field(discriminator="type"),
 ]
 

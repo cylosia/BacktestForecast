@@ -24,16 +24,40 @@ from backtestforecast.market_data.types import DailyBar, OptionContractRecord, O
 from backtestforecast.models import HistoricalEarningsEvent, HistoricalExDividendDate, HistoricalOptionContractCatalogSnapshot
 from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
 from backtestforecast.schemas.backtests import (
+    AdxSeries,
     AvoidEarningsRule,
+    BollingerBandSeries,
     BollingerBandsRule,
+    CciSeries,
+    CloseSeries,
     CreateBacktestRunRequest,
+    EmaSeries,
+    IndicatorLevelCrossRule,
+    IndicatorPersistenceRule,
+    IndicatorSeries,
+    IndicatorSeriesCrossRule,
+    IndicatorThresholdRule,
+    IndicatorTrendRule,
     IvPercentileRule,
+    IvPercentileSeries,
     IvRankRule,
+    IvRankSeries,
+    MacdHistogramSeries,
+    MacdLineSeries,
     MacdRule,
+    MacdSignalSeries,
+    MfiSeries,
     MovingAverageCrossoverRule,
+    RocSeries,
     RsiRule,
+    RsiSeriesSpec,
+    SmaSeries,
+    StochasticDSeries,
+    StochasticKSeries,
     SupportResistanceRule,
+    VolumeRatioSeries,
     VolumeSpikeRule,
+    WilliamsRSeries,
 )
 from backtestforecast.utils.dates import is_trading_day, market_date_today
 
@@ -1132,4 +1156,46 @@ class MarketDataService:
                 warmup = max(warmup, rule.lookback_days + 5)
             elif isinstance(rule, (VolumeSpikeRule, SupportResistanceRule)):
                 warmup = max(warmup, rule.lookback_period + 2)
+            elif isinstance(rule, IndicatorThresholdRule):
+                warmup = max(warmup, MarketDataService._indicator_series_warmup(rule.series))
+            elif isinstance(rule, IndicatorTrendRule):
+                warmup = max(warmup, MarketDataService._indicator_series_warmup(rule.series) + rule.bars - 1)
+            elif isinstance(rule, IndicatorLevelCrossRule):
+                warmup = max(warmup, MarketDataService._indicator_series_warmup(rule.series) + 1)
+            elif isinstance(rule, IndicatorSeriesCrossRule):
+                warmup = max(
+                    warmup,
+                    max(
+                        MarketDataService._indicator_series_warmup(rule.left_series),
+                        MarketDataService._indicator_series_warmup(rule.right_series),
+                    ) + 1,
+                )
+            elif isinstance(rule, IndicatorPersistenceRule):
+                warmup = max(warmup, MarketDataService._indicator_series_warmup(rule.series) + rule.bars - 1)
         return max(warmup, 2)
+
+    @staticmethod
+    def _indicator_series_warmup(series: IndicatorSeries) -> int:
+        if isinstance(series, CloseSeries):
+            return 2
+        if isinstance(series, RsiSeriesSpec):
+            return series.period + 1
+        if isinstance(series, (SmaSeries, EmaSeries)):
+            return series.period + 1
+        if isinstance(series, (MacdLineSeries, MacdSignalSeries, MacdHistogramSeries)):
+            return series.slow_period + series.signal_period + 2
+        if isinstance(series, BollingerBandSeries):
+            return series.period + 2
+        if isinstance(series, (IvRankSeries, IvPercentileSeries)):
+            return series.lookback_days + 5
+        if isinstance(series, VolumeRatioSeries):
+            return series.lookback_period + 1
+        if isinstance(series, (CciSeries, MfiSeries, WilliamsRSeries, AdxSeries)):
+            if isinstance(series, AdxSeries):
+                return (series.period * 2) + 1
+            return series.period + 1
+        if isinstance(series, RocSeries):
+            return series.period + 1
+        if isinstance(series, (StochasticKSeries, StochasticDSeries)):
+            return series.k_period + series.smooth_k + series.d_period
+        return 2

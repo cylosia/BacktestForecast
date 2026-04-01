@@ -4,6 +4,8 @@ import type {
   MovingAverageRuleType,
   BollingerBand,
 } from "@backtestforecast/api-client";
+import type { EditableAdvancedRule } from "@/lib/backtests/advanced-rules";
+import { AdvancedRuleBuilder } from "@/components/backtests/advanced-rule-builder";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -43,6 +45,7 @@ interface TaRuleValues {
   avoidEarningsEnabled: boolean;
   avoidEarningsDaysBefore: string;
   avoidEarningsDaysAfter: string;
+  advancedRules: EditableAdvancedRule[];
 }
 
 interface TaRuleErrors {
@@ -62,6 +65,7 @@ interface TaRuleErrors {
   supportResistancePeriod?: string;
   avoidEarningsDaysBefore?: string;
   avoidEarningsDaysAfter?: string;
+  advancedRules?: string;
 }
 
 export function TaRuleControls({
@@ -607,6 +611,12 @@ export function TaRuleControls({
           </div>
         ) : null}
       </div>
+
+      <AdvancedRuleBuilder
+        value={values.advancedRules}
+        error={errors.advancedRules}
+        onChange={(advancedRules) => onChange({ advancedRules })}
+      />
     </div>
   );
 }

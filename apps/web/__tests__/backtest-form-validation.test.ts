@@ -140,6 +140,76 @@ describe("backtest form submission edge cases", () => {
     expect(payload?.strategy_overrides).toEqual({ calendar_contract_type: "put" });
   });
 
+  it("serializes advanced generic indicator rules into the payload", () => {
+    const values = {
+      ...getDefaultBacktestFormValues(),
+      rsiEnabled: false,
+      advancedRules: [
+        {
+          id: "rule_1",
+          type: "indicator_trend" as const,
+          series: {
+            indicator: "rsi" as const,
+            period: "14",
+            fastPeriod: "12",
+            slowPeriod: "26",
+            signalPeriod: "9",
+            standardDeviations: "2",
+            band: "lower" as const,
+            lookbackDays: "252",
+            lookbackPeriod: "20",
+            kPeriod: "14",
+            dPeriod: "3",
+            smoothK: "3",
+          },
+          leftSeries: {
+            indicator: "close" as const,
+            period: "14",
+            fastPeriod: "12",
+            slowPeriod: "26",
+            signalPeriod: "9",
+            standardDeviations: "2",
+            band: "lower" as const,
+            lookbackDays: "252",
+            lookbackPeriod: "20",
+            kPeriod: "14",
+            dPeriod: "3",
+            smoothK: "3",
+          },
+          rightSeries: {
+            indicator: "ema" as const,
+            period: "21",
+            fastPeriod: "12",
+            slowPeriod: "26",
+            signalPeriod: "9",
+            standardDeviations: "2",
+            band: "lower" as const,
+            lookbackDays: "252",
+            lookbackPeriod: "20",
+            kPeriod: "14",
+            dPeriod: "3",
+            smoothK: "3",
+          },
+          operator: "gte" as const,
+          direction: "rising" as const,
+          level: "50",
+          bars: "4",
+        },
+      ],
+    };
+    const { errors, payload } = validateBacktestForm(values);
+    expect(errors.advancedRules).toBeUndefined();
+    expect(payload?.entry_rules).toContainEqual({
+      type: "indicator_trend",
+      series: {
+        indicator: "rsi",
+        period: 14,
+      },
+      direction: "rising",
+      bars: 4,
+    });
+  });
+
 
   it("uses backend-compatible bollinger field names", () => {
     const values = {

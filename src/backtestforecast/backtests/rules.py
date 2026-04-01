@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import bisect
+import json
 import math
 from collections import defaultdict
 from collections.abc import Callable, Sequence
@@ -12,28 +13,59 @@ import structlog
 from backtestforecast.backtests.strategies.common import select_preferred_common_expiration_contracts
 from backtestforecast.backtests.types import BacktestConfig, OptionDataGateway
 from backtestforecast.indicators.calculations import (
+    adx,
     bollinger_bands,
+    cci,
     ema,
     macd,
+    mfi,
+    roc,
     rolling_max,
     rolling_min,
     rsi,
     sma,
+    stochastic_oscillator,
+    williams_r,
 )
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord
 from backtestforecast.schemas.backtests import (
+    AdxSeries,
     AvoidEarningsRule,
     BollingerBand,
+    BollingerBandSeries,
     BollingerBandsRule,
+    CciSeries,
+    CloseSeries,
     ComparisonOperator,
+    EmaSeries,
+    IndicatorLevelCrossRule,
+    IndicatorPersistenceRule,
+    IndicatorSeries,
+    IndicatorSeriesCrossRule,
+    IndicatorThresholdRule,
+    IndicatorTrendDirection,
+    IndicatorTrendRule,
     IvPercentileRule,
+    IvPercentileSeries,
     IvRankRule,
+    IvRankSeries,
+    MacdHistogramSeries,
+    MacdLineSeries,
     MacdRule,
+    MacdSignalSeries,
+    MfiSeries,
     MovingAverageCrossoverRule,
+    RocSeries,
     RsiRule,
+    RsiSeriesSpec,
+    SmaSeries,
+    StochasticDSeries,
+    StochasticKSeries,
     SupportResistanceMode,
     SupportResistanceRule,
+    VolumeRatioSeries,
     VolumeSpikeRule,
+    WilliamsRSeries,
 )
 
 logger = structlog.get_logger(__name__)
@@ -50,6 +82,8 @@ class EntryRuleEvaluator:
     earnings_dates: set[date]
     option_gateway: OptionDataGateway
     closes: list[float] = field(init=False)
+    highs: list[float] = field(init=False)
+    lows: list[float] = field(init=False)
     volumes: list[float] = field(init=False)
     rsi_cache: dict[int, list[float | None]] = field(default_factory=dict)
     sma_cache: dict[int, list[float | None]] = field(default_factory=dict)
@@ -63,10 +97,23 @@ class EntryRuleEvaluator:
     rolling_support_cache: dict[int, list[float | None]] = field(default_factory=dict)
     rolling_resistance_cache: dict[int, list[float | None]] = field(default_factory=dict)
     iv_series_cache: list[float | None] | None = None
+    iv_rank_series_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    iv_percentile_series_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    volume_ratio_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    cci_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    roc_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    mfi_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    stochastic_k_cache: dict[tuple[int, int, int], list[float | None]] = field(default_factory=dict)
+    stochastic_d_cache: dict[tuple[int, int, int], list[float | None]] = field(default_factory=dict)
+    adx_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    williams_r_cache: dict[int, list[float | None]] = field(default_factory=dict)
+    generic_series_cache: dict[str, list[float | None]] = field(default_factory=dict)
     _sorted_earnings: list[date] = field(init=False)
 
     def __post_init__(self) -> None:
         self.closes = [bar.close_price for bar in self.bars]
+        self.highs = [bar.high_price for bar in self.bars]
+        self.lows = [bar.low_price for bar in self.bars]
         self.volumes = [bar.volume for bar in self.bars]
         self._sorted_earnings = sorted(self.earnings_dates)
 
@@ -101,6 +148,21 @@ class EntryRuleEvaluator:
                     return False
             elif isinstance(rule, AvoidEarningsRule):
                 if not self._evaluate_avoid_earnings_rule(rule, index):
+                    return False
+            elif isinstance(rule, IndicatorThresholdRule):
+                if not self._evaluate_indicator_threshold_rule(rule, index):
+                    return False
+            elif isinstance(rule, IndicatorTrendRule):
+                if not self._evaluate_indicator_trend_rule(rule, index):
+                    return False
+            elif isinstance(rule, IndicatorLevelCrossRule):
+                if not self._evaluate_indicator_level_cross_rule(rule, index):
+                    return False
+            elif isinstance(rule, IndicatorSeriesCrossRule):
+                if not self._evaluate_indicator_series_cross_rule(rule, index):
+                    return False
+            elif isinstance(rule, IndicatorPersistenceRule):
+                if not self._evaluate_indicator_persistence_rule(rule, index):
                     return False
             else:
                 logger.warning(
@@ -171,29 +233,20 @@ class EntryRuleEvaluator:
         return compare(self.closes[index], target_value, rule.operator)
 
     def _evaluate_iv_rule(self, rule: IvRankRule | IvPercentileRule, index: int) -> bool:
-        iv_series = self._get_iv_series()
-        current_value = iv_series[index]
+        if isinstance(rule, IvRankRule):
+            metric_series = self.iv_rank_series_cache.setdefault(
+                rule.lookback_days,
+                self._build_iv_metric_series(rule.lookback_days, percentile=False),
+            )
+        else:
+            metric_series = self.iv_percentile_series_cache.setdefault(
+                rule.lookback_days,
+                self._build_iv_metric_series(rule.lookback_days, percentile=True),
+            )
+        current_value = metric_series[index]
         if current_value is None:
             return False
-
-        lookback_values = [
-            value for value in iv_series[max(0, index - rule.lookback_days + 1) : index + 1] if value is not None
-        ]
-        if len(lookback_values) < min(20, rule.lookback_days):
-            return False
-
-        if isinstance(rule, IvRankRule):
-            window_min = min(lookback_values)
-            window_max = max(lookback_values)
-            if math.isclose(window_min, window_max):
-                return False
-            else:
-                metric = ((current_value - window_min) / (window_max - window_min)) * 100.0
-        else:
-            below_count = sum(1 for value in lookback_values if value < current_value)
-            metric = (below_count / len(lookback_values)) * 100.0
-
-        return compare(metric, float(rule.threshold), rule.operator)
+        return compare(current_value, float(rule.threshold), rule.operator)
 
     def _evaluate_volume_rule(self, rule: VolumeSpikeRule, index: int) -> bool:
         if rule.lookback_period < 1 or index < rule.lookback_period:
@@ -246,10 +299,196 @@ class EntryRuleEvaluator:
         lo = bisect.bisect_left(self._sorted_earnings, blackout_start)
         return lo >= len(self._sorted_earnings) or self._sorted_earnings[lo] > blackout_end
 
+    def _evaluate_indicator_threshold_rule(self, rule: IndicatorThresholdRule, index: int) -> bool:
+        series = self._get_indicator_series(rule.series)
+        current_value = series[index]
+        if current_value is None:
+            return False
+        return compare(current_value, float(rule.level), rule.operator)
+
+    def _evaluate_indicator_trend_rule(self, rule: IndicatorTrendRule, index: int) -> bool:
+        if index < rule.bars - 1:
+            return False
+        series = self._get_indicator_series(rule.series)
+        window = series[index - rule.bars + 1 : index + 1]
+        if any(value is None for value in window):
+            return False
+        values = [float(value) for value in window if value is not None]
+        if rule.direction == IndicatorTrendDirection.RISING:
+            return all(left < right for left, right in zip(values, values[1:], strict=False))
+        return all(left > right for left, right in zip(values, values[1:], strict=False))
+
+    def _evaluate_indicator_level_cross_rule(self, rule: IndicatorLevelCrossRule, index: int) -> bool:
+        if index <= 0:
+            return False
+        series = self._get_indicator_series(rule.series)
+        previous = series[index - 1]
+        current = series[index]
+        if previous is None or current is None:
+            return False
+        level = float(rule.level)
+        if rule.direction == "crosses_above":
+            return previous <= level and current > level
+        return previous >= level and current < level
+
+    def _evaluate_indicator_series_cross_rule(self, rule: IndicatorSeriesCrossRule, index: int) -> bool:
+        if index <= 0:
+            return False
+        left_series = self._get_indicator_series(rule.left_series)
+        right_series = self._get_indicator_series(rule.right_series)
+        previous_left = left_series[index - 1]
+        current_left = left_series[index]
+        previous_right = right_series[index - 1]
+        current_right = right_series[index]
+        if any(value is None for value in [previous_left, current_left, previous_right, current_right]):
+            return False
+        if rule.direction == "crosses_above":
+            return previous_left <= previous_right and current_left > current_right
+        return previous_left >= previous_right and current_left < current_right
+
+    def _evaluate_indicator_persistence_rule(self, rule: IndicatorPersistenceRule, index: int) -> bool:
+        if index < rule.bars - 1:
+            return False
+        series = self._get_indicator_series(rule.series)
+        window = series[index - rule.bars + 1 : index + 1]
+        if any(value is None for value in window):
+            return False
+        level = float(rule.level)
+        return all(compare(float(value), level, rule.operator) for value in window if value is not None)
+
+    def _build_iv_metric_series(self, lookback_days: int, *, percentile: bool) -> list[float | None]:
+        iv_series = self._get_iv_series()
+        result: list[float | None] = [None] * len(iv_series)
+        minimum_samples = min(20, lookback_days)
+        for index, current_value in enumerate(iv_series):
+            if current_value is None:
+                continue
+            lookback_values = [
+                value for value in iv_series[max(0, index - lookback_days + 1) : index + 1] if value is not None
+            ]
+            if len(lookback_values) < minimum_samples:
+                continue
+            if percentile:
+                below_count = sum(1 for value in lookback_values if value < current_value)
+                result[index] = (below_count / len(lookback_values)) * 100.0
+                continue
+            window_min = min(lookback_values)
+            window_max = max(lookback_values)
+            if math.isclose(window_min, window_max):
+                continue
+            result[index] = ((current_value - window_min) / (window_max - window_min)) * 100.0
+        return result
+
+    def _build_volume_ratio_series(self, lookback_period: int) -> list[float | None]:
+        result: list[float | None] = [None] * len(self.volumes)
+        for index in range(lookback_period, len(self.volumes)):
+            baseline = sum(self.volumes[index - lookback_period : index]) / lookback_period
+            if baseline <= 0:
+                continue
+            result[index] = self.volumes[index] / baseline
+        return result
+
+    @staticmethod
+    def _series_cache_key(spec: IndicatorSeries) -> str:
+        return json.dumps(spec.model_dump(mode="json"), sort_keys=True)
+
+    def _get_indicator_series(self, spec: IndicatorSeries) -> list[float | None]:
+        cache_key = self._series_cache_key(spec)
+        cached = self.generic_series_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        series = self._build_indicator_series(spec)
+        self.generic_series_cache[cache_key] = series
+        return series
+
+    def _build_indicator_series(self, spec: IndicatorSeries) -> list[float | None]:
+        if isinstance(spec, CloseSeries):
+            return [float(value) for value in self.closes]
+        if isinstance(spec, RsiSeriesSpec):
+            return self.rsi_cache.setdefault(spec.period, rsi(self.closes, spec.period))
+        if isinstance(spec, SmaSeries):
+            return self.sma_cache.setdefault(spec.period, sma(self.closes, spec.period))
+        if isinstance(spec, EmaSeries):
+            return self.ema_cache.setdefault(spec.period, ema(self.closes, spec.period))
+        if isinstance(spec, (MacdLineSeries, MacdSignalSeries, MacdHistogramSeries)):
+            line, signal, histogram = self.macd_cache.setdefault(
+                (spec.fast_period, spec.slow_period, spec.signal_period),
+                macd(self.closes, spec.fast_period, spec.slow_period, spec.signal_period),
+            )
+            if isinstance(spec, MacdLineSeries):
+                return line
+            if isinstance(spec, MacdSignalSeries):
+                return signal
+            return histogram
+        if isinstance(spec, BollingerBandSeries):
+            lower, middle, upper = self.bollinger_cache.setdefault(
+                (spec.period, float(spec.standard_deviations)),
+                bollinger_bands(self.closes, spec.period, float(spec.standard_deviations)),
+            )
+            return {
+                BollingerBand.LOWER: lower,
+                BollingerBand.MIDDLE: middle,
+                BollingerBand.UPPER: upper,
+            }[spec.band]
+        if isinstance(spec, IvRankSeries):
+            return self.iv_rank_series_cache.setdefault(
+                spec.lookback_days,
+                self._build_iv_metric_series(spec.lookback_days, percentile=False),
+            )
+        if isinstance(spec, IvPercentileSeries):
+            return self.iv_percentile_series_cache.setdefault(
+                spec.lookback_days,
+                self._build_iv_metric_series(spec.lookback_days, percentile=True),
+            )
+        if isinstance(spec, VolumeRatioSeries):
+            return self.volume_ratio_cache.setdefault(
+                spec.lookback_period,
+                self._build_volume_ratio_series(spec.lookback_period),
+            )
+        if isinstance(spec, CciSeries):
+            return self.cci_cache.setdefault(
+                spec.period,
+                cci(self.highs, self.lows, self.closes, spec.period),
+            )
+        if isinstance(spec, RocSeries):
+            return self.roc_cache.setdefault(spec.period, roc(self.closes, spec.period))
+        if isinstance(spec, MfiSeries):
+            return self.mfi_cache.setdefault(
+                spec.period,
+                mfi(self.highs, self.lows, self.closes, self.volumes, spec.period),
+            )
+        if isinstance(spec, (StochasticKSeries, StochasticDSeries)):
+            stochastic_key = (spec.k_period, spec.d_period, spec.smooth_k)
+            if stochastic_key not in self.stochastic_k_cache or stochastic_key not in self.stochastic_d_cache:
+                percent_k, percent_d = stochastic_oscillator(
+                    self.highs,
+                    self.lows,
+                    self.closes,
+                    k_period=spec.k_period,
+                    d_period=spec.d_period,
+                    smooth_k=spec.smooth_k,
+                )
+                self.stochastic_k_cache[stochastic_key] = percent_k
+                self.stochastic_d_cache[stochastic_key] = percent_d
+            if isinstance(spec, StochasticKSeries):
+                return self.stochastic_k_cache[stochastic_key]
+            return self.stochastic_d_cache[stochastic_key]
+        if isinstance(spec, AdxSeries):
+            return self.adx_cache.setdefault(spec.period, adx(self.highs, self.lows, self.closes, spec.period))
+        if isinstance(spec, WilliamsRSeries):
+            return self.williams_r_cache.setdefault(
+                spec.period,
+                williams_r(self.highs, self.lows, self.closes, spec.period),
+            )
+        raise TypeError(f"Unsupported indicator series type: {type(spec).__name__}")
+
     @staticmethod
     def _has_crossover_rule(rules: Sequence) -> bool:
         """Check if any rule requires the previous bar (index-1) for crossover detection."""
-        return any(isinstance(rule, (MovingAverageCrossoverRule, MacdRule)) for rule in rules)
+        return any(
+            isinstance(rule, (MovingAverageCrossoverRule, MacdRule, IndicatorLevelCrossRule, IndicatorSeriesCrossRule))
+            for rule in rules
+        )
 
     def _get_iv_series(self) -> list[float | None]:
         if self.iv_series_cache is None:

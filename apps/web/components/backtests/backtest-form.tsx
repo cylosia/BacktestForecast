@@ -285,7 +285,7 @@ export function BacktestForm({
         <CardHeader>
           <CardTitle>Technical analysis rules</CardTitle>
           <CardDescription>
-            This slice exposes RSI and SMA/EMA crossover controls only.
+            Use the classic rule toggles for quick setups, or build StrategyQuant-style generic indicator rules below.
           </CardDescription>
         </CardHeader>
         <CardContent>

@@ -79,6 +79,28 @@
         "title": "AccountDataExportResponse",
         "type": "object"
       },
+      "AdxSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "adx",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "default": 14,
+            "maximum": 252.0,
+            "minimum": 2.0,
+            "title": "Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "AdxSeries",
+        "type": "object"
+      },
       "AnalysisDetailResponse": {
         "properties": {
           "close_price": {
@@ -725,7 +747,8 @@
             "default": "massive",
             "enum": [
               "massive",
-              "manual"
+              "manual",
+              "historical_flatfile"
             ],
             "title": "Data Source",
             "type": "string"
@@ -1488,6 +1511,79 @@
         "title": "BollingerBand",
         "type": "string"
       },
+      "BollingerBandSeries-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "band": {
+            "$ref": "#/components/schemas/BollingerBand"
+          },
+          "indicator": {
+            "const": "bollinger_band",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "default": 20,
+            "maximum": 200.0,
+            "minimum": 5.0,
+            "title": "Period",
+            "type": "integer"
+          },
+          "standard_deviations": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 5.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "2",
+            "title": "Standard Deviations"
+          }
+        },
+        "required": [
+          "indicator",
+          "band"
+        ],
+        "title": "BollingerBandSeries",
+        "type": "object"
+      },
+      "BollingerBandSeries-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "band": {
+            "$ref": "#/components/schemas/BollingerBand"
+          },
+          "indicator": {
+            "const": "bollinger_band",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "default": 20,
+            "maximum": 200.0,
+            "minimum": 5.0,
+            "title": "Period",
+            "type": "integer"
+          },
+          "standard_deviations": {
+            "default": "2",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Deviations",
+            "type": "string"
+          }
+        },
+        "required": [
+          "indicator",
+          "band"
+        ],
+        "title": "BollingerBandSeries",
+        "type": "object"
+      },
       "BollingerBandsRule-Input": {
         "additionalProperties": false,
         "properties": {
@@ -1569,6 +1665,28 @@
         "title": "BollingerBandsRule",
         "type": "object"
       },
+      "CciSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "cci",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "default": 20,
+            "maximum": 252.0,
+            "minimum": 2.0,
+            "title": "Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "CciSeries",
+        "type": "object"
+      },
       "CheckoutSessionResponse": {
         "properties": {
           "billing_interval": {
@@ -1605,6 +1723,21 @@
           "billing_interval"
         ],
         "title": "CheckoutSessionResponse",
+        "type": "object"
+      },
+      "CloseSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "close",
+            "title": "Indicator",
+            "type": "string"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "CloseSeries",
         "type": "object"
       },
       "CompareBacktestsRequest": {
@@ -1783,6 +1916,11 @@
                   "avoid_earnings": "#/components/schemas/AvoidEarningsRule",
                   "bollinger_bands": "#/components/schemas/BollingerBandsRule-Input",
                   "ema_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "indicator_level_cross": "#/components/schemas/IndicatorLevelCrossRule-Input",
+                  "indicator_persistence": "#/components/schemas/IndicatorPersistenceRule-Input",
+                  "indicator_series_cross": "#/components/schemas/IndicatorSeriesCrossRule-Input",
+                  "indicator_threshold": "#/components/schemas/IndicatorThresholdRule-Input",
+                  "indicator_trend": "#/components/schemas/IndicatorTrendRule-Input",
                   "iv_percentile": "#/components/schemas/IvPercentileRule-Input",
                   "iv_rank": "#/components/schemas/IvRankRule-Input",
                   "macd": "#/components/schemas/MacdRule",
@@ -1820,6 +1958,21 @@
                 },
                 {
                   "$ref": "#/components/schemas/AvoidEarningsRule"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorThresholdRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorTrendRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorLevelCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorSeriesCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorPersistenceRule-Input"
                 }
               ]
             },
@@ -2093,6 +2246,11 @@
                   "avoid_earnings": "#/components/schemas/AvoidEarningsRule",
                   "bollinger_bands": "#/components/schemas/BollingerBandsRule-Input",
                   "ema_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "indicator_level_cross": "#/components/schemas/IndicatorLevelCrossRule-Input",
+                  "indicator_persistence": "#/components/schemas/IndicatorPersistenceRule-Input",
+                  "indicator_series_cross": "#/components/schemas/IndicatorSeriesCrossRule-Input",
+                  "indicator_threshold": "#/components/schemas/IndicatorThresholdRule-Input",
+                  "indicator_trend": "#/components/schemas/IndicatorTrendRule-Input",
                   "iv_percentile": "#/components/schemas/IvPercentileRule-Input",
                   "iv_rank": "#/components/schemas/IvRankRule-Input",
                   "macd": "#/components/schemas/MacdRule",
@@ -2130,6 +2288,21 @@
                 },
                 {
                   "$ref": "#/components/schemas/AvoidEarningsRule"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorThresholdRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorTrendRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorLevelCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorSeriesCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorPersistenceRule-Input"
                 }
               ]
             },
@@ -2890,6 +3063,19 @@
             ],
             "title": "Contract Type"
           },
+          "expiration_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional explicit expiration date for option legs. When set, the builder resolves this exact date instead of using expiration_offset.",
+            "title": "Expiration Date"
+          },
           "expiration_offset": {
             "default": 0,
             "description": "0=primary expiration, 1=next available, 2=second-next.",
@@ -2928,6 +3114,17 @@
             "minimum": -20.0,
             "title": "Strike Offset",
             "type": "integer"
+          },
+          "strike_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrikeSelection-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional explicit strike selection for custom option legs. When set, the builder ignores strike_offset for strike resolution."
           }
         },
         "required": [
@@ -3303,6 +3500,28 @@
         "title": "DeltaGridItem",
         "type": "object"
       },
+      "EmaSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "ema",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "maximum": 400.0,
+            "minimum": 2.0,
+            "title": "Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator",
+          "period"
+        ],
+        "title": "EmaSeries",
+        "type": "object"
+      },
       "EquityCurvePointResponse": {
         "properties": {
           "cash": {
@@ -3506,11 +3725,6 @@
       },
       "ExportJobResponse": {
         "properties": {
-          "backtest_run_id": {
-            "format": "uuid",
-            "title": "Backtest Run Id",
-            "type": "string"
-          },
           "completed_at": {
             "anyOf": [
               {
@@ -3624,6 +3838,11 @@
             ],
             "title": "Risk Free Rate Source"
           },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
           "sha256_hex": {
             "anyOf": [
               {
@@ -3658,7 +3877,7 @@
         },
         "required": [
           "id",
-          "backtest_run_id",
+          "run_id",
           "export_format",
           "status",
           "file_name",
@@ -3790,6 +4009,16 @@
           "forecasts": {
             "default": true,
             "title": "Forecasts",
+            "type": "boolean"
+          },
+          "multi_step_backtests": {
+            "default": false,
+            "title": "Multi Step Backtests",
+            "type": "boolean"
+          },
+          "multi_symbol_backtests": {
+            "default": false,
+            "title": "Multi Symbol Backtests",
             "type": "boolean"
           },
           "scanner": {
@@ -4099,6 +4328,1293 @@
         "title": "HistoricalPerformanceResponse",
         "type": "object"
       },
+      "IndicatorCrossDirection": {
+        "enum": [
+          "crosses_above",
+          "crosses_below"
+        ],
+        "title": "IndicatorCrossDirection",
+        "type": "string"
+      },
+      "IndicatorLevelCrossRule-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/IndicatorCrossDirection"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Level"
+          },
+          "series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Input",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Input"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Series"
+          },
+          "type": {
+            "const": "indicator_level_cross",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "series",
+          "direction",
+          "level"
+        ],
+        "title": "IndicatorLevelCrossRule",
+        "type": "object"
+      },
+      "IndicatorLevelCrossRule-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/IndicatorCrossDirection"
+          },
+          "level": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Level",
+            "type": "string"
+          },
+          "series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Output",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Output"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Series"
+          },
+          "type": {
+            "const": "indicator_level_cross",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "series",
+          "direction",
+          "level"
+        ],
+        "title": "IndicatorLevelCrossRule",
+        "type": "object"
+      },
+      "IndicatorPersistenceRule-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "default": 3,
+            "maximum": 50.0,
+            "minimum": 2.0,
+            "title": "Bars",
+            "type": "integer"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Level"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/ComparisonOperator"
+          },
+          "series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Input",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Input"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Series"
+          },
+          "type": {
+            "const": "indicator_persistence",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "series",
+          "operator",
+          "level"
+        ],
+        "title": "IndicatorPersistenceRule",
+        "type": "object"
+      },
+      "IndicatorPersistenceRule-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "default": 3,
+            "maximum": 50.0,
+            "minimum": 2.0,
+            "title": "Bars",
+            "type": "integer"
+          },
+          "level": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Level",
+            "type": "string"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/ComparisonOperator"
+          },
+          "series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Output",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Output"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Series"
+          },
+          "type": {
+            "const": "indicator_persistence",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "series",
+          "operator",
+          "level"
+        ],
+        "title": "IndicatorPersistenceRule",
+        "type": "object"
+      },
+      "IndicatorSeriesCrossRule-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/IndicatorCrossDirection"
+          },
+          "left_series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Input",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Input"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Left Series"
+          },
+          "right_series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Input",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Input"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Right Series"
+          },
+          "type": {
+            "const": "indicator_series_cross",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "left_series",
+          "right_series",
+          "direction"
+        ],
+        "title": "IndicatorSeriesCrossRule",
+        "type": "object"
+      },
+      "IndicatorSeriesCrossRule-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/IndicatorCrossDirection"
+          },
+          "left_series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Output",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Output"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Left Series"
+          },
+          "right_series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Output",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Output"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Right Series"
+          },
+          "type": {
+            "const": "indicator_series_cross",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "left_series",
+          "right_series",
+          "direction"
+        ],
+        "title": "IndicatorSeriesCrossRule",
+        "type": "object"
+      },
+      "IndicatorThresholdRule-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Level"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/ComparisonOperator"
+          },
+          "series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Input",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Input"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Series"
+          },
+          "type": {
+            "const": "indicator_threshold",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "series",
+          "operator",
+          "level"
+        ],
+        "title": "IndicatorThresholdRule",
+        "type": "object"
+      },
+      "IndicatorThresholdRule-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Level",
+            "type": "string"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/ComparisonOperator"
+          },
+          "series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Output",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Output"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Series"
+          },
+          "type": {
+            "const": "indicator_threshold",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "series",
+          "operator",
+          "level"
+        ],
+        "title": "IndicatorThresholdRule",
+        "type": "object"
+      },
+      "IndicatorTrendDirection": {
+        "enum": [
+          "rising",
+          "falling"
+        ],
+        "title": "IndicatorTrendDirection",
+        "type": "string"
+      },
+      "IndicatorTrendRule-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "default": 3,
+            "maximum": 50.0,
+            "minimum": 2.0,
+            "title": "Bars",
+            "type": "integer"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/IndicatorTrendDirection"
+          },
+          "series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Input",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Input"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Series"
+          },
+          "type": {
+            "const": "indicator_trend",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "series",
+          "direction"
+        ],
+        "title": "IndicatorTrendRule",
+        "type": "object"
+      },
+      "IndicatorTrendRule-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "default": 3,
+            "maximum": 50.0,
+            "minimum": 2.0,
+            "title": "Bars",
+            "type": "integer"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/IndicatorTrendDirection"
+          },
+          "series": {
+            "discriminator": {
+              "mapping": {
+                "adx": "#/components/schemas/AdxSeries",
+                "bollinger_band": "#/components/schemas/BollingerBandSeries-Output",
+                "cci": "#/components/schemas/CciSeries",
+                "close": "#/components/schemas/CloseSeries",
+                "ema": "#/components/schemas/EmaSeries",
+                "iv_percentile": "#/components/schemas/IvPercentileSeries",
+                "iv_rank": "#/components/schemas/IvRankSeries",
+                "macd_histogram": "#/components/schemas/MacdHistogramSeries",
+                "macd_line": "#/components/schemas/MacdLineSeries",
+                "macd_signal": "#/components/schemas/MacdSignalSeries",
+                "mfi": "#/components/schemas/MfiSeries",
+                "roc": "#/components/schemas/RocSeries",
+                "rsi": "#/components/schemas/RsiSeriesSpec",
+                "sma": "#/components/schemas/SmaSeries",
+                "stochastic_d": "#/components/schemas/StochasticDSeries",
+                "stochastic_k": "#/components/schemas/StochasticKSeries",
+                "volume_ratio": "#/components/schemas/VolumeRatioSeries",
+                "williams_r": "#/components/schemas/WilliamsRSeries"
+              },
+              "propertyName": "indicator"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RsiSeriesSpec"
+              },
+              {
+                "$ref": "#/components/schemas/SmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/EmaSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdLineSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdSignalSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MacdHistogramSeries"
+              },
+              {
+                "$ref": "#/components/schemas/BollingerBandSeries-Output"
+              },
+              {
+                "$ref": "#/components/schemas/IvRankSeries"
+              },
+              {
+                "$ref": "#/components/schemas/IvPercentileSeries"
+              },
+              {
+                "$ref": "#/components/schemas/VolumeRatioSeries"
+              },
+              {
+                "$ref": "#/components/schemas/CciSeries"
+              },
+              {
+                "$ref": "#/components/schemas/RocSeries"
+              },
+              {
+                "$ref": "#/components/schemas/MfiSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticKSeries"
+              },
+              {
+                "$ref": "#/components/schemas/StochasticDSeries"
+              },
+              {
+                "$ref": "#/components/schemas/AdxSeries"
+              },
+              {
+                "$ref": "#/components/schemas/WilliamsRSeries"
+              }
+            ],
+            "title": "Series"
+          },
+          "type": {
+            "const": "indicator_trend",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "series",
+          "direction"
+        ],
+        "title": "IndicatorTrendRule",
+        "type": "object"
+      },
       "IvPercentileRule-Input": {
         "additionalProperties": false,
         "properties": {
@@ -4170,6 +5686,28 @@
           "threshold"
         ],
         "title": "IvPercentileRule",
+        "type": "object"
+      },
+      "IvPercentileSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "iv_percentile",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "lookback_days": {
+            "default": 252,
+            "maximum": 756.0,
+            "minimum": 20.0,
+            "title": "Lookback Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "IvPercentileSeries",
         "type": "object"
       },
       "IvRankRule-Input": {
@@ -4245,6 +5783,28 @@
         "title": "IvRankRule",
         "type": "object"
       },
+      "IvRankSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "iv_rank",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "lookback_days": {
+            "default": 252,
+            "maximum": 756.0,
+            "minimum": 20.0,
+            "title": "Lookback Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "IvRankSeries",
+        "type": "object"
+      },
       "JobStatus": {
         "description": "Status values for jobs that support expiration (exports).",
         "enum": [
@@ -4317,6 +5877,78 @@
         "title": "LandscapeCell",
         "type": "object"
       },
+      "MacdHistogramSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "fast_period": {
+            "default": 12,
+            "maximum": 100.0,
+            "minimum": 2.0,
+            "title": "Fast Period",
+            "type": "integer"
+          },
+          "indicator": {
+            "const": "macd_histogram",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "signal_period": {
+            "default": 9,
+            "maximum": 100.0,
+            "minimum": 2.0,
+            "title": "Signal Period",
+            "type": "integer"
+          },
+          "slow_period": {
+            "default": 26,
+            "maximum": 200.0,
+            "minimum": 3.0,
+            "title": "Slow Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "MacdHistogramSeries",
+        "type": "object"
+      },
+      "MacdLineSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "fast_period": {
+            "default": 12,
+            "maximum": 100.0,
+            "minimum": 2.0,
+            "title": "Fast Period",
+            "type": "integer"
+          },
+          "indicator": {
+            "const": "macd_line",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "signal_period": {
+            "default": 9,
+            "maximum": 100.0,
+            "minimum": 2.0,
+            "title": "Signal Period",
+            "type": "integer"
+          },
+          "slow_period": {
+            "default": 26,
+            "maximum": 200.0,
+            "minimum": 3.0,
+            "title": "Slow Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "MacdLineSeries",
+        "type": "object"
+      },
       "MacdRule": {
         "additionalProperties": false,
         "properties": {
@@ -4355,6 +5987,42 @@
           "direction"
         ],
         "title": "MacdRule",
+        "type": "object"
+      },
+      "MacdSignalSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "fast_period": {
+            "default": 12,
+            "maximum": 100.0,
+            "minimum": 2.0,
+            "title": "Fast Period",
+            "type": "integer"
+          },
+          "indicator": {
+            "const": "macd_signal",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "signal_period": {
+            "default": 9,
+            "maximum": 100.0,
+            "minimum": 2.0,
+            "title": "Signal Period",
+            "type": "integer"
+          },
+          "slow_period": {
+            "default": 26,
+            "maximum": 200.0,
+            "minimum": 3.0,
+            "title": "Slow Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "MacdSignalSeries",
         "type": "object"
       },
       "MetaResponse": {
@@ -4416,6 +6084,28 @@
           "version"
         ],
         "title": "MetaResponse",
+        "type": "object"
+      },
+      "MfiSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "mfi",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "default": 14,
+            "maximum": 252.0,
+            "minimum": 2.0,
+            "title": "Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "MfiSeries",
         "type": "object"
       },
       "MovingAverageCrossoverRule": {
@@ -6325,6 +8015,28 @@
         "title": "RiskFreeRatePointResponse",
         "type": "object"
       },
+      "RocSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "roc",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "default": 10,
+            "maximum": 252.0,
+            "minimum": 1.0,
+            "title": "Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "RocSeries",
+        "type": "object"
+      },
       "RsiRule-Input": {
         "additionalProperties": false,
         "properties": {
@@ -6398,6 +8110,28 @@
         "title": "RsiRule",
         "type": "object"
       },
+      "RsiSeriesSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "rsi",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "default": 14,
+            "maximum": 100.0,
+            "minimum": 2.0,
+            "title": "Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "RsiSeriesSpec",
+        "type": "object"
+      },
       "RuleSetDefinition": {
         "additionalProperties": false,
         "properties": {
@@ -6408,6 +8142,11 @@
                   "avoid_earnings": "#/components/schemas/AvoidEarningsRule",
                   "bollinger_bands": "#/components/schemas/BollingerBandsRule-Input",
                   "ema_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "indicator_level_cross": "#/components/schemas/IndicatorLevelCrossRule-Input",
+                  "indicator_persistence": "#/components/schemas/IndicatorPersistenceRule-Input",
+                  "indicator_series_cross": "#/components/schemas/IndicatorSeriesCrossRule-Input",
+                  "indicator_threshold": "#/components/schemas/IndicatorThresholdRule-Input",
+                  "indicator_trend": "#/components/schemas/IndicatorTrendRule-Input",
                   "iv_percentile": "#/components/schemas/IvPercentileRule-Input",
                   "iv_rank": "#/components/schemas/IvRankRule-Input",
                   "macd": "#/components/schemas/MacdRule",
@@ -6445,6 +8184,21 @@
                 },
                 {
                   "$ref": "#/components/schemas/AvoidEarningsRule"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorThresholdRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorTrendRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorLevelCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorSeriesCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorPersistenceRule-Input"
                 }
               ]
             },
@@ -6919,6 +8673,28 @@
         "title": "ScannerRecommendationResponse",
         "type": "object"
       },
+      "SmaSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "sma",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "maximum": 400.0,
+            "minimum": 2.0,
+            "title": "Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator",
+          "period"
+        ],
+        "title": "SmaSeries",
+        "type": "object"
+      },
       "SpreadWidthConfig-Input": {
         "additionalProperties": false,
         "description": "Configuration for how wide a spread's wings are.",
@@ -7081,6 +8857,11 @@
                   "avoid_earnings": "#/components/schemas/AvoidEarningsRule",
                   "bollinger_bands": "#/components/schemas/BollingerBandsRule-Input",
                   "ema_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "indicator_level_cross": "#/components/schemas/IndicatorLevelCrossRule-Input",
+                  "indicator_persistence": "#/components/schemas/IndicatorPersistenceRule-Input",
+                  "indicator_series_cross": "#/components/schemas/IndicatorSeriesCrossRule-Input",
+                  "indicator_threshold": "#/components/schemas/IndicatorThresholdRule-Input",
+                  "indicator_trend": "#/components/schemas/IndicatorTrendRule-Input",
                   "iv_percentile": "#/components/schemas/IvPercentileRule-Input",
                   "iv_rank": "#/components/schemas/IvRankRule-Input",
                   "macd": "#/components/schemas/MacdRule",
@@ -7118,6 +8899,21 @@
                 },
                 {
                   "$ref": "#/components/schemas/AvoidEarningsRule"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorThresholdRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorTrendRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorLevelCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorSeriesCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorPersistenceRule-Input"
                 }
               ]
             },
@@ -7130,6 +8926,78 @@
           "mode"
         ],
         "title": "StepTriggerDefinition",
+        "type": "object"
+      },
+      "StochasticDSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "d_period": {
+            "default": 3,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "D Period",
+            "type": "integer"
+          },
+          "indicator": {
+            "const": "stochastic_d",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "k_period": {
+            "default": 14,
+            "maximum": 252.0,
+            "minimum": 2.0,
+            "title": "K Period",
+            "type": "integer"
+          },
+          "smooth_k": {
+            "default": 3,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Smooth K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "StochasticDSeries",
+        "type": "object"
+      },
+      "StochasticKSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "d_period": {
+            "default": 3,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "D Period",
+            "type": "integer"
+          },
+          "indicator": {
+            "const": "stochastic_k",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "k_period": {
+            "default": 14,
+            "maximum": 252.0,
+            "minimum": 2.0,
+            "title": "K Period",
+            "type": "integer"
+          },
+          "smooth_k": {
+            "default": 3,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Smooth K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "StochasticKSeries",
         "type": "object"
       },
       "StrategyCatalogGroupResponse": {
@@ -8111,6 +9979,11 @@
                   "avoid_earnings": "#/components/schemas/AvoidEarningsRule",
                   "bollinger_bands": "#/components/schemas/BollingerBandsRule-Input",
                   "ema_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "indicator_level_cross": "#/components/schemas/IndicatorLevelCrossRule-Input",
+                  "indicator_persistence": "#/components/schemas/IndicatorPersistenceRule-Input",
+                  "indicator_series_cross": "#/components/schemas/IndicatorSeriesCrossRule-Input",
+                  "indicator_threshold": "#/components/schemas/IndicatorThresholdRule-Input",
+                  "indicator_trend": "#/components/schemas/IndicatorTrendRule-Input",
                   "iv_percentile": "#/components/schemas/IvPercentileRule-Input",
                   "iv_rank": "#/components/schemas/IvRankRule-Input",
                   "macd": "#/components/schemas/MacdRule",
@@ -8148,6 +10021,21 @@
                 },
                 {
                   "$ref": "#/components/schemas/AvoidEarningsRule"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorThresholdRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorTrendRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorLevelCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorSeriesCrossRule-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorPersistenceRule-Input"
                 }
               ]
             },
@@ -8248,6 +10136,11 @@
                   "avoid_earnings": "#/components/schemas/AvoidEarningsRule",
                   "bollinger_bands": "#/components/schemas/BollingerBandsRule-Output",
                   "ema_crossover": "#/components/schemas/MovingAverageCrossoverRule",
+                  "indicator_level_cross": "#/components/schemas/IndicatorLevelCrossRule-Output",
+                  "indicator_persistence": "#/components/schemas/IndicatorPersistenceRule-Output",
+                  "indicator_series_cross": "#/components/schemas/IndicatorSeriesCrossRule-Output",
+                  "indicator_threshold": "#/components/schemas/IndicatorThresholdRule-Output",
+                  "indicator_trend": "#/components/schemas/IndicatorTrendRule-Output",
                   "iv_percentile": "#/components/schemas/IvPercentileRule-Output",
                   "iv_rank": "#/components/schemas/IvRankRule-Output",
                   "macd": "#/components/schemas/MacdRule",
@@ -8285,6 +10178,21 @@
                 },
                 {
                   "$ref": "#/components/schemas/AvoidEarningsRule"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorThresholdRule-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorTrendRule-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorLevelCrossRule-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorSeriesCrossRule-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/IndicatorPersistenceRule-Output"
                 }
               ]
             },
@@ -8673,6 +10581,28 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VolumeRatioSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "volume_ratio",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "lookback_period": {
+            "default": 20,
+            "maximum": 252.0,
+            "minimum": 2.0,
+            "title": "Lookback Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "VolumeRatioSeries",
+        "type": "object"
+      },
       "VolumeSpikeRule-Input": {
         "additionalProperties": false,
         "properties": {
@@ -8863,6 +10793,28 @@
           "value"
         ],
         "title": "WidthGridItem",
+        "type": "object"
+      },
+      "WilliamsRSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "indicator": {
+            "const": "williams_r",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "period": {
+            "default": 14,
+            "maximum": 252.0,
+            "minimum": 2.0,
+            "title": "Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator"
+        ],
+        "title": "WilliamsRSeries",
         "type": "object"
       },
       "WorkflowStepDefinition": {
@@ -12597,6 +14549,230 @@
         ]
       }
     },
+    "/v1/events/multi_step_backtests/{run_id}": {
+      "get": {
+        "operationId": "multi_step_backtest_events_v1_events_multi_step_backtests__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-Sent Events stream. Events: status, timeout, error, done."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Multi Step Backtest Events",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/v1/events/multi_symbol_backtests/{run_id}": {
+      "get": {
+        "operationId": "multi_symbol_backtest_events_v1_events_multi_symbol_backtests__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-Sent Events stream. Events: status, timeout, error, done."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Multi Symbol Backtest Events",
+        "tags": [
+          "events"
+        ]
+      }
+    },
     "/v1/events/scans/{job_id}": {
       "get": {
         "operationId": "scan_events_v1_events_scans__job_id__get",
@@ -14262,6 +16438,106 @@
       }
     },
     "/v1/multi-step-backtests/{run_id}": {
+      "delete": {
+        "operationId": "delete_multi_step_backtest_v1_multi_step_backtests__run_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Delete Multi Step Backtest",
+        "tags": [
+          "multi-step-backtests"
+        ]
+      },
       "get": {
         "operationId": "get_multi_step_backtest_v1_multi_step_backtests__run_id__get",
         "parameters": [
@@ -14365,6 +16641,105 @@
           }
         },
         "summary": "Get Multi Step Backtest",
+        "tags": [
+          "multi-step-backtests"
+        ]
+      }
+    },
+    "/v1/multi-step-backtests/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_multi_step_backtest_v1_multi_step_backtests__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiStepRunStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Cancel Multi Step Backtest",
         "tags": [
           "multi-step-backtests"
         ]
@@ -14717,6 +17092,106 @@
       }
     },
     "/v1/multi-symbol-backtests/{run_id}": {
+      "delete": {
+        "operationId": "delete_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Delete Multi Symbol Backtest",
+        "tags": [
+          "multi-symbol-backtests"
+        ]
+      },
       "get": {
         "operationId": "get_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__get",
         "parameters": [
@@ -14820,6 +17295,105 @@
           }
         },
         "summary": "Get Multi Symbol Backtest",
+        "tags": [
+          "multi-symbol-backtests"
+        ]
+      }
+    },
+    "/v1/multi-symbol-backtests/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_multi_symbol_backtest_v1_multi_symbol_backtests__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultiSymbolRunStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication required or session expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Insufficient permissions or feature locked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation error - request payload did not match the expected schema."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limit exceeded. See Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected server error."
+          }
+        },
+        "summary": "Cancel Multi Symbol Backtest",
         "tags": [
           "multi-symbol-backtests"
         ]

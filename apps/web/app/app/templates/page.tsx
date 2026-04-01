@@ -81,7 +81,7 @@ export default async function TemplatesPage() {
                 </TableHeader>
                 <TableBody>
                   {data.items.map((template) => {
-                    const cfg = template.config;
+                    const cfg = template.config_json;
                     return (
                       <TableRow key={template.id}>
                         <TableCell>

@@ -17,8 +17,8 @@ export function validateTemplateResponse(data: unknown): TemplateResponse {
   if (!(data.description == null || typeof data.description === "string")) {
     throw new Error("template.description must be null or a string");
   }
-  if (!isValidTemplateConfig(data.config)) {
-    throw new Error("template.config does not satisfy TemplateConfig");
+  if (!isValidTemplateConfig(data.config_json)) {
+    throw new Error("template.config_json does not satisfy TemplateConfig");
   }
   return data as TemplateResponse;
 }
