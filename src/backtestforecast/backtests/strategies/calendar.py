@@ -5,13 +5,14 @@ from dataclasses import dataclass
 from backtestforecast.backtests.margin import naked_call_margin, naked_put_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
-    choose_atm_strike,
     choose_primary_expiration,
     choose_secondary_expiration,
     contracts_for_expiration,
     get_overrides,
+    maybe_build_contract_delta_lookup,
     preferred_expiration_dates,
     require_contract_for_strike,
+    resolve_strike,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -122,6 +123,11 @@ class CalendarSpreadStrategy(StrategyDefinition):
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
         contract_type = overrides.calendar_contract_type or "call"
+        strike_selection = (
+            overrides.short_put_strike or overrides.long_put_strike
+            if contract_type == "put"
+            else overrides.short_call_strike or overrides.long_call_strike
+        )
         near_expiration, near_calls, far_expiration, far_calls = resolve_calendar_contract_groups(
             option_gateway,
             entry_date=bar.trade_date,
@@ -134,7 +140,32 @@ class CalendarSpreadStrategy(StrategyDefinition):
         )
         if not common_strikes:
             raise DataUnavailableError("Calendar spread requires a common strike across near and far expirations.")
-        strike = choose_atm_strike(common_strikes, bar.close_price)
+        near_dte = (near_expiration - bar.trade_date).days
+        delta_lookup = maybe_build_contract_delta_lookup(
+            selection=strike_selection,
+            contracts=near_calls,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            underlying_close=bar.close_price,
+            dte_days=near_dte,
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+            dividend_yield=config.dividend_yield,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+        )
+        strike = resolve_strike(
+            common_strikes,
+            bar.close_price,
+            contract_type,
+            strike_selection,
+            near_dte,
+            delta_lookup=delta_lookup,
+            contracts=near_calls,
+            option_gateway=option_gateway,
+            trade_date=bar.trade_date,
+            expiration_date=near_expiration,
+            iv_cache=getattr(option_gateway, "_iv_cache", None),
+            risk_free_rate=config.resolve_risk_free_rate(bar.trade_date),
+        )
         short_near = require_contract_for_strike(near_calls, strike)
         long_far = require_contract_for_strike(far_calls, strike)
 

@@ -13,6 +13,7 @@ def test_ready_reports_operations_status_only_in_detailed_mode(monkeypatch) -> N
     monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_result_backend_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
     monkeypatch.setattr(
         health,
@@ -55,6 +56,7 @@ def test_ready_returns_503_when_migrations_drift_even_without_detailed_access(mo
     monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_result_backend_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
     monkeypatch.setattr(
         health,
@@ -97,6 +99,7 @@ def test_ready_checks_migration_status_without_detailed_access(monkeypatch) -> N
     monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_result_backend_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
     monkeypatch.setattr(
         health,
@@ -139,6 +142,7 @@ def test_ready_includes_migration_error_only_in_detailed_payload(monkeypatch) ->
     monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_result_backend_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
     monkeypatch.setattr(
         health,
@@ -240,6 +244,7 @@ def test_ready_reports_db_timezone_and_export_storage_mode_in_detailed_payload(m
     monkeypatch.setattr(health, "get_missing_schema_tables", lambda: ())
     monkeypatch.setattr(health, "ping_redis", lambda: True)
     monkeypatch.setattr(health, "_ping_broker_redis", lambda: True)
+    monkeypatch.setattr(health, "_ping_result_backend_redis", lambda: True)
     monkeypatch.setattr(health, "_check_massive_health", lambda settings: "ok")
     monkeypatch.setattr(
         health,

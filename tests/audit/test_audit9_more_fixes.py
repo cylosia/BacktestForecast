@@ -137,17 +137,21 @@ class TestBaselineMigrationServerDefaults:
 class TestFetchBarsCoalescedRaisesOnTimeout:
     """Fix 40: _fetch_bars_coalesced must raise DataUnavailableError on timeout.
 
-    Structural check - inspects source to confirm the error type is referenced.
-    A full behavioral test would require wiring up a real MarketDataService with
-    a mocked client and coalesced waiter, which is covered in integration tests.
+    Structural check - _fetch_bars_coalesced now delegates to
+    _fetch_bars_with_metadata(), which owns the timeout/error translation logic.
     """
 
     def test_timeout_raises_data_unavailable(self):
         from backtestforecast.market_data.service import MarketDataService
 
-        source = inspect.getsource(MarketDataService._fetch_bars_coalesced)
+        wrapper_source = inspect.getsource(MarketDataService._fetch_bars_coalesced)
+        assert "_fetch_bars_with_metadata" in wrapper_source, (
+            "_fetch_bars_coalesced must delegate to _fetch_bars_with_metadata"
+        )
+
+        source = inspect.getsource(MarketDataService._fetch_bars_with_metadata)
         assert "DataUnavailableError" in source, (
-            "_fetch_bars_coalesced must raise DataUnavailableError on timeout"
+            "_fetch_bars_with_metadata must raise DataUnavailableError on timeout"
         )
         assert "timed out" in source.lower() or "timeout" in source.lower()
 

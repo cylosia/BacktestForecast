@@ -35,7 +35,7 @@ def _create_user(session: Session) -> User:
     return user
 
 
-def test_sweep_live_provider_smoke(postgres_db_session: Session):
+def test_sweep_live_provider_smoke(postgres_db_session: Session, monkeypatch: pytest.MonkeyPatch):
     _require_live_massive_key()
 
     user = _create_user(postgres_db_session)
@@ -57,6 +57,21 @@ def test_sweep_live_provider_smoke(postgres_db_session: Session):
     )
 
     service = SweepService(postgres_db_session)
+    # Keep this smoke focused on sweep execution against the live provider.
+    # Redis-backed cache/prefetch behavior is covered elsewhere and can hang on
+    # hosts where local Redis auth does not match the configured URL.
+    service.execution_service.market_data_service._redis_cache = None
+    monkeypatch.setattr(
+        service.execution_service,
+        "_maybe_prefetch_option_data",
+        lambda *args, **kwargs: None,
+    )
+    from backtestforecast.market_data.prefetch import PrefetchSummary
+
+    monkeypatch.setattr(
+        "backtestforecast.market_data.prefetch.OptionDataPrefetcher.prefetch_for_symbol",
+        lambda *args, **kwargs: PrefetchSummary(),
+    )
     try:
         job = service.create_job(user, payload)
         postgres_db_session.commit()

@@ -35,7 +35,7 @@ def _create_user(session: Session) -> User:
     return user
 
 
-def test_scanner_live_provider_smoke(postgres_db_session: Session):
+def test_scanner_live_provider_smoke(postgres_db_session: Session, monkeypatch: pytest.MonkeyPatch):
     _require_live_massive_key()
 
     user = _create_user(postgres_db_session)
@@ -56,6 +56,15 @@ def test_scanner_live_provider_smoke(postgres_db_session: Session):
     )
 
     service = ScanService(postgres_db_session)
+    # This is a live-provider scanner smoke, not a Redis cache or prefetch
+    # smoke. Keep it independent from the local Redis auth mode so it remains
+    # focused on provider reachability and end-to-end scan execution.
+    service.execution_service.market_data_service._redis_cache = None
+    monkeypatch.setattr(
+        service.execution_service,
+        "_maybe_prefetch_option_data",
+        lambda *args, **kwargs: None,
+    )
     try:
         job = service.create_job(user, payload)
         postgres_db_session.commit()

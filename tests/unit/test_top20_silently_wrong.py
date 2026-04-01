@@ -248,9 +248,11 @@ def test_s17_outbox_max_retries_increased():
 def test_s18_result_expires_handles_timedelta():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        from apps.worker.app.tasks import _reap_stale_jobs_inner
+        from apps.worker.app.tasks import _coerce_result_expires_seconds, _reap_stale_jobs_inner
     source = inspect.getsource(_reap_stale_jobs_inner)
-    assert "isinstance(_result_expires, timedelta)" in source
+    helper_source = inspect.getsource(_coerce_result_expires_seconds)
+    assert "_coerce_result_expires_seconds" in source
+    assert "isinstance(value, timedelta)" in helper_source
 
 
 # ---- S19: IN clause chunked to avoid query bloat ----

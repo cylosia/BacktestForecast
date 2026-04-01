@@ -77,6 +77,13 @@ def make_postgres_engine() -> Engine:
 
 
 def apply_test_schema(engine: Engine) -> None:
+    # Postgres-backed tests may have exercised app code that opened cached
+    # engines against TEST_DATABASE_URL. Dispose those pools before dropping
+    # the schema so stale pooled connections do not keep locks alive.
+    from backtestforecast.db.session import _invalidate_db_caches
+
+    _invalidate_db_caches()
+    engine.dispose()
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
         conn.exec_driver_sql("CREATE SCHEMA public")
@@ -96,12 +103,25 @@ def apply_test_schema(engine: Engine) -> None:
 
 def reset_database(session_factory: sessionmaker[Session]) -> None:
     engine = session_factory.kw["bind"]
-    inspector = inspect(engine)
-    existing_tables = set(inspector.get_table_names())
-    if not existing_tables:
+    expected_tables = {table.name for table in Base.metadata.sorted_tables}
+    existing_tables = set(inspect(engine).get_table_names())
+    if not existing_tables or expected_tables - existing_tables:
         apply_test_schema(engine)
+        existing_tables = set(inspect(engine).get_table_names())
     with session_factory() as session:
         existing_tables = set(inspect(session.connection()).get_table_names())
+        missing_tables = expected_tables - existing_tables
+        if missing_tables:
+            session.rollback()
+            session.close()
+            apply_test_schema(engine)
+            with session_factory() as recreated_session:
+                recreated_tables = set(inspect(recreated_session.connection()).get_table_names())
+                for table in reversed(Base.metadata.sorted_tables):
+                    if table.name in recreated_tables:
+                        recreated_session.execute(table.delete())
+                recreated_session.commit()
+            return
         for table in reversed(Base.metadata.sorted_tables):
             if table.name in existing_tables:
                 session.execute(table.delete())

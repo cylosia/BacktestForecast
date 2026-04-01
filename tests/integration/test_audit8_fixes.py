@@ -16,6 +16,8 @@ from backtestforecast.utils.dates import market_date_today
 
 
 def test_health_ready_returns_200_when_db_healthy(client, monkeypatch):
+    monkeypatch.setattr("apps.api.app.routers.health._ping_broker_redis", lambda: True)
+    monkeypatch.setattr("apps.api.app.routers.health._ping_result_backend_redis", lambda: True)
     monkeypatch.setattr(
         "apps.api.app.routers.health._get_migration_status",
         lambda: {"aligned": True, "applied_revision": "20260328_0010", "expected_revision": "20260328_0010"},
@@ -41,6 +43,7 @@ def test_health_ready_returns_503_when_db_down(client):
 def test_health_ready_returns_503_when_redis_down_and_fail_closed(client, monkeypatch):
     monkeypatch.setattr("apps.api.app.routers.health.ping_redis", lambda: False)
     monkeypatch.setattr("apps.api.app.routers.health._ping_broker_redis", lambda: True)
+    monkeypatch.setattr("apps.api.app.routers.health._ping_result_backend_redis", lambda: True)
     monkeypatch.setattr("apps.api.app.routers.health.ping_database", lambda: None)
     monkeypatch.setattr("apps.api.app.routers.health.get_settings", lambda: type(
         "S",
@@ -76,6 +79,7 @@ def test_health_ready_reports_degraded_memory_fallback_mode_with_details(client,
     )()
     monkeypatch.setattr("apps.api.app.routers.health.ping_redis", lambda: False)
     monkeypatch.setattr("apps.api.app.routers.health._ping_broker_redis", lambda: True)
+    monkeypatch.setattr("apps.api.app.routers.health._ping_result_backend_redis", lambda: True)
     monkeypatch.setattr("apps.api.app.routers.health.ping_database", lambda: None)
     monkeypatch.setattr(
         "apps.api.app.routers.health._get_migration_status",
