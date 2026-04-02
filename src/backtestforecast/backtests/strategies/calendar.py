@@ -1,13 +1,18 @@
 ﻿from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from backtestforecast.backtests.margin import naked_call_margin, naked_put_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
+    _gateway_cache_identity,
     choose_primary_expiration,
     choose_secondary_expiration,
+    common_sorted_strikes,
     contracts_for_expiration,
+    get_entry_quotes,
     get_overrides,
     maybe_build_contract_delta_lookup,
     preferred_expiration_dates,
@@ -27,6 +32,36 @@ from backtestforecast.market_data.types import DailyBar
 
 CALENDAR_MIN_FAR_LEG_EXTRA_DAYS = 1
 CALENDAR_MIN_DTE_TOLERANCE_DAYS = 8
+_CALENDAR_GROUP_CACHE_MAX = 16_384
+_CALENDAR_GROUP_CACHE_LOCK = threading.Lock()
+_CALENDAR_GROUP_CACHE: OrderedDict[
+    tuple[object, ...],
+    tuple[date, list[OptionContractRecord], date, list[OptionContractRecord]],
+] = OrderedDict()
+
+
+def _normalized_bound(value: float | None) -> float | None:
+    return round(value, 4) if value is not None else None
+def _get_cached_calendar_groups(
+    key: tuple[object, ...],
+) -> tuple[date, list[OptionContractRecord], date, list[OptionContractRecord]] | None:
+    with _CALENDAR_GROUP_CACHE_LOCK:
+        cached = _CALENDAR_GROUP_CACHE.get(key)
+        if cached is None:
+            return None
+        _CALENDAR_GROUP_CACHE.move_to_end(key)
+        return cached
+
+
+def _store_cached_calendar_groups(
+    key: tuple[object, ...],
+    value: tuple[date, list[OptionContractRecord], date, list[OptionContractRecord]],
+) -> None:
+    with _CALENDAR_GROUP_CACHE_LOCK:
+        _CALENDAR_GROUP_CACHE[key] = value
+        _CALENDAR_GROUP_CACHE.move_to_end(key)
+        while len(_CALENDAR_GROUP_CACHE) > _CALENDAR_GROUP_CACHE_MAX:
+            _CALENDAR_GROUP_CACHE.popitem(last=False)
 
 
 def resolve_calendar_contract_groups(
@@ -40,6 +75,18 @@ def resolve_calendar_contract_groups(
     strike_price_lte: float | None = None,
 ) -> tuple[date, list[OptionContractRecord], date, list[OptionContractRecord]]:
     effective_tolerance_days = max(dte_tolerance_days, CALENDAR_MIN_DTE_TOLERANCE_DAYS)
+    cache_key = (
+        _gateway_cache_identity(option_gateway),
+        entry_date,
+        contract_type,
+        target_dte,
+        effective_tolerance_days,
+        _normalized_bound(strike_price_gte),
+        _normalized_bound(strike_price_lte),
+    )
+    cached = _get_cached_calendar_groups(cache_key)
+    if cached is not None:
+        return cached
     ordered_expirations = preferred_expiration_dates(
         entry_date,
         target_dte,
@@ -57,7 +104,7 @@ def resolve_calendar_contract_groups(
         near_expiration: date | None = None
         near_contracts: list[OptionContractRecord] = []
         for expiration_date in ordered_expirations:
-            contracts = list(contracts_by_expiration.get(expiration_date, []))
+            contracts = contracts_by_expiration.get(expiration_date, [])
             if contracts:
                 near_expiration = expiration_date
                 near_contracts = contracts
@@ -70,9 +117,11 @@ def resolve_calendar_contract_groups(
                 continue
             if (expiration_date - entry_date).days < minimum_target:
                 continue
-            contracts = list(contracts_by_expiration.get(expiration_date, []))
+            contracts = contracts_by_expiration.get(expiration_date, [])
             if contracts:
-                return near_expiration, near_contracts, expiration_date, contracts
+                result = (near_expiration, near_contracts, expiration_date, contracts)
+                _store_cached_calendar_groups(cache_key, result)
+                return result
         raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
 
     exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
@@ -80,14 +129,12 @@ def resolve_calendar_contract_groups(
         near_expiration: date | None = None
         near_contracts: list[OptionContractRecord] = []
         for expiration_date in ordered_expirations:
-            contracts = list(
-                exact_fetch(
-                    entry_date=entry_date,
-                    contract_type=contract_type,
-                    expiration_date=expiration_date,
-                    strike_price_gte=strike_price_gte,
-                    strike_price_lte=strike_price_lte,
-                )
+            contracts = exact_fetch(
+                entry_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_price_gte=strike_price_gte,
+                strike_price_lte=strike_price_lte,
             )
             if contracts:
                 near_expiration = expiration_date
@@ -103,17 +150,17 @@ def resolve_calendar_contract_groups(
             if expiration_date > near_expiration and (expiration_date - entry_date).days >= minimum_target
         )
         for expiration_date in later_expirations:
-            contracts = list(
-                exact_fetch(
-                    entry_date=entry_date,
-                    contract_type=contract_type,
-                    expiration_date=expiration_date,
-                    strike_price_gte=strike_price_gte,
-                    strike_price_lte=strike_price_lte,
-                )
+            contracts = exact_fetch(
+                entry_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_price_gte=strike_price_gte,
+                strike_price_lte=strike_price_lte,
             )
             if contracts:
-                return near_expiration, near_contracts, expiration_date, contracts
+                result = (near_expiration, near_contracts, expiration_date, contracts)
+                _store_cached_calendar_groups(cache_key, result)
+                return result
         raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
 
     contracts = option_gateway.list_contracts(
@@ -131,12 +178,14 @@ def resolve_calendar_contract_groups(
     )
     if far_expiration is None:
         raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
-    return (
+    result = (
         near_expiration,
         contracts_for_expiration(contracts, near_expiration),
         far_expiration,
         contracts_for_expiration(contracts, far_expiration),
     )
+    _store_cached_calendar_groups(cache_key, result)
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,9 +214,7 @@ class CalendarSpreadStrategy(StrategyDefinition):
             target_dte=config.target_dte,
             dte_tolerance_days=config.dte_tolerance_days,
         )
-        common_strikes = sorted(
-            {contract.strike_price for contract in near_calls} & {contract.strike_price for contract in far_calls}
-        )
+        common_strikes = common_sorted_strikes(near_calls, far_calls)
         if not common_strikes:
             raise DataUnavailableError("Calendar spread requires a common strike across near and far expirations.")
         near_dte = (near_expiration - bar.trade_date).days
@@ -199,8 +246,13 @@ class CalendarSpreadStrategy(StrategyDefinition):
         short_near = require_contract_for_strike(near_calls, strike)
         long_far = require_contract_for_strike(far_calls, strike)
 
-        short_quote = option_gateway.get_quote(short_near.ticker, bar.trade_date)
-        long_quote = option_gateway.get_quote(long_far.ticker, bar.trade_date)
+        quotes = get_entry_quotes(
+            option_gateway,
+            trade_date=bar.trade_date,
+            contracts=[short_near, long_far],
+        )
+        short_quote = quotes.get(short_near.ticker)
+        long_quote = quotes.get(long_far.ticker)
         if short_quote is None or long_quote is None:
             return None
         if not valid_entry_mids(short_quote.mid_price, long_quote.mid_price):

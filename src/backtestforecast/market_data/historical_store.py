@@ -271,6 +271,148 @@ class HistoricalMarketDataStore:
             )
         return contracts_by_expiration
 
+    def list_option_contracts_for_expirations_by_type(
+        self,
+        *,
+        symbol: str,
+        as_of_date: date,
+        contract_types: list[str],
+        expiration_dates: list[date],
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> dict[str, dict[date, list[OptionContractRecord]]]:
+        if not contract_types or not expiration_dates:
+            return {}
+        requested_types = tuple(dict.fromkeys(contract_types))
+        requested_expirations = tuple(dict.fromkeys(expiration_dates))
+        with self._session(readonly=True) as session:
+            stmt = (
+                select(
+                    HistoricalOptionDayBar.option_ticker,
+                    HistoricalOptionDayBar.contract_type,
+                    HistoricalOptionDayBar.expiration_date,
+                    HistoricalOptionDayBar.strike_price,
+                )
+                .where(
+                    HistoricalOptionDayBar.underlying_symbol == symbol,
+                    HistoricalOptionDayBar.trade_date == as_of_date,
+                    HistoricalOptionDayBar.contract_type.in_(requested_types),
+                    HistoricalOptionDayBar.expiration_date.in_(requested_expirations),
+                )
+            )
+            if strike_price_gte is not None:
+                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
+            if strike_price_lte is not None:
+                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
+            rows = list(
+                session.execute(
+                    stmt.order_by(
+                        HistoricalOptionDayBar.contract_type,
+                        HistoricalOptionDayBar.expiration_date,
+                        HistoricalOptionDayBar.strike_price,
+                    )
+                )
+            )
+        contracts_by_type: dict[str, dict[date, list[OptionContractRecord]]] = {
+            contract_type: {
+                expiration_date: [] for expiration_date in requested_expirations
+            }
+            for contract_type in requested_types
+        }
+        seen_by_bucket: dict[tuple[str, date], set[str]] = {
+            (contract_type, expiration_date): set()
+            for contract_type in requested_types
+            for expiration_date in requested_expirations
+        }
+        for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
+            bucket = (row_contract_type, row_expiration_date)
+            seen = seen_by_bucket.setdefault(bucket, set())
+            if option_ticker in seen:
+                continue
+            seen.add(option_ticker)
+            contracts_by_type.setdefault(row_contract_type, {}).setdefault(row_expiration_date, []).append(
+                OptionContractRecord(
+                    ticker=option_ticker,
+                    contract_type=row_contract_type,
+                    expiration_date=row_expiration_date,
+                    strike_price=float(row_strike_price),
+                    shares_per_contract=100.0,
+                )
+            )
+        return contracts_by_type
+
+    def list_available_option_expirations(
+        self,
+        *,
+        symbol: str,
+        as_of_date: date,
+        contract_type: str,
+        expiration_dates: list[date],
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[date]:
+        if not expiration_dates:
+            return []
+        requested_expirations = tuple(dict.fromkeys(expiration_dates))
+        with self._session(readonly=True) as session:
+            stmt = (
+                select(HistoricalOptionDayBar.expiration_date)
+                .distinct()
+                .where(
+                    HistoricalOptionDayBar.underlying_symbol == symbol,
+                    HistoricalOptionDayBar.trade_date == as_of_date,
+                    HistoricalOptionDayBar.contract_type == contract_type,
+                    HistoricalOptionDayBar.expiration_date.in_(requested_expirations),
+                )
+                .order_by(HistoricalOptionDayBar.expiration_date)
+            )
+            if strike_price_gte is not None:
+                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
+            if strike_price_lte is not None:
+                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
+            return list(session.scalars(stmt))
+
+    def list_available_option_expirations_by_type(
+        self,
+        *,
+        symbol: str,
+        as_of_date: date,
+        contract_types: list[str],
+        expiration_dates: list[date],
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> dict[str, list[date]]:
+        if not contract_types or not expiration_dates:
+            return {}
+        requested_types = tuple(dict.fromkeys(contract_types))
+        requested_expirations = tuple(dict.fromkeys(expiration_dates))
+        with self._session(readonly=True) as session:
+            stmt = (
+                select(
+                    HistoricalOptionDayBar.contract_type,
+                    HistoricalOptionDayBar.expiration_date,
+                )
+                .distinct()
+                .where(
+                    HistoricalOptionDayBar.underlying_symbol == symbol,
+                    HistoricalOptionDayBar.trade_date == as_of_date,
+                    HistoricalOptionDayBar.contract_type.in_(requested_types),
+                    HistoricalOptionDayBar.expiration_date.in_(requested_expirations),
+                )
+                .order_by(HistoricalOptionDayBar.contract_type, HistoricalOptionDayBar.expiration_date)
+            )
+            if strike_price_gte is not None:
+                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
+            if strike_price_lte is not None:
+                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
+            rows = list(session.execute(stmt))
+        available_by_type: dict[str, list[date]] = {
+            contract_type: [] for contract_type in requested_types
+        }
+        for contract_type, expiration_date in rows:
+            available_by_type.setdefault(contract_type, []).append(expiration_date)
+        return available_by_type
+
     def get_option_quote_for_date(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         with self._session(readonly=True) as session:
             close_price = session.scalar(

@@ -9,6 +9,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_wing_strike,
     select_preferred_expiration_contracts,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -42,7 +43,7 @@ class ButterflyStrategy(StrategyDefinition):
             target_dte=config.target_dte,
             dte_tolerance_days=config.dte_tolerance_days,
         )
-        strikes = sorted({contract.strike_price for contract in call_contracts})
+        strikes = sorted_unique_strikes(call_contracts)
         center_strike = choose_atm_strike(strikes, bar.close_price)
         lower_strike = resolve_wing_strike(strikes, center_strike, -1, bar.close_price, overrides.spread_width)
         upper_strike = resolve_wing_strike(strikes, center_strike, 1, bar.close_price, overrides.spread_width)

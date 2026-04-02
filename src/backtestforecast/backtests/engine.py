@@ -1,8 +1,8 @@
 ﻿from __future__ import annotations
 
-import copy
 import inspect
 import math
+import time as _time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -11,6 +11,12 @@ from typing import Any
 import structlog
 
 from backtestforecast.backtests.rules import EntryRuleComputationCache, EntryRuleEvaluator
+from backtestforecast.backtests.strategies.common import (
+    BuildPositionProfiler,
+    activate_build_position_profiler,
+    current_build_position_phase,
+    reset_build_position_profiler,
+)
 from backtestforecast.backtests.strategies.registry import STRATEGY_REGISTRY
 from backtestforecast.backtests.strategies.wheel import WheelStrategyBacktestEngine
 from backtestforecast.backtests.summary import build_summary
@@ -20,6 +26,8 @@ from backtestforecast.backtests.types import (
     BacktestExecutionResult,
     EquityPointResult,
     OpenMultiLegPosition,
+    OpenOptionLeg,
+    OpenStockLeg,
     OptionDataGateway,
     PositionSnapshot,
     TradeResult,
@@ -48,6 +56,10 @@ _D_CACHE: dict[int | float, Decimal] = {
 }
 
 _D_CACHE_MAX = 4096
+_OPTION_SIGNED_UNIT_FACTOR_CACHE: dict[tuple[int, int, float], Decimal] = {}
+_OPTION_ABS_UNIT_FACTOR_CACHE: dict[tuple[int, float], Decimal] = {}
+_STOCK_SIGNED_UNIT_FACTOR_CACHE: dict[tuple[int, int], Decimal] = {}
+_STOCK_ABS_UNIT_FACTOR_CACHE: dict[int, Decimal] = {}
 
 
 def _D(v: float | int) -> Decimal:
@@ -65,6 +77,46 @@ def _D(v: float | int) -> Decimal:
     return result
 
 
+def _option_signed_unit_factor(leg: OpenOptionLeg | Any) -> Decimal:
+    key = (leg.side, leg.quantity_per_unit, _leg_multiplier(leg))
+    cached = _OPTION_SIGNED_UNIT_FACTOR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    factor = _D(leg.side) * _D(leg.quantity_per_unit) * _D(_leg_multiplier(leg))
+    _OPTION_SIGNED_UNIT_FACTOR_CACHE[key] = factor
+    return factor
+
+
+def _option_abs_unit_factor(leg: OpenOptionLeg | Any) -> Decimal:
+    key = (leg.quantity_per_unit, _leg_multiplier(leg))
+    cached = _OPTION_ABS_UNIT_FACTOR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    factor = _D(leg.quantity_per_unit) * _D(_leg_multiplier(leg))
+    _OPTION_ABS_UNIT_FACTOR_CACHE[key] = factor
+    return factor
+
+
+def _stock_signed_unit_factor(leg: OpenStockLeg | Any) -> Decimal:
+    key = (leg.side, leg.share_quantity_per_unit)
+    cached = _STOCK_SIGNED_UNIT_FACTOR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    factor = _D(leg.side) * _D(leg.share_quantity_per_unit)
+    _STOCK_SIGNED_UNIT_FACTOR_CACHE[key] = factor
+    return factor
+
+
+def _stock_abs_unit_factor(leg: OpenStockLeg | Any) -> Decimal:
+    key = leg.share_quantity_per_unit
+    cached = _STOCK_ABS_UNIT_FACTOR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    factor = _D(leg.share_quantity_per_unit)
+    _STOCK_ABS_UNIT_FACTOR_CACHE[key] = factor
+    return factor
+
+
 @dataclass(slots=True)
 class _ExitPolicyLane:
     config: BacktestConfig
@@ -75,6 +127,72 @@ class _ExitPolicyLane:
     equity_curve: list[EquityPointResult] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)
     warning_codes: set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class _EnginePhaseTiming:
+    rule_precompute_ms: float = 0.0
+    mark_position_ms: float = 0.0
+    exit_resolution_ms: float = 0.0
+    build_position_ms: float = 0.0
+    build_contract_fetch_ms: float = 0.0
+    build_delta_resolution_ms: float = 0.0
+    build_entry_quote_fetch_ms: float = 0.0
+    build_object_construction_ms: float = 0.0
+    attach_quote_series_ms: float = 0.0
+    position_sizing_ms: float = 0.0
+    current_position_value_ms: float = 0.0
+    close_position_ms: float = 0.0
+    equity_curve_ms: float = 0.0
+    force_close_ms: float = 0.0
+    summary_ms: float = 0.0
+    total_ms: float = 0.0
+    bars_processed: int = 0
+    bars_skipped_before_start: int = 0
+    positions_opened: int = 0
+    positions_closed: int = 0
+    force_closes: int = 0
+
+
+def _elapsed_ms(start: float) -> float:
+    return (_time.perf_counter() - start) * 1000.0
+
+
+class _TimedBuildPositionGateway:
+    _CONTRACT_FETCH_METHODS = {
+        "list_contracts",
+        "list_contracts_for_preferred_expiration",
+        "list_contracts_for_expiration",
+        "list_contracts_for_expirations",
+    }
+    _ENTRY_QUOTE_METHODS = {"get_quote", "get_quotes"}
+
+    def __init__(self, gateway: OptionDataGateway, profiler: BuildPositionProfiler) -> None:
+        self._gateway = gateway
+        self._profiler = profiler
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._gateway, name)
+        if not callable(attr):
+            return attr
+        if name not in self._CONTRACT_FETCH_METHODS and name not in self._ENTRY_QUOTE_METHODS:
+            return attr
+
+        def _wrapped(*args: Any, **kwargs: Any) -> Any:
+            start = _time.perf_counter()
+            try:
+                return attr(*args, **kwargs)
+            finally:
+                elapsed_ms = _elapsed_ms(start)
+                phase = current_build_position_phase()
+                if phase in {"contract_fetch", "delta_lookup"}:
+                    pass
+                elif name in self._CONTRACT_FETCH_METHODS:
+                    self._profiler.contract_fetch_ms += elapsed_ms
+                elif name in self._ENTRY_QUOTE_METHODS:
+                    self._profiler.entry_quote_fetch_ms += elapsed_ms
+
+        return _wrapped
 
 
 class OptionsBacktestEngine:
@@ -121,6 +239,116 @@ class OptionsBacktestEngine:
         )
         return quantity > 0
 
+    @staticmethod
+    def _record_build_position_subtiming(
+        timing: _EnginePhaseTiming,
+        *,
+        total_ms: float,
+        profiler: BuildPositionProfiler,
+    ) -> None:
+        timing.build_position_ms += total_ms
+        timing.build_contract_fetch_ms += profiler.contract_fetch_ms
+        timing.build_delta_resolution_ms += profiler.delta_lookup_ms
+        timing.build_entry_quote_fetch_ms += profiler.entry_quote_fetch_ms
+        residual = total_ms - profiler.contract_fetch_ms - profiler.delta_lookup_ms - profiler.entry_quote_fetch_ms
+        timing.build_object_construction_ms += max(0.0, residual)
+
+    @staticmethod
+    def _clone_position_template(position: OpenMultiLegPosition) -> OpenMultiLegPosition:
+        return OpenMultiLegPosition(
+            display_ticker=position.display_ticker,
+            strategy_type=position.strategy_type,
+            underlying_symbol=position.underlying_symbol,
+            entry_date=position.entry_date,
+            entry_index=position.entry_index,
+            quantity=position.quantity,
+            dte_at_open=position.dte_at_open,
+            option_legs=[
+                OpenOptionLeg(
+                    ticker=leg.ticker,
+                    contract_type=leg.contract_type,
+                    side=leg.side,
+                    strike_price=leg.strike_price,
+                    expiration_date=leg.expiration_date,
+                    quantity_per_unit=leg.quantity_per_unit,
+                    entry_mid=leg.entry_mid,
+                    last_mid=leg.last_mid,
+                    contract_multiplier=leg.contract_multiplier,
+                )
+                for leg in position.option_legs
+            ],
+            stock_legs=[
+                OpenStockLeg(
+                    symbol=leg.symbol,
+                    side=leg.side,
+                    share_quantity_per_unit=leg.share_quantity_per_unit,
+                    entry_price=leg.entry_price,
+                    last_price=leg.last_price,
+                )
+                for leg in position.stock_legs
+            ],
+            scheduled_exit_date=position.scheduled_exit_date,
+            capital_required_per_unit=position.capital_required_per_unit,
+            max_loss_per_unit=position.max_loss_per_unit,
+            max_profit_per_unit=position.max_profit_per_unit,
+            entry_reason=position.entry_reason,
+            entry_commission_total=position.entry_commission_total,
+            detail_json=dict(position.detail_json),
+            # Quote history is read-mostly and can be safely shared across lanes.
+            quote_series_lookup=position.quote_series_lookup,
+            quote_series_loaded_tickers=set(position.quote_series_loaded_tickers),
+        )
+
+    @staticmethod
+    def _build_position_with_timing(
+        *,
+        strategy: object,
+        config: BacktestConfig,
+        bar: DailyBar,
+        bar_index: int,
+        option_gateway: OptionDataGateway,
+        custom_legs: list[Any] | None,
+        timing: _EnginePhaseTiming,
+    ) -> OpenMultiLegPosition | None:
+        profiler = BuildPositionProfiler()
+        timed_gateway = _TimedBuildPositionGateway(option_gateway, profiler)
+        profiler_token = activate_build_position_profiler(profiler)
+        build_start = _time.perf_counter()
+        try:
+            if custom_legs is not None:
+                candidate = strategy.build_position(
+                    config,
+                    bar,
+                    bar_index,
+                    timed_gateway,
+                    custom_legs=custom_legs,
+                )
+            else:
+                candidate = strategy.build_position(
+                    config,
+                    bar,
+                    bar_index,
+                    timed_gateway,
+                )
+        except Exception:
+            total_ms = _elapsed_ms(build_start)
+            reset_build_position_profiler(profiler_token)
+            OptionsBacktestEngine._record_build_position_subtiming(
+                timing,
+                total_ms=total_ms,
+                profiler=profiler,
+            )
+            raise
+        else:
+            total_ms = _elapsed_ms(build_start)
+            reset_build_position_profiler(profiler_token)
+            OptionsBacktestEngine._record_build_position_subtiming(
+                timing,
+                total_ms=total_ms,
+                profiler=profiler,
+            )
+            return candidate
+
     def run(
         self,
         config: BacktestConfig,
@@ -162,6 +390,8 @@ class OptionsBacktestEngine:
         if config.account_size <= 0:
             raise AppValidationError("account_size must be positive")
 
+        timing = _EnginePhaseTiming()
+        total_start = _time.perf_counter()
         sorted_bars = sorted(bars, key=lambda bar: bar.trade_date)
         _pre_filter_len = len(sorted_bars)
         sorted_bars = [b for b in sorted_bars if b.close_price > 0]
@@ -206,6 +436,7 @@ class OptionsBacktestEngine:
             shared_cache=shared_entry_rule_cache,
         )
         entry_allowed_mask: list[bool] | None = None
+        rule_precompute_start = _time.perf_counter()
         try:
             entry_allowed_mask = evaluator.build_entry_allowed_mask()
         except Exception:
@@ -216,6 +447,7 @@ class OptionsBacktestEngine:
                 "entry_rule_evaluation_error",
                 "One or more entry rule evaluations failed and were treated as not-allowed.",
             )
+        timing.rule_precompute_ms += _elapsed_ms(rule_precompute_start)
         build_position_supports_custom_legs = (
             config.custom_legs is not None
             and "custom_legs" in inspect.signature(strategy.build_position).parameters
@@ -225,15 +457,19 @@ class OptionsBacktestEngine:
 
         for index, bar in enumerate(sorted_bars):
             if bar.trade_date < config.start_date:
+                timing.bars_skipped_before_start += 1
                 continue
+            timing.bars_processed += 1
 
             position_value = _D0
             exit_prices: dict[str, float] = {}
 
             if position is not None:
+                mark_start = _time.perf_counter()
                 snapshot = self._mark_position(
                     position, bar, option_gateway, warnings, warning_codes, ex_dividend_dates,
                 )
+                timing.mark_position_ms += _elapsed_ms(mark_start)
                 position_value = snapshot.position_value
                 exit_prices = {leg.ticker: leg.last_mid for leg in position.option_legs}
                 for stock_leg in position.stock_legs:
@@ -260,6 +496,7 @@ class OptionsBacktestEngine:
                     capital_at_risk = 0.0
                 else:
                     capital_at_risk = position.capital_required_per_unit * position.quantity
+                exit_start = _time.perf_counter()
                 should_exit, exit_reason = self._resolve_exit(
                     bar=bar,
                     position=position,
@@ -273,11 +510,13 @@ class OptionsBacktestEngine:
                     stop_loss_pct=config.stop_loss_pct,
                     current_bar_index=index,
                 )
+                timing.exit_resolution_ms += _elapsed_ms(exit_start)
                 assignment_detail = snapshot.assignment_detail
                 if snapshot.assignment_exit_reason is not None:
                     should_exit = True
                     exit_reason = snapshot.assignment_exit_reason
                 if should_exit:
+                    close_start = _time.perf_counter()
                     trade, cash_delta = self._close_position(
                         position, config, position_value, bar.trade_date, bar.close_price,
                         exit_prices, exit_reason, warnings, warning_codes,
@@ -285,6 +524,8 @@ class OptionsBacktestEngine:
                         assignment_detail=assignment_detail,
                         trade_warnings=snapshot.warnings,
                     )
+                    timing.close_position_ms += _elapsed_ms(close_start)
+                    timing.positions_closed += 1
                     cash += cash_delta
                     trades.append(trade)
                     position = None
@@ -332,21 +573,15 @@ class OptionsBacktestEngine:
                     entry_allowed = False
             if entry_allowed:
                 try:
-                    if custom_legs is not None:
-                        candidate = strategy.build_position(
-                            config,
-                            bar,
-                            index,
-                            option_gateway,
-                            custom_legs=custom_legs,
-                        )
-                    else:
-                        candidate = strategy.build_position(
-                            config,
-                            bar,
-                            index,
-                            option_gateway,
-                        )
+                    candidate = self._build_position_with_timing(
+                        strategy=strategy,
+                        config=config,
+                        bar=bar,
+                        bar_index=index,
+                        option_gateway=option_gateway,
+                        custom_legs=custom_legs,
+                        timing=timing,
+                    )
                 except DataUnavailableError:
                     self._add_warning_once(
                         warnings,
@@ -354,7 +589,7 @@ class OptionsBacktestEngine:
                         "missing_contract_chain",
                         "One or more entry dates could not be evaluated because no eligible"
                         " option contract chain was returned.",
-                    )
+                        )
                 else:
                     if candidate is None:
                         self._add_warning_once(
@@ -364,12 +599,6 @@ class OptionsBacktestEngine:
                             "One or more entry dates were skipped because no valid same-day option quote was returned.",
                         )
                     else:
-                        self._attach_position_quote_series(
-                            candidate,
-                            option_gateway=option_gateway,
-                            start_date=bar.trade_date,
-                            end_date=last_bar_date,
-                        )
                         ev_per_unit = self._entry_value_per_unit(candidate)
                         contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
                         commission_per_unit = float(config.commission_per_contract) * contracts_per_unit
@@ -377,6 +606,7 @@ class OptionsBacktestEngine:
                             sum(abs(leg.entry_mid * _leg_multiplier(leg)) * leg.quantity_per_unit for leg in candidate.option_legs)
                             + sum(abs(leg.entry_price * leg.share_quantity_per_unit) for leg in candidate.stock_legs)
                         )
+                        open_start = _time.perf_counter()
                         quantity = self._resolve_position_size(
                             available_cash=cash,
                             account_size=float(config.account_size),
@@ -389,6 +619,7 @@ class OptionsBacktestEngine:
                             gross_notional_per_unit=gross_notional_per_unit,
                         )
                         if quantity <= 0:
+                            timing.position_sizing_ms += _elapsed_ms(open_start)
                             self._add_warning_once(
                                 warnings,
                                 warning_codes,
@@ -410,21 +641,34 @@ class OptionsBacktestEngine:
                                     "(including slippage) would have exceeded available cash.",
                                 )
                             else:
+                                attach_start = _time.perf_counter()
+                                self._attach_position_quote_series(
+                                    candidate,
+                                    option_gateway=option_gateway,
+                                    start_date=bar.trade_date,
+                                    end_date=last_bar_date,
+                                )
+                                timing.attach_quote_series_ms += _elapsed_ms(attach_start)
                                 cash -= total_entry_cost
                                 position = candidate
+                                timing.positions_opened += 1
                                 if strategy.margin_warning_message and candidate.capital_required_per_unit > float(
                                     abs(ev_per_unit)
                                 ):
                                     self._add_warning_once(
                                         warnings, warning_codes, "margin_reserved", strategy.margin_warning_message
                                     )
+                            timing.position_sizing_ms += _elapsed_ms(open_start)
 
             if position is not None:
+                current_value_start = _time.perf_counter()
                 position_value = self._current_position_value(position, bar.close_price)
+                timing.current_position_value_ms += _elapsed_ms(current_value_start)
                 if not position_value.is_finite():
                     logger.warning("engine.nan_position_value", ticker=position.display_ticker, bar_date=str(bar.trade_date))
                     position_value = _D0
 
+            equity_start = _time.perf_counter()
             equity = cash + position_value
             if equity < _D0:
                 self._add_warning_once(
@@ -444,14 +688,18 @@ class OptionsBacktestEngine:
                     drawdown_pct=drawdown_pct,
                 )
             )
+            timing.equity_curve_ms += _elapsed_ms(equity_start)
 
             if position is None and bar.trade_date > config.end_date:
                 break
 
         if position is not None:
+            force_close_start = _time.perf_counter()
+            mark_start = _time.perf_counter()
             snapshot = self._mark_position(
                 position, sorted_bars[-1], option_gateway, warnings, warning_codes, ex_dividend_dates,
             )
+            timing.mark_position_ms += _elapsed_ms(mark_start)
             final_position_value = snapshot.position_value
             if not final_position_value.is_finite():
                 logger.warning(
@@ -464,6 +712,7 @@ class OptionsBacktestEngine:
             exit_prices_fc = {leg.ticker: leg.last_mid for leg in position.option_legs}
             for stock_leg in position.stock_legs:
                 exit_prices_fc[stock_leg.symbol] = stock_leg.last_price
+            close_start = _time.perf_counter()
             trade, cash_delta = self._close_position(
                 position, config, final_position_value, sorted_bars[-1].trade_date,
                 sorted_bars[-1].close_price, exit_prices_fc, "data_exhausted",
@@ -471,6 +720,8 @@ class OptionsBacktestEngine:
                 current_bar_index=len(sorted_bars) - 1,
                 trade_warnings=snapshot.warnings,
             )
+            timing.close_position_ms += _elapsed_ms(close_start)
+            timing.positions_closed += 1
             cash += cash_delta
             trades.append(trade)
             position = None
@@ -496,7 +747,10 @@ class OptionsBacktestEngine:
                 warnings, warning_codes, "data_exhausted_pricing",
                 "Position force-closed at last available bar price. Actual settlement price may differ significantly.",
             )
+            timing.force_closes += 1
+            timing.force_close_ms += _elapsed_ms(force_close_start)
 
+        summary_start = _time.perf_counter()
         ending_equity_f = float(equity_curve[-1].equity) if equity_curve else float(config.account_size)
         summary = build_summary(
             float(config.account_size),
@@ -506,6 +760,35 @@ class OptionsBacktestEngine:
             risk_free_rate=config.risk_free_rate,
             risk_free_rate_curve=config.risk_free_rate_curve,
             warnings=warnings,
+        )
+        timing.summary_ms += _elapsed_ms(summary_start)
+        timing.total_ms = _elapsed_ms(total_start)
+        logger.info(
+            "backtest.engine_run_timing",
+            symbol=config.symbol,
+            strategy_type=config.strategy_type,
+            bars_input=len(bars),
+            bars_processed=timing.bars_processed,
+            bars_skipped_before_start=timing.bars_skipped_before_start,
+            positions_opened=timing.positions_opened,
+            positions_closed=timing.positions_closed,
+            force_closes=timing.force_closes,
+            rule_precompute_ms=round(timing.rule_precompute_ms, 3),
+            mark_position_ms=round(timing.mark_position_ms, 3),
+            exit_resolution_ms=round(timing.exit_resolution_ms, 3),
+            build_position_ms=round(timing.build_position_ms, 3),
+            build_contract_fetch_ms=round(timing.build_contract_fetch_ms, 3),
+            build_delta_resolution_ms=round(timing.build_delta_resolution_ms, 3),
+            build_entry_quote_fetch_ms=round(timing.build_entry_quote_fetch_ms, 3),
+            build_object_construction_ms=round(timing.build_object_construction_ms, 3),
+            attach_quote_series_ms=round(timing.attach_quote_series_ms, 3),
+            position_sizing_ms=round(timing.position_sizing_ms, 3),
+            current_position_value_ms=round(timing.current_position_value_ms, 3),
+            close_position_ms=round(timing.close_position_ms, 3),
+            equity_curve_ms=round(timing.equity_curve_ms, 3),
+            force_close_ms=round(timing.force_close_ms, 3),
+            summary_ms=round(timing.summary_ms, 3),
+            total_ms=round(timing.total_ms, 3),
         )
         return BacktestExecutionResult(summary=summary, trades=trades, equity_curve=equity_curve, warnings=warnings)
 
@@ -533,6 +816,8 @@ class OptionsBacktestEngine:
                 )
             ]
 
+        timing = _EnginePhaseTiming()
+        total_start = _time.perf_counter()
         base_config = configs[0]
         if base_config.strategy_type == "wheel_strategy":
             return [
@@ -630,6 +915,7 @@ class OptionsBacktestEngine:
             shared_cache=shared_entry_rule_cache,
         )
         entry_allowed_mask: list[bool] | None = None
+        rule_precompute_start = _time.perf_counter()
         try:
             entry_allowed_mask = evaluator.build_entry_allowed_mask()
         except Exception:
@@ -641,6 +927,7 @@ class OptionsBacktestEngine:
                     "entry_rule_evaluation_error",
                     "One or more entry rule evaluations failed and were treated as not-allowed.",
                 )
+        timing.rule_precompute_ms += _elapsed_ms(rule_precompute_start)
 
         build_position_supports_custom_legs = (
             base_config.custom_legs is not None
@@ -651,13 +938,16 @@ class OptionsBacktestEngine:
 
         for index, bar in enumerate(sorted_bars):
             if bar.trade_date < base_config.start_date:
+                timing.bars_skipped_before_start += 1
                 continue
+            timing.bars_processed += 1
 
             position_values = [_D0 for _ in lanes]
             exit_prices_by_lane: list[dict[str, float]] = [{} for _ in lanes]
 
             for lane_index, lane in enumerate(lanes):
                 if lane.position is not None:
+                    mark_start = _time.perf_counter()
                     snapshot = self._mark_position(
                         lane.position,
                         bar,
@@ -666,6 +956,7 @@ class OptionsBacktestEngine:
                         lane.warning_codes,
                         ex_dividend_dates,
                     )
+                    timing.mark_position_ms += _elapsed_ms(mark_start)
                     position_values[lane_index] = snapshot.position_value
                     exit_prices = {leg.ticker: leg.last_mid for leg in lane.position.option_legs}
                     for stock_leg in lane.position.stock_legs:
@@ -695,6 +986,7 @@ class OptionsBacktestEngine:
                         capital_at_risk = 0.0
                     else:
                         capital_at_risk = lane.position.capital_required_per_unit * lane.position.quantity
+                    exit_start = _time.perf_counter()
                     should_exit, exit_reason = self._resolve_exit(
                         bar=bar,
                         position=lane.position,
@@ -708,11 +1000,13 @@ class OptionsBacktestEngine:
                         stop_loss_pct=lane.config.stop_loss_pct,
                         current_bar_index=index,
                     )
+                    timing.exit_resolution_ms += _elapsed_ms(exit_start)
                     assignment_detail = snapshot.assignment_detail
                     if snapshot.assignment_exit_reason is not None:
                         should_exit = True
                         exit_reason = snapshot.assignment_exit_reason
                     if should_exit:
+                        close_start = _time.perf_counter()
                         trade, cash_delta = self._close_position(
                             lane.position,
                             lane.config,
@@ -727,6 +1021,8 @@ class OptionsBacktestEngine:
                             assignment_detail=assignment_detail,
                             trade_warnings=snapshot.warnings,
                         )
+                        timing.close_position_ms += _elapsed_ms(close_start)
+                        timing.positions_closed += 1
                         lane.cash += cash_delta
                         lane.trades.append(trade)
                         lane.position = None
@@ -786,21 +1082,15 @@ class OptionsBacktestEngine:
 
                 if affordable_lanes:
                     try:
-                        if custom_legs is not None:
-                            candidate_template = strategy.build_position(
-                                base_config,
-                                bar,
-                                index,
-                                option_gateway,
-                                custom_legs=custom_legs,
-                            )
-                        else:
-                            candidate_template = strategy.build_position(
-                                base_config,
-                                bar,
-                                index,
-                                option_gateway,
-                            )
+                        candidate_template = self._build_position_with_timing(
+                            strategy=strategy,
+                            config=base_config,
+                            bar=bar,
+                            bar_index=index,
+                            option_gateway=option_gateway,
+                            custom_legs=custom_legs,
+                            timing=timing,
+                        )
                     except DataUnavailableError:
                         for lane in affordable_lanes:
                             self._add_warning_once(
@@ -820,12 +1110,6 @@ class OptionsBacktestEngine:
                                     "One or more entry dates were skipped because no valid same-day option quote was returned.",
                                 )
                         else:
-                            self._attach_position_quote_series(
-                                candidate_template,
-                                option_gateway=option_gateway,
-                                start_date=bar.trade_date,
-                                end_date=last_bar_date,
-                            )
                             ev_per_unit = self._entry_value_per_unit(candidate_template)
                             contracts_per_unit = sum(
                                 leg.quantity_per_unit for leg in candidate_template.option_legs
@@ -840,7 +1124,9 @@ class OptionsBacktestEngine:
                                     for leg in candidate_template.stock_legs
                                 )
                             )
+                            approved_opens: list[tuple[_ExitPolicyLane, int, Decimal]] = []
                             for lane in affordable_lanes:
+                                open_start = _time.perf_counter()
                                 commission_per_unit = (
                                     float(lane.config.commission_per_contract) * contracts_per_unit
                                 )
@@ -863,15 +1149,13 @@ class OptionsBacktestEngine:
                                         "One or more signals were skipped because available cash or"
                                         " configured risk budget could not support the strategy package.",
                                     )
+                                    timing.position_sizing_ms += _elapsed_ms(open_start)
                                     continue
-                                candidate = copy.deepcopy(candidate_template)
-                                candidate.quantity = quantity
-                                candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
+                                candidate_template.quantity = quantity
                                 entry_commission = self._option_commission_total(
-                                    candidate,
+                                    candidate_template,
                                     lane.config.commission_per_contract,
                                 )
-                                candidate.entry_commission_total = entry_commission
                                 slippage_cost_d = (
                                     _D(gross_notional_per_unit)
                                     * _D(quantity)
@@ -890,9 +1174,31 @@ class OptionsBacktestEngine:
                                         "One or more entries were skipped because the total cost "
                                         "(including slippage) would have exceeded available cash.",
                                     )
+                                    timing.position_sizing_ms += _elapsed_ms(open_start)
                                     continue
+                                approved_opens.append((lane, quantity, total_entry_cost))
+                                timing.position_sizing_ms += _elapsed_ms(open_start)
+                            if approved_opens:
+                                attach_start = _time.perf_counter()
+                                self._attach_position_quote_series(
+                                    candidate_template,
+                                    option_gateway=option_gateway,
+                                    start_date=bar.trade_date,
+                                    end_date=last_bar_date,
+                                )
+                                timing.attach_quote_series_ms += _elapsed_ms(attach_start)
+                            for lane, quantity, total_entry_cost in approved_opens:
+                                candidate = self._clone_position_template(candidate_template)
+                                candidate.quantity = quantity
+                                candidate.detail_json.setdefault("entry_underlying_close", bar.close_price)
+                                entry_commission = self._option_commission_total(
+                                    candidate,
+                                    lane.config.commission_per_contract,
+                                )
+                                candidate.entry_commission_total = entry_commission
                                 lane.cash -= total_entry_cost
                                 lane.position = candidate
+                                timing.positions_opened += 1
                                 if (
                                     strategy.margin_warning_message
                                     and candidate.capital_required_per_unit > float(abs(ev_per_unit))
@@ -907,7 +1213,9 @@ class OptionsBacktestEngine:
             all_flat_after_end = True
             for lane_index, lane in enumerate(lanes):
                 if lane.position is not None:
+                    current_value_start = _time.perf_counter()
                     position_values[lane_index] = self._current_position_value(lane.position, bar.close_price)
+                    timing.current_position_value_ms += _elapsed_ms(current_value_start)
                     if not position_values[lane_index].is_finite():
                         logger.warning(
                             "engine.nan_position_value",
@@ -915,6 +1223,7 @@ class OptionsBacktestEngine:
                             bar_date=str(bar.trade_date),
                         )
                         position_values[lane_index] = _D0
+                equity_start = _time.perf_counter()
                 equity = lane.cash + position_values[lane_index]
                 if equity < _D0:
                     self._add_warning_once(
@@ -940,6 +1249,7 @@ class OptionsBacktestEngine:
                         drawdown_pct=drawdown_pct,
                     )
                 )
+                timing.equity_curve_ms += _elapsed_ms(equity_start)
                 if lane.position is not None or bar.trade_date <= lane.config.end_date:
                     all_flat_after_end = False
 
@@ -949,6 +1259,8 @@ class OptionsBacktestEngine:
         results: list[BacktestExecutionResult] = []
         for lane in lanes:
             if lane.position is not None:
+                force_close_start = _time.perf_counter()
+                mark_start = _time.perf_counter()
                 snapshot = self._mark_position(
                     lane.position,
                     sorted_bars[-1],
@@ -957,6 +1269,7 @@ class OptionsBacktestEngine:
                     lane.warning_codes,
                     ex_dividend_dates,
                 )
+                timing.mark_position_ms += _elapsed_ms(mark_start)
                 final_position_value = snapshot.position_value
                 if not final_position_value.is_finite():
                     logger.warning(
@@ -969,6 +1282,7 @@ class OptionsBacktestEngine:
                 exit_prices_fc = {leg.ticker: leg.last_mid for leg in lane.position.option_legs}
                 for stock_leg in lane.position.stock_legs:
                     exit_prices_fc[stock_leg.symbol] = stock_leg.last_price
+                close_start = _time.perf_counter()
                 trade, cash_delta = self._close_position(
                     lane.position,
                     lane.config,
@@ -982,6 +1296,8 @@ class OptionsBacktestEngine:
                     current_bar_index=len(sorted_bars) - 1,
                     trade_warnings=snapshot.warnings,
                 )
+                timing.close_position_ms += _elapsed_ms(close_start)
+                timing.positions_closed += 1
                 lane.cash += cash_delta
                 lane.trades.append(trade)
                 lane.position = None
@@ -1015,7 +1331,10 @@ class OptionsBacktestEngine:
                     "data_exhausted_pricing",
                     "Position force-closed at last available bar price. Actual settlement price may differ significantly.",
                 )
+                timing.force_closes += 1
+                timing.force_close_ms += _elapsed_ms(force_close_start)
 
+            summary_start = _time.perf_counter()
             ending_equity_f = (
                 float(lane.equity_curve[-1].equity)
                 if lane.equity_curve
@@ -1038,7 +1357,37 @@ class OptionsBacktestEngine:
                     warnings=lane.warnings,
                 )
             )
+            timing.summary_ms += _elapsed_ms(summary_start)
 
+        timing.total_ms = _elapsed_ms(total_start)
+        logger.info(
+            "backtest.engine_exit_variants_timing",
+            symbol=base_config.symbol,
+            strategy_type=base_config.strategy_type,
+            lane_count=len(lanes),
+            bars_input=len(bars),
+            bars_processed=timing.bars_processed,
+            bars_skipped_before_start=timing.bars_skipped_before_start,
+            positions_opened=timing.positions_opened,
+            positions_closed=timing.positions_closed,
+            force_closes=timing.force_closes,
+            rule_precompute_ms=round(timing.rule_precompute_ms, 3),
+            mark_position_ms=round(timing.mark_position_ms, 3),
+            exit_resolution_ms=round(timing.exit_resolution_ms, 3),
+            build_position_ms=round(timing.build_position_ms, 3),
+            build_contract_fetch_ms=round(timing.build_contract_fetch_ms, 3),
+            build_delta_resolution_ms=round(timing.build_delta_resolution_ms, 3),
+            build_entry_quote_fetch_ms=round(timing.build_entry_quote_fetch_ms, 3),
+            build_object_construction_ms=round(timing.build_object_construction_ms, 3),
+            attach_quote_series_ms=round(timing.attach_quote_series_ms, 3),
+            position_sizing_ms=round(timing.position_sizing_ms, 3),
+            current_position_value_ms=round(timing.current_position_value_ms, 3),
+            close_position_ms=round(timing.close_position_ms, 3),
+            equity_curve_ms=round(timing.equity_curve_ms, 3),
+            force_close_ms=round(timing.force_close_ms, 3),
+            summary_ms=round(timing.summary_ms, 3),
+            total_ms=round(timing.total_ms, 3),
+        )
         return results
 
     def _mark_position(
@@ -1060,6 +1409,7 @@ class OptionsBacktestEngine:
         branches above and in ``_close_position``.
         """
         option_value = _D0
+        position_quantity = _D(position.quantity)
         missing_quote_tickers: list[str] = []
         quote_lookup = self._load_option_quotes_for_bar(
             position=position,
@@ -1074,8 +1424,7 @@ class OptionsBacktestEngine:
                 missing_quote_tickers,
             )
             leg.last_mid = current_mid
-            multiplier = _leg_multiplier(leg)
-            option_value += _D(leg.side) * _D(leg.quantity_per_unit) * _D(current_mid) * _D(multiplier) * _D(position.quantity)
+            option_value += _option_signed_unit_factor(leg) * _D(current_mid) * position_quantity
 
         if missing_quote_tickers:
             self._add_warning_once(
@@ -1086,9 +1435,10 @@ class OptionsBacktestEngine:
             )
 
         stock_value = _D0
+        close_price_d = _D(bar.close_price)
         for leg in position.stock_legs:
             leg.last_price = bar.close_price
-            stock_value += _D(leg.side) * _D(leg.share_quantity_per_unit) * _D(bar.close_price) * _D(position.quantity)
+            stock_value += _stock_signed_unit_factor(leg) * close_price_d * position_quantity
 
         assignment_exit_reason, assignment_detail = self._check_early_assignment(
             position=position,
@@ -1121,15 +1471,10 @@ class OptionsBacktestEngine:
         assigned_ticker = assignment_detail["assigned_leg"]
         settlement_price = _D(assignment_detail["settlement_price"])
         option_value = _D0
+        position_quantity = _D(position.quantity)
         for leg in position.option_legs:
             leg_mid = settlement_price if leg.ticker == assigned_ticker else _D(leg.last_mid)
-            option_value += (
-                _D(leg.side)
-                * _D(leg.quantity_per_unit)
-                * leg_mid
-                * _D(_leg_multiplier(leg))
-                * _D(position.quantity)
-            )
+            option_value += _option_signed_unit_factor(leg) * leg_mid * position_quantity
         return option_value
 
     @classmethod
@@ -1305,15 +1650,14 @@ class OptionsBacktestEngine:
 
     @staticmethod
     def _current_position_value(position: OpenMultiLegPosition, underlying_close: float) -> Decimal:
-        option_value = sum(
-            (_D(leg.side) * _D(leg.quantity_per_unit) * _D(leg.last_mid)
-             * _D(_leg_multiplier(leg)) * _D(position.quantity))
-            for leg in position.option_legs
-        ) or _D0
-        stock_value = sum(
-            (_D(leg.side) * _D(leg.share_quantity_per_unit) * _D(underlying_close) * _D(position.quantity))
-            for leg in position.stock_legs
-        ) or _D0
+        position_quantity = _D(position.quantity)
+        option_value = _D0
+        for leg in position.option_legs:
+            option_value += _option_signed_unit_factor(leg) * _D(leg.last_mid) * position_quantity
+        stock_value = _D0
+        underlying_close_d = _D(underlying_close)
+        for leg in position.stock_legs:
+            stock_value += _stock_signed_unit_factor(leg) * underlying_close_d * position_quantity
         result = option_value + stock_value
         if not result.is_finite():
             return _D0
@@ -1384,8 +1728,9 @@ class OptionsBacktestEngine:
             exit_prices=exit_prices,
             assignment_detail=assignment_detail,
         )
+        position_quantity = _D(position.quantity)
         stock_exit_notional: Decimal = (
-            sum(abs(_D(leg.last_price) * _D(leg.share_quantity_per_unit)) for leg in position.stock_legs) * _D(position.quantity)
+            sum(abs(_D(leg.last_price) * _stock_abs_unit_factor(leg)) for leg in position.stock_legs) * position_quantity
             if position.stock_legs else _D0
         )
         exit_gross_notional = option_exit_notional + stock_exit_notional
@@ -1393,20 +1738,19 @@ class OptionsBacktestEngine:
         exit_slippage = exit_gross_notional * slippage_pct_d
         entry_value_per_unit = self._entry_value_per_unit(position)
         option_entry_notional: Decimal = sum(
-            (abs(_D(leg.entry_mid) * _D(_leg_multiplier(leg)))
-             * _D(leg.quantity_per_unit))
+            abs(_D(leg.entry_mid) * _option_abs_unit_factor(leg))
             for leg in position.option_legs
         ) or _D0
-        option_entry_notional *= _D(position.quantity)
+        option_entry_notional *= position_quantity
         stock_entry_notional: Decimal = (
-            sum(abs(_D(leg.entry_price) * _D(leg.share_quantity_per_unit)) for leg in position.stock_legs) * _D(position.quantity)
+            sum(abs(_D(leg.entry_price) * _stock_abs_unit_factor(leg)) for leg in position.stock_legs) * position_quantity
             if position.stock_legs else _D0
         )
         entry_gross_notional = option_entry_notional + stock_entry_notional
         entry_slippage = entry_gross_notional * slippage_pct_d
         cash_delta = exit_value_d - exit_commission - exit_slippage
-        exit_value_per_unit = exit_value_d / _D(position.quantity) if position.quantity else _D0
-        gross_pnl = (exit_value_per_unit - entry_value_per_unit) * _D(position.quantity)
+        exit_value_per_unit = exit_value_d / position_quantity if position.quantity else _D0
+        gross_pnl = (exit_value_per_unit - entry_value_per_unit) * position_quantity
         dividends_received = self._estimate_dividends_received(position, config, exit_date)
         if dividends_received:
             gross_pnl += dividends_received
@@ -1515,22 +1859,20 @@ class OptionsBacktestEngine:
         annual_yield = _D(config.dividend_yield)
         proration = _D(holding_days) / _D365
         dividends = _D0
+        position_quantity = _D(position.quantity)
         for leg in position.stock_legs:
-            notional = _D(leg.entry_price) * _D(leg.share_quantity_per_unit) * _D(position.quantity)
+            notional = _D(leg.entry_price) * _stock_abs_unit_factor(leg) * position_quantity
             dividends += notional * annual_yield * proration * _D(leg.side)
         return dividends
 
     @staticmethod
     def _entry_value_per_unit(position: OpenMultiLegPosition) -> Decimal:
-        option_value = sum(
-            (_D(leg.side) * _D(leg.quantity_per_unit) * _D(leg.entry_mid)
-             * _D(_leg_multiplier(leg)))
-            for leg in position.option_legs
-        ) or _D0
-        stock_value = sum(
-            (_D(leg.side) * _D(leg.share_quantity_per_unit) * _D(leg.entry_price))
-            for leg in position.stock_legs
-        ) or _D0
+        option_value = _D0
+        for leg in position.option_legs:
+            option_value += _option_signed_unit_factor(leg) * _D(leg.entry_mid)
+        stock_value = _D0
+        for leg in position.stock_legs:
+            stock_value += _stock_signed_unit_factor(leg) * _D(leg.entry_price)
         return option_value + stock_value
 
     @staticmethod
@@ -1584,14 +1926,12 @@ class OptionsBacktestEngine:
         total_commission = _D0
         slippage_notional = _D0
         waivers: list[dict[str, Any]] = []
+        position_quantity = _D(position.quantity)
 
         for leg in position.option_legs:
             leg_exit_mid = _D(exit_prices.get(leg.ticker, leg.last_mid))
-            leg_contracts = _D(leg.quantity_per_unit) * _D(position.quantity)
-            leg_notional = (
-                abs(leg_exit_mid * _D(_leg_multiplier(leg)) * _D(leg.quantity_per_unit))
-                * _D(position.quantity)
-            )
+            leg_contracts = _D(leg.quantity_per_unit) * position_quantity
+            leg_notional = abs(leg_exit_mid * _option_abs_unit_factor(leg)) * position_quantity
             waiver_reason: str | None = None
 
             if assigned_ticker == leg.ticker:

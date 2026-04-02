@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from backtestforecast.backtests.margin import ratio_backspread_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
+    get_entry_quotes,
     get_overrides,
     maybe_build_contract_delta_lookup,
     offset_strike,
@@ -81,8 +82,13 @@ class RatioCallBackspreadStrategy(StrategyDefinition):
         short_c = require_contract_for_strike(cc, short_strike)
         long_c = require_contract_for_strike(cc, long_strike)
 
-        sq = option_gateway.get_quote(short_c.ticker, bar.trade_date)
-        lq = option_gateway.get_quote(long_c.ticker, bar.trade_date)
+        quotes = get_entry_quotes(
+            option_gateway,
+            trade_date=bar.trade_date,
+            contracts=[short_c, long_c],
+        )
+        sq = quotes.get(short_c.ticker)
+        lq = quotes.get(long_c.ticker)
         if sq is None or lq is None:
             return None
         if not valid_entry_mids(sq.mid_price, lq.mid_price):
@@ -174,8 +180,13 @@ class RatioPutBackspreadStrategy(StrategyDefinition):
         short_c = require_contract_for_strike(pc, short_strike)
         long_c = require_contract_for_strike(pc, long_strike)
 
-        sq = option_gateway.get_quote(short_c.ticker, bar.trade_date)
-        lq = option_gateway.get_quote(long_c.ticker, bar.trade_date)
+        quotes = get_entry_quotes(
+            option_gateway,
+            trade_date=bar.trade_date,
+            contracts=[short_c, long_c],
+        )
+        sq = quotes.get(short_c.ticker)
+        lq = quotes.get(long_c.ticker)
         if sq is None or lq is None:
             return None
         if not valid_entry_mids(sq.mid_price, lq.mid_price):

@@ -10,6 +10,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_strike,
     select_preferred_expiration_contracts,
+    sorted_unique_strikes,
     valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
@@ -55,8 +56,9 @@ class CashSecuredPutStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=getattr(option_gateway, "_iv_cache", None),
         )
+        strikes = sorted_unique_strikes(put_contracts)
         strike = resolve_strike(
-            [c.strike_price for c in put_contracts],
+            strikes,
             bar.close_price,
             "put",
             overrides.short_put_strike,

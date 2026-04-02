@@ -7,12 +7,14 @@ import structlog
 from backtestforecast.backtests.margin import iron_condor_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
+    get_entry_quotes,
     get_overrides,
     maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
     resolve_wing_strike,
     select_preferred_common_expiration_contracts,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -75,8 +77,10 @@ class IronCondorStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=_iv_cache,
         )
+        call_strikes = sorted_unique_strikes(call_contracts)
+        put_strikes = sorted_unique_strikes(put_contracts)
         call_short_strike = resolve_strike(
-            [c.strike_price for c in call_contracts],
+            call_strikes,
             bar.close_price,
             "call",
             overrides.short_call_strike,
@@ -89,7 +93,7 @@ class IronCondorStrategy(StrategyDefinition):
             risk_free_rate=risk_free_rate,
         )
         put_short_strike = resolve_strike(
-            [c.strike_price for c in put_contracts],
+            put_strikes,
             bar.close_price,
             "put",
             overrides.short_put_strike,
@@ -102,14 +106,14 @@ class IronCondorStrategy(StrategyDefinition):
             risk_free_rate=risk_free_rate,
         )
         call_long_strike = resolve_wing_strike(
-            [c.strike_price for c in call_contracts],
+            call_strikes,
             call_short_strike,
             1,
             bar.close_price,
             overrides.spread_width,
         )
         put_long_strike = resolve_wing_strike(
-            [c.strike_price for c in put_contracts],
+            put_strikes,
             put_short_strike,
             -1,
             bar.close_price,
@@ -123,12 +127,11 @@ class IronCondorStrategy(StrategyDefinition):
         short_put = require_contract_for_strike(put_contracts, put_short_strike)
         long_put = require_contract_for_strike(put_contracts, put_long_strike)
 
-        quotes = {
-            short_call.ticker: option_gateway.get_quote(short_call.ticker, bar.trade_date),
-            long_call.ticker: option_gateway.get_quote(long_call.ticker, bar.trade_date),
-            short_put.ticker: option_gateway.get_quote(short_put.ticker, bar.trade_date),
-            long_put.ticker: option_gateway.get_quote(long_put.ticker, bar.trade_date),
-        }
+        quotes = get_entry_quotes(
+            option_gateway,
+            trade_date=bar.trade_date,
+            contracts=[short_call, long_call, short_put, long_put],
+        )
         if any(quote is None for quote in quotes.values()):
             return None
 

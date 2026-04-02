@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from backtestforecast.backtests.margin import credit_spread_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
+    get_entry_quotes,
     get_overrides,
     maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
     resolve_wing_strike,
     select_preferred_expiration_contracts,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -46,7 +48,7 @@ class VerticalSpreadStrategy(StrategyDefinition):
             target_dte=config.target_dte,
             dte_tolerance_days=config.dte_tolerance_days,
         )
-        strikes = [contract.strike_price for contract in expiration_contracts]
+        strikes = sorted_unique_strikes(expiration_contracts)
         dte = (expiration - bar.trade_date).days
         # Determine short leg placement override based on contract type
         short_override = overrides.short_call_strike if self.contract_type == "call" else overrides.short_put_strike
@@ -119,8 +121,13 @@ class VerticalSpreadStrategy(StrategyDefinition):
                 short_contract = upper_contract
                 long_contract = lower_contract
 
-        long_quote = option_gateway.get_quote(long_contract.ticker, bar.trade_date)
-        short_quote = option_gateway.get_quote(short_contract.ticker, bar.trade_date)
+        quotes = get_entry_quotes(
+            option_gateway,
+            trade_date=bar.trade_date,
+            contracts=[long_contract, short_contract],
+        )
+        long_quote = quotes.get(long_contract.ticker)
+        short_quote = quotes.get(short_contract.ticker)
         if long_quote is None or short_quote is None:
             return None
         if not valid_entry_mids(long_quote.mid_price, short_quote.mid_price):

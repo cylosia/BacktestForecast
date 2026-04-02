@@ -15,6 +15,7 @@ from backtestforecast.backtests.strategies.common import (
     resolve_strike,
     resolve_wing_strike,
     select_preferred_common_expiration_contracts,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -71,8 +72,10 @@ class JadeLizardStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=_iv_cache,
         )
+        call_strikes = sorted_unique_strikes(cc)
+        put_strikes = sorted_unique_strikes(pc)
         put_strike = resolve_strike(
-            [c.strike_price for c in pc],
+            put_strikes,
             bar.close_price,
             "put",
             overrides.short_put_strike,
@@ -85,7 +88,7 @@ class JadeLizardStrategy(StrategyDefinition):
             risk_free_rate=risk_free_rate,
         )
         call_short_strike = resolve_strike(
-            [c.strike_price for c in cc],
+            call_strikes,
             bar.close_price,
             "call",
             overrides.short_call_strike,
@@ -98,7 +101,7 @@ class JadeLizardStrategy(StrategyDefinition):
             risk_free_rate=risk_free_rate,
         )
         call_long_strike = resolve_wing_strike(
-            [c.strike_price for c in cc],
+            call_strikes,
             call_short_strike,
             1,
             bar.close_price,
@@ -186,16 +189,18 @@ class IronButterflyStrategy(StrategyDefinition):
 
         # ATM strike for short straddle
         center_strike = choose_common_atm_strike(cc, pc, bar.close_price)
+        call_strikes = sorted_unique_strikes(cc)
+        put_strikes = sorted_unique_strikes(pc)
         # Wings: configurable width
         call_wing = resolve_wing_strike(
-            [c.strike_price for c in cc],
+            call_strikes,
             center_strike,
             1,
             bar.close_price,
             overrides.spread_width,
         )
         put_wing = resolve_wing_strike(
-            [c.strike_price for c in pc],
+            put_strikes,
             center_strike,
             -1,
             bar.close_price,

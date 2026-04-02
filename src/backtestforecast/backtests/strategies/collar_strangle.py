@@ -10,6 +10,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_strike,
     select_preferred_common_expiration_contracts,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -72,8 +73,10 @@ class CollarStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=_iv_cache,
         )
+        call_strikes = sorted_unique_strikes(cc)
+        put_strikes = sorted_unique_strikes(pc)
         call_strike = resolve_strike(
-            [c.strike_price for c in cc],
+            call_strikes,
             bar.close_price,
             "call",
             overrides.short_call_strike,
@@ -86,7 +89,7 @@ class CollarStrategy(StrategyDefinition):
             risk_free_rate=risk_free_rate,
         )
         put_strike = resolve_strike(
-            [c.strike_price for c in pc],
+            put_strikes,
             bar.close_price,
             "put",
             overrides.long_put_strike,
@@ -223,8 +226,10 @@ class CoveredStrangleStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=_iv_cache,
         )
+        call_strikes = sorted_unique_strikes(cc)
+        put_strikes = sorted_unique_strikes(pc)
         call_strike = resolve_strike(
-            [c.strike_price for c in cc],
+            call_strikes,
             bar.close_price,
             "call",
             overrides.short_call_strike,
@@ -237,7 +242,7 @@ class CoveredStrangleStrategy(StrategyDefinition):
             risk_free_rate=risk_free_rate,
         )
         put_strike = resolve_strike(
-            [c.strike_price for c in pc],
+            put_strikes,
             bar.close_price,
             "put",
             overrides.short_put_strike,

@@ -8,8 +8,11 @@ from backtestforecast.backtests.strategies.common import (
     choose_atm_strike,
     choose_common_atm_strike,
     choose_primary_expiration,
+    choose_primary_expiration_date,
+    common_sorted_expirations,
     contracts_for_expiration,
     require_contract_for_strike,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -39,7 +42,7 @@ class SyntheticPutStrategy(StrategyDefinition):
         cc = contracts_for_expiration(calls, expiration)
         if not cc:
             return None
-        strike = choose_atm_strike([c.strike_price for c in cc], bar.close_price)
+        strike = choose_atm_strike(sorted_unique_strikes(cc), bar.close_price)
         long_call = require_contract_for_strike(cc, strike)
 
         cq = option_gateway.get_quote(long_call.ticker, bar.trade_date)
@@ -105,14 +108,10 @@ class ReverseConversionStrategy(StrategyDefinition):
     ) -> OpenMultiLegPosition | None:
         calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
         puts = option_gateway.list_contracts(bar.trade_date, "put", config.target_dte, config.dte_tolerance_days)
-        common_exp = sorted({c.expiration_date for c in calls} & {c.expiration_date for c in puts})
+        common_exp = common_sorted_expirations(calls, puts)
         if not common_exp:
             raise DataUnavailableError("No common expiration for reverse conversion.")
-        expiration = choose_primary_expiration(
-            [c for c in calls if c.expiration_date in common_exp],
-            bar.trade_date,
-            config.target_dte,
-        )
+        expiration = choose_primary_expiration_date(common_exp, entry_date=bar.trade_date, target_dte=config.target_dte)
         cc = contracts_for_expiration(calls, expiration)
         pc = contracts_for_expiration(puts, expiration)
         strike = choose_common_atm_strike(cc, pc, bar.close_price)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -80,6 +80,58 @@ class _TargetedGateway(_Gateway):
                 shares_per_contract=100.0,
             )
         ]
+
+
+class _BatchQuoteGateway(_TargetedGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_quote_calls: list[tuple[tuple[str, ...], date]] = []
+
+    def get_quotes(self, option_tickers, trade_date):
+        self.batch_quote_calls.append((tuple(option_tickers), trade_date))
+        return {
+            ticker: OptionQuoteRecord(
+                trade_date=trade_date,
+                bid_price=1.0,
+                ask_price=1.2,
+                participant_timestamp=None,
+            )
+            for ticker in option_tickers
+        }
+
+    def get_quote(self, option_ticker: str, trade_date: date):
+        raise AssertionError("batch quote path should be used")
+
+
+class _SeriesQuoteGateway(_Gateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.series_calls: list[tuple[tuple[str, ...], date, date]] = []
+
+    def get_quote_series(self, option_tickers, start_date: date, end_date: date):
+        self.series_calls.append((tuple(option_tickers), start_date, end_date))
+        series = {}
+        for ticker in option_tickers:
+            per_date = {}
+            current = start_date
+            while current <= end_date:
+                per_date[current] = OptionQuoteRecord(
+                    trade_date=current,
+                    bid_price=1.0,
+                    ask_price=1.2,
+                    participant_timestamp=None,
+                )
+                current += timedelta(days=1)
+            series[ticker] = per_date
+        return series
+
+    def get_quote(self, option_ticker: str, trade_date: date):
+        return OptionQuoteRecord(
+            trade_date=trade_date,
+            bid_price=1.0,
+            ask_price=1.2,
+            participant_timestamp=None,
+        )
 
 
 def _request(strategy_type: StrategyType = StrategyType.LONG_CALL) -> CreateBacktestRunRequest:
@@ -198,6 +250,31 @@ def test_prewarm_targeted_option_bundle_uses_exact_expiration_single_type_with_q
     ])
 
 
+def test_prewarm_targeted_option_bundle_batches_entry_quotes_when_supported():
+    gateway = _BatchQuoteGateway()
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type=StrategyType.COVERED_CALL,
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 2),
+        target_dte=3,
+        dte_tolerance_days=1,
+        max_holding_days=7,
+        account_size=Decimal("100000"),
+        risk_per_trade_pct=Decimal("100"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[],
+    )
+    bars = [DailyBar(date(2025, 4, 1), 200, 201, 199, 200, 1_000_000)]
+    bundle = HistoricalDataBundle(bars=bars, earnings_dates=set(), ex_dividend_dates=set(), option_gateway=gateway)
+
+    summary = prewarm_targeted_option_bundle(request, bundle=bundle, include_quotes=True)
+
+    assert summary.dates_processed == 1
+    assert summary.quotes_fetched == 1
+    assert gateway.batch_quote_calls == [(("O:AAPL250404C00200000",), date(2025, 4, 1))]
+
+
 def test_prewarm_targeted_option_bundle_uses_shared_expiration_lookup_for_two_sided_strategies():
     gateway = _TargetedGateway()
     request = CreateBacktestRunRequest(
@@ -225,6 +302,106 @@ def test_prewarm_targeted_option_bundle_uses_shared_expiration_lookup_for_two_si
         (date(2025, 4, 1), "call", date(2025, 4, 4), 160.0, 240.0),
         (date(2025, 4, 1), "put", date(2025, 4, 4), 160.0, 240.0),
     ])
+
+
+def test_prewarm_targeted_option_bundle_uses_availability_probe_before_shared_batch_fetch():
+    class _AvailabilityGateway(_TargetedGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.availability_calls = 0
+            self.combined_calls: list[tuple[date, ...]] = []
+
+        def list_available_expirations_by_type(self, **kwargs):
+            self.availability_calls += 1
+            expiration_dates = kwargs["expiration_dates"]
+            chosen = expiration_dates[1]
+            return {
+                "call": [chosen],
+                "put": [chosen],
+            }
+
+        def list_contracts_for_expirations_by_type(self, **kwargs):
+            expiration_dates = tuple(kwargs["expiration_dates"])
+            self.combined_calls.append(expiration_dates)
+            expiration = expiration_dates[0]
+            return {
+                "call": {
+                    expiration: [
+                        OptionContractRecord(
+                            "O:AAPL250405C00200000",
+                            "call",
+                            expiration,
+                            200.0,
+                            100.0,
+                        )
+                    ],
+                },
+                "put": {
+                    expiration: [
+                        OptionContractRecord(
+                            "O:AAPL250405P00200000",
+                            "put",
+                            expiration,
+                            200.0,
+                            100.0,
+                        )
+                    ],
+                },
+            }
+
+        def list_contracts_for_expiration(self, **kwargs):
+            raise AssertionError("shared prewarm should use combined fetch after availability probe")
+
+    gateway = _AvailabilityGateway()
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type=StrategyType.IRON_CONDOR,
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 2),
+        target_dte=3,
+        dte_tolerance_days=1,
+        max_holding_days=7,
+        account_size=Decimal("100000"),
+        risk_per_trade_pct=Decimal("100"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[],
+    )
+    bars = [DailyBar(date(2025, 4, 1), 200, 201, 199, 200, 1_000_000)]
+    bundle = HistoricalDataBundle(bars=bars, earnings_dates=set(), ex_dividend_dates=set(), option_gateway=gateway)
+
+    summary = prewarm_targeted_option_bundle(request, bundle=bundle, include_quotes=False)
+
+    assert summary.dates_processed == 1
+    assert summary.contracts_fetched == 2
+    assert summary.quotes_fetched == 0
+    assert gateway.availability_calls == 1
+    assert gateway.combined_calls == [(date(2025, 4, 5),)]
+    assert gateway.exact_expiration_calls == []
+
+
+def test_prewarm_long_option_bundle_uses_quote_series_for_future_quote_warming_when_supported():
+    gateway = _SeriesQuoteGateway()
+    request = _request()
+    bars = [
+        DailyBar(date(2025, 4, 1), 200, 201, 199, 200, 1_000_000),
+        DailyBar(date(2025, 4, 2), 202, 203, 201, 202, 1_000_000),
+        DailyBar(date(2025, 4, 3), 203, 204, 202, 203, 1_000_000),
+    ]
+    bundle = HistoricalDataBundle(bars=bars, earnings_dates=set(), ex_dividend_dates=set(), option_gateway=gateway)
+
+    summary = prewarm_long_option_bundle(
+        request,
+        bundle=bundle,
+        include_quotes=True,
+        warm_future_quotes=True,
+    )
+
+    assert summary.dates_processed == 3
+    assert summary.quotes_fetched == 6
+    assert gateway.series_calls == [
+        (("O:AAPL250404C00200000",), date(2025, 4, 1), date(2025, 4, 3)),
+        (("O:AAPL250404C00200000",), date(2025, 4, 2), date(2025, 4, 3)),
+    ]
 
 
 def test_prewarm_targeted_option_bundle_uses_exact_near_and_far_expirations_for_calendar():

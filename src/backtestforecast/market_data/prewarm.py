@@ -124,6 +124,64 @@ def _collect_parallel_prewarm_results(
     return results
 
 
+def _count_quote_warm_requests(
+    contracts: list[object],
+    quote_dates: list[date],
+) -> int:
+    count = 0
+    for contract in contracts:
+        expiration_date = getattr(contract, "expiration_date", None)
+        for quote_date in quote_dates:
+            if expiration_date is not None and quote_date > expiration_date:
+                break
+            count += 1
+    return count
+
+
+def _warm_contract_quotes(
+    gateway: object,
+    *,
+    contracts: list[object],
+    quote_dates: list[date],
+) -> int:
+    if not contracts or not quote_dates:
+        return 0
+    unique_tickers = list(dict.fromkeys(getattr(contract, "ticker") for contract in contracts))
+    if not unique_tickers:
+        return 0
+    fetch_series = getattr(gateway, "get_quote_series", None)
+    if callable(fetch_series) and len(quote_dates) > 1:
+        fetch_series(unique_tickers, quote_dates[0], quote_dates[-1])
+        return _count_quote_warm_requests(contracts, quote_dates)
+
+    batch_fetch = getattr(gateway, "get_quotes", None)
+    if callable(batch_fetch):
+        warmed = 0
+        for quote_date in quote_dates:
+            eligible_tickers = list(
+                dict.fromkeys(
+                    getattr(contract, "ticker")
+                    for contract in contracts
+                    if quote_date <= getattr(contract, "expiration_date", quote_date)
+                )
+            )
+            if not eligible_tickers:
+                continue
+            batch_fetch(eligible_tickers, quote_date)
+            warmed += len(eligible_tickers)
+        return warmed
+
+    warmed = 0
+    for contract in contracts:
+        expiration_date = getattr(contract, "expiration_date", None)
+        for quote_date in quote_dates:
+            if expiration_date is not None and quote_date > expiration_date:
+                break
+            gateway.get_quote(contract.ticker, quote_date)
+            warmed += 1
+    return warmed
+
+
 def resolve_long_option_contract_type(strategy_type: StrategyType) -> str:
     if strategy_type == StrategyType.LONG_CALL:
         return "call"
@@ -150,6 +208,7 @@ def prewarm_long_option_backtest(
     include_quotes: bool = False,
     max_dates: int | None = None,
     warm_future_quotes: bool = False,
+    entry_trade_bars: list[DailyBar] | None = None,
 ) -> ContractCatalogPrewarmSummary:
     bundle = market_data_service.prepare_backtest(request)
     return prewarm_long_option_bundle(
@@ -158,6 +217,7 @@ def prewarm_long_option_backtest(
         include_quotes=include_quotes,
         max_dates=max_dates,
         warm_future_quotes=warm_future_quotes,
+        entry_trade_bars=entry_trade_bars,
     )
 
 
@@ -168,6 +228,7 @@ def prewarm_long_option_bundle(
     include_quotes: bool = False,
     max_dates: int | None = None,
     warm_future_quotes: bool = False,
+    entry_trade_bars: list[DailyBar] | None = None,
 ) -> ContractCatalogPrewarmSummary:
     contract_type = resolve_long_option_contract_type(request.strategy_type)
     gateway = bundle.option_gateway
@@ -177,12 +238,14 @@ def prewarm_long_option_bundle(
 
     strike_override = _resolve_long_option_strike_override(request)
     strike_band_resolver = LONG_CALL_STRATEGY if contract_type == "call" else LONG_PUT_STRATEGY
-    trade_bars = collect_trade_dates(
+    all_trade_bars = collect_trade_dates(
         bundle.bars,
         start_date=request.start_date,
         end_date=request.end_date,
-        max_dates=max_dates,
     )
+    trade_bars = entry_trade_bars or all_trade_bars
+    if max_dates is not None:
+        trade_bars = trade_bars[:max_dates]
     def _prewarm_date(index: int, bar: DailyBar) -> _DatePrewarmResult:
         result = _DatePrewarmResult(index=index)
         try:
@@ -200,19 +263,18 @@ def prewarm_long_option_bundle(
             if include_quotes:
                 quote_dates = (
                     _quote_trade_dates_for_entry(
-                        trade_bars=trade_bars,
-                        entry_index=index,
+                        trade_bars=all_trade_bars,
+                        entry_date=bar.trade_date,
                         max_holding_days=request.max_holding_days,
                     )
                     if warm_future_quotes
                     else [bar.trade_date]
                 )
-                for contract in contracts:
-                    for quote_date in quote_dates:
-                        if quote_date > contract.expiration_date:
-                            break
-                        gateway.get_quote(contract.ticker, quote_date)
-                        result.quotes_fetched += 1
+                result.quotes_fetched += _warm_contract_quotes(
+                    gateway,
+                    contracts=contracts,
+                    quote_dates=quote_dates,
+                )
         except Exception as exc:
             result.errors.append(f"{request.symbol} {bar.trade_date}: {exc}")
         return result
@@ -264,6 +326,7 @@ def prewarm_targeted_option_bundle(
     include_quotes: bool = False,
     max_dates: int | None = None,
     warm_future_quotes: bool = False,
+    entry_trade_bars: list[DailyBar] | None = None,
 ) -> ContractCatalogPrewarmSummary:
     gateway = bundle.option_gateway
     exact_fetch = getattr(gateway, "list_contracts_for_preferred_expiration", None)
@@ -271,12 +334,14 @@ def prewarm_targeted_option_bundle(
     if not callable(exact_fetch) or not callable(exact_by_expiration):
         raise TypeError("option gateway must expose exact-expiration fetch helpers for targeted prewarm")
 
-    trade_bars = collect_trade_dates(
+    all_trade_bars = collect_trade_dates(
         bundle.bars,
         start_date=request.start_date,
         end_date=request.end_date,
-        max_dates=max_dates,
     )
+    trade_bars = entry_trade_bars or all_trade_bars
+    if max_dates is not None:
+        trade_bars = trade_bars[:max_dates]
     def _prewarm_date(index: int, bar: DailyBar) -> _DatePrewarmResult:
         result = _DatePrewarmResult(index=index)
         try:
@@ -292,8 +357,8 @@ def prewarm_targeted_option_bundle(
             if include_quotes:
                 quote_dates = (
                     _quote_trade_dates_for_entry(
-                        trade_bars=trade_bars,
-                        entry_index=index,
+                        trade_bars=all_trade_bars,
+                        entry_date=bar.trade_date,
                         max_holding_days=request.max_holding_days,
                         max_quote_dates=2,
                     )
@@ -301,12 +366,11 @@ def prewarm_targeted_option_bundle(
                     else [bar.trade_date]
                 )
                 for contracts in contract_groups:
-                    for contract in contracts:
-                        for quote_date in quote_dates:
-                            if quote_date > contract.expiration_date:
-                                break
-                            gateway.get_quote(contract.ticker, quote_date)
-                            result.quotes_fetched += 1
+                    result.quotes_fetched += _warm_contract_quotes(
+                        gateway,
+                        contracts=contracts,
+                        quote_dates=quote_dates,
+                    )
         except Exception as exc:
             result.errors.append(f"{request.symbol} {bar.trade_date}: {exc}")
         return result
@@ -330,13 +394,14 @@ def prewarm_targeted_option_bundle(
 def _quote_trade_dates_for_entry(
     *,
     trade_bars: list[DailyBar],
-    entry_index: int,
+    entry_date: date,
     max_holding_days: int,
     max_quote_dates: int | None = None,
 ) -> list[date]:
-    entry_date = trade_bars[entry_index].trade_date
     quote_dates: list[date] = []
-    for bar in trade_bars[entry_index:]:
+    for bar in trade_bars:
+        if bar.trade_date < entry_date:
+            continue
         if (bar.trade_date - entry_date).days > max_holding_days:
             break
         quote_dates.append(bar.trade_date)
@@ -375,7 +440,68 @@ def _targeted_contract_groups_for_date(
             request.target_dte,
             request.dte_tolerance_days,
         )
+        availability_fetch_by_type = getattr(gateway, "list_available_expirations_by_type", None)
+        batch_fetch_by_type = getattr(gateway, "list_contracts_for_expirations_by_type", None)
         batch_fetch = getattr(gateway, "list_contracts_for_expirations", None)
+        exact_fetch = getattr(gateway, "list_contracts_for_expiration", None)
+        if callable(availability_fetch_by_type):
+            available_by_type = availability_fetch_by_type(
+                entry_date=trade_date,
+                contract_types=["call", "put"],
+                expiration_dates=ordered_expirations,
+                strike_price_gte=strike_band[0],
+                strike_price_lte=strike_band[1],
+            )
+            available_calls = set(available_by_type.get("call", []))
+            available_puts = set(available_by_type.get("put", []))
+            for expiration_date in ordered_expirations:
+                if expiration_date not in available_calls or expiration_date not in available_puts:
+                    continue
+                if callable(batch_fetch_by_type):
+                    fetched_by_type = batch_fetch_by_type(
+                        entry_date=trade_date,
+                        contract_types=["call", "put"],
+                        expiration_dates=[expiration_date],
+                        strike_price_gte=strike_band[0],
+                        strike_price_lte=strike_band[1],
+                    )
+                    calls = list(fetched_by_type.get("call", {}).get(expiration_date, []))
+                    puts = list(fetched_by_type.get("put", {}).get(expiration_date, []))
+                elif callable(exact_fetch):
+                    calls = exact_fetch(
+                        entry_date=trade_date,
+                        contract_type="call",
+                        expiration_date=expiration_date,
+                        strike_price_gte=strike_band[0],
+                        strike_price_lte=strike_band[1],
+                    )
+                    puts = exact_fetch(
+                        entry_date=trade_date,
+                        contract_type="put",
+                        expiration_date=expiration_date,
+                        strike_price_gte=strike_band[0],
+                        strike_price_lte=strike_band[1],
+                    )
+                else:
+                    calls = []
+                    puts = []
+                if calls and puts:
+                    return [calls, puts]
+        if callable(batch_fetch_by_type):
+            fetched_by_type = batch_fetch_by_type(
+                entry_date=trade_date,
+                contract_types=["call", "put"],
+                expiration_dates=ordered_expirations,
+                strike_price_gte=strike_band[0],
+                strike_price_lte=strike_band[1],
+            )
+            calls_by_expiration = fetched_by_type.get("call", {})
+            puts_by_expiration = fetched_by_type.get("put", {})
+            for expiration_date in ordered_expirations:
+                calls = list(calls_by_expiration.get(expiration_date, []))
+                puts = list(puts_by_expiration.get(expiration_date, []))
+                if calls and puts:
+                    return [calls, puts]
         if callable(batch_fetch):
             calls_by_expiration = batch_fetch(
                 entry_date=trade_date,

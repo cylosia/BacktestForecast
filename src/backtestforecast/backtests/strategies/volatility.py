@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_common_atm_strike,
+    get_entry_quotes,
     get_overrides,
     maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
     select_preferred_common_expiration_contracts,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -77,8 +79,10 @@ class VolatilityExpansionStrategy(StrategyDefinition):
                 dividend_yield=config.dividend_yield,
                 iv_cache=_iv_cache,
             )
+            call_strikes = sorted_unique_strikes(call_contracts)
+            put_strikes = sorted_unique_strikes(put_contracts)
             call_strike = resolve_strike(
-                [c.strike_price for c in call_contracts],
+                call_strikes,
                 bar.close_price,
                 "call",
                 overrides.long_call_strike,
@@ -91,7 +95,7 @@ class VolatilityExpansionStrategy(StrategyDefinition):
                 risk_free_rate=risk_free_rate,
             )
             put_strike = resolve_strike(
-                [c.strike_price for c in put_contracts],
+                put_strikes,
                 bar.close_price,
                 "put",
                 overrides.long_put_strike,
@@ -110,8 +114,13 @@ class VolatilityExpansionStrategy(StrategyDefinition):
                 "Position stays open until expiration, max_holding_days, or backtest end.",
             ]
 
-        call_quote = option_gateway.get_quote(call_contract.ticker, bar.trade_date)
-        put_quote = option_gateway.get_quote(put_contract.ticker, bar.trade_date)
+        quotes = get_entry_quotes(
+            option_gateway,
+            trade_date=bar.trade_date,
+            contracts=[call_contract, put_contract],
+        )
+        call_quote = quotes.get(call_contract.ticker)
+        put_quote = quotes.get(put_contract.ticker)
         if call_quote is None or put_quote is None:
             return None
         if not valid_entry_mids(call_quote.mid_price, put_quote.mid_price):

@@ -6,11 +6,13 @@ from backtestforecast.backtests.margin import short_straddle_strangle_margin
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_common_atm_strike,
+    get_entry_quotes,
     get_overrides,
     maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
     select_preferred_common_expiration_contracts,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -76,8 +78,10 @@ class ShortVolatilityStrategy(StrategyDefinition):
                 dividend_yield=config.dividend_yield,
                 iv_cache=_iv_cache,
             )
+            call_strikes = sorted_unique_strikes(cc)
+            put_strikes = sorted_unique_strikes(pc)
             call_strike = resolve_strike(
-                [c.strike_price for c in cc],
+                call_strikes,
                 bar.close_price,
                 "call",
                 overrides.short_call_strike,
@@ -90,7 +94,7 @@ class ShortVolatilityStrategy(StrategyDefinition):
                 risk_free_rate=risk_free_rate,
             )
             put_strike = resolve_strike(
-                [c.strike_price for c in pc],
+                put_strikes,
                 bar.close_price,
                 "put",
                 overrides.short_put_strike,
@@ -105,8 +109,13 @@ class ShortVolatilityStrategy(StrategyDefinition):
             call_c = require_contract_for_strike(cc, call_strike)
             put_c = require_contract_for_strike(pc, put_strike)
 
-        cq = option_gateway.get_quote(call_c.ticker, bar.trade_date)
-        pq = option_gateway.get_quote(put_c.ticker, bar.trade_date)
+        quotes = get_entry_quotes(
+            option_gateway,
+            trade_date=bar.trade_date,
+            contracts=[call_c, put_c],
+        )
+        cq = quotes.get(call_c.ticker)
+        pq = quotes.get(put_c.ticker)
         if cq is None or pq is None:
             return None
         if not valid_entry_mids(cq.mid_price, pq.mid_price):

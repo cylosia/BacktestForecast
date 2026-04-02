@@ -10,6 +10,7 @@ from backtestforecast.backtests.strategies.common import (
     maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
+    sorted_unique_strikes,
     valid_entry_mids,
 )
 from backtestforecast.backtests.types import (
@@ -95,8 +96,9 @@ class LongOptionStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=getattr(option_gateway, "_iv_cache", None),
         )
+        strikes = sorted_unique_strikes(exp_contracts)
         strike = resolve_strike(
-            [c.strike_price for c in exp_contracts],
+            strikes,
             bar.close_price,
             self.contract_type,
             strike_override,

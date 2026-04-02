@@ -78,17 +78,51 @@ class HistoricalDataBundle:
     warnings: list[dict[str, Any]] | None = None
     prefetched_signatures: set[tuple[Any, ...]] = field(default_factory=set, compare=False, repr=False)
     prefetched_summaries: dict[tuple[Any, ...], dict[str, Any]] = field(default_factory=dict, compare=False, repr=False)
+    prefetch_lock: threading.RLock = field(default_factory=threading.RLock, compare=False, repr=False)
+    prefetch_inflight: dict[tuple[Any, ...], threading.Event] = field(default_factory=dict, compare=False, repr=False)
     entry_rule_cache: EntryRuleComputationCache = field(default_factory=EntryRuleComputationCache, compare=False, repr=False)
 
     def has_prefetched(self, signature: tuple[Any, ...]) -> bool:
-        return signature in self.prefetched_signatures
+        with self.prefetch_lock:
+            return signature in self.prefetched_signatures
 
     def get_prefetch_summary(self, signature: tuple[Any, ...]) -> dict[str, Any] | None:
-        return self.prefetched_summaries.get(signature)
+        with self.prefetch_lock:
+            summary = self.prefetched_summaries.get(signature)
+            return dict(summary) if summary is not None else None
 
     def remember_prefetch(self, signature: tuple[Any, ...], summary: dict[str, Any]) -> None:
-        self.prefetched_signatures.add(signature)
-        self.prefetched_summaries[signature] = dict(summary)
+        with self.prefetch_lock:
+            self.prefetched_signatures.add(signature)
+            self.prefetched_summaries[signature] = dict(summary)
+
+    def begin_prefetch(
+        self,
+        signature: tuple[Any, ...],
+    ) -> tuple[str, dict[str, Any] | None, threading.Event | None]:
+        with self.prefetch_lock:
+            summary = self.prefetched_summaries.get(signature)
+            if summary is not None or signature in self.prefetched_signatures:
+                return "cached", (dict(summary) if summary is not None else {}), None
+            inflight_event = self.prefetch_inflight.get(signature)
+            if inflight_event is None:
+                inflight_event = threading.Event()
+                self.prefetch_inflight[signature] = inflight_event
+                return "run", None, inflight_event
+            return "wait", None, inflight_event
+
+    def end_prefetch(
+        self,
+        signature: tuple[Any, ...],
+        summary: dict[str, Any] | None,
+    ) -> None:
+        with self.prefetch_lock:
+            if summary is not None:
+                self.prefetched_signatures.add(signature)
+                self.prefetched_summaries[signature] = dict(summary)
+            inflight_event = self.prefetch_inflight.pop(signature, None)
+        if inflight_event is not None:
+            inflight_event.set()
 
     def clone_for_execution(self) -> HistoricalDataBundle:
         return HistoricalDataBundle(
@@ -98,11 +132,10 @@ class HistoricalDataBundle:
             option_gateway=self.option_gateway,
             data_source=self.data_source,
             warnings=list(self.warnings) if self.warnings is not None else None,
-            prefetched_signatures=set(self.prefetched_signatures),
-            prefetched_summaries={
-                signature: dict(summary)
-                for signature, summary in self.prefetched_summaries.items()
-            },
+            prefetched_signatures=self.prefetched_signatures,
+            prefetched_summaries=self.prefetched_summaries,
+            prefetch_lock=self.prefetch_lock,
+            prefetch_inflight=self.prefetch_inflight,
             entry_rule_cache=EntryRuleComputationCache(),
         )
 
@@ -149,6 +182,22 @@ _GLOBAL_CACHE_BUDGET = 50_000
 def get_global_cache_entries() -> int:
     """Return the approximate number of entries across all gateway caches."""
     return _global_cache_entries
+
+
+def _filter_contracts_by_strike_bounds(
+    contracts: list[OptionContractRecord],
+    *,
+    strike_floor: float | None,
+    strike_ceiling: float | None,
+) -> list[OptionContractRecord]:
+    if strike_floor is None and strike_ceiling is None:
+        return list(contracts)
+    return [
+        contract
+        for contract in contracts
+        if (strike_floor is None or contract.strike_price >= strike_floor)
+        and (strike_ceiling is None or contract.strike_price <= strike_ceiling)
+    ]
 
 
 class MassiveOptionGateway:
@@ -359,6 +408,29 @@ class MassiveOptionGateway:
             strike_price_lte=strike_price_lte,
         )
 
+    def list_contracts_for_expirations(
+        self,
+        *,
+        entry_date: date,
+        contract_type: str,
+        expiration_dates: list[date],
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> dict[date, list[OptionContractRecord]]:
+        if not expiration_dates:
+            return {}
+        requested_expirations = list(dict.fromkeys(expiration_dates))
+        return {
+            expiration_date: self._list_contracts_for_exact_expiration(
+                entry_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_price_gte=strike_price_gte,
+                strike_price_lte=strike_price_lte,
+            )
+            for expiration_date in requested_expirations
+        }
+
     def _list_contracts_for_exact_expiration(
         self,
         *,
@@ -376,6 +448,18 @@ class MassiveOptionGateway:
             if contracts is not None:
                 self._exact_contract_cache.move_to_end(cache_key)
                 return contracts
+            if strike_floor is not None or strike_ceiling is not None:
+                full_cache_key = (entry_date, contract_type, expiration_date, None, None)
+                full_contracts = self._exact_contract_cache.get(full_cache_key)
+                if full_contracts is not None:
+                    self._exact_contract_cache.move_to_end(full_cache_key)
+                    filtered_contracts = _filter_contracts_by_strike_bounds(
+                        full_contracts,
+                        strike_floor=strike_floor,
+                        strike_ceiling=strike_ceiling,
+                    )
+                    self._store_exact_contracts_in_memory(cache_key, filtered_contracts)
+                    return filtered_contracts
 
         use_redis = self._redis_cache is not None and strike_floor is None and strike_ceiling is None
         if self._contract_catalog is not None:

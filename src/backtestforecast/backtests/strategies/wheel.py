@@ -15,6 +15,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_strike,
     select_preferred_expiration_contracts,
+    sorted_unique_strikes,
     valid_entry_mids,
 )
 from backtestforecast.backtests.summary import build_summary
@@ -614,7 +615,7 @@ class WheelStrategyBacktestEngine:
                 iv_cache=getattr(option_gateway, "_iv_cache", None),
             )
             strike = resolve_strike(
-                [contract.strike_price for contract in put_contracts],
+                sorted_unique_strikes(put_contracts),
                 bar.close_price,
                 "put",
                 overrides.short_put_strike,
@@ -732,7 +733,7 @@ class WheelStrategyBacktestEngine:
                 iv_cache=getattr(option_gateway, "_iv_cache", None),
             )
             strike = resolve_strike(
-                [contract.strike_price for contract in call_contracts],
+                sorted_unique_strikes(call_contracts),
                 bar.close_price,
                 "call",
                 overrides.short_call_strike,

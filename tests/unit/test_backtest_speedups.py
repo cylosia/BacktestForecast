@@ -3,17 +3,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+import backtestforecast.backtests.strategies.calendar as calendar_module
+import backtestforecast.backtests.strategies.common as common_module
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.strategies.common import (
     build_contract_delta_lookup,
+    choose_primary_expiration_date,
+    common_sorted_expirations,
     maybe_build_contract_delta_lookup,
     require_contract_for_strike,
+    resolve_strike,
+    select_preferred_common_expiration_contracts,
+    select_preferred_expiration_contracts,
 )
+from backtestforecast.backtests.strategies.calendar import resolve_calendar_contract_groups
 from backtestforecast.backtests.summary import build_summary
 from backtestforecast.backtests.types import (
     BacktestConfig,
@@ -21,10 +30,12 @@ from backtestforecast.backtests.types import (
     EquityPointResult,
     OpenMultiLegPosition,
     OpenOptionLeg,
+    OpenStockLeg,
 )
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
-from backtestforecast.schemas.backtests import ComparisonOperator, RsiRule
+from backtestforecast.schemas.backtests import ComparisonOperator, RsiRule, StrikeSelection, StrikeSelectionMode
 from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
+from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest
 from backtestforecast.services.backtest_execution import BacktestExecutionService
@@ -119,6 +130,7 @@ def test_execution_service_prefetches_contracts_for_single_backtests(monkeypatch
         include_quotes,
         max_dates,
         warm_future_quotes,
+        entry_trade_bars=None,
     ):
         captured["symbol"] = request.symbol
         captured["bar_count"] = len(bundle.bars)
@@ -186,6 +198,27 @@ def test_execution_service_prefetches_contracts_for_single_backtests(monkeypatch
     assert captured["include_quotes"] is True
     assert captured["max_dates"] == 4
     assert captured["warm_future_quotes"] is True
+
+
+def test_historical_data_bundle_clone_shares_prefetch_state() -> None:
+    bundle = HistoricalDataBundle(
+        bars=[SimpleNamespace(trade_date=date(2025, 4, 1))],
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+    )
+    clone = bundle.clone_for_execution()
+    signature = ("targeted_exact_quotes", "AAPL")
+
+    bundle.remember_prefetch(signature, {"dates_processed": 2, "contracts_fetched": 4})
+
+    assert clone.has_prefetched(signature) is True
+    assert clone.get_prefetch_summary(signature) == {"dates_processed": 2, "contracts_fetched": 4}
+
+    clone_summary = clone.get_prefetch_summary(signature)
+    assert clone_summary is not None
+    clone_summary["dates_processed"] = 999
+    assert bundle.get_prefetch_summary(signature) == {"dates_processed": 2, "contracts_fetched": 4}
 
 
 def test_engine_mark_position_uses_batch_quote_fetch_when_available() -> None:
@@ -344,6 +377,626 @@ def test_execution_service_logs_phase_timings(monkeypatch) -> None:
     assert logged["total_ms"] == 22.0
 
 
+def test_execution_service_deduplicates_inflight_prefetch_across_bundle_clones(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    bundle = HistoricalDataBundle(
+        bars=[SimpleNamespace(trade_date=date(2025, 4, 1))],
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+    )
+    clone = bundle.clone_for_execution()
+    service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle),
+        engine=_CapturingEngine(),
+    )
+    plan = module._PrefetchPlan(
+        mode="targeted_strategy_exact_contracts",
+        signature=("prefetch", "AAPL"),
+        include_quotes=False,
+        warm_future_quotes=False,
+        max_dates=1,
+        trade_dates=(date(2025, 4, 1),),
+    )
+    started = threading.Event()
+    release = threading.Event()
+    call_count = 0
+
+    monkeypatch.setattr(service, "_build_prefetch_plan", lambda request, bundle, settings: plan)
+
+    def _fake_run_prefetch_plan(request, bundle, plan, settings):
+        nonlocal call_count
+        call_count += 1
+        started.set()
+        assert release.wait(timeout=2)
+        return module._PrefetchResult(
+            mode=plan.mode,
+            summary={"dates_processed": 1, "contracts_fetched": 5},
+        )
+
+    monkeypatch.setattr(service, "_run_prefetch_plan", _fake_run_prefetch_plan)
+
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="covered_call",
+        start_date="2025-04-01",
+        end_date="2025-04-03",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[],
+    )
+    settings = SimpleNamespace(backtest_prefetch_timeout_seconds=5)
+    results: list[object | None] = [None, None]
+
+    def _run(index: int, execution_bundle: HistoricalDataBundle) -> None:
+        results[index] = service._maybe_prefetch_option_data(request, execution_bundle, settings)
+
+    thread_one = threading.Thread(target=_run, args=(0, bundle))
+    thread_two = threading.Thread(target=_run, args=(1, clone))
+    thread_one.start()
+    assert started.wait(timeout=1)
+    thread_two.start()
+    release.set()
+    thread_one.join(timeout=2)
+    thread_two.join(timeout=2)
+
+    assert call_count == 1
+    assert sorted(result.skipped for result in results if result is not None) == [False, True]
+
+
+def test_execution_service_caches_resolved_execution_inputs(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    settings = SimpleNamespace(
+        option_cache_warn_age_seconds=259_200,
+        backtest_option_prefetch_enabled=False,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=4,
+        backtest_prefetch_timeout_seconds=77,
+    )
+    resolve_calls = {"rate": 0, "curve": 0}
+
+    def _fake_resolve_rate(request, *, client=None):
+        resolve_calls["rate"] += 1
+        return SimpleNamespace(rate=0.01, source="configured_fallback", field_name="yield_3_month")
+
+    def _fake_build_curve(request, *, default_rate, client=None):
+        resolve_calls["curve"] += 1
+        return SimpleNamespace(default_rate=default_rate, dates=(), rates=())
+
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "resolve_backtest_risk_free_rate", _fake_resolve_rate)
+    monkeypatch.setattr(module, "build_backtest_risk_free_rate_curve", _fake_build_curve)
+
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 4, 1)),
+        SimpleNamespace(trade_date=date(2025, 4, 2)),
+    ]
+    bundle = HistoricalDataBundle(
+        bars=bars,
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+    )
+    service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle),
+        engine=_CapturingEngine(),
+    )
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date="2025-04-01",
+        end_date="2025-04-02",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[],
+    )
+
+    first = service.execute_request(request, bundle=bundle)
+    second = service.execute_request(request, bundle=bundle)
+
+    assert first.summary.ending_equity == 10100.0
+    assert second.summary.ending_equity == 10100.0
+    assert resolve_calls == {"rate": 1, "curve": 1}
+
+
+def test_select_preferred_expiration_contracts_reuses_selection_cache() -> None:
+    calls: list[tuple[date, str, int, int]] = []
+    contract = OptionContractRecord(
+        ticker="O:SPY250425C00500000",
+        contract_type="call",
+        expiration_date=date(2025, 4, 25),
+        strike_price=500.0,
+        shares_per_contract=100.0,
+    )
+
+    class _Gateway:
+        def list_contracts_for_preferred_expiration(self, **kwargs):
+            calls.append(
+                (
+                    kwargs["entry_date"],
+                    kwargs["contract_type"],
+                    kwargs["target_dte"],
+                    kwargs["dte_tolerance_days"],
+                )
+            )
+            return [contract]
+
+    gateway = _Gateway()
+
+    first = select_preferred_expiration_contracts(
+        gateway,
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        target_dte=24,
+        dte_tolerance_days=5,
+    )
+    second = select_preferred_expiration_contracts(
+        gateway,
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        target_dte=24,
+        dte_tolerance_days=5,
+    )
+
+    assert calls == [(date(2025, 4, 1), "call", 24, 5)]
+    assert first == second
+
+
+def test_select_preferred_common_expiration_contracts_reuses_selection_cache() -> None:
+    call_batches = 0
+    put_batches = 0
+    expiration = date(2025, 4, 25)
+    call_contract = OptionContractRecord(
+        ticker="O:SPY250425C00500000",
+        contract_type="call",
+        expiration_date=expiration,
+        strike_price=500.0,
+        shares_per_contract=100.0,
+    )
+    put_contract = OptionContractRecord(
+        ticker="O:SPY250425P00500000",
+        contract_type="put",
+        expiration_date=expiration,
+        strike_price=500.0,
+        shares_per_contract=100.0,
+    )
+
+    class _Gateway:
+        def list_contracts_for_expirations(self, **kwargs):
+            nonlocal call_batches, put_batches
+            if kwargs["contract_type"] == "call":
+                call_batches += 1
+                return {expiration: [call_contract]}
+            put_batches += 1
+            return {expiration: [put_contract]}
+
+    gateway = _Gateway()
+
+    first = select_preferred_common_expiration_contracts(
+        gateway,
+        entry_date=date(2025, 4, 1),
+        target_dte=24,
+        dte_tolerance_days=5,
+    )
+    second = select_preferred_common_expiration_contracts(
+        gateway,
+        entry_date=date(2025, 4, 1),
+        target_dte=24,
+        dte_tolerance_days=5,
+    )
+
+    assert call_batches == 1
+    assert put_batches == 1
+    assert first == second
+
+
+def test_resolve_calendar_contract_groups_reuses_selection_cache() -> None:
+    calls: list[date] = []
+
+    def _contracts_for(expiration_date: date) -> list[OptionContractRecord]:
+        return [
+            OptionContractRecord(
+                ticker=f"O:SPY{expiration_date.strftime('%y%m%d')}C00500000",
+                contract_type="call",
+                expiration_date=expiration_date,
+                strike_price=500.0,
+                shares_per_contract=100.0,
+            )
+        ]
+
+    class _Gateway:
+        def list_contracts_for_expiration(self, **kwargs):
+            expiration_date = kwargs["expiration_date"]
+            calls.append(expiration_date)
+            if expiration_date in {date(2025, 4, 8), date(2025, 4, 9)}:
+                return _contracts_for(expiration_date)
+            return []
+
+    gateway = _Gateway()
+
+    first = resolve_calendar_contract_groups(
+        gateway,
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        target_dte=7,
+        dte_tolerance_days=1,
+    )
+    second = resolve_calendar_contract_groups(
+        gateway,
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        target_dte=7,
+        dte_tolerance_days=1,
+    )
+
+    assert calls == [date(2025, 4, 8), date(2025, 4, 9)]
+    assert first == second
+
+
+def test_engine_run_logs_phase_timing_breakdown(monkeypatch) -> None:
+    import backtestforecast.backtests.engine as engine_module
+
+    logged: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        engine_module,
+        "logger",
+        SimpleNamespace(
+            info=lambda event, **kwargs: logged.append((event, kwargs)),
+            warning=lambda *args, **kwargs: None,
+            debug=lambda *args, **kwargs: None,
+        ),
+    )
+
+    contract = OptionContractRecord("C100", "call", date(2025, 10, 17), 100.0, 100.0)
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 9, 2), open_price=100.0, high_price=100.0, low_price=100.0, close_price=100.0, volume=1_000_000),
+        SimpleNamespace(trade_date=date(2025, 9, 3), open_price=101.0, high_price=101.0, low_price=101.0, close_price=101.0, volume=1_000_000),
+    ]
+
+    class _Gateway:
+        def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+            assert contract_type == "call"
+            return [contract]
+
+        def get_quote(self, option_ticker, trade_date):
+            prices = {
+                date(2025, 9, 2): 2.0,
+                date(2025, 9, 3): 3.2,
+            }
+            price = prices.get(trade_date)
+            if price is None:
+                return None
+            return OptionQuoteRecord(trade_date=trade_date, bid_price=price - 0.1, ask_price=price + 0.1, participant_timestamp=None)
+
+        def get_ex_dividend_dates(self, start_date, end_date):
+            return set()
+
+    result = OptionsBacktestEngine().run(
+        BacktestConfig(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2025, 9, 2),
+            end_date=date(2025, 9, 2),
+            target_dte=30,
+            dte_tolerance_days=30,
+            max_holding_days=1,
+            account_size=Decimal("10000"),
+            risk_per_trade_pct=Decimal("5"),
+            commission_per_contract=Decimal("0.65"),
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        _Gateway(),
+    )
+
+    assert result.summary.trade_count == 1
+    event_name, payload = logged[-1]
+    assert event_name == "backtest.engine_run_timing"
+    assert payload["bars_processed"] == 2
+    assert payload["positions_opened"] == 1
+    assert payload["positions_closed"] == 1
+    assert payload["mark_position_ms"] >= 0.0
+    assert payload["exit_resolution_ms"] >= 0.0
+    assert payload["build_position_ms"] >= 0.0
+    assert payload["build_contract_fetch_ms"] >= 0.0
+    assert payload["build_delta_resolution_ms"] >= 0.0
+    assert payload["build_entry_quote_fetch_ms"] >= 0.0
+    assert payload["build_object_construction_ms"] >= 0.0
+    assert payload["position_sizing_ms"] >= 0.0
+    assert payload["close_position_ms"] >= 0.0
+    assert payload["summary_ms"] >= 0.0
+    assert payload["total_ms"] >= payload["summary_ms"]
+
+
+def test_engine_run_exit_policy_variants_logs_phase_timing_breakdown(monkeypatch) -> None:
+    import backtestforecast.backtests.engine as engine_module
+
+    logged: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        engine_module,
+        "logger",
+        SimpleNamespace(
+            info=lambda event, **kwargs: logged.append((event, kwargs)),
+            warning=lambda *args, **kwargs: None,
+            debug=lambda *args, **kwargs: None,
+        ),
+    )
+
+    contract = OptionContractRecord("C100", "call", date(2025, 10, 17), 100.0, 100.0)
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 9, 2), open_price=100.0, high_price=100.0, low_price=100.0, close_price=100.0, volume=1_000_000),
+        SimpleNamespace(trade_date=date(2025, 9, 3), open_price=101.0, high_price=101.0, low_price=101.0, close_price=101.0, volume=1_000_000),
+        SimpleNamespace(trade_date=date(2025, 9, 4), open_price=102.0, high_price=102.0, low_price=102.0, close_price=102.0, volume=1_000_000),
+    ]
+
+    class _Gateway:
+        def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+            assert contract_type == "call"
+            return [contract]
+
+        def get_quote(self, option_ticker, trade_date):
+            prices = {
+                date(2025, 9, 2): 2.0,
+                date(2025, 9, 3): 3.2,
+                date(2025, 9, 4): 3.7,
+            }
+            price = prices.get(trade_date)
+            if price is None:
+                return None
+            return OptionQuoteRecord(trade_date=trade_date, bid_price=price - 0.1, ask_price=price + 0.1, participant_timestamp=None)
+
+        def get_ex_dividend_dates(self, start_date, end_date):
+            return set()
+
+    base_kwargs = dict(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=date(2025, 9, 2),
+        end_date=date(2025, 9, 2),
+        target_dte=30,
+        dte_tolerance_days=30,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[],
+    )
+    results = OptionsBacktestEngine().run_exit_policy_variants(
+        configs=[
+            BacktestConfig(**base_kwargs, profit_target_pct=50),
+            BacktestConfig(**base_kwargs, profit_target_pct=75),
+        ],
+        bars=bars,
+        earnings_dates=set(),
+        option_gateway=_Gateway(),
+    )
+
+    assert len(results) == 2
+    event_name, payload = logged[-1]
+    assert event_name == "backtest.engine_exit_variants_timing"
+    assert payload["lane_count"] == 2
+    assert payload["positions_opened"] == 2
+    assert payload["positions_closed"] == 2
+    assert payload["rule_precompute_ms"] >= 0.0
+    assert payload["mark_position_ms"] >= 0.0
+    assert payload["build_position_ms"] >= 0.0
+    assert payload["build_contract_fetch_ms"] >= 0.0
+    assert payload["build_delta_resolution_ms"] >= 0.0
+    assert payload["build_entry_quote_fetch_ms"] >= 0.0
+    assert payload["build_object_construction_ms"] >= 0.0
+    assert payload["position_sizing_ms"] >= 0.0
+    assert payload["equity_curve_ms"] >= 0.0
+    assert payload["summary_ms"] >= 0.0
+    assert payload["total_ms"] >= payload["summary_ms"]
+
+
+def test_engine_run_defers_quote_series_attachment_until_after_affordability(monkeypatch) -> None:
+    engine = OptionsBacktestEngine()
+    attach_calls: list[tuple[date, date]] = []
+
+    monkeypatch.setattr(
+        engine,
+        "_attach_position_quote_series",
+        lambda position, *, option_gateway, start_date, end_date: attach_calls.append((start_date, end_date)),
+    )
+    monkeypatch.setattr(engine, "_resolve_position_size", lambda **kwargs: 0)
+
+    contract = OptionContractRecord("C100", "call", date(2025, 10, 17), 100.0, 100.0)
+    bars = [
+        SimpleNamespace(
+            trade_date=date(2025, 9, 2),
+            open_price=100.0,
+            high_price=100.0,
+            low_price=100.0,
+            close_price=100.0,
+            volume=1_000_000,
+        ),
+    ]
+
+    class _Gateway:
+        def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+            return [contract]
+
+        def get_quote(self, option_ticker, trade_date):
+            return OptionQuoteRecord(
+                trade_date=trade_date,
+                bid_price=1.9,
+                ask_price=2.1,
+                participant_timestamp=None,
+            )
+
+        def get_ex_dividend_dates(self, start_date, end_date):
+            return set()
+
+    result = engine.run(
+        BacktestConfig(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2025, 9, 2),
+            end_date=date(2025, 9, 2),
+            target_dte=30,
+            dte_tolerance_days=30,
+            max_holding_days=1,
+            account_size=Decimal("10000"),
+            risk_per_trade_pct=Decimal("5"),
+            commission_per_contract=Decimal("0.65"),
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        _Gateway(),
+    )
+
+    assert result.summary.trade_count == 0
+    assert attach_calls == []
+
+
+def test_engine_run_exit_policy_variants_attaches_quote_series_only_after_viable_lane(monkeypatch) -> None:
+    engine = OptionsBacktestEngine()
+    attach_calls: list[tuple[date, date]] = []
+    sizing_results = iter([0, 1])
+
+    monkeypatch.setattr(
+        engine,
+        "_attach_position_quote_series",
+        lambda position, *, option_gateway, start_date, end_date: attach_calls.append((start_date, end_date)),
+    )
+    monkeypatch.setattr(engine, "_resolve_position_size", lambda **kwargs: next(sizing_results))
+
+    contract = OptionContractRecord("C100", "call", date(2025, 10, 17), 100.0, 100.0)
+    bars = [
+        SimpleNamespace(
+            trade_date=date(2025, 9, 2),
+            open_price=100.0,
+            high_price=100.0,
+            low_price=100.0,
+            close_price=100.0,
+            volume=1_000_000,
+        ),
+        SimpleNamespace(
+            trade_date=date(2025, 9, 3),
+            open_price=101.0,
+            high_price=101.0,
+            low_price=101.0,
+            close_price=101.0,
+            volume=1_000_000,
+        ),
+    ]
+
+    class _Gateway:
+        def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+            return [contract]
+
+        def get_quote(self, option_ticker, trade_date):
+            price = 2.0 if trade_date == date(2025, 9, 2) else 2.6
+            return OptionQuoteRecord(
+                trade_date=trade_date,
+                bid_price=price - 0.1,
+                ask_price=price + 0.1,
+                participant_timestamp=None,
+            )
+
+        def get_ex_dividend_dates(self, start_date, end_date):
+            return set()
+
+    base_kwargs = dict(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=date(2025, 9, 2),
+        end_date=date(2025, 9, 2),
+        target_dte=30,
+        dte_tolerance_days=30,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[],
+    )
+    results = engine.run_exit_policy_variants(
+        configs=[
+            BacktestConfig(**base_kwargs, profit_target_pct=50),
+            BacktestConfig(**base_kwargs, profit_target_pct=75),
+        ],
+        bars=bars,
+        earnings_dates=set(),
+        option_gateway=_Gateway(),
+    )
+
+    assert len(results) == 2
+    assert attach_calls == [(date(2025, 9, 2), date(2025, 9, 3))]
+    assert [result.summary.trade_count for result in results] == [0, 1]
+
+
+def test_clone_position_template_shares_quote_series_but_copies_lane_state() -> None:
+    quote_series = {
+        "O:LEG1": {
+            date(2025, 9, 2): OptionQuoteRecord(date(2025, 9, 2), 1.9, 2.1, None),
+        },
+        "O:LEG2": {
+            date(2025, 9, 2): OptionQuoteRecord(date(2025, 9, 2), 0.9, 1.1, None),
+        },
+    }
+    position = OpenMultiLegPosition(
+        display_ticker="O:TEST",
+        strategy_type="calendar_spread",
+        underlying_symbol="AAPL",
+        entry_date=date(2025, 9, 2),
+        entry_index=0,
+        quantity=1,
+        dte_at_open=30,
+        option_legs=[
+            OpenOptionLeg("O:LEG1", "call", 1, 100.0, date(2025, 10, 17), 1, 2.0, 2.0),
+            OpenOptionLeg("O:LEG2", "call", -1, 105.0, date(2025, 10, 17), 1, 1.0, 1.0),
+        ],
+        stock_legs=[
+            OpenStockLeg("AAPL", 1, 100, 100.0, 100.0),
+        ],
+        scheduled_exit_date=date(2025, 9, 12),
+        capital_required_per_unit=500.0,
+        max_loss_per_unit=200.0,
+        max_profit_per_unit=300.0,
+        entry_reason="entry_rules_met",
+        entry_commission_total=Decimal("1.30"),
+        detail_json={"entry_underlying_close": 100.0},
+        quote_series_lookup=quote_series,
+        quote_series_loaded_tickers={"O:LEG1", "O:LEG2"},
+    )
+
+    clone = OptionsBacktestEngine._clone_position_template(position)
+
+    assert clone is not position
+    assert clone.quote_series_lookup is position.quote_series_lookup
+    assert clone.quote_series_lookup is quote_series
+    assert clone.quote_series_loaded_tickers == position.quote_series_loaded_tickers
+    assert clone.quote_series_loaded_tickers is not position.quote_series_loaded_tickers
+    assert clone.option_legs is not position.option_legs
+    assert clone.option_legs[0] is not position.option_legs[0]
+    assert clone.stock_legs is not position.stock_legs
+    assert clone.stock_legs[0] is not position.stock_legs[0]
+    assert clone.detail_json is not position.detail_json
+
+    clone.quantity = 3
+    clone.option_legs[0].last_mid = 9.9
+    clone.stock_legs[0].last_price = 123.0
+    clone.detail_json["entry_underlying_close"] = 101.0
+
+    assert position.quantity == 1
+    assert position.option_legs[0].last_mid == 2.0
+    assert position.stock_legs[0].last_price == 100.0
+    assert position.detail_json["entry_underlying_close"] == 100.0
+
+
 def test_execution_service_passes_bundle_entry_rule_cache_to_supported_engines(monkeypatch) -> None:
     import backtestforecast.services.backtest_execution as module
 
@@ -480,6 +1133,7 @@ def test_execution_service_uses_targeted_exact_prefetch_for_supported_non_long_s
         include_quotes,
         max_dates,
         warm_future_quotes,
+        entry_trade_bars=None,
     ):
         captured["symbol"] = request.symbol
         captured["bar_count"] = len(bundle.bars)
@@ -549,6 +1203,131 @@ def test_execution_service_uses_targeted_exact_prefetch_for_supported_non_long_s
     assert captured["warm_future_quotes"] is False
 
 
+def test_execution_service_warms_entry_quotes_for_historical_targeted_prefetch(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    captured: dict[str, object] = {}
+
+    def _fake_targeted_prewarm(
+        request,
+        *,
+        bundle,
+        include_quotes,
+        max_dates,
+        warm_future_quotes,
+        entry_trade_bars=None,
+    ):
+        captured["include_quotes"] = include_quotes
+        captured["max_dates"] = max_dates
+        captured["warm_future_quotes"] = warm_future_quotes
+        return SimpleNamespace(to_dict=lambda: {"dates_processed": len(bundle.bars)})
+
+    settings = SimpleNamespace(
+        option_cache_warn_age_seconds=259_200,
+        backtest_option_prefetch_enabled=True,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=4,
+        backtest_prefetch_timeout_seconds=77,
+    )
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "prewarm_targeted_option_bundle", _fake_targeted_prewarm)
+    monkeypatch.setattr(module, "build_backtest_risk_free_rate_curve", lambda *args, **kwargs: None)
+
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 4, 1)),
+        SimpleNamespace(trade_date=date(2025, 4, 2)),
+        SimpleNamespace(trade_date=date(2025, 4, 3)),
+    ]
+    historical_gateway = HistoricalOptionGateway.__new__(HistoricalOptionGateway)
+    bundle = HistoricalDataBundle(
+        bars=bars,
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=historical_gateway,
+    )
+    service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle),
+        engine=_CapturingEngine(),
+    )
+    request = CreateBacktestRunRequest(
+        symbol="SPY",
+        strategy_type="covered_call",
+        start_date="2025-04-01",
+        end_date="2025-04-03",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[],
+    )
+    resolved = ResolvedExecutionParameters(
+        risk_free_rate=0.01,
+        risk_free_rate_source="configured_fallback",
+        risk_free_rate_field_name="yield_3_month",
+        risk_free_rate_model="curve_default",
+        dividend_yield=0.0,
+        source_of_truth="test",
+    )
+
+    service.execute_request(request, resolved_parameters=resolved)
+
+    assert captured["include_quotes"] is True
+    assert captured["max_dates"] == 4
+    assert captured["warm_future_quotes"] is False
+
+
+def test_execution_service_prefetch_plan_uses_signal_dates(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    settings = SimpleNamespace(
+        backtest_option_prefetch_enabled=True,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=2,
+    )
+    bars = [
+        SimpleNamespace(trade_date=date(2025, 4, 1), close_price=100.0, high_price=101.0, low_price=99.0, volume=1_000_000),
+        SimpleNamespace(trade_date=date(2025, 4, 2), close_price=101.0, high_price=102.0, low_price=100.0, volume=1_000_000),
+        SimpleNamespace(trade_date=date(2025, 4, 3), close_price=102.0, high_price=103.0, low_price=101.0, volume=1_000_000),
+        SimpleNamespace(trade_date=date(2025, 4, 4), close_price=103.0, high_price=104.0, low_price=102.0, volume=1_000_000),
+    ]
+    bundle = HistoricalDataBundle(
+        bars=bars,
+        earnings_dates=set(),
+        ex_dividend_dates=set(),
+        option_gateway=SimpleNamespace(),
+    )
+    service = BacktestExecutionService(
+        market_data_service=_StubMarketDataService(bundle),
+        engine=_CapturingEngine(),
+    )
+    request = CreateBacktestRunRequest(
+        symbol="SPY",
+        strategy_type="covered_call",
+        start_date="2025-04-01",
+        end_date="2025-04-04",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[{"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14}],
+    )
+
+    monkeypatch.setattr(
+        module.EntryRuleEvaluator,
+        "build_entry_allowed_mask",
+        lambda self: [False, True, False, True],
+    )
+
+    plan = service._build_prefetch_plan(request, bundle, settings)
+
+    assert plan is not None
+    assert plan.trade_dates == (date(2025, 4, 2), date(2025, 4, 4))
+
+
 def test_execution_service_skips_duplicate_prefetch_for_warm_bundle(monkeypatch) -> None:
     import backtestforecast.services.backtest_execution as module
 
@@ -562,6 +1341,7 @@ def test_execution_service_skips_duplicate_prefetch_for_warm_bundle(monkeypatch)
         include_quotes,
         max_dates,
         warm_future_quotes,
+        entry_trade_bars=None,
     ):
         prewarm_calls.append(request.strategy_type.value)
         return SimpleNamespace(to_dict=lambda: {"dates_processed": 2, "contracts_fetched": 10, "quotes_fetched": 0, "errors": []})
@@ -642,6 +1422,7 @@ def test_execution_service_prefetch_requests_with_shared_bundle_deduplicates(mon
         include_quotes,
         max_dates,
         warm_future_quotes,
+        entry_trade_bars=None,
     ):
         prewarm_calls.append((request.strategy_type.value, request.profit_target_pct))
         return SimpleNamespace(to_dict=lambda: {"dates_processed": 2, "contracts_fetched": 10, "quotes_fetched": 0, "errors": []})
@@ -722,6 +1503,7 @@ def test_execution_service_prefetch_requests_reuse_equivalent_strategy_groups(mo
         include_quotes,
         max_dates,
         warm_future_quotes,
+        entry_trade_bars=None,
     ):
         prewarm_calls.append(request.strategy_type.value)
         return SimpleNamespace(
@@ -1048,6 +1830,365 @@ def test_build_contract_delta_lookup_falls_back_to_one_quote_per_contract_when_g
         ("O:AAPL250404C00200000", date(2025, 4, 1)),
         ("O:AAPL250404C00210000", date(2025, 4, 1)),
     ]
+
+
+def test_build_contract_delta_lookup_reuses_cached_lookup_for_identical_chain_and_inputs():
+    class _Gateway:
+        def __init__(self) -> None:
+            self.quote_calls: list[tuple[str, date]] = []
+
+        def get_chain_delta_lookup(self, contracts):
+            return {}
+
+        def get_quote(self, option_ticker: str, trade_date: date):
+            self.quote_calls.append((option_ticker, trade_date))
+            return OptionQuoteRecord(trade_date=trade_date, bid_price=2.0, ask_price=2.2, participant_timestamp=None)
+
+    gateway = _Gateway()
+    contracts = [
+        OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+    ]
+
+    first = build_contract_delta_lookup(
+        contracts=contracts,
+        option_gateway=gateway,
+        trade_date=date(2025, 4, 1),
+        underlying_close=205.0,
+        dte_days=3,
+        risk_free_rate=0.01,
+        dividend_yield=0.02,
+    )
+    second = build_contract_delta_lookup(
+        contracts=contracts,
+        option_gateway=gateway,
+        trade_date=date(2025, 4, 1),
+        underlying_close=205.0,
+        dte_days=3,
+        risk_free_rate=0.01,
+        dividend_yield=0.02,
+    )
+
+    assert second == first
+    assert gateway.quote_calls == [
+        ("O:AAPL250404C00200000", date(2025, 4, 1)),
+        ("O:AAPL250404C00210000", date(2025, 4, 1)),
+    ]
+
+
+def test_common_expiration_selection_cache_is_shared_across_gateways_with_shared_state():
+    shared_state = object()
+
+    class _Gateway:
+        def __init__(self) -> None:
+            self._shared_state = shared_state
+            self.symbol = "AAPL"
+            self.calls = 0
+
+        def list_contracts_for_expirations(self, **kwargs):
+            self.calls += 1
+            expiration_dates = kwargs["expiration_dates"]
+            contract_type = kwargs["contract_type"]
+            first = expiration_dates[0]
+            return {
+                expiration: [
+                    OptionContractRecord(
+                        f"O:{contract_type[0].upper()}{idx}",
+                        contract_type,
+                        expiration,
+                        100.0,
+                        100.0,
+                    )
+                ] if expiration == first else []
+                for idx, expiration in enumerate(expiration_dates)
+            }
+
+    with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+        common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+    try:
+        first = _Gateway()
+        second = _Gateway()
+
+        resolved_first = select_preferred_common_expiration_contracts(
+            first,
+            entry_date=date(2025, 4, 1),
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+        resolved_second = select_preferred_common_expiration_contracts(
+            second,
+            entry_date=date(2025, 4, 1),
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+
+        assert resolved_second == resolved_first
+        assert first.calls == 2
+        assert second.calls == 0
+    finally:
+        with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+            common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+
+
+def test_select_preferred_common_expiration_contracts_uses_combined_batch_fetch_when_available():
+    class _Gateway:
+        def __init__(self) -> None:
+            self.combined_calls = 0
+
+        def list_contracts_for_expirations_by_type(self, **kwargs):
+            self.combined_calls += 1
+            expiration_dates = kwargs["expiration_dates"]
+            first = expiration_dates[0]
+            return {
+                "call": {
+                    expiration: [
+                        OptionContractRecord(
+                            f"O:C{idx}",
+                            "call",
+                            expiration,
+                            100.0,
+                            100.0,
+                        )
+                    ] if expiration == first else []
+                    for idx, expiration in enumerate(expiration_dates)
+                },
+                "put": {
+                    expiration: [
+                        OptionContractRecord(
+                            f"O:P{idx}",
+                            "put",
+                            expiration,
+                            100.0,
+                            100.0,
+                        )
+                    ] if expiration == first else []
+                    for idx, expiration in enumerate(expiration_dates)
+                },
+            }
+
+        def list_contracts_for_expirations(self, **kwargs):
+            raise AssertionError("combined batch fetch should take priority")
+
+    with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+        common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+    try:
+        gateway = _Gateway()
+        expiration, call_contracts, put_contracts = select_preferred_common_expiration_contracts(
+            gateway,
+            entry_date=date(2025, 4, 1),
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+
+        assert expiration == date(2025, 4, 4)
+        assert call_contracts[0].contract_type == "call"
+        assert put_contracts[0].contract_type == "put"
+        assert gateway.combined_calls == 1
+    finally:
+        with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+            common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+
+
+def test_select_preferred_common_expiration_contracts_uses_availability_probe_to_limit_combined_fetch():
+    class _Gateway:
+        def __init__(self) -> None:
+            self.availability_calls = 0
+            self.combined_expiration_calls: list[list[date]] = []
+
+        def list_available_expirations_by_type(self, **kwargs):
+            self.availability_calls += 1
+            expiration_dates = kwargs["expiration_dates"]
+            chosen = expiration_dates[1]
+            return {
+                "call": [chosen],
+                "put": [chosen],
+            }
+
+        def list_contracts_for_expirations_by_type(self, **kwargs):
+            expiration_dates = list(kwargs["expiration_dates"])
+            self.combined_expiration_calls.append(expiration_dates)
+            assert len(expiration_dates) == 1
+            expiration = expiration_dates[0]
+            return {
+                "call": {
+                    expiration: [
+                        OptionContractRecord("O:C1", "call", expiration, 100.0, 100.0),
+                    ],
+                },
+                "put": {
+                    expiration: [
+                        OptionContractRecord("O:P1", "put", expiration, 100.0, 100.0),
+                    ],
+                },
+            }
+
+        def list_contracts_for_expirations(self, **kwargs):
+            raise AssertionError("availability probe should narrow the combined fetch to one expiration")
+
+    with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+        common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+    try:
+        gateway = _Gateway()
+        expiration, call_contracts, put_contracts = select_preferred_common_expiration_contracts(
+            gateway,
+            entry_date=date(2025, 4, 1),
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+
+        assert expiration == date(2025, 4, 5)
+        assert gateway.availability_calls == 1
+        assert gateway.combined_expiration_calls == [[date(2025, 4, 5)]]
+        assert call_contracts[0].contract_type == "call"
+        assert put_contracts[0].contract_type == "put"
+    finally:
+        with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+            common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+
+
+def test_resolve_strike_uses_tuple_delta_lookup_when_contracts_share_single_expiration():
+    class _Gateway:
+        def get_quote(self, option_ticker: str, trade_date: date):
+            raise AssertionError("tuple-key delta lookup should avoid quote fallback")
+
+    contracts = [
+        OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+    ]
+    selection = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
+
+    resolved = resolve_strike(
+        [200.0, 210.0],
+        205.0,
+        "call",
+        selection,
+        dte_days=3,
+        delta_lookup={
+            (200.0, date(2025, 4, 4)): 0.31,
+            (210.0, date(2025, 4, 4)): 0.18,
+        },
+        contracts=contracts,
+        option_gateway=_Gateway(),
+        trade_date=date(2025, 4, 1),
+    )
+
+    assert resolved == 200.0
+
+
+def test_calendar_group_cache_is_shared_across_gateways_with_shared_state():
+    shared_state = object()
+
+    class _Gateway:
+        def __init__(self) -> None:
+            self._shared_state = shared_state
+            self.symbol = "AAPL"
+            self.calls = 0
+
+        def list_contracts_for_expirations(self, **kwargs):
+            self.calls += 1
+            expiration_dates = kwargs["expiration_dates"]
+            near = expiration_dates[0]
+            far = expiration_dates[-1]
+            contract_type = kwargs["contract_type"]
+            return {
+                expiration: [
+                    OptionContractRecord(
+                        f"O:{contract_type[0].upper()}{idx}",
+                        contract_type,
+                        expiration,
+                        100.0,
+                        100.0,
+                    )
+                ] if expiration in {near, far} else []
+                for idx, expiration in enumerate(expiration_dates)
+            }
+
+    with calendar_module._CALENDAR_GROUP_CACHE_LOCK:
+        calendar_module._CALENDAR_GROUP_CACHE.clear()
+    try:
+        first = _Gateway()
+        second = _Gateway()
+
+        resolved_first = resolve_calendar_contract_groups(
+            first,
+            entry_date=date(2025, 4, 1),
+            contract_type="call",
+            target_dte=7,
+            dte_tolerance_days=2,
+        )
+        resolved_second = resolve_calendar_contract_groups(
+            second,
+            entry_date=date(2025, 4, 1),
+            contract_type="call",
+            target_dte=7,
+            dte_tolerance_days=2,
+        )
+
+        assert resolved_second == resolved_first
+        assert first.calls == 1
+        assert second.calls == 0
+    finally:
+        with calendar_module._CALENDAR_GROUP_CACHE_LOCK:
+            calendar_module._CALENDAR_GROUP_CACHE.clear()
+
+
+def test_select_preferred_expiration_contracts_preserves_gateway_contract_sequence_identity():
+    cached_contracts = [
+        OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+    ]
+
+    class _Gateway:
+        def list_contracts_for_preferred_expiration(self, **kwargs):
+            return cached_contracts
+
+    expiration, returned_contracts = select_preferred_expiration_contracts(
+        _Gateway(),
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        target_dte=3,
+        dte_tolerance_days=1,
+    )
+
+    assert expiration == date(2025, 4, 4)
+    assert returned_contracts is cached_contracts
+
+
+def test_common_sorted_expirations_reuses_sorted_common_dates_and_filters_minimum():
+    left_contracts = [
+        OptionContractRecord("O:L1", "call", date(2025, 4, 11), 100.0, 100.0),
+        OptionContractRecord("O:L2", "call", date(2025, 4, 18), 100.0, 100.0),
+        OptionContractRecord("O:L3", "call", date(2025, 4, 25), 100.0, 100.0),
+    ]
+    right_contracts = [
+        OptionContractRecord("O:R1", "put", date(2025, 4, 4), 100.0, 100.0),
+        OptionContractRecord("O:R2", "put", date(2025, 4, 18), 100.0, 100.0),
+        OptionContractRecord("O:R3", "put", date(2025, 4, 25), 100.0, 100.0),
+    ]
+
+    assert common_sorted_expirations(left_contracts, right_contracts) == [
+        date(2025, 4, 18),
+        date(2025, 4, 25),
+    ]
+    assert common_sorted_expirations(
+        left_contracts,
+        right_contracts,
+        min_expiration_exclusive=date(2025, 4, 18),
+    ) == [date(2025, 4, 25)]
+
+
+def test_choose_primary_expiration_date_prefers_closest_not_before_target():
+    resolved = choose_primary_expiration_date(
+        [
+            date(2025, 4, 11),
+            date(2025, 4, 18),
+            date(2025, 4, 25),
+        ],
+        entry_date=date(2025, 4, 1),
+        target_dte=14,
+    )
+
+    assert resolved == date(2025, 4, 18)
 
 
 def test_maybe_build_contract_delta_lookup_skips_work_for_non_delta_selection():

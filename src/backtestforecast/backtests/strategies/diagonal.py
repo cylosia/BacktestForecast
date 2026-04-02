@@ -6,7 +6,9 @@ from backtestforecast.backtests.margin import naked_call_margin, short_straddle_
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_primary_expiration,
+    choose_primary_expiration_date,
     choose_secondary_expiration,
+    common_sorted_expirations,
     contracts_for_expiration,
     get_overrides,
     maybe_build_contract_delta_lookup,
@@ -36,7 +38,7 @@ def _deep_itm_call_strike(strikes: list[float], underlying_close: float) -> floa
     underlying. Falls back to 2 strikes below if nothing reaches that
     threshold. Raises DataUnavailableError when no ITM strikes exist.
     """
-    below = sorted([s for s in strikes if s < underlying_close])
+    below = [strike for strike in strikes if strike < underlying_close]
     if not below:
         raise DataUnavailableError("No deep ITM call strike available for PMCC - all strikes are at or above the underlying price.")
     target = underlying_close * 0.90
@@ -77,9 +79,11 @@ class PMCCStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=getattr(option_gateway, "_iv_cache", None),
         )
+        near_strikes = sorted_unique_strikes(near_cc)
+        far_strikes = sorted_unique_strikes(far_cc)
 
         short_strike = resolve_strike(
-            [c.strike_price for c in near_cc],
+            near_strikes,
             bar.close_price,
             "call",
             overrides.short_call_strike,
@@ -91,7 +95,7 @@ class PMCCStrategy(StrategyDefinition):
             iv_cache=getattr(option_gateway, '_iv_cache', None),
             risk_free_rate=risk_free_rate,
         )
-        long_strike = _deep_itm_call_strike([c.strike_price for c in far_cc], bar.close_price)
+        long_strike = _deep_itm_call_strike(far_strikes, bar.close_price)
         short_c = require_contract_for_strike(near_cc, short_strike)
         long_c = require_contract_for_strike(far_cc, long_strike)
 
@@ -196,9 +200,10 @@ class DiagonalSpreadStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=getattr(option_gateway, "_iv_cache", None),
         )
+        near_strikes = sorted_unique_strikes(near_cc)
 
         near_strike = resolve_strike(
-            [c.strike_price for c in near_cc],
+            near_strikes,
             bar.close_price,
             "call",
             overrides.short_call_strike,
@@ -301,16 +306,11 @@ class DoubleDiagonalStrategy(StrategyDefinition):
         overrides = get_overrides(config.strategy_overrides)
         calls = option_gateway.list_contracts(bar.trade_date, "call", config.target_dte, config.dte_tolerance_days)
         puts = option_gateway.list_contracts(bar.trade_date, "put", config.target_dte, config.dte_tolerance_days)
-        common_near_exp = sorted({c.expiration_date for c in calls} & {c.expiration_date for c in puts})
+        common_near_exp = common_sorted_expirations(calls, puts)
         if not common_near_exp:
             raise DataUnavailableError("No common expiration for double diagonal.")
-        near_exp = choose_primary_expiration(
-            [c for c in calls if c.expiration_date in common_near_exp], bar.trade_date, config.target_dte
-        )
-        common_far_exps = sorted(
-            {c.expiration_date for c in calls if c.expiration_date > near_exp}
-            & {c.expiration_date for c in puts if c.expiration_date > near_exp}
-        )
+        near_exp = choose_primary_expiration_date(common_near_exp, entry_date=bar.trade_date, target_dte=config.target_dte)
+        common_far_exps = common_sorted_expirations(calls, puts, min_expiration_exclusive=near_exp)
         if not common_far_exps:
             raise DataUnavailableError("No common far expiration for double diagonal.")
         far_exp = choose_secondary_expiration(
@@ -351,8 +351,10 @@ class DoubleDiagonalStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=_iv_cache,
         )
+        near_call_strikes = sorted_unique_strikes(near_cc)
+        near_put_strikes = sorted_unique_strikes(near_pc)
         near_call_strike = resolve_strike(
-            [c.strike_price for c in near_cc],
+            near_call_strikes,
             bar.close_price,
             "call",
             overrides.short_call_strike,
@@ -365,7 +367,7 @@ class DoubleDiagonalStrategy(StrategyDefinition):
             risk_free_rate=risk_free_rate,
         )
         near_put_strike = resolve_strike(
-            [c.strike_price for c in near_pc],
+            near_put_strikes,
             bar.close_price,
             "put",
             overrides.short_put_strike,

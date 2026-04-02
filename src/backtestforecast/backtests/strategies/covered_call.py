@@ -10,6 +10,7 @@ from backtestforecast.backtests.strategies.common import (
     require_contract_for_strike,
     resolve_strike,
     select_preferred_expiration_contracts,
+    sorted_unique_strikes,
     synthetic_ticker,
     valid_entry_mids,
 )
@@ -62,8 +63,9 @@ class CoveredCallStrategy(StrategyDefinition):
             dividend_yield=config.dividend_yield,
             iv_cache=getattr(option_gateway, "_iv_cache", None),
         )
+        strikes = sorted_unique_strikes(call_contracts)
         strike = resolve_strike(
-            [c.strike_price for c in call_contracts],
+            strikes,
             bar.close_price,
             "call",
             overrides.short_call_strike,

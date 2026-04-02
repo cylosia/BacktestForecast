@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from collections import OrderedDict
 import inspect
 import json
 import threading
@@ -10,6 +11,7 @@ from decimal import Decimal
 import structlog
 
 from backtestforecast.backtests.engine import OptionsBacktestEngine
+from backtestforecast.backtests.rules import EntryRuleEvaluator
 from backtestforecast.backtests.types import BacktestConfig, BacktestExecutionResult
 from backtestforecast.config import get_settings
 from backtestforecast.domain.execution_parameters import ResolvedExecutionParameters
@@ -21,6 +23,7 @@ from backtestforecast.market_data.prewarm import (
     supports_targeted_exact_quote_prewarm,
     targeted_exact_quote_prewarm_signature,
 )
+from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest, StrategyType
 from backtestforecast.services.risk_free_rate import (
@@ -30,6 +33,7 @@ from backtestforecast.services.risk_free_rate import (
 
 _logger = structlog.get_logger("services.backtest_execution")
 _thread_local_execution_services = threading.local()
+_EXECUTION_INPUTS_CACHE_MAX = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +43,7 @@ class _PrefetchPlan:
     include_quotes: bool
     warm_future_quotes: bool
     max_dates: int
+    trade_dates: tuple[object, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +51,12 @@ class _PrefetchResult:
     mode: str
     summary: dict[str, object]
     skipped: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedExecutionInputsCacheEntry:
+    parameters: ResolvedExecutionParameters
+    risk_free_rate_curve: object | None
 
 
 class BacktestExecutionService:
@@ -65,6 +76,10 @@ class BacktestExecutionService:
         self._closed = False
         self._market_data_service = market_data_service
         self.engine = engine or OptionsBacktestEngine()
+        self._execution_inputs_cache: OrderedDict[
+            tuple[object, ...],
+            _ResolvedExecutionInputsCacheEntry,
+        ] = OrderedDict()
         self._engine_supports_shared_entry_rule_cache = (
             "shared_entry_rule_cache" in inspect.signature(self.engine.run).parameters
         )
@@ -283,7 +298,11 @@ class BacktestExecutionService:
         risk_free_rate_curve: object | None = None,
     ) -> tuple[ResolvedExecutionParameters, object | None]:
         provider_client = self._market_data_service.client if self._market_data_service is not None else None
+        cache_key = self._execution_inputs_cache_key(request)
+        cached = self._get_cached_execution_inputs(cache_key)
         parameters = resolved_parameters
+        if parameters is None and cached is not None:
+            parameters = cached.parameters
         if parameters is None:
             resolved_risk_free_rate = resolve_backtest_risk_free_rate(
                 request,
@@ -294,13 +313,53 @@ class BacktestExecutionService:
                 resolved_risk_free_rate,
             )
         resolved_curve = risk_free_rate_curve
+        if resolved_curve is None and cached is not None:
+            resolved_curve = cached.risk_free_rate_curve
         if resolved_curve is None:
             resolved_curve = build_backtest_risk_free_rate_curve(
                 request,
                 default_rate=parameters.risk_free_rate or 0.0,
                 client=provider_client,
             )
+        self._store_execution_inputs_cache(
+            cache_key,
+            _ResolvedExecutionInputsCacheEntry(
+                parameters=parameters,
+                risk_free_rate_curve=resolved_curve,
+            ),
+        )
         return parameters, resolved_curve
+
+    @staticmethod
+    def _execution_inputs_cache_key(
+        request: CreateBacktestRunRequest,
+    ) -> tuple[object, ...]:
+        return (
+            request.start_date,
+            request.end_date,
+            float(request.risk_free_rate) if request.risk_free_rate is not None else None,
+            float(request.dividend_yield) if request.dividend_yield is not None else 0.0,
+        )
+
+    def _get_cached_execution_inputs(
+        self,
+        cache_key: tuple[object, ...],
+    ) -> _ResolvedExecutionInputsCacheEntry | None:
+        cached = self._execution_inputs_cache.get(cache_key)
+        if cached is None:
+            return None
+        self._execution_inputs_cache.move_to_end(cache_key)
+        return cached
+
+    def _store_execution_inputs_cache(
+        self,
+        cache_key: tuple[object, ...],
+        entry: _ResolvedExecutionInputsCacheEntry,
+    ) -> None:
+        self._execution_inputs_cache[cache_key] = entry
+        self._execution_inputs_cache.move_to_end(cache_key)
+        while len(self._execution_inputs_cache) > _EXECUTION_INPUTS_CACHE_MAX:
+            self._execution_inputs_cache.popitem(last=False)
 
     @staticmethod
     def _build_config(
@@ -382,21 +441,39 @@ class BacktestExecutionService:
         plan = self._build_prefetch_plan(request, bundle, settings)
         if plan is None:
             return None
-        cached_summary = bundle.get_prefetch_summary(plan.signature)
-        if cached_summary is not None or bundle.has_prefetched(plan.signature):
-            _logger.info(
-                "backtest.option_prefetch_skipped",
-                symbol=request.symbol,
-                mode=plan.mode,
-                strategy_type=request.strategy_type.value,
-                reason="bundle_already_warm",
-            )
-            return _PrefetchResult(
-                mode=plan.mode,
-                summary=dict(cached_summary or {}),
-                skipped=True,
-            )
-        return self._run_prefetch_plan(request, bundle, plan, settings)
+        wait_timeout_seconds = max(1, int(getattr(settings, "backtest_prefetch_timeout_seconds", 180)))
+        while True:
+            state, cached_summary, inflight_event = bundle.begin_prefetch(plan.signature)
+            if state == "cached":
+                _logger.info(
+                    "backtest.option_prefetch_skipped",
+                    symbol=request.symbol,
+                    mode=plan.mode,
+                    strategy_type=request.strategy_type.value,
+                    reason="bundle_already_warm",
+                )
+                return _PrefetchResult(
+                    mode=plan.mode,
+                    summary=dict(cached_summary or {}),
+                    skipped=True,
+                )
+            if state == "wait":
+                if inflight_event is not None and inflight_event.wait(timeout=wait_timeout_seconds):
+                    continue
+                _logger.warning(
+                    "backtest.option_prefetch_wait_timed_out",
+                    symbol=request.symbol,
+                    mode=plan.mode,
+                    strategy_type=request.strategy_type.value,
+                    timeout_seconds=wait_timeout_seconds,
+                )
+                return None
+            result: _PrefetchResult | None = None
+            try:
+                result = self._run_prefetch_plan(request, bundle, plan, settings)
+            finally:
+                bundle.end_prefetch(plan.signature, result.summary if result is not None else None)
+            return result
 
     def _build_prefetch_plan(
         self,
@@ -413,6 +490,12 @@ class BacktestExecutionService:
         if len(trade_dates) < getattr(settings, "backtest_prefetch_min_trade_dates", 10):
             return None
         max_dates = getattr(settings, "backtest_prefetch_max_dates", 6)
+        selected_trade_bars = self._select_prefetch_trade_bars(
+            request,
+            bundle=bundle,
+            max_dates=max_dates,
+        )
+        selected_trade_dates = tuple(bar.trade_date for bar in selected_trade_bars)
         if request.strategy_type in {StrategyType.LONG_CALL, StrategyType.LONG_PUT}:
             mode = "targeted_exact_quotes"
             override_signature = self._json_signature(
@@ -428,6 +511,7 @@ class BacktestExecutionService:
                 request.dte_tolerance_days,
                 request.max_holding_days,
                 max_dates,
+                selected_trade_dates,
                 override_signature,
             )
             return _PrefetchPlan(
@@ -436,12 +520,14 @@ class BacktestExecutionService:
                 include_quotes=True,
                 warm_future_quotes=True,
                 max_dates=max_dates,
+                trade_dates=selected_trade_dates,
             )
         if supports_targeted_exact_quote_prewarm(request.strategy_type):
             mode = "targeted_strategy_exact_contracts"
             override_signature = self._json_signature(
                 targeted_exact_quote_prewarm_signature(request)
             )
+            local_historical_gateway = isinstance(bundle.option_gateway, HistoricalOptionGateway)
             signature = (
                 mode,
                 request.symbol,
@@ -450,14 +536,17 @@ class BacktestExecutionService:
                 request.target_dte,
                 request.dte_tolerance_days,
                 max_dates,
+                local_historical_gateway,
+                selected_trade_dates,
                 override_signature,
             )
             return _PrefetchPlan(
                 mode=mode,
                 signature=signature,
-                include_quotes=False,
+                include_quotes=local_historical_gateway,
                 warm_future_quotes=False,
                 max_dates=max_dates,
+                trade_dates=selected_trade_dates,
             )
         mode = "broad_contracts_only"
         signature = (
@@ -468,6 +557,7 @@ class BacktestExecutionService:
             request.target_dte,
             request.dte_tolerance_days,
             max_dates,
+            selected_trade_dates,
         )
         return _PrefetchPlan(
             mode=mode,
@@ -475,6 +565,7 @@ class BacktestExecutionService:
             include_quotes=False,
             warm_future_quotes=False,
             max_dates=max_dates,
+            trade_dates=selected_trade_dates,
         )
 
     def _run_prefetch_plan(
@@ -484,6 +575,7 @@ class BacktestExecutionService:
         plan: _PrefetchPlan,
         settings: object,
     ) -> _PrefetchResult | None:
+        entry_trade_bars = self._resolve_prefetch_trade_bars(bundle, plan.trade_dates)
         try:
             if plan.mode == "targeted_exact_quotes":
                 summary = prewarm_long_option_bundle(
@@ -492,6 +584,7 @@ class BacktestExecutionService:
                     include_quotes=plan.include_quotes,
                     max_dates=plan.max_dates,
                     warm_future_quotes=plan.warm_future_quotes,
+                    entry_trade_bars=entry_trade_bars,
                 )
             elif plan.mode == "targeted_strategy_exact_contracts":
                 summary = prewarm_targeted_option_bundle(
@@ -500,13 +593,14 @@ class BacktestExecutionService:
                     include_quotes=plan.include_quotes,
                     max_dates=plan.max_dates,
                     warm_future_quotes=plan.warm_future_quotes,
+                    entry_trade_bars=entry_trade_bars,
                 )
             else:
                 summary = OptionDataPrefetcher(
                     timeout_seconds=getattr(settings, "backtest_prefetch_timeout_seconds", 180),
                 ).prefetch_for_symbol(
                     request.symbol,
-                    bundle.bars,
+                    entry_trade_bars or bundle.bars,
                     request.start_date,
                     request.end_date,
                     request.target_dte,
@@ -544,6 +638,71 @@ class BacktestExecutionService:
         if request.strategy_type == StrategyType.LONG_PUT and overrides.long_put_strike is not None:
             return {"long_put_strike": overrides.long_put_strike.model_dump(mode="json", exclude_none=True)}
         return None
+
+    @staticmethod
+    def _resolve_prefetch_trade_bars(
+        bundle: HistoricalDataBundle,
+        trade_dates: tuple[object, ...],
+    ) -> list[object]:
+        if not trade_dates:
+            return []
+        by_date = {bar.trade_date: bar for bar in bundle.bars}
+        return [by_date[trade_date] for trade_date in trade_dates if trade_date in by_date]
+
+    def _select_prefetch_trade_bars(
+        self,
+        request: CreateBacktestRunRequest,
+        *,
+        bundle: HistoricalDataBundle,
+        max_dates: int,
+    ) -> list[object]:
+        trade_bars = [
+            bar for bar in bundle.bars
+            if request.start_date <= bar.trade_date <= request.end_date
+        ]
+        if len(trade_bars) <= max_dates or not request.entry_rules:
+            return trade_bars[:max_dates]
+
+        try:
+            evaluator = EntryRuleEvaluator(
+                config=BacktestConfig(
+                    symbol=request.symbol,
+                    strategy_type=request.strategy_type.value,
+                    start_date=request.start_date,
+                    end_date=request.end_date,
+                    target_dte=request.target_dte,
+                    dte_tolerance_days=request.dte_tolerance_days,
+                    max_holding_days=request.max_holding_days,
+                    account_size=request.account_size,
+                    risk_per_trade_pct=request.risk_per_trade_pct,
+                    commission_per_contract=request.commission_per_contract,
+                    entry_rules=request.entry_rules,
+                    strategy_overrides=request.strategy_overrides,
+                    custom_legs=request.custom_legs,
+                    profit_target_pct=float(request.profit_target_pct) if request.profit_target_pct is not None else None,
+                    stop_loss_pct=float(request.stop_loss_pct) if request.stop_loss_pct is not None else None,
+                ),
+                bars=bundle.bars,
+                earnings_dates=bundle.earnings_dates,
+                option_gateway=bundle.option_gateway,
+                shared_cache=bundle.entry_rule_cache,
+            )
+            mask = evaluator.build_entry_allowed_mask()
+            selected = [
+                bar
+                for index, bar in enumerate(bundle.bars)
+                if request.start_date <= bar.trade_date <= request.end_date and index < len(mask) and mask[index]
+            ]
+            if selected:
+                return selected[:max_dates]
+        except Exception:
+            _logger.warning(
+                "backtest.option_prefetch_signal_selection_failed",
+                symbol=request.symbol,
+                strategy_type=request.strategy_type.value,
+                exc_info=True,
+            )
+        return trade_bars[:max_dates]
 
     def _check_data_staleness(
         self,

@@ -1,10 +1,13 @@
 ﻿from __future__ import annotations
 
 import bisect
+import contextvars
 import math
 import threading
+import time as _time
 from collections import OrderedDict, defaultdict
 from collections.abc import Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
@@ -12,7 +15,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from backtestforecast.errors import DataUnavailableError
-from backtestforecast.market_data.types import OptionContractRecord
+from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
 from backtestforecast.schemas.backtests import (
     SpreadWidthConfig,
     SpreadWidthMode,
@@ -29,6 +32,68 @@ if TYPE_CHECKING:
 
 _CHAIN_CONTEXT_CACHE_MAX = 4_096
 _CHAIN_CONTEXT_LOCK = threading.Lock()
+_DELTA_LOOKUP_CACHE_MAX = 4_096
+_DELTA_LOOKUP_CACHE_LOCK = threading.Lock()
+_PREFERRED_EXPIRATION_SELECTION_CACHE_MAX = 16_384
+_PREFERRED_EXPIRATION_SELECTION_CACHE_LOCK = threading.Lock()
+_COMMON_EXPIRATION_SELECTION_CACHE_MAX = 16_384
+_COMMON_EXPIRATION_SELECTION_CACHE_LOCK = threading.Lock()
+
+
+@dataclass(slots=True)
+class BuildPositionProfiler:
+    contract_fetch_ms: float = 0.0
+    delta_lookup_ms: float = 0.0
+    entry_quote_fetch_ms: float = 0.0
+
+
+_BUILD_POSITION_PROFILER: contextvars.ContextVar[BuildPositionProfiler | None] = contextvars.ContextVar(
+    "build_position_profiler",
+    default=None,
+)
+_BUILD_POSITION_PHASE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "build_position_phase",
+    default=None,
+)
+
+
+def activate_build_position_profiler(
+    profiler: BuildPositionProfiler,
+) -> contextvars.Token[BuildPositionProfiler | None]:
+    return _BUILD_POSITION_PROFILER.set(profiler)
+
+
+def reset_build_position_profiler(
+    token: contextvars.Token[BuildPositionProfiler | None],
+) -> None:
+    _BUILD_POSITION_PROFILER.reset(token)
+
+
+def current_build_position_phase() -> str | None:
+    return _BUILD_POSITION_PHASE.get()
+
+
+@contextmanager
+def _profile_build_position_phase(phase: str):
+    profiler = _BUILD_POSITION_PROFILER.get()
+    if profiler is None:
+        yield
+        return
+    active_phase = _BUILD_POSITION_PHASE.get()
+    if active_phase == phase:
+        yield
+        return
+    phase_token = _BUILD_POSITION_PHASE.set(phase)
+    start = _time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed_ms = (_time.perf_counter() - start) * 1000.0
+        if phase == "contract_fetch":
+            profiler.contract_fetch_ms += elapsed_ms
+        elif phase == "delta_lookup":
+            profiler.delta_lookup_ms += elapsed_ms
+        _BUILD_POSITION_PHASE.reset(phase_token)
 
 
 @dataclass(slots=True)
@@ -43,10 +108,76 @@ class _ChainContext:
 
 
 _CHAIN_CONTEXT_CACHE: OrderedDict[int, _ChainContext] = OrderedDict()
+_DELTA_LOOKUP_CACHE: OrderedDict[tuple[object, ...], dict[tuple[float, date], float]] = OrderedDict()
+_PREFERRED_EXPIRATION_SELECTION_CACHE: OrderedDict[
+    tuple[object, ...],
+    tuple[date, list[OptionContractRecord]],
+] = OrderedDict()
+_COMMON_EXPIRATION_SELECTION_CACHE: OrderedDict[
+    tuple[object, ...],
+    tuple[date, list[OptionContractRecord], list[OptionContractRecord]],
+] = OrderedDict()
 
 
 def _normalized_strike_key(strike: float) -> int:
     return int(round(strike * 10_000))
+
+
+def _normalized_bound(value: float | None) -> float | None:
+    return round(value, 4) if value is not None else None
+
+
+def _gateway_cache_identity(option_gateway: object) -> tuple[object, ...]:
+    shared_state = getattr(option_gateway, "_shared_state", None)
+    if shared_state is not None:
+        return (
+            type(option_gateway),
+            "shared_state",
+            id(shared_state),
+            getattr(option_gateway, "symbol", None),
+        )
+    store = getattr(option_gateway, "store", None)
+    symbol = getattr(option_gateway, "symbol", None)
+    if store is not None and symbol is not None:
+        return (type(option_gateway), "store_symbol", id(store), symbol)
+    return (type(option_gateway), id(option_gateway))
+
+
+def _cache_get(cache: OrderedDict[tuple[object, ...], object], key: tuple[object, ...], *, lock: threading.Lock):
+    with lock:
+        cached = cache.get(key)
+        if cached is None:
+            return None
+        cache.move_to_end(key)
+        return cached
+
+
+def _cache_store(
+    cache: OrderedDict[tuple[object, ...], object],
+    key: tuple[object, ...],
+    value: object,
+    *,
+    lock: threading.Lock,
+    max_size: int,
+) -> None:
+    with lock:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > max_size:
+            cache.popitem(last=False)
+
+
+def _expiration_priority(
+    expiration: date,
+    *,
+    entry_date: date,
+    target_dte: int,
+) -> tuple[int, int, int]:
+    return (
+        abs((expiration - entry_date).days - target_dte),
+        0 if (expiration - entry_date).days >= target_dte else 1,
+        (expiration - entry_date).days,
+    )
 
 
 def _sequence_signature(contracts: list[OptionContractRecord] | tuple[OptionContractRecord, ...]) -> tuple[int, str | None, str | None]:
@@ -75,6 +206,14 @@ def _build_chain_context(
     )
 
 
+def _materialize_contracts(
+    contracts: Iterable[OptionContractRecord] | list[OptionContractRecord] | tuple[OptionContractRecord, ...],
+) -> list[OptionContractRecord] | tuple[OptionContractRecord, ...]:
+    if isinstance(contracts, (list, tuple)):
+        return contracts
+    return list(contracts)
+
+
 def _contracts_with_context(
     contracts: Iterable[OptionContractRecord],
 ) -> tuple[list[OptionContractRecord] | tuple[OptionContractRecord, ...], _ChainContext]:
@@ -100,13 +239,57 @@ def _contracts_with_context(
                 _CHAIN_CONTEXT_CACHE.popitem(last=False)
         return contracts, context
 
-    materialized = list(contracts)
+    materialized = _materialize_contracts(contracts)
     return materialized, _build_chain_context(materialized)
 
 
 def group_contracts_by_expiration(contracts: Iterable[OptionContractRecord]) -> dict[date, list[OptionContractRecord]]:
     _contracts, context = _contracts_with_context(contracts)
     return context.grouped_by_expiration
+
+
+def common_sorted_strikes(
+    left_contracts: Iterable[OptionContractRecord],
+    right_contracts: Iterable[OptionContractRecord],
+) -> list[float]:
+    _left_contracts, left_context = _contracts_with_context(left_contracts)
+    _right_contracts, right_context = _contracts_with_context(right_contracts)
+    if len(left_context.unique_strikes_sorted) <= len(right_context.unique_strikes_sorted):
+        right_keys = {_normalized_strike_key(strike) for strike in right_context.unique_strikes_sorted}
+        return [
+            strike for strike in left_context.unique_strikes_sorted
+            if _normalized_strike_key(strike) in right_keys
+        ]
+    left_keys = {_normalized_strike_key(strike) for strike in left_context.unique_strikes_sorted}
+    return [
+        strike for strike in right_context.unique_strikes_sorted
+        if _normalized_strike_key(strike) in left_keys
+    ]
+
+
+def common_sorted_expirations(
+    left_contracts: Iterable[OptionContractRecord],
+    right_contracts: Iterable[OptionContractRecord],
+    *,
+    min_expiration_exclusive: date | None = None,
+) -> list[date]:
+    _left_contracts, left_context = _contracts_with_context(left_contracts)
+    _right_contracts, right_context = _contracts_with_context(right_contracts)
+    if len(left_context.expirations_sorted) <= len(right_context.expirations_sorted):
+        right_expirations = set(right_context.expirations_sorted)
+        expirations = [
+            expiration for expiration in left_context.expirations_sorted
+            if expiration in right_expirations
+        ]
+    else:
+        left_expirations = set(left_context.expirations_sorted)
+        expirations = [
+            expiration for expiration in right_context.expirations_sorted
+            if expiration in left_expirations
+        ]
+    if min_expiration_exclusive is None:
+        return expirations
+    return [expiration for expiration in expirations if expiration > min_expiration_exclusive]
 
 
 def choose_primary_expiration(
@@ -118,13 +301,21 @@ def choose_primary_expiration(
     expirations = context.expirations_sorted
     if not expirations:
         raise DataUnavailableError("No eligible option expirations were available.")
+    return choose_primary_expiration_date(expirations, entry_date=entry_date, target_dte=target_dte)
+
+
+def choose_primary_expiration_date(
+    expirations: Iterable[date],
+    *,
+    entry_date: date,
+    target_dte: int,
+) -> date:
+    ordered_expirations = tuple(expirations)
+    if not ordered_expirations:
+        raise DataUnavailableError("No eligible option expirations were available.")
     return min(
-        expirations,
-        key=lambda expiration: (
-            abs((expiration - entry_date).days - target_dte),
-            0 if (expiration - entry_date).days >= target_dte else 1,
-            (expiration - entry_date).days,
-        ),
+        ordered_expirations,
+        key=lambda expiration: _expiration_priority(expiration, entry_date=entry_date, target_dte=target_dte),
     )
 
 
@@ -139,11 +330,7 @@ def preferred_expiration_dates(
     offsets = range(lower, upper + 1)
     return sorted(
         (entry_date + timedelta(days=offset) for offset in offsets),
-        key=lambda expiration: (
-            abs((expiration - entry_date).days - target_dte),
-            0 if (expiration - entry_date).days >= target_dte else 1,
-            (expiration - entry_date).days,
-        ),
+        key=lambda expiration: _expiration_priority(expiration, entry_date=entry_date, target_dte=target_dte),
     )
 
 
@@ -179,32 +366,65 @@ def select_preferred_expiration_contracts(
     strike_price_gte: float | None = None,
     strike_price_lte: float | None = None,
 ) -> tuple[date, list[OptionContractRecord]]:
-    preferred_fetch = getattr(option_gateway, "list_contracts_for_preferred_expiration", None)
-    if callable(preferred_fetch):
+    cache_key = (
+        _gateway_cache_identity(option_gateway),
+        entry_date,
+        contract_type,
+        target_dte,
+        dte_tolerance_days,
+        _normalized_bound(strike_price_gte),
+        _normalized_bound(strike_price_lte),
+    )
+    cached = _cache_get(
+        _PREFERRED_EXPIRATION_SELECTION_CACHE,
+        cache_key,
+        lock=_PREFERRED_EXPIRATION_SELECTION_CACHE_LOCK,
+    )
+    if cached is not None:
+        return cached
+    with _profile_build_position_phase("contract_fetch"):
+        preferred_fetch = getattr(option_gateway, "list_contracts_for_preferred_expiration", None)
+        if callable(preferred_fetch):
+            contracts = _materialize_contracts(
+                preferred_fetch(
+                    entry_date=entry_date,
+                    contract_type=contract_type,
+                    target_dte=target_dte,
+                    dte_tolerance_days=dte_tolerance_days,
+                    strike_price_gte=strike_price_gte,
+                    strike_price_lte=strike_price_lte,
+                )
+            )
+            if not contracts:
+                raise DataUnavailableError("No eligible option expirations were available.")
+            result = (contracts[0].expiration_date, contracts)
+            _cache_store(
+                _PREFERRED_EXPIRATION_SELECTION_CACHE,
+                cache_key,
+                result,
+                lock=_PREFERRED_EXPIRATION_SELECTION_CACHE_LOCK,
+                max_size=_PREFERRED_EXPIRATION_SELECTION_CACHE_MAX,
+            )
+            return result
+
         contracts = list(
-            preferred_fetch(
-                entry_date=entry_date,
-                contract_type=contract_type,
-                target_dte=target_dte,
-                dte_tolerance_days=dte_tolerance_days,
-                strike_price_gte=strike_price_gte,
-                strike_price_lte=strike_price_lte,
+            option_gateway.list_contracts(
+                entry_date,
+                contract_type,
+                target_dte,
+                dte_tolerance_days,
             )
         )
-        if not contracts:
-            raise DataUnavailableError("No eligible option expirations were available.")
-        return contracts[0].expiration_date, contracts
-
-    contracts = list(
-        option_gateway.list_contracts(
-            entry_date,
-            contract_type,
-            target_dte,
-            dte_tolerance_days,
+        expiration = choose_primary_expiration(contracts, entry_date, target_dte)
+        result = (expiration, contracts_for_expiration(contracts, expiration))
+        _cache_store(
+            _PREFERRED_EXPIRATION_SELECTION_CACHE,
+            cache_key,
+            result,
+            lock=_PREFERRED_EXPIRATION_SELECTION_CACHE_LOCK,
+            max_size=_PREFERRED_EXPIRATION_SELECTION_CACHE_MAX,
         )
-    )
-    expiration = choose_primary_expiration(contracts, entry_date, target_dte)
-    return expiration, contracts_for_expiration(contracts, expiration)
+        return result
 
 
 def select_preferred_common_expiration_contracts(
@@ -214,56 +434,164 @@ def select_preferred_common_expiration_contracts(
     target_dte: int,
     dte_tolerance_days: int,
 ) -> tuple[date, list[OptionContractRecord], list[OptionContractRecord]]:
-    batch_fetch = getattr(option_gateway, "list_contracts_for_expirations", None)
-    ordered_expirations = preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days)
-    if callable(batch_fetch):
-        calls_by_expiration = batch_fetch(
-            entry_date=entry_date,
-            contract_type="call",
-            expiration_dates=ordered_expirations,
-        )
-        puts_by_expiration = batch_fetch(
-            entry_date=entry_date,
-            contract_type="put",
-            expiration_dates=ordered_expirations,
-        )
-        for expiration_date in ordered_expirations:
-            calls = list(calls_by_expiration.get(expiration_date, []))
-            puts = list(puts_by_expiration.get(expiration_date, []))
-            if calls and puts:
-                return expiration_date, calls, puts
-
-    exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
-    if callable(exact_fetch):
-        for expiration_date in ordered_expirations:
-            calls = list(
-                exact_fetch(
-                    entry_date=entry_date,
-                    contract_type="call",
-                    expiration_date=expiration_date,
-                )
-            )
-            puts = list(
-                exact_fetch(
-                    entry_date=entry_date,
-                    contract_type="put",
-                    expiration_date=expiration_date,
-                )
-            )
-            if calls and puts:
-                return expiration_date, calls, puts
-
-    calls = list(option_gateway.list_contracts(entry_date, "call", target_dte, dte_tolerance_days))
-    puts = list(option_gateway.list_contracts(entry_date, "put", target_dte, dte_tolerance_days))
-    common_expirations = sorted({contract.expiration_date for contract in calls} & {contract.expiration_date for contract in puts})
-    if not common_expirations:
-        raise DataUnavailableError("No common call/put expiration was available for the selected strategy.")
-    expiration = choose_primary_expiration(
-        [contract for contract in calls if contract.expiration_date in common_expirations],
+    cache_key = (
+        _gateway_cache_identity(option_gateway),
         entry_date,
         target_dte,
+        dte_tolerance_days,
     )
-    return expiration, contracts_for_expiration(calls, expiration), contracts_for_expiration(puts, expiration)
+    cached = _cache_get(
+        _COMMON_EXPIRATION_SELECTION_CACHE,
+        cache_key,
+        lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
+    )
+    if cached is not None:
+        return cached
+    with _profile_build_position_phase("contract_fetch"):
+        availability_fetch_by_type = getattr(option_gateway, "list_available_expirations_by_type", None)
+        batch_fetch_by_type = getattr(option_gateway, "list_contracts_for_expirations_by_type", None)
+        batch_fetch = getattr(option_gateway, "list_contracts_for_expirations", None)
+        exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
+        ordered_expirations = preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days)
+        if callable(availability_fetch_by_type):
+            available_by_type = availability_fetch_by_type(
+                entry_date=entry_date,
+                contract_types=["call", "put"],
+                expiration_dates=ordered_expirations,
+            )
+            available_calls = set(available_by_type.get("call", []))
+            available_puts = set(available_by_type.get("put", []))
+            for expiration_date in ordered_expirations:
+                if expiration_date not in available_calls or expiration_date not in available_puts:
+                    continue
+                if callable(batch_fetch_by_type):
+                    fetched_by_type = batch_fetch_by_type(
+                        entry_date=entry_date,
+                        contract_types=["call", "put"],
+                        expiration_dates=[expiration_date],
+                    )
+                    calls = _materialize_contracts(fetched_by_type.get("call", {}).get(expiration_date, []))
+                    puts = _materialize_contracts(fetched_by_type.get("put", {}).get(expiration_date, []))
+                elif callable(exact_fetch):
+                    calls = _materialize_contracts(
+                        exact_fetch(
+                            entry_date=entry_date,
+                            contract_type="call",
+                            expiration_date=expiration_date,
+                        )
+                    )
+                    puts = _materialize_contracts(
+                        exact_fetch(
+                            entry_date=entry_date,
+                            contract_type="put",
+                            expiration_date=expiration_date,
+                        )
+                    )
+                else:
+                    calls = []
+                    puts = []
+                if calls and puts:
+                    result = (expiration_date, calls, puts)
+                    _cache_store(
+                        _COMMON_EXPIRATION_SELECTION_CACHE,
+                        cache_key,
+                        result,
+                        lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
+                        max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
+                    )
+                    return result
+        if callable(batch_fetch_by_type):
+            fetched_by_type = batch_fetch_by_type(
+                entry_date=entry_date,
+                contract_types=["call", "put"],
+                expiration_dates=ordered_expirations,
+            )
+            calls_by_expiration = fetched_by_type.get("call", {})
+            puts_by_expiration = fetched_by_type.get("put", {})
+            for expiration_date in ordered_expirations:
+                calls = _materialize_contracts(calls_by_expiration.get(expiration_date, []))
+                puts = _materialize_contracts(puts_by_expiration.get(expiration_date, []))
+                if calls and puts:
+                    result = (expiration_date, calls, puts)
+                    _cache_store(
+                        _COMMON_EXPIRATION_SELECTION_CACHE,
+                        cache_key,
+                        result,
+                        lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
+                        max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
+                    )
+                    return result
+        if callable(batch_fetch):
+            calls_by_expiration = batch_fetch(
+                entry_date=entry_date,
+                contract_type="call",
+                expiration_dates=ordered_expirations,
+            )
+            puts_by_expiration = batch_fetch(
+                entry_date=entry_date,
+                contract_type="put",
+                expiration_dates=ordered_expirations,
+            )
+            for expiration_date in ordered_expirations:
+                calls = _materialize_contracts(calls_by_expiration.get(expiration_date, []))
+                puts = _materialize_contracts(puts_by_expiration.get(expiration_date, []))
+                if calls and puts:
+                    result = (expiration_date, calls, puts)
+                    _cache_store(
+                        _COMMON_EXPIRATION_SELECTION_CACHE,
+                        cache_key,
+                        result,
+                        lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
+                        max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
+                    )
+                    return result
+
+        if callable(exact_fetch):
+            for expiration_date in ordered_expirations:
+                calls = _materialize_contracts(
+                    exact_fetch(
+                        entry_date=entry_date,
+                        contract_type="call",
+                        expiration_date=expiration_date,
+                    )
+                )
+                puts = _materialize_contracts(
+                    exact_fetch(
+                        entry_date=entry_date,
+                        contract_type="put",
+                        expiration_date=expiration_date,
+                    )
+                )
+                if calls and puts:
+                    result = (expiration_date, calls, puts)
+                    _cache_store(
+                        _COMMON_EXPIRATION_SELECTION_CACHE,
+                        cache_key,
+                        result,
+                        lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
+                        max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
+                    )
+                    return result
+
+        calls = list(option_gateway.list_contracts(entry_date, "call", target_dte, dte_tolerance_days))
+        puts = list(option_gateway.list_contracts(entry_date, "put", target_dte, dte_tolerance_days))
+        common_expirations = common_sorted_expirations(calls, puts)
+        if not common_expirations:
+            raise DataUnavailableError("No common call/put expiration was available for the selected strategy.")
+        expiration = choose_primary_expiration_date(common_expirations, entry_date=entry_date, target_dte=target_dte)
+        result = (
+            expiration,
+            contracts_for_expiration(calls, expiration),
+            contracts_for_expiration(puts, expiration),
+        )
+        _cache_store(
+            _COMMON_EXPIRATION_SELECTION_CACHE,
+            cache_key,
+            result,
+            lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
+            max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
+        )
+        return result
 
 
 def sorted_unique_strikes(contracts: Iterable[OptionContractRecord]) -> list[float]:
@@ -337,9 +665,7 @@ def choose_common_atm_strike(
     put_contracts: Iterable[OptionContractRecord],
     underlying_close: float,
 ) -> float:
-    _call_contracts, call_context = _contracts_with_context(call_contracts)
-    _put_contracts, put_context = _contracts_with_context(put_contracts)
-    common_strikes = sorted(set(call_context.unique_strikes_sorted) & set(put_context.unique_strikes_sorted))
+    common_strikes = common_sorted_strikes(call_contracts, put_contracts)
     if not common_strikes:
         raise DataUnavailableError("No common call/put strike was available for the selected expiration.")
     return choose_atm_strike(common_strikes, underlying_close)
@@ -496,28 +822,51 @@ def build_contract_delta_lookup(
     iv_cache: dict[tuple[str, date], float | None] | None = None,
     realized_vol: float | None = None,
 ) -> dict[tuple[float, date], float]:
-    if not contracts:
+    contract_sequence, context = _contracts_with_context(contracts)
+    if not contract_sequence:
         return {}
+    cache_key = (
+        id(contract_sequence),
+        context.contract_count,
+        context.first_ticker,
+        context.last_ticker,
+        trade_date.toordinal(),
+        round(underlying_close, 4),
+        int(dte_days),
+        round(risk_free_rate, 8),
+        round(dividend_yield, 8),
+        round(realized_vol, 8) if realized_vol is not None else None,
+    )
+    with _DELTA_LOOKUP_CACHE_LOCK:
+        cached = _DELTA_LOOKUP_CACHE.get(cache_key)
+        if cached is not None:
+            _DELTA_LOOKUP_CACHE.move_to_end(cache_key)
+            return cached
 
     gateway_lookup = getattr(option_gateway, "get_chain_delta_lookup", None)
     if callable(gateway_lookup):
         try:
-            raw_lookup = gateway_lookup(contracts) or {}
+            raw_lookup = gateway_lookup(contract_sequence) or {}
         except Exception:
             raw_lookup = {}
         else:
             normalized: dict[tuple[float, date], float] = {}
-            for contract in contracts:
+            for contract in contract_sequence:
                 raw_delta = raw_lookup.get((contract.strike_price, contract.expiration_date))
                 if raw_delta is None:
                     raw_delta = raw_lookup.get(contract.strike_price)
                 if raw_delta is not None:
                     normalized[(contract.strike_price, contract.expiration_date)] = raw_delta
             if normalized:
+                with _DELTA_LOOKUP_CACHE_LOCK:
+                    _DELTA_LOOKUP_CACHE[cache_key] = normalized
+                    _DELTA_LOOKUP_CACHE.move_to_end(cache_key)
+                    while len(_DELTA_LOOKUP_CACHE) > _DELTA_LOOKUP_CACHE_MAX:
+                        _DELTA_LOOKUP_CACHE.popitem(last=False)
                 return normalized
 
     lookup: dict[tuple[float, date], float] = {}
-    for contract in contracts:
+    for contract in contract_sequence:
         iv = _estimate_iv_for_contract(
             contract,
             underlying_close=underlying_close,
@@ -557,6 +906,11 @@ def build_contract_delta_lookup(
                 dividend_yield=dividend_yield,
             )
         lookup[(contract.strike_price, contract.expiration_date)] = delta
+    with _DELTA_LOOKUP_CACHE_LOCK:
+        _DELTA_LOOKUP_CACHE[cache_key] = lookup
+        _DELTA_LOOKUP_CACHE.move_to_end(cache_key)
+        while len(_DELTA_LOOKUP_CACHE) > _DELTA_LOOKUP_CACHE_MAX:
+            _DELTA_LOOKUP_CACHE.popitem(last=False)
     return lookup
 
 
@@ -575,17 +929,18 @@ def maybe_build_contract_delta_lookup(
 ) -> dict[tuple[float, date], float] | None:
     if selection is None or selection.mode != StrikeSelectionMode.DELTA_TARGET:
         return None
-    return build_contract_delta_lookup(
-        contracts=contracts,
-        option_gateway=option_gateway,
-        trade_date=trade_date,
-        underlying_close=underlying_close,
-        dte_days=dte_days,
-        risk_free_rate=risk_free_rate,
-        dividend_yield=dividend_yield,
-        iv_cache=iv_cache,
-        realized_vol=realized_vol,
-    )
+    with _profile_build_position_phase("delta_lookup"):
+        return build_contract_delta_lookup(
+            contracts=contracts,
+            option_gateway=option_gateway,
+            trade_date=trade_date,
+            underlying_close=underlying_close,
+            dte_days=dte_days,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
+            iv_cache=iv_cache,
+            realized_vol=realized_vol,
+        )
 
 
 def _nearest_strike(strikes: list[float], target: float) -> float:
@@ -619,97 +974,119 @@ def resolve_strike(
       3. *realized_vol* - historical realized volatility (if available)
       4. Hardcoded 30% vol BSM - final fallback
     """
-    if selection is None or selection.mode == StrikeSelectionMode.NEAREST_OTM:
+    with _profile_build_position_phase("delta_lookup"):
+        if selection is None or selection.mode == StrikeSelectionMode.NEAREST_OTM:
+            if contract_type == "call":
+                return choose_call_otm_strike(strikes, underlying_close)
+            return choose_put_otm_strike(strikes, underlying_close)
+
+        val = float(selection.value) if selection.value is not None else 0.0
+
+        if selection.mode == StrikeSelectionMode.PCT_FROM_SPOT:
+            if contract_type == "call":
+                target = underlying_close * (1.0 + val / 100.0)
+            else:
+                target = underlying_close * (1.0 - val / 100.0)
+            return _nearest_strike(strikes, target)
+
+        if selection.mode == StrikeSelectionMode.ATM_OFFSET_STEPS:
+            steps = round(val)
+            atm = choose_atm_strike(strikes, underlying_close)
+            sorted_strikes = sorted(set(strikes))
+            if contract_type == "call":
+                resolved = offset_strike(sorted_strikes, atm, steps, presorted=True)
+            else:
+                resolved = offset_strike(sorted_strikes, atm, -steps, presorted=True)
+            if resolved is None:
+                raise DataUnavailableError(f"Strike offset {steps} out of range for {contract_type}.")
+            return resolved
+
+        if selection.mode == StrikeSelectionMode.DELTA_TARGET:
+            if not strikes:
+                raise DataUnavailableError("No strikes available for delta targeting.")
+            target_delta = val / 100.0
+            lookup_expiration = expiration_date
+            if lookup_expiration is None and delta_lookup is not None:
+                if contracts is not None:
+                    _, context = _contracts_with_context(contracts)
+                    if len(context.expirations_sorted) == 1:
+                        lookup_expiration = context.expirations_sorted[0]
+                if lookup_expiration is None:
+                    tuple_expirations = {
+                        key[1]
+                        for key in delta_lookup
+                        if isinstance(key, tuple)
+                        and len(key) == 2
+                        and isinstance(key[1], date)
+                    }
+                    if len(tuple_expirations) == 1:
+                        lookup_expiration = next(iter(tuple_expirations))
+
+            best_strike = strikes[0]
+            best_diff = float("inf")
+            for strike in strikes:
+                delta: float | None = None
+
+                if delta_lookup is not None:
+                    raw: float | None = None
+                    if lookup_expiration is not None:
+                        raw = delta_lookup.get((strike, lookup_expiration))  # type: ignore[call-overload]
+                    if raw is None:
+                        raw = delta_lookup.get(strike)  # type: ignore[call-overload]
+                    if raw is not None:
+                        delta = raw
+
+                if delta is None:
+                    iv: float | None = None
+                    if contracts is not None and option_gateway is not None and trade_date is not None:
+                        iv = _estimate_iv_for_strike(
+                            strike,
+                            contract_type,
+                            underlying_close,
+                            dte_days,
+                            contracts,
+                            option_gateway,
+                            trade_date,
+                            risk_free_rate=risk_free_rate,
+                            iv_cache=iv_cache,
+                        )
+                    if iv is not None:
+                        delta = _approx_bsm_delta(
+                            underlying_close,
+                            strike,
+                            dte_days,
+                            contract_type,
+                            vol=iv,
+                            risk_free_rate=risk_free_rate,
+                        )
+                    elif realized_vol is not None:
+                        delta = _approx_bsm_delta(
+                            underlying_close,
+                            strike,
+                            dte_days,
+                            contract_type,
+                            vol=realized_vol,
+                            risk_free_rate=risk_free_rate,
+                        )
+                    else:
+                        delta = _approx_bsm_delta(
+                            underlying_close,
+                            strike,
+                            dte_days,
+                            contract_type,
+                            risk_free_rate=risk_free_rate,
+                        )
+
+                diff = abs(abs(delta) - target_delta)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_strike = strike
+            return best_strike
+
+        # Fallback
         if contract_type == "call":
             return choose_call_otm_strike(strikes, underlying_close)
         return choose_put_otm_strike(strikes, underlying_close)
-
-    val = float(selection.value) if selection.value is not None else 0.0
-
-    if selection.mode == StrikeSelectionMode.PCT_FROM_SPOT:
-        if contract_type == "call":
-            target = underlying_close * (1.0 + val / 100.0)
-        else:
-            target = underlying_close * (1.0 - val / 100.0)
-        return _nearest_strike(strikes, target)
-
-    if selection.mode == StrikeSelectionMode.ATM_OFFSET_STEPS:
-        steps = round(val)
-        atm = choose_atm_strike(strikes, underlying_close)
-        sorted_strikes = sorted(set(strikes))
-        if contract_type == "call":
-            resolved = offset_strike(sorted_strikes, atm, steps, presorted=True)
-        else:
-            resolved = offset_strike(sorted_strikes, atm, -steps, presorted=True)
-        if resolved is None:
-            raise DataUnavailableError(f"Strike offset {steps} out of range for {contract_type}.")
-        return resolved
-
-    if selection.mode == StrikeSelectionMode.DELTA_TARGET:
-        if not strikes:
-            raise DataUnavailableError("No strikes available for delta targeting.")
-        target_delta = val / 100.0
-
-        best_strike = strikes[0]
-        best_diff = float("inf")
-        for strike in strikes:
-            delta: float | None = None
-
-            if delta_lookup is not None:
-                raw: float | None = None
-                if expiration_date is not None:
-                    raw = delta_lookup.get((strike, expiration_date))  # type: ignore[call-overload]
-                if raw is None:
-                    raw = delta_lookup.get(strike)  # type: ignore[call-overload]
-                if raw is not None:
-                    delta = raw
-
-            if delta is None:
-                iv: float | None = None
-                if contracts is not None and option_gateway is not None and trade_date is not None:
-                    iv = _estimate_iv_for_strike(
-                        strike, contract_type, underlying_close, dte_days,
-                        contracts, option_gateway, trade_date,
-                        risk_free_rate=risk_free_rate,
-                        iv_cache=iv_cache,
-                    )
-                if iv is not None:
-                    delta = _approx_bsm_delta(
-                        underlying_close,
-                        strike,
-                        dte_days,
-                        contract_type,
-                        vol=iv,
-                        risk_free_rate=risk_free_rate,
-                    )
-                elif realized_vol is not None:
-                    delta = _approx_bsm_delta(
-                        underlying_close,
-                        strike,
-                        dte_days,
-                        contract_type,
-                        vol=realized_vol,
-                        risk_free_rate=risk_free_rate,
-                    )
-                else:
-                    delta = _approx_bsm_delta(
-                        underlying_close,
-                        strike,
-                        dte_days,
-                        contract_type,
-                        risk_free_rate=risk_free_rate,
-                    )
-
-            diff = abs(abs(delta) - target_delta)
-            if diff < best_diff:
-                best_diff = diff
-                best_strike = strike
-        return best_strike
-
-    # Fallback
-    if contract_type == "call":
-        return choose_call_otm_strike(strikes, underlying_close)
-    return choose_put_otm_strike(strikes, underlying_close)
 
 
 def resolve_wing_strike(
@@ -776,6 +1153,34 @@ def resolve_wing_strike(
 def valid_entry_mids(*mids: float | None) -> bool:
     """Return True if every mid price is finite and positive."""
     return all(m is not None and math.isfinite(m) and m > 0 for m in mids)
+
+
+def get_entry_quotes(
+    option_gateway: OptionDataGateway,
+    *,
+    trade_date: date,
+    contracts: Iterable[OptionContractRecord],
+) -> dict[str, OptionQuoteRecord | None]:
+    contract_list = list(contracts)
+    if not contract_list:
+        return {}
+    tickers = list(dict.fromkeys(contract.ticker for contract in contract_list))
+    quotes: dict[str, OptionQuoteRecord | None] = {}
+    batch_fetch = getattr(option_gateway, "get_quotes", None)
+    if callable(batch_fetch) and len(tickers) > 1:
+        try:
+            quotes.update(dict(batch_fetch(tickers, trade_date)))
+        except Exception:
+            _logger.debug(
+                "entry_quotes.batch_fetch_failed",
+                trade_date=str(trade_date),
+                ticker_count=len(tickers),
+                exc_info=True,
+            )
+    for ticker in tickers:
+        if ticker not in quotes:
+            quotes[ticker] = option_gateway.get_quote(ticker, trade_date)
+    return quotes
 
 
 def get_overrides(config_overrides: StrategyOverrides | None) -> StrategyOverrides:
