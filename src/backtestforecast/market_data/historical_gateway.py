@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING, TypeVar
 
-from backtestforecast.backtests.strategies.common import preferred_expiration_dates
+from backtestforecast.backtests.strategies.common import (
+    _increment_build_position_counter,
+    preferred_expiration_dates,
+)
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
@@ -17,13 +20,14 @@ if TYPE_CHECKING:
     from backtestforecast.market_data.redis_cache import OptionDataRedisCache
 
 _SHARED_SYMBOL_CACHE_MAX = 64
-_CONTRACT_CACHE_MAX = 512
+_CONTRACT_CACHE_MAX = 4_096
 _FULL_EXACT_CONTRACT_CACHE_MAX = 4_096
 _FILTERED_EXACT_CONTRACT_CACHE_MAX = 1_024
-_EXPIRATION_AVAILABILITY_CACHE_MAX = 8_192
-_EXPIRATION_AVAILABILITY_BY_TYPE_CACHE_MAX = 4_096
-_QUOTE_CACHE_MAX = 10_000
-_QUOTE_SERIES_CACHE_MAX = 256
+_EXPIRATION_AVAILABILITY_CACHE_MAX = 32_768
+_EXPIRATION_AVAILABILITY_BY_TYPE_CACHE_MAX = 16_384
+_PREFERRED_EXPIRATION_EXACT_PROBE_MAX_UNKNOWN = 2
+_QUOTE_CACHE_MAX = 50_000
+_QUOTE_SERIES_CACHE_MAX = 4_096
 _IV_CACHE_MAX = 50_000
 _SHARED_STORE_CACHE_MAX = 16
 _STORE_SHARED_STATE_LOCK = threading.Lock()
@@ -161,7 +165,9 @@ class HistoricalOptionGateway:
         with self._shared_state.lock:
             contracts = _cache_hit(self._shared_state.contract_cache, cache_key)
             if contracts is not None:
+                _increment_build_position_counter("contract_gateway_contract_cache_hits")
                 return contracts
+            _increment_build_position_counter("contract_gateway_contract_cache_misses")
             inflight_event = self._shared_state.contracts_inflight.get(cache_key)
             if inflight_event is None:
                 inflight_event = threading.Event()
@@ -221,6 +227,16 @@ class HistoricalOptionGateway:
         ordered_expirations = preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days)
         strike_floor = round(strike_price_gte, 4) if strike_price_gte is not None else None
         strike_ceiling = round(strike_price_lte, 4) if strike_price_lte is not None else None
+        requested_expirations = tuple(dict.fromkeys(ordered_expirations))
+        availability_cache_key = (
+            entry_date,
+            contract_type,
+            requested_expirations,
+            strike_floor,
+            strike_ceiling,
+        )
+        unresolved_prefix: list[date] = []
+        cached_fallback: list[OptionContractRecord] | None = None
         with self._shared_state.lock:
             for expiration_date in ordered_expirations:
                 cached = self._get_cached_exact_contracts_locked(
@@ -230,8 +246,99 @@ class HistoricalOptionGateway:
                     strike_floor=strike_floor,
                     strike_ceiling=strike_ceiling,
                 )
+                if cached is None:
+                    if cached_fallback is None:
+                        unresolved_prefix.append(expiration_date)
+                    continue
                 if cached:
-                    return cached
+                    if not unresolved_prefix:
+                        return cached
+                    cached_fallback = cached
+                    break
+            cached_available = _cache_hit(self._shared_state.expiration_availability_cache, availability_cache_key)
+
+        if cached_available is not None:
+            if not cached_available:
+                raise DataUnavailableError("No eligible option expirations were available in local historical data.")
+            for expiration_date in cached_available:
+                contracts = self._list_contracts_for_exact_expiration(
+                    entry_date=entry_date,
+                    contract_type=contract_type,
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_floor,
+                    strike_price_lte=strike_ceiling,
+                )
+                if contracts:
+                    return contracts
+            raise DataUnavailableError("No eligible option expirations were available in local historical data.")
+
+        if cached_fallback is not None and 0 < len(unresolved_prefix) <= _PREFERRED_EXPIRATION_EXACT_PROBE_MAX_UNKNOWN:
+            for expiration_date in unresolved_prefix:
+                contracts = self._list_contracts_for_exact_expiration(
+                    entry_date=entry_date,
+                    contract_type=contract_type,
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_floor,
+                    strike_price_lte=strike_ceiling,
+                )
+                if contracts:
+                    return contracts
+            return cached_fallback
+
+        grouped_contracts: dict[date, list[OptionContractRecord]] = {}
+        used_range_lookup = False
+        range_fetch = getattr(self.store, "list_option_contracts_for_expiration", None)
+        if callable(range_fetch):
+            used_range_lookup = True
+            lower = entry_date.fromordinal(entry_date.toordinal() + max(1, target_dte - dte_tolerance_days))
+            upper = entry_date.fromordinal(entry_date.toordinal() + target_dte + dte_tolerance_days)
+            ranged_contracts = range_fetch(
+                symbol=self.symbol,
+                as_of_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=None,
+                expiration_gte=lower,
+                expiration_lte=upper,
+                strike_price_gte=strike_floor,
+                strike_price_lte=strike_ceiling,
+            )
+            for contract in ranged_contracts:
+                grouped_contracts.setdefault(contract.expiration_date, []).append(contract)
+        if grouped_contracts:
+            available_expirations = tuple(
+                expiration_date
+                for expiration_date in requested_expirations
+                if grouped_contracts.get(expiration_date)
+            )
+            with self._shared_state.lock:
+                _store_lru(
+                    self._shared_state.expiration_availability_cache,
+                    availability_cache_key,
+                    available_expirations,
+                    max_size=_EXPIRATION_AVAILABILITY_CACHE_MAX,
+                )
+                for expiration_date in available_expirations:
+                    self._store_exact_contracts_locked(
+                        entry_date=entry_date,
+                        contract_type=contract_type,
+                        expiration_date=expiration_date,
+                        strike_floor=strike_floor,
+                        strike_ceiling=strike_ceiling,
+                        contracts=grouped_contracts[expiration_date],
+                    )
+            if available_expirations:
+                return grouped_contracts[available_expirations[0]]
+            raise DataUnavailableError("No eligible option expirations were available in local historical data.")
+        if used_range_lookup:
+            with self._shared_state.lock:
+                _store_lru(
+                    self._shared_state.expiration_availability_cache,
+                    availability_cache_key,
+                    (),
+                    max_size=_EXPIRATION_AVAILABILITY_CACHE_MAX,
+                )
+            raise DataUnavailableError("No eligible option expirations were available in local historical data.")
+
         available_expirations = set(
             self.list_available_expirations(
                 entry_date=entry_date,
@@ -240,7 +347,7 @@ class HistoricalOptionGateway:
                 strike_price_gte=strike_price_gte,
                 strike_price_lte=strike_price_lte,
             )
-        )
+            )
         for expiration_date in ordered_expirations:
             if expiration_date not in available_expirations:
                 continue
@@ -254,6 +361,63 @@ class HistoricalOptionGateway:
             if contracts:
                 return contracts
         raise DataUnavailableError("No eligible option expirations were available in local historical data.")
+
+    def list_contracts_for_preferred_common_expiration(
+        self,
+        *,
+        entry_date: date,
+        target_dte: int,
+        dte_tolerance_days: int,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> tuple[date, list[OptionContractRecord], list[OptionContractRecord]]:
+        ordered_expirations = preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days)
+        strike_floor = round(strike_price_gte, 4) if strike_price_gte is not None else None
+        strike_ceiling = round(strike_price_lte, 4) if strike_price_lte is not None else None
+        missing_expirations: list[date] = []
+
+        with self._shared_state.lock:
+            for expiration_date in ordered_expirations:
+                calls = self._get_cached_exact_contracts_locked(
+                    entry_date=entry_date,
+                    contract_type="call",
+                    expiration_date=expiration_date,
+                    strike_floor=strike_floor,
+                    strike_ceiling=strike_ceiling,
+                )
+                puts = self._get_cached_exact_contracts_locked(
+                    entry_date=entry_date,
+                    contract_type="put",
+                    expiration_date=expiration_date,
+                    strike_floor=strike_floor,
+                    strike_ceiling=strike_ceiling,
+                )
+                if calls is not None and puts is not None:
+                    if calls and puts:
+                        return expiration_date, calls, puts
+                    continue
+                if calls == [] or puts == []:
+                    continue
+                missing_expirations.append(expiration_date)
+
+        if not missing_expirations:
+            raise DataUnavailableError("No shared option expiration was available in local historical data.")
+
+        fetched_by_type = self.list_contracts_for_expirations_by_type(
+            entry_date=entry_date,
+            contract_types=["call", "put"],
+            expiration_dates=missing_expirations,
+            strike_price_gte=strike_floor,
+            strike_price_lte=strike_ceiling,
+        )
+        calls_by_expiration = fetched_by_type.get("call", {})
+        puts_by_expiration = fetched_by_type.get("put", {})
+        for expiration_date in missing_expirations:
+            calls = calls_by_expiration.get(expiration_date, [])
+            puts = puts_by_expiration.get(expiration_date, [])
+            if calls and puts:
+                return expiration_date, calls, puts
+        raise DataUnavailableError("No shared option expiration was available in local historical data.")
 
     def list_contracts_for_expiration(
         self,
@@ -436,7 +600,9 @@ class HistoricalOptionGateway:
         with self._shared_state.lock:
             cached = _cache_hit(self._shared_state.expiration_availability_cache, cache_key)
             if cached is not None:
+                _increment_build_position_counter("contract_gateway_availability_cache_hits")
                 return list(cached)
+        _increment_build_position_counter("contract_gateway_availability_cache_misses")
 
         store_fetch = getattr(self.store, "list_available_option_expirations", None)
         if inspect.ismethod(store_fetch):
@@ -496,10 +662,12 @@ class HistoricalOptionGateway:
         with self._shared_state.lock:
             cached = _cache_hit(self._shared_state.expiration_availability_by_type_cache, cache_key)
             if cached is not None:
+                _increment_build_position_counter("contract_gateway_availability_by_type_cache_hits")
                 return {
                     contract_type: list(cached.get(contract_type, ()))
                     for contract_type in requested_types
                 }
+        _increment_build_position_counter("contract_gateway_availability_by_type_cache_misses")
 
         store_fetch = getattr(self.store, "list_available_option_expirations_by_type", None)
         if inspect.ismethod(store_fetch):
@@ -748,6 +916,7 @@ class HistoricalOptionGateway:
             )
             if contracts is not None:
                 return contracts
+        with self._shared_state.lock:
             inflight_event = self._shared_state.exact_contracts_inflight.get(cache_key)
             if inflight_event is None:
                 inflight_event = threading.Event()
@@ -879,13 +1048,56 @@ class HistoricalOptionGateway:
     ) -> list[OptionContractRecord] | None:
         full_cache_key = (entry_date, contract_type, expiration_date)
         if strike_floor is None and strike_ceiling is None:
-            return _cache_hit(self._shared_state.full_exact_contract_cache, full_cache_key)
+            contracts = _cache_hit(self._shared_state.full_exact_contract_cache, full_cache_key)
+            if contracts is not None:
+                _increment_build_position_counter("contract_gateway_exact_cache_hits")
+                return contracts
+            _increment_build_position_counter("contract_gateway_exact_cache_misses")
+            return None
         filtered_cache_key = (entry_date, contract_type, expiration_date, strike_floor, strike_ceiling)
         contracts = _cache_hit(self._shared_state.exact_contract_cache, filtered_cache_key)
         if contracts is not None:
+            _increment_build_position_counter("contract_gateway_exact_cache_hits")
             return contracts
         full_contracts = _cache_hit(self._shared_state.full_exact_contract_cache, full_cache_key)
         if full_contracts is None:
+            for (
+                cached_entry_date,
+                cached_contract_type,
+                cached_expiration_date,
+                cached_floor,
+                cached_ceiling,
+            ), cached_contracts in reversed(list(self._shared_state.exact_contract_cache.items())):
+                if (
+                    cached_entry_date != entry_date
+                    or cached_contract_type != contract_type
+                    or cached_expiration_date != expiration_date
+                ):
+                    continue
+                lower_covers = (
+                    strike_floor is not None
+                    and (cached_floor is None or cached_floor <= strike_floor)
+                ) or (strike_floor is None and cached_floor is None)
+                upper_covers = (
+                    strike_ceiling is not None
+                    and (cached_ceiling is None or cached_ceiling >= strike_ceiling)
+                ) or (strike_ceiling is None and cached_ceiling is None)
+                if not lower_covers or not upper_covers:
+                    continue
+                filtered_contracts = _filter_contracts_by_strike_bounds(
+                    cached_contracts,
+                    strike_floor=strike_floor,
+                    strike_ceiling=strike_ceiling,
+                )
+                _store_lru(
+                    self._shared_state.exact_contract_cache,
+                    filtered_cache_key,
+                    filtered_contracts,
+                    max_size=_FILTERED_EXACT_CONTRACT_CACHE_MAX,
+                )
+                _increment_build_position_counter("contract_gateway_exact_cache_hits")
+                return filtered_contracts
+            _increment_build_position_counter("contract_gateway_exact_cache_misses")
             return None
         filtered_contracts = _filter_contracts_by_strike_bounds(
             full_contracts,
@@ -898,6 +1110,7 @@ class HistoricalOptionGateway:
             filtered_contracts,
             max_size=_FILTERED_EXACT_CONTRACT_CACHE_MAX,
         )
+        _increment_build_position_counter("contract_gateway_exact_cache_hits")
         return filtered_contracts
 
     def _store_exact_contracts_locked(

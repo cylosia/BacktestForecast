@@ -11,12 +11,14 @@ import pytest
 
 import backtestforecast.backtests.strategies.calendar as calendar_module
 import backtestforecast.backtests.strategies.common as common_module
+import backtestforecast.backtests.native_kernels as native_kernels_module
 from backtestforecast.backtests.engine import OptionsBacktestEngine
 from backtestforecast.backtests.strategies.common import (
     build_contract_delta_lookup,
     choose_primary_expiration_date,
     common_sorted_expirations,
     maybe_build_contract_delta_lookup,
+    preferred_expiration_dates,
     require_contract_for_strike,
     resolve_strike,
     select_preferred_common_expiration_contracts,
@@ -261,6 +263,50 @@ def test_engine_mark_position_uses_batch_quote_fetch_when_available() -> None:
     assert position.option_legs[0].last_mid == pytest.approx(1.3)
     assert position.option_legs[1].last_mid == pytest.approx(0.7)
     assert snapshot.position_missing_quote is False
+
+
+def test_butterfly_strategy_uses_batch_entry_quote_fetch_when_available() -> None:
+    from backtestforecast.backtests.strategies.butterfly import ButterflyStrategy
+
+    strategy = ButterflyStrategy()
+    expiration = date(2025, 4, 18)
+    lower_contract = OptionContractRecord("O:LOWER", "call", expiration, 95.0, 100.0)
+    center_contract = OptionContractRecord("O:CENTER", "call", expiration, 100.0, 100.0)
+    upper_contract = OptionContractRecord("O:UPPER", "call", expiration, 105.0, 100.0)
+    config = BacktestConfig(
+        symbol="AAPL",
+        strategy_type="butterfly",
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 30),
+        target_dte=17,
+        dte_tolerance_days=3,
+        max_holding_days=10,
+        account_size=10_000,
+        risk_per_trade_pct=5,
+        commission_per_contract=0,
+        entry_rules=[],
+    )
+    bar = SimpleNamespace(trade_date=date(2025, 4, 1), close_price=100.0)
+
+    class _Gateway:
+        def list_contracts_for_preferred_expiration(self, **kwargs):
+            return [lower_contract, center_contract, upper_contract]
+
+        def get_quotes(self, option_tickers, trade_date):
+            assert option_tickers == ["O:LOWER", "O:CENTER", "O:UPPER"]
+            return {
+                "O:LOWER": OptionQuoteRecord(trade_date, 4.9, 5.1, None),
+                "O:CENTER": OptionQuoteRecord(trade_date, 2.9, 3.1, None),
+                "O:UPPER": OptionQuoteRecord(trade_date, 0.9, 1.1, None),
+            }
+
+        def get_quote(self, option_ticker, trade_date):
+            raise AssertionError("single-ticker quote path should not be used")
+
+    position = strategy.build_position(config, bar, 0, _Gateway())
+
+    assert position is not None
+    assert [leg.ticker for leg in position.option_legs] == ["O:LOWER", "O:CENTER", "O:UPPER"]
 
 
 def test_engine_mark_position_uses_attached_quote_series_before_gateway_fetch() -> None:
@@ -710,9 +756,35 @@ def test_engine_run_logs_phase_timing_breakdown(monkeypatch) -> None:
     assert payload["exit_resolution_ms"] >= 0.0
     assert payload["build_position_ms"] >= 0.0
     assert payload["build_contract_fetch_ms"] >= 0.0
+    assert payload["build_contract_selector_fetch_ms"] >= 0.0
+    assert payload["build_contract_availability_fetch_ms"] >= 0.0
+    assert payload["build_contract_batch_fetch_ms"] >= 0.0
+    assert payload["build_contract_exact_fetch_ms"] >= 0.0
+    assert payload["build_contract_other_ms"] >= 0.0
+    assert payload["build_contract_selection_cache_hits"] >= 0
+    assert payload["build_contract_selection_cache_misses"] >= 0
+    assert isinstance(payload["build_contract_gateway_method_ms"], dict)
+    assert isinstance(payload["build_contract_gateway_method_calls"], dict)
+    assert payload["build_contract_gateway_contract_cache_hits"] >= 0
+    assert payload["build_contract_gateway_contract_cache_misses"] >= 0
+    assert payload["build_contract_gateway_exact_cache_hits"] >= 0
+    assert payload["build_contract_gateway_exact_cache_misses"] >= 0
+    assert payload["build_contract_gateway_availability_cache_hits"] >= 0
+    assert payload["build_contract_gateway_availability_cache_misses"] >= 0
+    assert payload["build_contract_gateway_availability_by_type_cache_hits"] >= 0
+    assert payload["build_contract_gateway_availability_by_type_cache_misses"] >= 0
     assert payload["build_delta_resolution_ms"] >= 0.0
+    assert payload["build_delta_iv_quote_fetch_ms"] >= 0.0
+    assert payload["build_delta_iv_solve_ms"] >= 0.0
+    assert payload["build_delta_kernel_ms"] >= 0.0
+    assert payload["build_delta_other_ms"] >= 0.0
+    assert payload["build_delta_lookup_cache_hits"] >= 0
+    assert payload["build_delta_lookup_cache_misses"] >= 0
+    assert payload["build_delta_iv_cache_hits"] >= 0
+    assert payload["build_delta_iv_cache_misses"] >= 0
     assert payload["build_entry_quote_fetch_ms"] >= 0.0
     assert payload["build_object_construction_ms"] >= 0.0
+    assert payload["attach_quote_series_ms"] >= 0.0
     assert payload["position_sizing_ms"] >= 0.0
     assert payload["close_position_ms"] >= 0.0
     assert payload["summary_ms"] >= 0.0
@@ -792,9 +864,27 @@ def test_engine_run_exit_policy_variants_logs_phase_timing_breakdown(monkeypatch
     assert payload["mark_position_ms"] >= 0.0
     assert payload["build_position_ms"] >= 0.0
     assert payload["build_contract_fetch_ms"] >= 0.0
+    assert payload["build_contract_selector_fetch_ms"] >= 0.0
+    assert payload["build_contract_availability_fetch_ms"] >= 0.0
+    assert payload["build_contract_batch_fetch_ms"] >= 0.0
+    assert payload["build_contract_exact_fetch_ms"] >= 0.0
+    assert payload["build_contract_other_ms"] >= 0.0
+    assert payload["build_contract_selection_cache_hits"] >= 0
+    assert payload["build_contract_selection_cache_misses"] >= 0
+    assert isinstance(payload["build_contract_gateway_method_ms"], dict)
+    assert isinstance(payload["build_contract_gateway_method_calls"], dict)
     assert payload["build_delta_resolution_ms"] >= 0.0
+    assert payload["build_delta_iv_quote_fetch_ms"] >= 0.0
+    assert payload["build_delta_iv_solve_ms"] >= 0.0
+    assert payload["build_delta_kernel_ms"] >= 0.0
+    assert payload["build_delta_other_ms"] >= 0.0
+    assert payload["build_delta_lookup_cache_hits"] >= 0
+    assert payload["build_delta_lookup_cache_misses"] >= 0
+    assert payload["build_delta_iv_cache_hits"] >= 0
+    assert payload["build_delta_iv_cache_misses"] >= 0
     assert payload["build_entry_quote_fetch_ms"] >= 0.0
     assert payload["build_object_construction_ms"] >= 0.0
+    assert payload["attach_quote_series_ms"] >= 0.0
     assert payload["position_sizing_ms"] >= 0.0
     assert payload["equity_curve_ms"] >= 0.0
     assert payload["summary_ms"] >= 0.0
@@ -936,6 +1026,447 @@ def test_engine_run_exit_policy_variants_attaches_quote_series_only_after_viable
     assert len(results) == 2
     assert attach_calls == [(date(2025, 9, 2), date(2025, 9, 3))]
     assert [result.summary.trade_count for result in results] == [0, 1]
+
+
+def test_delta_lookup_profiler_tracks_quote_iv_kernel_and_cache_metrics(monkeypatch) -> None:
+    import backtestforecast.backtests.rules as rules_module
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.value = 0.0
+
+        def perf_counter(self) -> float:
+            return self.value
+
+        def advance(self, seconds: float) -> None:
+            self.value += seconds
+
+    class _Gateway:
+        def __init__(self) -> None:
+            self.iv_cache: dict[tuple[str, date], float | None] = {}
+            self.quote_calls: list[tuple[str, date]] = []
+
+        def get_iv(self, key):
+            return key in self.iv_cache, self.iv_cache.get(key)
+
+        def store_iv(self, key, value):
+            self.iv_cache[key] = value
+
+        def get_quote(self, option_ticker, trade_date):
+            self.quote_calls.append((option_ticker, trade_date))
+            clock.advance(0.004)
+            return OptionQuoteRecord(
+                trade_date=trade_date,
+                bid_price=1.9,
+                ask_price=2.1,
+                participant_timestamp=None,
+            )
+
+    clock = _Clock()
+    monkeypatch.setattr(common_module._time, "perf_counter", clock.perf_counter)
+
+    def _fake_implied_volatility_from_price(**kwargs):
+        clock.advance(0.006)
+        return 0.22
+
+    def _fake_approx_bsm_delta_many(*args, **kwargs):
+        clock.advance(0.008)
+        return [0.31]
+
+    monkeypatch.setattr(rules_module, "implied_volatility_from_price", _fake_implied_volatility_from_price)
+    monkeypatch.setattr(common_module, "_kernel_approx_bsm_delta_many", _fake_approx_bsm_delta_many)
+
+    selection = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
+    contracts = [OptionContractRecord("O:AAPL250502C00100000", "call", date(2025, 5, 2), 100.0, 100.0)]
+    gateway = _Gateway()
+
+    with common_module._DELTA_LOOKUP_CACHE_LOCK:
+        common_module._DELTA_LOOKUP_CACHE.clear()
+
+    profiler = common_module.BuildPositionProfiler()
+    token = common_module.activate_build_position_profiler(profiler)
+    try:
+        first = maybe_build_contract_delta_lookup(
+            selection=selection,
+            contracts=contracts,
+            option_gateway=gateway,
+            trade_date=date(2025, 4, 1),
+            underlying_close=100.0,
+            dte_days=31,
+        )
+        second = maybe_build_contract_delta_lookup(
+            selection=selection,
+            contracts=contracts,
+            option_gateway=gateway,
+            trade_date=date(2025, 4, 1),
+            underlying_close=101.0,
+            dte_days=31,
+        )
+        third = maybe_build_contract_delta_lookup(
+            selection=selection,
+            contracts=contracts,
+            option_gateway=gateway,
+            trade_date=date(2025, 4, 1),
+            underlying_close=101.0,
+            dte_days=31,
+        )
+    finally:
+        common_module.reset_build_position_profiler(token)
+        with common_module._DELTA_LOOKUP_CACHE_LOCK:
+            common_module._DELTA_LOOKUP_CACHE.clear()
+
+    expected_lookup = {(100.0, date(2025, 5, 2)): 0.31}
+    assert first == expected_lookup
+    assert second == expected_lookup
+    assert third == expected_lookup
+    assert gateway.quote_calls == [("O:AAPL250502C00100000", date(2025, 4, 1))]
+    assert profiler.delta_lookup_ms == pytest.approx(26.0)
+    assert profiler.delta_iv_quote_fetch_ms == pytest.approx(4.0)
+    assert profiler.delta_iv_solve_ms == pytest.approx(6.0)
+    assert profiler.delta_kernel_ms == pytest.approx(16.0)
+    assert profiler.delta_lookup_cache_hits == 1
+    assert profiler.delta_lookup_cache_misses == 2
+    assert profiler.delta_iv_cache_hits == 1
+    assert profiler.delta_iv_cache_misses == 1
+
+
+def test_contract_fetch_profiler_tracks_selector_availability_batch_and_cache_metrics(monkeypatch) -> None:
+    class _Clock:
+        def __init__(self) -> None:
+            self.value = 0.0
+
+        def perf_counter(self) -> float:
+            return self.value
+
+        def advance(self, seconds: float) -> None:
+            self.value += seconds
+
+    clock = _Clock()
+    monkeypatch.setattr(common_module._time, "perf_counter", clock.perf_counter)
+
+    expiration = date(2025, 4, 4)
+    preferred_contract = OptionContractRecord("O:AAPL250404C00100000", "call", expiration, 100.0, 100.0)
+    call_contract = OptionContractRecord("O:AAPL250404C00105000", "call", expiration, 105.0, 100.0)
+    put_contract = OptionContractRecord("O:AAPL250404P00095000", "put", expiration, 95.0, 100.0)
+
+    class _PreferredGateway:
+        def list_contracts_for_preferred_expiration(self, **kwargs):
+            clock.advance(0.002)
+            return [preferred_contract]
+
+    class _CommonGateway:
+        def list_available_expirations_by_type(self, **kwargs):
+            clock.advance(0.003)
+            return {"call": [expiration], "put": [expiration]}
+
+        def list_contracts_for_expirations_by_type(self, **kwargs):
+            clock.advance(0.004)
+            return {
+                "call": {expiration: [call_contract]},
+                "put": {expiration: [put_contract]},
+            }
+
+    preferred_gateway = _PreferredGateway()
+    common_gateway = _CommonGateway()
+
+    with common_module._PREFERRED_EXPIRATION_SELECTION_CACHE_LOCK:
+        common_module._PREFERRED_EXPIRATION_SELECTION_CACHE.clear()
+    with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+        common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+
+    profiler = common_module.BuildPositionProfiler()
+    token = common_module.activate_build_position_profiler(profiler)
+    try:
+        first_preferred = select_preferred_expiration_contracts(
+            preferred_gateway,
+            entry_date=date(2025, 4, 1),
+            contract_type="call",
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+        second_preferred = select_preferred_expiration_contracts(
+            preferred_gateway,
+            entry_date=date(2025, 4, 1),
+            contract_type="call",
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+        first_common = select_preferred_common_expiration_contracts(
+            common_gateway,
+            entry_date=date(2025, 4, 1),
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+        second_common = select_preferred_common_expiration_contracts(
+            common_gateway,
+            entry_date=date(2025, 4, 1),
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+    finally:
+        common_module.reset_build_position_profiler(token)
+        with common_module._PREFERRED_EXPIRATION_SELECTION_CACHE_LOCK:
+            common_module._PREFERRED_EXPIRATION_SELECTION_CACHE.clear()
+        with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+            common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+
+    assert first_preferred == second_preferred
+    assert first_common == second_common
+    assert profiler.contract_fetch_ms == pytest.approx(6.0)
+    assert profiler.contract_selector_fetch_ms == pytest.approx(2.0)
+    assert profiler.contract_availability_fetch_ms == pytest.approx(0.0)
+    assert profiler.contract_batch_fetch_ms == pytest.approx(4.0)
+    assert profiler.contract_exact_fetch_ms == pytest.approx(0.0)
+    assert profiler.contract_selection_cache_hits == 2
+    assert profiler.contract_selection_cache_misses == 2
+
+
+def test_contract_fetch_profiler_uses_specialized_common_selector_gateway(monkeypatch) -> None:
+    class _Clock:
+        def __init__(self) -> None:
+            self.value = 0.0
+
+        def perf_counter(self) -> float:
+            return self.value
+
+        def advance(self, seconds: float) -> None:
+            self.value += seconds
+
+    clock = _Clock()
+    monkeypatch.setattr(common_module._time, "perf_counter", clock.perf_counter)
+
+    expiration = date(2025, 4, 4)
+    call_contract = OptionContractRecord("O:AAPL250404C00105000", "call", expiration, 105.0, 100.0)
+    put_contract = OptionContractRecord("O:AAPL250404P00095000", "put", expiration, 95.0, 100.0)
+
+    class _Gateway:
+        def list_contracts_for_preferred_common_expiration(self, **kwargs):
+            clock.advance(0.004)
+            return expiration, [call_contract], [put_contract]
+
+        def list_contracts_for_expirations_by_type(self, **kwargs):
+            raise AssertionError("specialized common-expiration path should short-circuit generic batch fetch")
+
+    gateway = _Gateway()
+
+    with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+        common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+
+    profiler = common_module.BuildPositionProfiler()
+    token = common_module.activate_build_position_profiler(profiler)
+    try:
+        first = select_preferred_common_expiration_contracts(
+            gateway,
+            entry_date=date(2025, 4, 1),
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+        second = select_preferred_common_expiration_contracts(
+            gateway,
+            entry_date=date(2025, 4, 1),
+            target_dte=3,
+            dte_tolerance_days=1,
+        )
+    finally:
+        common_module.reset_build_position_profiler(token)
+        with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
+            common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
+
+    assert first == second
+    assert profiler.contract_fetch_ms == pytest.approx(4.0)
+    assert profiler.contract_selector_fetch_ms == pytest.approx(4.0)
+    assert profiler.contract_batch_fetch_ms == pytest.approx(0.0)
+    assert profiler.contract_selection_cache_hits == 1
+    assert profiler.contract_selection_cache_misses == 1
+
+
+def test_timed_build_position_gateway_tracks_contract_gateway_methods(monkeypatch) -> None:
+    import backtestforecast.backtests.engine as engine_module
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.value = 0.0
+
+        def perf_counter(self) -> float:
+            return self.value
+
+        def advance(self, seconds: float) -> None:
+            self.value += seconds
+
+    clock = _Clock()
+    monkeypatch.setattr(engine_module._time, "perf_counter", clock.perf_counter)
+
+    class _Gateway:
+        def list_contracts(self, entry_date, contract_type, target_dte, dte_tolerance_days):
+            clock.advance(0.002)
+            return []
+
+        def list_contracts_for_preferred_common_expiration(self, **kwargs):
+            clock.advance(0.004)
+            return date(2025, 4, 4), [], []
+
+        def list_available_expirations_by_type(self, **kwargs):
+            clock.advance(0.003)
+            return {"call": [], "put": []}
+
+    profiler = common_module.BuildPositionProfiler()
+    wrapped = engine_module._TimedBuildPositionGateway(_Gateway(), profiler)
+
+    wrapped.list_contracts(date(2025, 4, 1), "call", 30, 5)
+    wrapped.list_contracts_for_preferred_common_expiration(
+        entry_date=date(2025, 4, 1),
+        target_dte=3,
+        dte_tolerance_days=1,
+    )
+    wrapped.list_available_expirations_by_type(
+        entry_date=date(2025, 4, 1),
+        contract_types=["call", "put"],
+        expiration_dates=[date(2025, 4, 4)],
+    )
+
+    assert profiler.contract_fetch_ms == pytest.approx(9.0)
+    assert profiler.contract_gateway_method_ms["list_available_expirations_by_type"] == pytest.approx(3.0)
+    assert profiler.contract_gateway_method_ms["list_contracts"] == pytest.approx(2.0)
+    assert profiler.contract_gateway_method_ms["list_contracts_for_preferred_common_expiration"] == pytest.approx(4.0)
+    assert profiler.contract_gateway_method_calls == {
+        "list_available_expirations_by_type": 1,
+        "list_contracts": 1,
+        "list_contracts_for_preferred_common_expiration": 1,
+    }
+
+
+def test_engine_run_position_sizing_timing_excludes_quote_series_attachment(monkeypatch) -> None:
+    import backtestforecast.backtests.engine as engine_module
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.value = 0.0
+
+        def perf_counter(self) -> float:
+            return self.value
+
+        def advance(self, seconds: float) -> None:
+            self.value += seconds
+
+    logged: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        engine_module,
+        "logger",
+        SimpleNamespace(
+            info=lambda event, **kwargs: logged.append((event, kwargs)),
+            warning=lambda *args, **kwargs: None,
+            debug=lambda *args, **kwargs: None,
+        ),
+    )
+
+    clock = _Clock()
+    monkeypatch.setattr(engine_module._time, "perf_counter", clock.perf_counter)
+
+    engine = OptionsBacktestEngine()
+    candidate = OpenMultiLegPosition(
+        display_ticker="AAPL 100C",
+        strategy_type="long_call",
+        underlying_symbol="AAPL",
+        entry_date=date(2025, 9, 2),
+        entry_index=0,
+        quantity=1,
+        dte_at_open=30,
+        option_legs=[
+            OpenOptionLeg(
+                ticker="O:AAPL251017C00100000",
+                contract_type="call",
+                side=1,
+                strike_price=100.0,
+                expiration_date=date(2025, 10, 17),
+                quantity_per_unit=1,
+                entry_mid=2.0,
+                last_mid=2.0,
+                contract_multiplier=100.0,
+            )
+        ],
+        stock_legs=[],
+        scheduled_exit_date=date(2025, 9, 3),
+        capital_required_per_unit=200.0,
+        max_loss_per_unit=200.0,
+        max_profit_per_unit=None,
+        entry_reason="signal",
+        entry_commission_total=Decimal("0"),
+        detail_json={},
+    )
+
+    monkeypatch.setattr(
+        engine,
+        "_build_position_with_timing",
+        lambda **kwargs: candidate if kwargs["bar_index"] == 0 else None,
+    )
+
+    def _fake_resolve_position_size(**kwargs):
+        clock.advance(0.003)
+        return 1
+
+    monkeypatch.setattr(engine, "_resolve_position_size", _fake_resolve_position_size)
+    monkeypatch.setattr(
+        engine,
+        "_attach_position_quote_series",
+        lambda position, *, option_gateway, start_date, end_date: clock.advance(0.007),
+    )
+
+    bars = [
+        SimpleNamespace(
+            trade_date=date(2025, 9, 2),
+            open_price=100.0,
+            high_price=100.0,
+            low_price=100.0,
+            close_price=100.0,
+            volume=1_000_000,
+        ),
+        SimpleNamespace(
+            trade_date=date(2025, 9, 3),
+            open_price=101.0,
+            high_price=101.0,
+            low_price=101.0,
+            close_price=101.0,
+            volume=1_000_000,
+        ),
+    ]
+
+    class _Gateway:
+        def get_quote(self, option_ticker, trade_date):
+            price = 2.0 if trade_date == date(2025, 9, 2) else 3.0
+            return OptionQuoteRecord(
+                trade_date=trade_date,
+                bid_price=price - 0.1,
+                ask_price=price + 0.1,
+                participant_timestamp=None,
+            )
+
+        def get_ex_dividend_dates(self, start_date, end_date):
+            return set()
+
+    result = engine.run(
+        BacktestConfig(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=date(2025, 9, 2),
+            end_date=date(2025, 9, 2),
+            target_dte=30,
+            dte_tolerance_days=30,
+            max_holding_days=1,
+            account_size=Decimal("10000"),
+            risk_per_trade_pct=Decimal("5"),
+            commission_per_contract=Decimal("0.65"),
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        _Gateway(),
+    )
+
+    assert result.summary.trade_count == 1
+    event_name, payload = logged[-1]
+    assert event_name == "backtest.engine_run_timing"
+    assert payload["position_sizing_ms"] == pytest.approx(3.0)
+    assert payload["attach_quote_series_ms"] == pytest.approx(7.0)
 
 
 def test_clone_position_template_shares_quote_series_but_copies_lane_state() -> None:
@@ -1989,7 +2520,7 @@ def test_select_preferred_common_expiration_contracts_uses_combined_batch_fetch_
             common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
 
 
-def test_select_preferred_common_expiration_contracts_uses_availability_probe_to_limit_combined_fetch():
+def test_select_preferred_common_expiration_contracts_prefers_combined_batch_over_availability_probe():
     class _Gateway:
         def __init__(self) -> None:
             self.availability_calls = 0
@@ -2007,8 +2538,7 @@ def test_select_preferred_common_expiration_contracts_uses_availability_probe_to
         def list_contracts_for_expirations_by_type(self, **kwargs):
             expiration_dates = list(kwargs["expiration_dates"])
             self.combined_expiration_calls.append(expiration_dates)
-            assert len(expiration_dates) == 1
-            expiration = expiration_dates[0]
+            expiration = expiration_dates[1]
             return {
                 "call": {
                     expiration: [
@@ -2023,7 +2553,7 @@ def test_select_preferred_common_expiration_contracts_uses_availability_probe_to
             }
 
         def list_contracts_for_expirations(self, **kwargs):
-            raise AssertionError("availability probe should narrow the combined fetch to one expiration")
+            raise AssertionError("combined by-type batch should take priority")
 
     with common_module._COMMON_EXPIRATION_SELECTION_CACHE_LOCK:
         common_module._COMMON_EXPIRATION_SELECTION_CACHE.clear()
@@ -2037,8 +2567,8 @@ def test_select_preferred_common_expiration_contracts_uses_availability_probe_to
         )
 
         assert expiration == date(2025, 4, 5)
-        assert gateway.availability_calls == 1
-        assert gateway.combined_expiration_calls == [[date(2025, 4, 5)]]
+        assert gateway.availability_calls == 0
+        assert gateway.combined_expiration_calls == [preferred_expiration_dates(date(2025, 4, 1), 3, 1)]
         assert call_contracts[0].contract_type == "call"
         assert put_contracts[0].contract_type == "put"
     finally:
@@ -2073,6 +2603,567 @@ def test_resolve_strike_uses_tuple_delta_lookup_when_contracts_share_single_expi
     )
 
     assert resolved == 200.0
+
+
+def test_approx_bsm_delta_delegates_to_optional_native_kernel(monkeypatch):
+    class _NativeKernel:
+        def approx_bsm_delta(
+            self,
+            spot,
+            strike,
+            dte_days,
+            contract_type,
+            vol,
+            risk_free_rate,
+            dividend_yield,
+        ):
+            assert (spot, strike, dte_days, contract_type) == (100.0, 105.0, 30, "call")
+            assert vol == 0.3
+            return 0.1234
+
+    monkeypatch.setattr(native_kernels_module, "_load_native_kernel_module", lambda: _NativeKernel())
+
+    assert common_module._approx_bsm_delta(100.0, 105.0, 30, "call") == pytest.approx(0.1234)
+
+
+def test_approx_bsm_delta_many_delegates_to_optional_native_kernel(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _NativeKernel:
+        def approx_bsm_delta_many(
+            self,
+            spot,
+            strikes,
+            dte_days,
+            contract_types,
+            vols,
+            risk_free_rate,
+            dividend_yield,
+        ):
+            captured["spot"] = spot
+            captured["strikes"] = list(strikes)
+            captured["dte_days"] = dte_days
+            captured["contract_types"] = list(contract_types)
+            captured["vols"] = list(vols)
+            captured["risk_free_rate"] = risk_free_rate
+            captured["dividend_yield"] = dividend_yield
+            return [0.31, 0.18]
+
+    monkeypatch.setattr(native_kernels_module, "_load_native_kernel_module", lambda: _NativeKernel())
+
+    resolved = native_kernels_module.approx_bsm_delta_many(
+        205.0,
+        [200.0, 210.0],
+        3,
+        ["call", "call"],
+        [0.25, 0.25],
+        risk_free_rate=0.01,
+        dividend_yield=0.02,
+    )
+
+    assert resolved == [0.31, 0.18]
+    assert captured == {
+        "spot": 205.0,
+        "strikes": [200.0, 210.0],
+        "dte_days": 3,
+        "contract_types": ["call", "call"],
+        "vols": [0.25, 0.25],
+        "risk_free_rate": 0.01,
+        "dividend_yield": 0.02,
+    }
+
+
+def test_resolve_delta_target_strike_from_vols_delegates_to_optional_native_kernel(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _NativeKernel:
+        def resolve_delta_target_strike_from_vols(
+            self,
+            spot,
+            strikes,
+            dte_days,
+            contract_types,
+            vols,
+            target_delta,
+            risk_free_rate,
+            dividend_yield,
+        ):
+            captured["spot"] = spot
+            captured["strikes"] = list(strikes)
+            captured["dte_days"] = dte_days
+            captured["contract_types"] = list(contract_types)
+            captured["vols"] = list(vols)
+            captured["target_delta"] = target_delta
+            captured["risk_free_rate"] = risk_free_rate
+            captured["dividend_yield"] = dividend_yield
+            return strikes[0]
+
+    monkeypatch.setattr(native_kernels_module, "_load_native_kernel_module", lambda: _NativeKernel())
+
+    resolved = native_kernels_module.resolve_delta_target_strike_from_vols(
+        205.0,
+        [200.0, 210.0],
+        3,
+        ["call", "call"],
+        [0.25, 0.25],
+        0.30,
+        risk_free_rate=0.01,
+        dividend_yield=0.02,
+    )
+
+    assert resolved == 200.0
+    assert captured == {
+        "spot": 205.0,
+        "strikes": [200.0, 210.0],
+        "dte_days": 3,
+        "contract_types": ["call", "call"],
+        "vols": [0.25, 0.25],
+        "target_delta": 0.30,
+        "risk_free_rate": 0.01,
+        "dividend_yield": 0.02,
+    }
+
+
+def test_build_contract_delta_lookup_batches_optional_native_kernel_calls(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_many(
+        spot,
+        strikes,
+        dte_days,
+        contract_types,
+        vols,
+        risk_free_rate,
+        dividend_yield,
+    ):
+        captured["spot"] = spot
+        captured["strikes"] = list(strikes)
+        captured["dte_days"] = dte_days
+        captured["contract_types"] = list(contract_types)
+        captured["vols"] = list(vols)
+        captured["risk_free_rate"] = risk_free_rate
+        captured["dividend_yield"] = dividend_yield
+        return [0.31, 0.18]
+
+    monkeypatch.setattr(common_module, "_kernel_approx_bsm_delta_many", _fake_many)
+    monkeypatch.setattr(common_module, "_estimate_iv_for_contract", lambda *args, **kwargs: None)
+
+    class _Gateway:
+        def get_quote(self, option_ticker: str, trade_date: date):
+            raise AssertionError("realized-vol batch path should not fetch quotes")
+
+    contracts = [
+        OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+    ]
+
+    lookup = build_contract_delta_lookup(
+        contracts=contracts,
+        option_gateway=_Gateway(),
+        trade_date=date(2025, 4, 1),
+        underlying_close=205.0,
+        dte_days=3,
+        risk_free_rate=0.01,
+        dividend_yield=0.02,
+        realized_vol=0.25,
+    )
+
+    assert lookup == {
+        (200.0, date(2025, 4, 4)): 0.31,
+        (210.0, date(2025, 4, 4)): 0.18,
+    }
+    assert captured == {
+        "spot": 205.0,
+        "strikes": [200.0, 210.0],
+        "dte_days": 3,
+        "contract_types": ["call", "call"],
+        "vols": [0.25, 0.25],
+        "risk_free_rate": 0.01,
+        "dividend_yield": 0.02,
+    }
+
+
+def test_build_contract_delta_lookup_batches_iv_quote_fetch_when_available(monkeypatch):
+    import backtestforecast.backtests.rules as rules_module
+
+    captured: dict[str, object] = {}
+
+    def _fake_many(
+        spot,
+        strikes,
+        dte_days,
+        contract_types,
+        vols,
+        risk_free_rate,
+        dividend_yield,
+    ):
+        captured["spot"] = spot
+        captured["strikes"] = list(strikes)
+        captured["dte_days"] = dte_days
+        captured["contract_types"] = list(contract_types)
+        captured["vols"] = list(vols)
+        captured["risk_free_rate"] = risk_free_rate
+        captured["dividend_yield"] = dividend_yield
+        return [0.31, 0.18]
+
+    monkeypatch.setattr(common_module, "_kernel_approx_bsm_delta_many", _fake_many)
+    monkeypatch.setattr(rules_module, "implied_volatility_from_price", lambda **kwargs: 0.22)
+
+    class _Gateway:
+        def __init__(self) -> None:
+            self.batch_calls: list[tuple[list[str], date]] = []
+
+        def get_iv(self, key):
+            return False, None
+
+        def store_iv(self, key, value):
+            return None
+
+        def get_quotes(self, option_tickers, trade_date):
+            self.batch_calls.append((list(option_tickers), trade_date))
+            return {
+                ticker: OptionQuoteRecord(trade_date=trade_date, bid_price=2.0, ask_price=2.2, participant_timestamp=None)
+                for ticker in option_tickers
+            }
+
+        def get_quote(self, option_ticker, trade_date):
+            raise AssertionError("batch IV quote fetch should avoid single-quote calls")
+
+    gateway = _Gateway()
+    contracts = [
+        OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+    ]
+
+    lookup = build_contract_delta_lookup(
+        contracts=contracts,
+        option_gateway=gateway,
+        trade_date=date(2025, 4, 1),
+        underlying_close=205.0,
+        dte_days=3,
+        risk_free_rate=0.01,
+        dividend_yield=0.02,
+    )
+
+    assert lookup == {
+        (200.0, date(2025, 4, 4)): 0.31,
+        (210.0, date(2025, 4, 4)): 0.18,
+    }
+    assert gateway.batch_calls == [
+        (["O:AAPL250404C00200000", "O:AAPL250404C00210000"], date(2025, 4, 1))
+    ]
+    assert captured == {
+        "spot": 205.0,
+        "strikes": [200.0, 210.0],
+        "dte_days": 3,
+        "contract_types": ["call", "call"],
+        "vols": [0.22, 0.22],
+        "risk_free_rate": 0.01,
+        "dividend_yield": 0.02,
+    }
+
+
+def test_native_kernel_loader_falls_back_to_ctypes_library_when_python_module_missing(monkeypatch):
+    class _NativeKernel:
+        pass
+
+    monkeypatch.setattr(native_kernels_module.importlib, "import_module", lambda name: (_ for _ in ()).throw(ImportError()))
+    monkeypatch.setattr(native_kernels_module, "_load_ctypes_native_kernel", lambda: _NativeKernel())
+    native_kernels_module.reset_native_kernel_module_cache()
+
+    first = native_kernels_module._load_native_kernel_module()
+    second = native_kernels_module._load_native_kernel_module()
+
+    assert isinstance(first, _NativeKernel)
+    assert second is first
+
+
+def test_resolve_strike_delta_target_delegates_final_choice_to_optional_native_kernel(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _NativeKernel:
+        def choose_delta_target_strike(self, strikes, deltas, target_delta):
+            captured["strikes"] = list(strikes)
+            captured["deltas"] = list(deltas)
+            captured["target_delta"] = target_delta
+            return strikes[-1]
+
+    monkeypatch.setattr(native_kernels_module, "_MIN_NATIVE_CHOOSE_DELTA_TARGET_STRIKE_LEN", 1)
+    monkeypatch.setattr(native_kernels_module, "_load_native_kernel_module", lambda: _NativeKernel())
+    selection = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
+
+    resolved = resolve_strike(
+        [200.0, 210.0],
+        205.0,
+        "call",
+        selection,
+        dte_days=3,
+        delta_lookup={
+            (200.0, date(2025, 4, 4)): 0.31,
+            (210.0, date(2025, 4, 4)): 0.18,
+        },
+        contracts=[
+            OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+            OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+        ],
+        trade_date=date(2025, 4, 1),
+    )
+
+    assert resolved == 210.0
+    assert captured == {
+        "strikes": [200.0, 210.0],
+        "deltas": [0.31, 0.18],
+        "target_delta": pytest.approx(0.30),
+    }
+
+
+def test_choose_delta_target_strike_uses_optional_native_kernel_for_short_lists_when_extension_loaded(monkeypatch):
+    class _NativeKernel:
+        def choose_delta_target_strike(self, strikes, deltas, target_delta):
+            assert strikes == [200.0, 210.0]
+            assert deltas == [0.31, 0.18]
+            assert target_delta == pytest.approx(0.30)
+            return strikes[-1]
+
+    monkeypatch.setattr(native_kernels_module, "_load_native_kernel_module", lambda: _NativeKernel())
+
+    assert native_kernels_module.choose_delta_target_strike([200.0, 210.0], [0.31, 0.18], 0.30) == 210.0
+
+
+def test_resolve_strike_uses_python_choice_for_short_lists_with_ctypes_wrapper(monkeypatch):
+    class _NativeKernel:
+        source = "dummy.dll"
+
+        def choose_delta_target_strike(self, strikes, deltas, target_delta):
+            raise AssertionError("short strike lists should stay on the Python chooser")
+
+    monkeypatch.setattr(native_kernels_module, "_load_native_kernel_module", lambda: _NativeKernel())
+    selection = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
+
+    resolved = resolve_strike(
+        [200.0, 210.0],
+        205.0,
+        "call",
+        selection,
+        dte_days=3,
+        delta_lookup={
+            (200.0, date(2025, 4, 4)): 0.31,
+            (210.0, date(2025, 4, 4)): 0.18,
+        },
+        contracts=[
+            OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+            OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+        ],
+        trade_date=date(2025, 4, 1),
+    )
+
+    assert resolved == 200.0
+
+
+def test_resolve_strike_uses_combined_native_resolver_when_all_strikes_need_approximation(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_resolve(
+        spot,
+        strikes,
+        dte_days,
+        contract_types,
+        vols,
+        target_delta,
+        risk_free_rate,
+        dividend_yield,
+    ):
+        captured["spot"] = spot
+        captured["strikes"] = list(strikes)
+        captured["dte_days"] = dte_days
+        captured["contract_types"] = contract_types
+        captured["vols"] = list(vols)
+        captured["target_delta"] = target_delta
+        captured["risk_free_rate"] = risk_free_rate
+        captured["dividend_yield"] = dividend_yield
+        return strikes[0]
+
+    monkeypatch.setattr(common_module, "_kernel_resolve_delta_target_strike_from_vols", _fake_resolve)
+    monkeypatch.setattr(
+        common_module,
+        "_kernel_approx_bsm_delta_many",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("combined native resolver should bypass batch delta output")),
+    )
+    monkeypatch.setattr(
+        common_module,
+        "_kernel_choose_delta_target_strike",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("combined native resolver should bypass Python-side choose handoff")),
+    )
+    selection = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
+
+    resolved = resolve_strike(
+        [200.0, 210.0],
+        205.0,
+        "call",
+        selection,
+        dte_days=3,
+        realized_vol=0.25,
+        risk_free_rate=0.01,
+    )
+
+    assert resolved == 200.0
+    assert captured == {
+        "spot": 205.0,
+        "strikes": [200.0, 210.0],
+        "dte_days": 3,
+        "contract_types": "call",
+        "vols": [0.25, 0.25],
+        "target_delta": 0.3,
+        "risk_free_rate": 0.01,
+        "dividend_yield": 0.0,
+    }
+
+
+def test_resolve_strike_batches_iv_quote_fetch_when_available(monkeypatch):
+    import backtestforecast.backtests.rules as rules_module
+
+    captured: dict[str, object] = {}
+
+    def _fake_resolve(
+        spot,
+        strikes,
+        dte_days,
+        contract_types,
+        vols,
+        target_delta,
+        risk_free_rate,
+        dividend_yield,
+    ):
+        captured["spot"] = spot
+        captured["strikes"] = list(strikes)
+        captured["dte_days"] = dte_days
+        captured["contract_types"] = contract_types
+        captured["vols"] = list(vols)
+        captured["target_delta"] = target_delta
+        captured["risk_free_rate"] = risk_free_rate
+        captured["dividend_yield"] = dividend_yield
+        return strikes[0]
+
+    monkeypatch.setattr(common_module, "_kernel_resolve_delta_target_strike_from_vols", _fake_resolve)
+    monkeypatch.setattr(rules_module, "implied_volatility_from_price", lambda **kwargs: 0.24)
+    selection = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
+
+    class _Gateway:
+        def __init__(self) -> None:
+            self.batch_calls: list[tuple[list[str], date]] = []
+
+        def get_iv(self, key):
+            return False, None
+
+        def store_iv(self, key, value):
+            return None
+
+        def get_quotes(self, option_tickers, trade_date):
+            self.batch_calls.append((list(option_tickers), trade_date))
+            return {
+                ticker: OptionQuoteRecord(trade_date=trade_date, bid_price=2.0, ask_price=2.2, participant_timestamp=None)
+                for ticker in option_tickers
+            }
+
+        def get_quote(self, option_ticker, trade_date):
+            raise AssertionError("batch IV quote fetch should avoid single-quote calls")
+
+    gateway = _Gateway()
+    contracts = [
+        OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+    ]
+
+    resolved = resolve_strike(
+        [200.0, 210.0],
+        205.0,
+        "call",
+        selection,
+        dte_days=3,
+        contracts=contracts,
+        option_gateway=gateway,
+        trade_date=date(2025, 4, 1),
+        risk_free_rate=0.01,
+    )
+
+    assert resolved == 200.0
+    assert gateway.batch_calls == [
+        (["O:AAPL250404C00200000", "O:AAPL250404C00210000"], date(2025, 4, 1))
+    ]
+    assert captured == {
+        "spot": 205.0,
+        "strikes": [200.0, 210.0],
+        "dte_days": 3,
+        "contract_types": "call",
+        "vols": [0.24, 0.24],
+        "target_delta": 0.3,
+        "risk_free_rate": 0.01,
+        "dividend_yield": 0.0,
+    }
+
+
+def test_resolve_strike_batches_fallback_delta_calculations(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_many(
+        spot,
+        strikes,
+        dte_days,
+        contract_types,
+        vols,
+        risk_free_rate,
+        dividend_yield,
+    ):
+        captured["spot"] = spot
+        captured["strikes"] = list(strikes)
+        captured["dte_days"] = dte_days
+        captured["contract_types"] = contract_types
+        captured["vols"] = list(vols)
+        captured["risk_free_rate"] = risk_free_rate
+        captured["dividend_yield"] = dividend_yield
+        return [0.18]
+
+    def _fake_choose(strikes, deltas, target_delta):
+        captured["choose_strikes"] = list(strikes)
+        captured["choose_deltas"] = list(deltas)
+        captured["target_delta"] = target_delta
+        return strikes[0]
+
+    monkeypatch.setattr(common_module, "_kernel_approx_bsm_delta_many", _fake_many)
+    monkeypatch.setattr(common_module, "_kernel_choose_delta_target_strike", _fake_choose)
+    selection = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
+
+    resolved = resolve_strike(
+        [200.0, 210.0],
+        205.0,
+        "call",
+        selection,
+        dte_days=3,
+        delta_lookup={
+            (200.0, date(2025, 4, 4)): 0.31,
+        },
+        contracts=[
+            OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+            OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+        ],
+        trade_date=date(2025, 4, 1),
+        realized_vol=0.25,
+        risk_free_rate=0.01,
+    )
+
+    assert resolved == 200.0
+    assert captured == {
+        "spot": 205.0,
+        "strikes": [210.0],
+        "dte_days": 3,
+        "contract_types": "call",
+        "vols": [0.25],
+        "risk_free_rate": 0.01,
+        "dividend_yield": 0.0,
+        "choose_strikes": [200.0, 210.0],
+        "choose_deltas": [0.31, 0.18],
+        "target_delta": 0.3,
+    }
 
 
 def test_calendar_group_cache_is_shared_across_gateways_with_shared_state():

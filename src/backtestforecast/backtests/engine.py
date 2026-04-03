@@ -136,7 +136,32 @@ class _EnginePhaseTiming:
     exit_resolution_ms: float = 0.0
     build_position_ms: float = 0.0
     build_contract_fetch_ms: float = 0.0
+    build_contract_selector_fetch_ms: float = 0.0
+    build_contract_availability_fetch_ms: float = 0.0
+    build_contract_batch_fetch_ms: float = 0.0
+    build_contract_exact_fetch_ms: float = 0.0
+    build_contract_other_ms: float = 0.0
+    build_contract_selection_cache_hits: int = 0
+    build_contract_selection_cache_misses: int = 0
+    build_contract_gateway_method_ms: dict[str, float] = field(default_factory=dict)
+    build_contract_gateway_method_calls: dict[str, int] = field(default_factory=dict)
+    build_contract_gateway_contract_cache_hits: int = 0
+    build_contract_gateway_contract_cache_misses: int = 0
+    build_contract_gateway_exact_cache_hits: int = 0
+    build_contract_gateway_exact_cache_misses: int = 0
+    build_contract_gateway_availability_cache_hits: int = 0
+    build_contract_gateway_availability_cache_misses: int = 0
+    build_contract_gateway_availability_by_type_cache_hits: int = 0
+    build_contract_gateway_availability_by_type_cache_misses: int = 0
     build_delta_resolution_ms: float = 0.0
+    build_delta_iv_quote_fetch_ms: float = 0.0
+    build_delta_iv_solve_ms: float = 0.0
+    build_delta_kernel_ms: float = 0.0
+    build_delta_other_ms: float = 0.0
+    build_delta_lookup_cache_hits: int = 0
+    build_delta_lookup_cache_misses: int = 0
+    build_delta_iv_cache_hits: int = 0
+    build_delta_iv_cache_misses: int = 0
     build_entry_quote_fetch_ms: float = 0.0
     build_object_construction_ms: float = 0.0
     attach_quote_series_ms: float = 0.0
@@ -162,8 +187,12 @@ class _TimedBuildPositionGateway:
     _CONTRACT_FETCH_METHODS = {
         "list_contracts",
         "list_contracts_for_preferred_expiration",
+        "list_contracts_for_preferred_common_expiration",
         "list_contracts_for_expiration",
         "list_contracts_for_expirations",
+        "list_contracts_for_expirations_by_type",
+        "list_available_expirations",
+        "list_available_expirations_by_type",
     }
     _ENTRY_QUOTE_METHODS = {"get_quote", "get_quotes"}
 
@@ -185,6 +214,13 @@ class _TimedBuildPositionGateway:
             finally:
                 elapsed_ms = _elapsed_ms(start)
                 phase = current_build_position_phase()
+                if name in self._CONTRACT_FETCH_METHODS:
+                    self._profiler.contract_gateway_method_ms[name] = (
+                        self._profiler.contract_gateway_method_ms.get(name, 0.0) + elapsed_ms
+                    )
+                    self._profiler.contract_gateway_method_calls[name] = (
+                        self._profiler.contract_gateway_method_calls.get(name, 0) + 1
+                    )
                 if phase in {"contract_fetch", "delta_lookup"}:
                     pass
                 elif name in self._CONTRACT_FETCH_METHODS:
@@ -248,7 +284,55 @@ class OptionsBacktestEngine:
     ) -> None:
         timing.build_position_ms += total_ms
         timing.build_contract_fetch_ms += profiler.contract_fetch_ms
+        timing.build_contract_selector_fetch_ms += profiler.contract_selector_fetch_ms
+        timing.build_contract_availability_fetch_ms += profiler.contract_availability_fetch_ms
+        timing.build_contract_batch_fetch_ms += profiler.contract_batch_fetch_ms
+        timing.build_contract_exact_fetch_ms += profiler.contract_exact_fetch_ms
+        timing.build_contract_selection_cache_hits += profiler.contract_selection_cache_hits
+        timing.build_contract_selection_cache_misses += profiler.contract_selection_cache_misses
+        timing.build_contract_gateway_contract_cache_hits += profiler.contract_gateway_contract_cache_hits
+        timing.build_contract_gateway_contract_cache_misses += profiler.contract_gateway_contract_cache_misses
+        timing.build_contract_gateway_exact_cache_hits += profiler.contract_gateway_exact_cache_hits
+        timing.build_contract_gateway_exact_cache_misses += profiler.contract_gateway_exact_cache_misses
+        timing.build_contract_gateway_availability_cache_hits += profiler.contract_gateway_availability_cache_hits
+        timing.build_contract_gateway_availability_cache_misses += profiler.contract_gateway_availability_cache_misses
+        timing.build_contract_gateway_availability_by_type_cache_hits += (
+            profiler.contract_gateway_availability_by_type_cache_hits
+        )
+        timing.build_contract_gateway_availability_by_type_cache_misses += (
+            profiler.contract_gateway_availability_by_type_cache_misses
+        )
+        for method_name, elapsed_ms in profiler.contract_gateway_method_ms.items():
+            timing.build_contract_gateway_method_ms[method_name] = (
+                timing.build_contract_gateway_method_ms.get(method_name, 0.0) + elapsed_ms
+            )
+        for method_name, call_count in profiler.contract_gateway_method_calls.items():
+            timing.build_contract_gateway_method_calls[method_name] = (
+                timing.build_contract_gateway_method_calls.get(method_name, 0) + call_count
+            )
+        contract_residual = (
+            profiler.contract_fetch_ms
+            - profiler.contract_selector_fetch_ms
+            - profiler.contract_availability_fetch_ms
+            - profiler.contract_batch_fetch_ms
+            - profiler.contract_exact_fetch_ms
+        )
+        timing.build_contract_other_ms += max(0.0, contract_residual)
         timing.build_delta_resolution_ms += profiler.delta_lookup_ms
+        timing.build_delta_iv_quote_fetch_ms += profiler.delta_iv_quote_fetch_ms
+        timing.build_delta_iv_solve_ms += profiler.delta_iv_solve_ms
+        timing.build_delta_kernel_ms += profiler.delta_kernel_ms
+        timing.build_delta_lookup_cache_hits += profiler.delta_lookup_cache_hits
+        timing.build_delta_lookup_cache_misses += profiler.delta_lookup_cache_misses
+        timing.build_delta_iv_cache_hits += profiler.delta_iv_cache_hits
+        timing.build_delta_iv_cache_misses += profiler.delta_iv_cache_misses
+        delta_residual = (
+            profiler.delta_lookup_ms
+            - profiler.delta_iv_quote_fetch_ms
+            - profiler.delta_iv_solve_ms
+            - profiler.delta_kernel_ms
+        )
+        timing.build_delta_other_ms += max(0.0, delta_residual)
         timing.build_entry_quote_fetch_ms += profiler.entry_quote_fetch_ms
         residual = total_ms - profiler.contract_fetch_ms - profiler.delta_lookup_ms - profiler.entry_quote_fetch_ms
         timing.build_object_construction_ms += max(0.0, residual)
@@ -634,6 +718,7 @@ class OptionsBacktestEngine:
                             candidate.entry_commission_total = entry_commission
                             slippage_cost_d = _D(gross_notional_per_unit) * _D(quantity) * (_D(config.slippage_pct) / _D100)
                             total_entry_cost = (ev_per_unit * _D(quantity)) + entry_commission + slippage_cost_d
+                            timing.position_sizing_ms += _elapsed_ms(open_start)
                             if cash - total_entry_cost < 0:
                                 self._add_warning_once(
                                     warnings, warning_codes, "negative_cash_rejected",
@@ -658,7 +743,6 @@ class OptionsBacktestEngine:
                                     self._add_warning_once(
                                         warnings, warning_codes, "margin_reserved", strategy.margin_warning_message
                                     )
-                            timing.position_sizing_ms += _elapsed_ms(open_start)
 
             if position is not None:
                 current_value_start = _time.perf_counter()
@@ -778,7 +862,39 @@ class OptionsBacktestEngine:
             exit_resolution_ms=round(timing.exit_resolution_ms, 3),
             build_position_ms=round(timing.build_position_ms, 3),
             build_contract_fetch_ms=round(timing.build_contract_fetch_ms, 3),
+            build_contract_selector_fetch_ms=round(timing.build_contract_selector_fetch_ms, 3),
+            build_contract_availability_fetch_ms=round(timing.build_contract_availability_fetch_ms, 3),
+            build_contract_batch_fetch_ms=round(timing.build_contract_batch_fetch_ms, 3),
+            build_contract_exact_fetch_ms=round(timing.build_contract_exact_fetch_ms, 3),
+            build_contract_other_ms=round(timing.build_contract_other_ms, 3),
+            build_contract_selection_cache_hits=timing.build_contract_selection_cache_hits,
+            build_contract_selection_cache_misses=timing.build_contract_selection_cache_misses,
+            build_contract_gateway_method_ms={
+                method_name: round(elapsed_ms, 3)
+                for method_name, elapsed_ms in sorted(timing.build_contract_gateway_method_ms.items())
+            },
+            build_contract_gateway_method_calls=dict(sorted(timing.build_contract_gateway_method_calls.items())),
+            build_contract_gateway_contract_cache_hits=timing.build_contract_gateway_contract_cache_hits,
+            build_contract_gateway_contract_cache_misses=timing.build_contract_gateway_contract_cache_misses,
+            build_contract_gateway_exact_cache_hits=timing.build_contract_gateway_exact_cache_hits,
+            build_contract_gateway_exact_cache_misses=timing.build_contract_gateway_exact_cache_misses,
+            build_contract_gateway_availability_cache_hits=timing.build_contract_gateway_availability_cache_hits,
+            build_contract_gateway_availability_cache_misses=timing.build_contract_gateway_availability_cache_misses,
+            build_contract_gateway_availability_by_type_cache_hits=(
+                timing.build_contract_gateway_availability_by_type_cache_hits
+            ),
+            build_contract_gateway_availability_by_type_cache_misses=(
+                timing.build_contract_gateway_availability_by_type_cache_misses
+            ),
             build_delta_resolution_ms=round(timing.build_delta_resolution_ms, 3),
+            build_delta_iv_quote_fetch_ms=round(timing.build_delta_iv_quote_fetch_ms, 3),
+            build_delta_iv_solve_ms=round(timing.build_delta_iv_solve_ms, 3),
+            build_delta_kernel_ms=round(timing.build_delta_kernel_ms, 3),
+            build_delta_other_ms=round(timing.build_delta_other_ms, 3),
+            build_delta_lookup_cache_hits=timing.build_delta_lookup_cache_hits,
+            build_delta_lookup_cache_misses=timing.build_delta_lookup_cache_misses,
+            build_delta_iv_cache_hits=timing.build_delta_iv_cache_hits,
+            build_delta_iv_cache_misses=timing.build_delta_iv_cache_misses,
             build_entry_quote_fetch_ms=round(timing.build_entry_quote_fetch_ms, 3),
             build_object_construction_ms=round(timing.build_object_construction_ms, 3),
             attach_quote_series_ms=round(timing.attach_quote_series_ms, 3),
@@ -1376,7 +1492,39 @@ class OptionsBacktestEngine:
             exit_resolution_ms=round(timing.exit_resolution_ms, 3),
             build_position_ms=round(timing.build_position_ms, 3),
             build_contract_fetch_ms=round(timing.build_contract_fetch_ms, 3),
+            build_contract_selector_fetch_ms=round(timing.build_contract_selector_fetch_ms, 3),
+            build_contract_availability_fetch_ms=round(timing.build_contract_availability_fetch_ms, 3),
+            build_contract_batch_fetch_ms=round(timing.build_contract_batch_fetch_ms, 3),
+            build_contract_exact_fetch_ms=round(timing.build_contract_exact_fetch_ms, 3),
+            build_contract_other_ms=round(timing.build_contract_other_ms, 3),
+            build_contract_selection_cache_hits=timing.build_contract_selection_cache_hits,
+            build_contract_selection_cache_misses=timing.build_contract_selection_cache_misses,
+            build_contract_gateway_method_ms={
+                method_name: round(elapsed_ms, 3)
+                for method_name, elapsed_ms in sorted(timing.build_contract_gateway_method_ms.items())
+            },
+            build_contract_gateway_method_calls=dict(sorted(timing.build_contract_gateway_method_calls.items())),
+            build_contract_gateway_contract_cache_hits=timing.build_contract_gateway_contract_cache_hits,
+            build_contract_gateway_contract_cache_misses=timing.build_contract_gateway_contract_cache_misses,
+            build_contract_gateway_exact_cache_hits=timing.build_contract_gateway_exact_cache_hits,
+            build_contract_gateway_exact_cache_misses=timing.build_contract_gateway_exact_cache_misses,
+            build_contract_gateway_availability_cache_hits=timing.build_contract_gateway_availability_cache_hits,
+            build_contract_gateway_availability_cache_misses=timing.build_contract_gateway_availability_cache_misses,
+            build_contract_gateway_availability_by_type_cache_hits=(
+                timing.build_contract_gateway_availability_by_type_cache_hits
+            ),
+            build_contract_gateway_availability_by_type_cache_misses=(
+                timing.build_contract_gateway_availability_by_type_cache_misses
+            ),
             build_delta_resolution_ms=round(timing.build_delta_resolution_ms, 3),
+            build_delta_iv_quote_fetch_ms=round(timing.build_delta_iv_quote_fetch_ms, 3),
+            build_delta_iv_solve_ms=round(timing.build_delta_iv_solve_ms, 3),
+            build_delta_kernel_ms=round(timing.build_delta_kernel_ms, 3),
+            build_delta_other_ms=round(timing.build_delta_other_ms, 3),
+            build_delta_lookup_cache_hits=timing.build_delta_lookup_cache_hits,
+            build_delta_lookup_cache_misses=timing.build_delta_lookup_cache_misses,
+            build_delta_iv_cache_hits=timing.build_delta_iv_cache_hits,
+            build_delta_iv_cache_misses=timing.build_delta_iv_cache_misses,
             build_entry_quote_fetch_ms=round(timing.build_entry_quote_fetch_ms, 3),
             build_object_construction_ms=round(timing.build_object_construction_ms, 3),
             attach_quote_series_ms=round(timing.attach_quote_series_ms, 3),

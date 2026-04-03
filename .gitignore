@@ -39,6 +39,13 @@ pytest-cache-files-*
 /subset_*.txt
 /tmp_baseline_preview.txt
 /unit_failure_log.txt
+/rust/**/target/
+/src/backtestforecast/_backtest_kernels_native.dll
+/src/backtestforecast/_backtest_kernels*.pdb
+/src/backtestforecast/_backtest_kernels*.pyd
+/src/backtestforecast/_backtest_kernels*.so
+/src/backtestforecast/libbacktest_kernels_native.so
+/src/backtestforecast/libbacktest_kernels_native.dylib
 
 # Env files
 .env

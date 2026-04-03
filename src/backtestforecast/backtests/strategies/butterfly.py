@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     choose_atm_strike,
+    get_entry_quotes,
     get_overrides,
     require_contract_for_strike,
     resolve_wing_strike,
@@ -54,9 +55,14 @@ class ButterflyStrategy(StrategyDefinition):
         center_call = require_contract_for_strike(call_contracts, center_strike)
         upper_call = require_contract_for_strike(call_contracts, upper_strike)
 
-        lower_quote = option_gateway.get_quote(lower_call.ticker, bar.trade_date)
-        center_quote = option_gateway.get_quote(center_call.ticker, bar.trade_date)
-        upper_quote = option_gateway.get_quote(upper_call.ticker, bar.trade_date)
+        quotes = get_entry_quotes(
+            option_gateway,
+            trade_date=bar.trade_date,
+            contracts=[lower_call, center_call, upper_call],
+        )
+        lower_quote = quotes.get(lower_call.ticker)
+        center_quote = quotes.get(center_call.ticker)
+        upper_quote = quotes.get(upper_call.ticker)
         if lower_quote is None or center_quote is None or upper_quote is None:
             return None
         if not valid_entry_mids(lower_quote.mid_price, center_quote.mid_price, upper_quote.mid_price):

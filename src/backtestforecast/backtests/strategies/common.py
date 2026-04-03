@@ -6,14 +6,20 @@ import math
 import threading
 import time as _time
 from collections import OrderedDict, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import structlog
 
+from backtestforecast.backtests.native_kernels import (
+    approx_bsm_delta as _kernel_approx_bsm_delta,
+    approx_bsm_delta_many as _kernel_approx_bsm_delta_many,
+    choose_delta_target_strike as _kernel_choose_delta_target_strike,
+    resolve_delta_target_strike_from_vols as _kernel_resolve_delta_target_strike_from_vols,
+)
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord
 from backtestforecast.schemas.backtests import (
@@ -43,8 +49,31 @@ _COMMON_EXPIRATION_SELECTION_CACHE_LOCK = threading.Lock()
 @dataclass(slots=True)
 class BuildPositionProfiler:
     contract_fetch_ms: float = 0.0
+    contract_selector_fetch_ms: float = 0.0
+    contract_availability_fetch_ms: float = 0.0
+    contract_batch_fetch_ms: float = 0.0
+    contract_exact_fetch_ms: float = 0.0
+    contract_gateway_method_ms: dict[str, float] = field(default_factory=dict)
+    contract_gateway_method_calls: dict[str, int] = field(default_factory=dict)
+    contract_gateway_contract_cache_hits: int = 0
+    contract_gateway_contract_cache_misses: int = 0
+    contract_gateway_exact_cache_hits: int = 0
+    contract_gateway_exact_cache_misses: int = 0
+    contract_gateway_availability_cache_hits: int = 0
+    contract_gateway_availability_cache_misses: int = 0
+    contract_gateway_availability_by_type_cache_hits: int = 0
+    contract_gateway_availability_by_type_cache_misses: int = 0
     delta_lookup_ms: float = 0.0
+    delta_iv_quote_fetch_ms: float = 0.0
+    delta_iv_solve_ms: float = 0.0
+    delta_kernel_ms: float = 0.0
     entry_quote_fetch_ms: float = 0.0
+    contract_selection_cache_hits: int = 0
+    contract_selection_cache_misses: int = 0
+    delta_lookup_cache_hits: int = 0
+    delta_lookup_cache_misses: int = 0
+    delta_iv_cache_hits: int = 0
+    delta_iv_cache_misses: int = 0
 
 
 _BUILD_POSITION_PROFILER: contextvars.ContextVar[BuildPositionProfiler | None] = contextvars.ContextVar(
@@ -71,6 +100,33 @@ def reset_build_position_profiler(
 
 def current_build_position_phase() -> str | None:
     return _BUILD_POSITION_PHASE.get()
+
+
+def _record_build_position_ms(field: str, elapsed_ms: float) -> None:
+    profiler = _BUILD_POSITION_PROFILER.get()
+    if profiler is None:
+        return
+    setattr(profiler, field, getattr(profiler, field) + elapsed_ms)
+
+
+def _increment_build_position_counter(field: str, amount: int = 1) -> None:
+    profiler = _BUILD_POSITION_PROFILER.get()
+    if profiler is None:
+        return
+    setattr(profiler, field, getattr(profiler, field) + amount)
+
+
+@contextmanager
+def _profile_build_position_metric(field: str):
+    profiler = _BUILD_POSITION_PROFILER.get()
+    if profiler is None:
+        yield
+        return
+    start = _time.perf_counter()
+    try:
+        yield
+    finally:
+        _record_build_position_ms(field, (_time.perf_counter() - start) * 1000.0)
 
 
 @contextmanager
@@ -105,6 +161,14 @@ class _ChainContext:
     expirations_sorted: tuple[date, ...]
     unique_strikes_sorted: tuple[float, ...]
     contracts_by_strike: dict[int, OptionContractRecord]
+
+
+@dataclass(slots=True)
+class _PreparedIvInput:
+    has_cached_iv: bool
+    cached_iv: float | None
+    store_iv: Callable[[float | None], None]
+    quote: OptionQuoteRecord | None = None
 
 
 _CHAIN_CONTEXT_CACHE: OrderedDict[int, _ChainContext] = OrderedDict()
@@ -381,20 +445,23 @@ def select_preferred_expiration_contracts(
         lock=_PREFERRED_EXPIRATION_SELECTION_CACHE_LOCK,
     )
     if cached is not None:
+        _increment_build_position_counter("contract_selection_cache_hits")
         return cached
+    _increment_build_position_counter("contract_selection_cache_misses")
     with _profile_build_position_phase("contract_fetch"):
         preferred_fetch = getattr(option_gateway, "list_contracts_for_preferred_expiration", None)
         if callable(preferred_fetch):
-            contracts = _materialize_contracts(
-                preferred_fetch(
-                    entry_date=entry_date,
-                    contract_type=contract_type,
-                    target_dte=target_dte,
-                    dte_tolerance_days=dte_tolerance_days,
-                    strike_price_gte=strike_price_gte,
-                    strike_price_lte=strike_price_lte,
+            with _profile_build_position_metric("contract_selector_fetch_ms"):
+                contracts = _materialize_contracts(
+                    preferred_fetch(
+                        entry_date=entry_date,
+                        contract_type=contract_type,
+                        target_dte=target_dte,
+                        dte_tolerance_days=dte_tolerance_days,
+                        strike_price_gte=strike_price_gte,
+                        strike_price_lte=strike_price_lte,
+                    )
                 )
-            )
             if not contracts:
                 raise DataUnavailableError("No eligible option expirations were available.")
             result = (contracts[0].expiration_date, contracts)
@@ -407,14 +474,15 @@ def select_preferred_expiration_contracts(
             )
             return result
 
-        contracts = list(
-            option_gateway.list_contracts(
-                entry_date,
-                contract_type,
-                target_dte,
-                dte_tolerance_days,
+        with _profile_build_position_metric("contract_selector_fetch_ms"):
+            contracts = list(
+                option_gateway.list_contracts(
+                    entry_date,
+                    contract_type,
+                    target_dte,
+                    dte_tolerance_days,
+                )
             )
-        )
         expiration = choose_primary_expiration(contracts, entry_date, target_dte)
         result = (expiration, contracts_for_expiration(contracts, expiration))
         _cache_store(
@@ -446,66 +514,38 @@ def select_preferred_common_expiration_contracts(
         lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
     )
     if cached is not None:
+        _increment_build_position_counter("contract_selection_cache_hits")
         return cached
+    _increment_build_position_counter("contract_selection_cache_misses")
     with _profile_build_position_phase("contract_fetch"):
+        preferred_common_fetch = getattr(option_gateway, "list_contracts_for_preferred_common_expiration", None)
         availability_fetch_by_type = getattr(option_gateway, "list_available_expirations_by_type", None)
         batch_fetch_by_type = getattr(option_gateway, "list_contracts_for_expirations_by_type", None)
         batch_fetch = getattr(option_gateway, "list_contracts_for_expirations", None)
         exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
         ordered_expirations = preferred_expiration_dates(entry_date, target_dte, dte_tolerance_days)
-        if callable(availability_fetch_by_type):
-            available_by_type = availability_fetch_by_type(
-                entry_date=entry_date,
-                contract_types=["call", "put"],
-                expiration_dates=ordered_expirations,
+        if callable(preferred_common_fetch):
+            with _profile_build_position_metric("contract_selector_fetch_ms"):
+                result = preferred_common_fetch(
+                    entry_date=entry_date,
+                    target_dte=target_dte,
+                    dte_tolerance_days=dte_tolerance_days,
+                )
+            _cache_store(
+                _COMMON_EXPIRATION_SELECTION_CACHE,
+                cache_key,
+                result,
+                lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
+                max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
             )
-            available_calls = set(available_by_type.get("call", []))
-            available_puts = set(available_by_type.get("put", []))
-            for expiration_date in ordered_expirations:
-                if expiration_date not in available_calls or expiration_date not in available_puts:
-                    continue
-                if callable(batch_fetch_by_type):
-                    fetched_by_type = batch_fetch_by_type(
-                        entry_date=entry_date,
-                        contract_types=["call", "put"],
-                        expiration_dates=[expiration_date],
-                    )
-                    calls = _materialize_contracts(fetched_by_type.get("call", {}).get(expiration_date, []))
-                    puts = _materialize_contracts(fetched_by_type.get("put", {}).get(expiration_date, []))
-                elif callable(exact_fetch):
-                    calls = _materialize_contracts(
-                        exact_fetch(
-                            entry_date=entry_date,
-                            contract_type="call",
-                            expiration_date=expiration_date,
-                        )
-                    )
-                    puts = _materialize_contracts(
-                        exact_fetch(
-                            entry_date=entry_date,
-                            contract_type="put",
-                            expiration_date=expiration_date,
-                        )
-                    )
-                else:
-                    calls = []
-                    puts = []
-                if calls and puts:
-                    result = (expiration_date, calls, puts)
-                    _cache_store(
-                        _COMMON_EXPIRATION_SELECTION_CACHE,
-                        cache_key,
-                        result,
-                        lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
-                        max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
-                    )
-                    return result
+            return result
         if callable(batch_fetch_by_type):
-            fetched_by_type = batch_fetch_by_type(
-                entry_date=entry_date,
-                contract_types=["call", "put"],
-                expiration_dates=ordered_expirations,
-            )
+            with _profile_build_position_metric("contract_batch_fetch_ms"):
+                fetched_by_type = batch_fetch_by_type(
+                    entry_date=entry_date,
+                    contract_types=["call", "put"],
+                    expiration_dates=ordered_expirations,
+                )
             calls_by_expiration = fetched_by_type.get("call", {})
             puts_by_expiration = fetched_by_type.get("put", {})
             for expiration_date in ordered_expirations:
@@ -521,17 +561,58 @@ def select_preferred_common_expiration_contracts(
                         max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
                     )
                     return result
+
+        if callable(availability_fetch_by_type) and callable(exact_fetch):
+            with _profile_build_position_metric("contract_availability_fetch_ms"):
+                available_by_type = availability_fetch_by_type(
+                    entry_date=entry_date,
+                    contract_types=["call", "put"],
+                    expiration_dates=ordered_expirations,
+                )
+            available_calls = set(available_by_type.get("call", []))
+            available_puts = set(available_by_type.get("put", []))
+            for expiration_date in ordered_expirations:
+                if expiration_date not in available_calls or expiration_date not in available_puts:
+                    continue
+                with _profile_build_position_metric("contract_exact_fetch_ms"):
+                    calls = _materialize_contracts(
+                        exact_fetch(
+                            entry_date=entry_date,
+                            contract_type="call",
+                            expiration_date=expiration_date,
+                        )
+                    )
+                with _profile_build_position_metric("contract_exact_fetch_ms"):
+                    puts = _materialize_contracts(
+                        exact_fetch(
+                            entry_date=entry_date,
+                            contract_type="put",
+                            expiration_date=expiration_date,
+                        )
+                    )
+                if calls and puts:
+                    result = (expiration_date, calls, puts)
+                    _cache_store(
+                        _COMMON_EXPIRATION_SELECTION_CACHE,
+                        cache_key,
+                        result,
+                        lock=_COMMON_EXPIRATION_SELECTION_CACHE_LOCK,
+                        max_size=_COMMON_EXPIRATION_SELECTION_CACHE_MAX,
+                    )
+                    return result
         if callable(batch_fetch):
-            calls_by_expiration = batch_fetch(
-                entry_date=entry_date,
-                contract_type="call",
-                expiration_dates=ordered_expirations,
-            )
-            puts_by_expiration = batch_fetch(
-                entry_date=entry_date,
-                contract_type="put",
-                expiration_dates=ordered_expirations,
-            )
+            with _profile_build_position_metric("contract_batch_fetch_ms"):
+                calls_by_expiration = batch_fetch(
+                    entry_date=entry_date,
+                    contract_type="call",
+                    expiration_dates=ordered_expirations,
+                )
+            with _profile_build_position_metric("contract_batch_fetch_ms"):
+                puts_by_expiration = batch_fetch(
+                    entry_date=entry_date,
+                    contract_type="put",
+                    expiration_dates=ordered_expirations,
+                )
             for expiration_date in ordered_expirations:
                 calls = _materialize_contracts(calls_by_expiration.get(expiration_date, []))
                 puts = _materialize_contracts(puts_by_expiration.get(expiration_date, []))
@@ -548,20 +629,22 @@ def select_preferred_common_expiration_contracts(
 
         if callable(exact_fetch):
             for expiration_date in ordered_expirations:
-                calls = _materialize_contracts(
-                    exact_fetch(
-                        entry_date=entry_date,
-                        contract_type="call",
-                        expiration_date=expiration_date,
+                with _profile_build_position_metric("contract_exact_fetch_ms"):
+                    calls = _materialize_contracts(
+                        exact_fetch(
+                            entry_date=entry_date,
+                            contract_type="call",
+                            expiration_date=expiration_date,
+                        )
                     )
-                )
-                puts = _materialize_contracts(
-                    exact_fetch(
-                        entry_date=entry_date,
-                        contract_type="put",
-                        expiration_date=expiration_date,
+                with _profile_build_position_metric("contract_exact_fetch_ms"):
+                    puts = _materialize_contracts(
+                        exact_fetch(
+                            entry_date=entry_date,
+                            contract_type="put",
+                            expiration_date=expiration_date,
+                        )
                     )
-                )
                 if calls and puts:
                     result = (expiration_date, calls, puts)
                     _cache_store(
@@ -573,8 +656,10 @@ def select_preferred_common_expiration_contracts(
                     )
                     return result
 
-        calls = list(option_gateway.list_contracts(entry_date, "call", target_dte, dte_tolerance_days))
-        puts = list(option_gateway.list_contracts(entry_date, "put", target_dte, dte_tolerance_days))
+        with _profile_build_position_metric("contract_selector_fetch_ms"):
+            calls = list(option_gateway.list_contracts(entry_date, "call", target_dte, dte_tolerance_days))
+        with _profile_build_position_metric("contract_selector_fetch_ms"):
+            puts = list(option_gateway.list_contracts(entry_date, "put", target_dte, dte_tolerance_days))
         common_expirations = common_sorted_expirations(calls, puts)
         if not common_expirations:
             raise DataUnavailableError("No common call/put expiration was available for the selected strategy.")
@@ -700,23 +785,110 @@ def _approx_bsm_delta(
     Callers should pass estimated implied volatility when available for
     significantly better accuracy.
     """
-    if dte_days <= 0:
-        if spot == strike:
-            return 0.5 if contract_type == "call" else -0.5
-        if contract_type == "call":
-            return 1.0 if spot > strike else 0.0
-        return -1.0 if spot < strike else 0.0
+    return _kernel_approx_bsm_delta(
+        spot,
+        strike,
+        dte_days,
+        contract_type,
+        vol=vol,
+        risk_free_rate=risk_free_rate,
+        dividend_yield=dividend_yield,
+    )
 
-    t = dte_days / 365.0
-    sqrt_t = math.sqrt(t)
-    try:
-        d1 = (math.log(spot / strike) + (risk_free_rate - dividend_yield + 0.5 * vol * vol) * t) / (vol * sqrt_t)
-    except (ValueError, ZeroDivisionError):
-        return 0.5 if contract_type == "call" else -0.5
 
-    if contract_type == "call":
-        return math.exp(-dividend_yield * t) * _norm_cdf(d1)
-    return math.exp(-dividend_yield * t) * (_norm_cdf(d1) - 1.0)
+def _build_iv_store_callback(
+    cache_key: tuple[str, date],
+    *,
+    option_gateway: OptionDataGateway,
+    iv_cache: dict[tuple[str, date], float | None] | None,
+) -> Callable[[float | None], None]:
+    _store_iv = getattr(option_gateway, "store_iv", None)
+    if _store_iv is not None:
+        return lambda value: _store_iv(cache_key, value)
+    if iv_cache is not None:
+        return lambda value: iv_cache.__setitem__(cache_key, value)
+    return lambda value: None
+
+
+def _prepare_iv_input(
+    contract: OptionContractRecord,
+    *,
+    option_gateway: OptionDataGateway,
+    trade_date: date,
+    iv_cache: dict[tuple[str, date], float | None] | None = None,
+) -> _PreparedIvInput:
+    cache_key = (contract.ticker, trade_date)
+    store_iv = _build_iv_store_callback(cache_key, option_gateway=option_gateway, iv_cache=iv_cache)
+
+    _get_iv = getattr(option_gateway, "get_iv", None)
+    if _get_iv is not None:
+        found, cached_val = _get_iv(cache_key)
+        if found:
+            _increment_build_position_counter("delta_iv_cache_hits")
+            return _PreparedIvInput(True, cached_val, store_iv)
+        _increment_build_position_counter("delta_iv_cache_misses")
+        return _PreparedIvInput(False, None, store_iv)
+
+    if iv_cache is not None:
+        if cache_key in iv_cache:
+            _increment_build_position_counter("delta_iv_cache_hits")
+            return _PreparedIvInput(True, iv_cache[cache_key], store_iv)
+        _increment_build_position_counter("delta_iv_cache_misses")
+
+    return _PreparedIvInput(False, None, store_iv)
+
+
+def _prefetch_iv_inputs(
+    contracts: Iterable[OptionContractRecord],
+    *,
+    option_gateway: OptionDataGateway,
+    trade_date: date,
+    iv_cache: dict[tuple[str, date], float | None] | None = None,
+) -> dict[str, _PreparedIvInput]:
+    prepared: dict[str, _PreparedIvInput] = {}
+    missing_tickers: list[str] = []
+    for contract in contracts:
+        if contract.ticker in prepared:
+            continue
+        prepared_input = _prepare_iv_input(
+            contract,
+            option_gateway=option_gateway,
+            trade_date=trade_date,
+            iv_cache=iv_cache,
+        )
+        prepared[contract.ticker] = prepared_input
+        if not prepared_input.has_cached_iv:
+            missing_tickers.append(contract.ticker)
+
+    if not missing_tickers:
+        return prepared
+
+    batch_fetch = getattr(option_gateway, "get_quotes", None)
+    remaining_tickers = list(missing_tickers)
+    if callable(batch_fetch) and len(missing_tickers) > 1:
+        try:
+            with _profile_build_position_metric("delta_iv_quote_fetch_ms"):
+                fetched_quotes = dict(batch_fetch(missing_tickers, trade_date))
+        except Exception:
+            _logger.debug(
+                "iv_quotes.batch_fetch_failed",
+                trade_date=str(trade_date),
+                ticker_count=len(missing_tickers),
+                exc_info=True,
+            )
+        else:
+            remaining_tickers = []
+            for ticker in missing_tickers:
+                if ticker in fetched_quotes:
+                    prepared[ticker].quote = fetched_quotes[ticker]
+                else:
+                    remaining_tickers.append(ticker)
+
+    for ticker in remaining_tickers:
+        with _profile_build_position_metric("delta_iv_quote_fetch_ms"):
+            prepared[ticker].quote = option_gateway.get_quote(ticker, trade_date)
+
+    return prepared
 
 
 def _estimate_iv_for_strike(
@@ -729,6 +901,7 @@ def _estimate_iv_for_strike(
     trade_date: date,
     risk_free_rate: float = 0.045,
     iv_cache: dict[tuple[str, date], float | None] | None = None,
+    prepared_iv_inputs: dict[str, _PreparedIvInput] | None = None,
 ) -> float | None:
     """Estimate implied volatility from the market quote for a given strike.
 
@@ -759,6 +932,7 @@ def _estimate_iv_for_strike(
         trade_date=trade_date,
         risk_free_rate=risk_free_rate,
         iv_cache=iv_cache,
+        prepared_input=prepared_iv_inputs.get(contract.ticker) if prepared_iv_inputs is not None else None,
     )
 
 
@@ -771,42 +945,40 @@ def _estimate_iv_for_contract(
     trade_date: date,
     risk_free_rate: float = 0.045,
     iv_cache: dict[tuple[str, date], float | None] | None = None,
+    prepared_input: _PreparedIvInput | None = None,
 ) -> float | None:
     """Estimate implied volatility for a specific contract."""
     from backtestforecast.backtests.rules import implied_volatility_from_price
 
-    cache_key = (contract.ticker, trade_date)
+    if prepared_input is None:
+        prepared_input = _prepare_iv_input(
+            contract,
+            option_gateway=option_gateway,
+            trade_date=trade_date,
+            iv_cache=iv_cache,
+        )
 
-    _get_iv = getattr(option_gateway, "get_iv", None)
-    _store_iv = getattr(option_gateway, "store_iv", None)
+    if prepared_input.has_cached_iv:
+        return prepared_input.cached_iv
 
-    if _get_iv is not None:
-        found, cached_val = _get_iv(cache_key)
-        if found:
-            return cached_val
-    elif iv_cache is not None and cache_key in iv_cache:
-        return iv_cache[cache_key]
-
-    quote = option_gateway.get_quote(contract.ticker, trade_date)
+    quote = prepared_input.quote
+    if quote is None:
+        with _profile_build_position_metric("delta_iv_quote_fetch_ms"):
+            quote = option_gateway.get_quote(contract.ticker, trade_date)
     if quote is None or quote.mid_price <= 0:
-        if _store_iv is not None:
-            _store_iv(cache_key, None)
-        elif iv_cache is not None:
-            iv_cache[cache_key] = None
+        prepared_input.store_iv(None)
         return None
 
-    iv = implied_volatility_from_price(
-        option_price=quote.mid_price,
-        underlying_price=underlying_close,
-        strike_price=contract.strike_price,
-        time_to_expiry_years=max(dte_days, 1) / 365.0,
-        option_type=contract.contract_type,
-        risk_free_rate=risk_free_rate,
-    )
-    if _store_iv is not None:
-        _store_iv(cache_key, iv)
-    elif iv_cache is not None:
-        iv_cache[cache_key] = iv
+    with _profile_build_position_metric("delta_iv_solve_ms"):
+        iv = implied_volatility_from_price(
+            option_price=quote.mid_price,
+            underlying_price=underlying_close,
+            strike_price=contract.strike_price,
+            time_to_expiry_years=max(dte_days, 1) / 365.0,
+            option_type=contract.contract_type,
+            risk_free_rate=risk_free_rate,
+        )
+    prepared_input.store_iv(iv)
     return iv
 
 
@@ -841,7 +1013,9 @@ def build_contract_delta_lookup(
         cached = _DELTA_LOOKUP_CACHE.get(cache_key)
         if cached is not None:
             _DELTA_LOOKUP_CACHE.move_to_end(cache_key)
+            _increment_build_position_counter("delta_lookup_cache_hits")
             return cached
+    _increment_build_position_counter("delta_lookup_cache_misses")
 
     gateway_lookup = getattr(option_gateway, "get_chain_delta_lookup", None)
     if callable(gateway_lookup):
@@ -865,46 +1039,43 @@ def build_contract_delta_lookup(
                         _DELTA_LOOKUP_CACHE.popitem(last=False)
                 return normalized
 
-    lookup: dict[tuple[float, date], float] = {}
-    for contract in contract_sequence:
-        iv = _estimate_iv_for_contract(
-            contract,
-            underlying_close=underlying_close,
-            dte_days=dte_days,
+    resolved_vols: list[float] = []
+    if realized_vol is not None:
+        resolved_vols = [realized_vol] * len(contract_sequence)
+    else:
+        prepared_iv_inputs = _prefetch_iv_inputs(
+            contract_sequence,
             option_gateway=option_gateway,
             trade_date=trade_date,
-            risk_free_rate=risk_free_rate,
             iv_cache=iv_cache,
         )
-        if iv is not None:
-            delta = _approx_bsm_delta(
-                underlying_close,
-                contract.strike_price,
-                dte_days,
-                contract.contract_type,
-                vol=iv,
+        for contract in contract_sequence:
+            iv = _estimate_iv_for_contract(
+                contract,
+                underlying_close=underlying_close,
+                dte_days=dte_days,
+                option_gateway=option_gateway,
+                trade_date=trade_date,
                 risk_free_rate=risk_free_rate,
-                dividend_yield=dividend_yield,
+                iv_cache=iv_cache,
+                prepared_input=prepared_iv_inputs.get(contract.ticker),
             )
-        elif realized_vol is not None:
-            delta = _approx_bsm_delta(
-                underlying_close,
-                contract.strike_price,
-                dte_days,
-                contract.contract_type,
-                vol=realized_vol,
-                risk_free_rate=risk_free_rate,
-                dividend_yield=dividend_yield,
-            )
-        else:
-            delta = _approx_bsm_delta(
-                underlying_close,
-                contract.strike_price,
-                dte_days,
-                contract.contract_type,
-                risk_free_rate=risk_free_rate,
-                dividend_yield=dividend_yield,
-            )
+            if iv is not None:
+                resolved_vols.append(iv)
+            else:
+                resolved_vols.append(0.30)
+    with _profile_build_position_metric("delta_kernel_ms"):
+        deltas = _kernel_approx_bsm_delta_many(
+            underlying_close,
+            [contract.strike_price for contract in contract_sequence],
+            dte_days,
+            [contract.contract_type for contract in contract_sequence],
+            resolved_vols,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
+        )
+    lookup: dict[tuple[float, date], float] = {}
+    for contract, delta in zip(contract_sequence, deltas, strict=True):
         lookup[(contract.strike_price, contract.expiration_date)] = delta
     with _DELTA_LOOKUP_CACHE_LOCK:
         _DELTA_LOOKUP_CACHE[cache_key] = lookup
@@ -1005,6 +1176,8 @@ def resolve_strike(
             if not strikes:
                 raise DataUnavailableError("No strikes available for delta targeting.")
             target_delta = val / 100.0
+            prepared_iv_inputs: dict[str, _PreparedIvInput] | None = None
+            needs_iv_prefetch = False
             lookup_expiration = expiration_date
             if lookup_expiration is None and delta_lookup is not None:
                 if contracts is not None:
@@ -1022,9 +1195,11 @@ def resolve_strike(
                     if len(tuple_expirations) == 1:
                         lookup_expiration = next(iter(tuple_expirations))
 
-            best_strike = strikes[0]
-            best_diff = float("inf")
-            for strike in strikes:
+            resolved_deltas: list[float | None] = [None] * len(strikes)
+            pending_indices: list[int] = []
+            pending_strikes: list[float] = []
+            pending_vols: list[float] = []
+            for index, strike in enumerate(strikes):
                 delta: float | None = None
 
                 if delta_lookup is not None:
@@ -1038,7 +1213,15 @@ def resolve_strike(
 
                 if delta is None:
                     iv: float | None = None
-                    if contracts is not None and option_gateway is not None and trade_date is not None:
+                    if realized_vol is None and contracts is not None and option_gateway is not None and trade_date is not None:
+                        if not needs_iv_prefetch:
+                            prepared_iv_inputs = _prefetch_iv_inputs(
+                                contracts,
+                                option_gateway=option_gateway,
+                                trade_date=trade_date,
+                                iv_cache=iv_cache,
+                            )
+                            needs_iv_prefetch = True
                         iv = _estimate_iv_for_strike(
                             strike,
                             contract_type,
@@ -1049,39 +1232,51 @@ def resolve_strike(
                             trade_date,
                             risk_free_rate=risk_free_rate,
                             iv_cache=iv_cache,
+                            prepared_iv_inputs=prepared_iv_inputs,
                         )
+                    pending_indices.append(index)
+                    pending_strikes.append(strike)
                     if iv is not None:
-                        delta = _approx_bsm_delta(
-                            underlying_close,
-                            strike,
-                            dte_days,
-                            contract_type,
-                            vol=iv,
-                            risk_free_rate=risk_free_rate,
-                        )
+                        pending_vols.append(iv)
                     elif realized_vol is not None:
-                        delta = _approx_bsm_delta(
-                            underlying_close,
-                            strike,
-                            dte_days,
-                            contract_type,
-                            vol=realized_vol,
-                            risk_free_rate=risk_free_rate,
-                        )
+                        pending_vols.append(realized_vol)
                     else:
-                        delta = _approx_bsm_delta(
+                        pending_vols.append(0.30)
+                    continue
+                resolved_deltas[index] = delta
+
+            if pending_indices:
+                if len(pending_indices) == len(strikes):
+                    with _profile_build_position_metric("delta_kernel_ms"):
+                        return _kernel_resolve_delta_target_strike_from_vols(
                             underlying_close,
-                            strike,
+                            pending_strikes,
                             dte_days,
                             contract_type,
+                            pending_vols,
+                            target_delta,
                             risk_free_rate=risk_free_rate,
+                            dividend_yield=0.0,
                         )
-
-                diff = abs(abs(delta) - target_delta)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_strike = strike
-            return best_strike
+                with _profile_build_position_metric("delta_kernel_ms"):
+                    pending_deltas = _kernel_approx_bsm_delta_many(
+                        underlying_close,
+                        pending_strikes,
+                        dte_days,
+                        contract_type,
+                        pending_vols,
+                        risk_free_rate=risk_free_rate,
+                        dividend_yield=0.0,
+                    )
+                for index, delta in zip(pending_indices, pending_deltas, strict=True):
+                    resolved_deltas[index] = delta
+            resolved_delta_values: list[float] = []
+            for delta in resolved_deltas:
+                if delta is None:
+                    raise DataUnavailableError("Failed to resolve deltas for one or more strikes.")
+                resolved_delta_values.append(float(delta))
+            with _profile_build_position_metric("delta_kernel_ms"):
+                return _kernel_choose_delta_target_strike(strikes, resolved_delta_values, target_delta)
 
         # Fallback
         if contract_type == "call":

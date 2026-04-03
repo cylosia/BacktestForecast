@@ -15,6 +15,7 @@ from backtestforecast.market_data.prewarm import (
     prewarm_targeted_option_bundle,
     resolve_long_option_contract_type,
 )
+from backtestforecast.backtests.strategies.common import preferred_expiration_dates
 from backtestforecast.market_data.service import HistoricalDataBundle
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
 from backtestforecast.schemas.backtests import CreateBacktestRunRequest, StrategyType
@@ -304,7 +305,7 @@ def test_prewarm_targeted_option_bundle_uses_shared_expiration_lookup_for_two_si
     ])
 
 
-def test_prewarm_targeted_option_bundle_uses_availability_probe_before_shared_batch_fetch():
+def test_prewarm_targeted_option_bundle_prefers_shared_batch_fetch_over_availability_probe():
     class _AvailabilityGateway(_TargetedGateway):
         def __init__(self) -> None:
             super().__init__()
@@ -323,7 +324,7 @@ def test_prewarm_targeted_option_bundle_uses_availability_probe_before_shared_ba
         def list_contracts_for_expirations_by_type(self, **kwargs):
             expiration_dates = tuple(kwargs["expiration_dates"])
             self.combined_calls.append(expiration_dates)
-            expiration = expiration_dates[0]
+            expiration = expiration_dates[1]
             return {
                 "call": {
                     expiration: [
@@ -350,7 +351,7 @@ def test_prewarm_targeted_option_bundle_uses_availability_probe_before_shared_ba
             }
 
         def list_contracts_for_expiration(self, **kwargs):
-            raise AssertionError("shared prewarm should use combined fetch after availability probe")
+            raise AssertionError("shared prewarm should use combined by-type batch directly")
 
     gateway = _AvailabilityGateway()
     request = CreateBacktestRunRequest(
@@ -374,8 +375,8 @@ def test_prewarm_targeted_option_bundle_uses_availability_probe_before_shared_ba
     assert summary.dates_processed == 1
     assert summary.contracts_fetched == 2
     assert summary.quotes_fetched == 0
-    assert gateway.availability_calls == 1
-    assert gateway.combined_calls == [(date(2025, 4, 5),)]
+    assert gateway.availability_calls == 0
+    assert gateway.combined_calls == [tuple(preferred_expiration_dates(date(2025, 4, 1), 3, 1))]
     assert gateway.exact_expiration_calls == []
 
 

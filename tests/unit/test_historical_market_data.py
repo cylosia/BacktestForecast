@@ -227,6 +227,58 @@ def test_historical_store_batches_contracts_for_multiple_expirations() -> None:
     ]
 
 
+def test_historical_store_batches_contracts_for_multiple_expirations_by_type() -> None:
+    store = _store()
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:AAPL250418C00190000",
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=date(2025, 4, 1),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker="O:AAPL250418P00190000",
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="put",
+                strike_price=Decimal("190"),
+                open_price=Decimal("4.10"),
+                high_price=Decimal("4.40"),
+                low_price=Decimal("3.80"),
+                close_price=Decimal("4.25"),
+                volume=Decimal("11"),
+                source_file_date=date(2025, 4, 1),
+            ),
+        ]
+    )
+
+    contracts_by_type = store.list_option_contracts_for_expirations_by_type(
+        symbol="AAPL",
+        as_of_date=date(2025, 4, 1),
+        contract_types=["call", "put"],
+        expiration_dates=[date(2025, 4, 18), date(2025, 4, 25)],
+    )
+
+    assert [contract.ticker for contract in contracts_by_type["call"][date(2025, 4, 18)]] == [
+        "O:AAPL250418C00190000"
+    ]
+    assert [contract.ticker for contract in contracts_by_type["put"][date(2025, 4, 18)]] == [
+        "O:AAPL250418P00190000"
+    ]
+    assert contracts_by_type["call"][date(2025, 4, 25)] == []
+    assert contracts_by_type["put"][date(2025, 4, 25)] == []
+
+
 def test_historical_store_batches_quotes_for_same_trade_date() -> None:
     store = _store()
     store.upsert_option_day_bars(

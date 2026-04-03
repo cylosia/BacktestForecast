@@ -8,6 +8,8 @@ from backtestforecast.backtests.margin import naked_call_margin, naked_put_margi
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.common import (
     _gateway_cache_identity,
+    _increment_build_position_counter,
+    _profile_build_position_metric,
     choose_primary_expiration,
     choose_secondary_expiration,
     common_sorted_strikes,
@@ -42,6 +44,8 @@ _CALENDAR_GROUP_CACHE: OrderedDict[
 
 def _normalized_bound(value: float | None) -> float | None:
     return round(value, 4) if value is not None else None
+
+
 def _get_cached_calendar_groups(
     key: tuple[object, ...],
 ) -> tuple[date, list[OptionContractRecord], date, list[OptionContractRecord]] | None:
@@ -86,7 +90,9 @@ def resolve_calendar_contract_groups(
     )
     cached = _get_cached_calendar_groups(cache_key)
     if cached is not None:
+        _increment_build_position_counter("contract_selection_cache_hits")
         return cached
+    _increment_build_position_counter("contract_selection_cache_misses")
     ordered_expirations = preferred_expiration_dates(
         entry_date,
         target_dte,
@@ -94,13 +100,14 @@ def resolve_calendar_contract_groups(
     )
     batch_fetch = getattr(option_gateway, "list_contracts_for_expirations", None)
     if callable(batch_fetch):
-        contracts_by_expiration = batch_fetch(
-            entry_date=entry_date,
-            contract_type=contract_type,
-            expiration_dates=ordered_expirations,
-            strike_price_gte=strike_price_gte,
-            strike_price_lte=strike_price_lte,
-        )
+        with _profile_build_position_metric("contract_batch_fetch_ms"):
+            contracts_by_expiration = batch_fetch(
+                entry_date=entry_date,
+                contract_type=contract_type,
+                expiration_dates=ordered_expirations,
+                strike_price_gte=strike_price_gte,
+                strike_price_lte=strike_price_lte,
+            )
         near_expiration: date | None = None
         near_contracts: list[OptionContractRecord] = []
         for expiration_date in ordered_expirations:
@@ -129,13 +136,14 @@ def resolve_calendar_contract_groups(
         near_expiration: date | None = None
         near_contracts: list[OptionContractRecord] = []
         for expiration_date in ordered_expirations:
-            contracts = exact_fetch(
-                entry_date=entry_date,
-                contract_type=contract_type,
-                expiration_date=expiration_date,
-                strike_price_gte=strike_price_gte,
-                strike_price_lte=strike_price_lte,
-            )
+            with _profile_build_position_metric("contract_exact_fetch_ms"):
+                contracts = exact_fetch(
+                    entry_date=entry_date,
+                    contract_type=contract_type,
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_price_gte,
+                    strike_price_lte=strike_price_lte,
+                )
             if contracts:
                 near_expiration = expiration_date
                 near_contracts = contracts
@@ -150,13 +158,14 @@ def resolve_calendar_contract_groups(
             if expiration_date > near_expiration and (expiration_date - entry_date).days >= minimum_target
         )
         for expiration_date in later_expirations:
-            contracts = exact_fetch(
-                entry_date=entry_date,
-                contract_type=contract_type,
-                expiration_date=expiration_date,
-                strike_price_gte=strike_price_gte,
-                strike_price_lte=strike_price_lte,
-            )
+            with _profile_build_position_metric("contract_exact_fetch_ms"):
+                contracts = exact_fetch(
+                    entry_date=entry_date,
+                    contract_type=contract_type,
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_price_gte,
+                    strike_price_lte=strike_price_lte,
+                )
             if contracts:
                 result = (near_expiration, near_contracts, expiration_date, contracts)
                 _store_cached_calendar_groups(cache_key, result)

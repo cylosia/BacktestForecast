@@ -1,0 +1,12 @@
+[package]
+name = "backtest_kernels_pyo3"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "_backtest_kernels"
+crate-type = ["cdylib"]
+
+[dependencies]
+backtest_kernels_native = { path = "../backtest_kernels" }
+pyo3 = "0.27.0"

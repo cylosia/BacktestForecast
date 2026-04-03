@@ -160,3 +160,77 @@ def test_historical_gateway_uses_durable_catalog_before_raw_store():
     )
 
     assert result == cached_contracts
+
+
+def test_gateway_filters_from_warm_full_expiration_cache_before_provider():
+    contracts = [
+        OptionContractRecord("O:AAPL250404C00190000", "call", date(2025, 4, 4), 190.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+    ]
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def list_option_contracts_for_expiration(self, **kwargs):
+            self.calls += 1
+            return contracts
+
+    client = _Client()
+    gateway = MassiveOptionGateway(client, "AAPL")
+
+    warmed = gateway._list_contracts_for_exact_expiration(
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        expiration_date=date(2025, 4, 4),
+    )
+    filtered = gateway._list_contracts_for_exact_expiration(
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        expiration_date=date(2025, 4, 4),
+        strike_price_gte=195.0,
+        strike_price_lte=205.0,
+    )
+
+    assert warmed == contracts
+    assert filtered == [contracts[1]]
+    assert client.calls == 1
+
+
+def test_historical_gateway_filters_from_warm_full_expiration_cache_before_store():
+    from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+    contracts = [
+        OptionContractRecord("O:AAPL250404C00190000", "call", date(2025, 4, 4), 190.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00200000", "call", date(2025, 4, 4), 200.0, 100.0),
+        OptionContractRecord("O:AAPL250404C00210000", "call", date(2025, 4, 4), 210.0, 100.0),
+    ]
+
+    class _RawStore:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def list_option_contracts_for_expiration(self, **kwargs):
+            self.calls += 1
+            return contracts
+
+    raw_store = _RawStore()
+    gateway = HistoricalOptionGateway(raw_store, "AAPL")
+
+    warmed = gateway.list_contracts_for_expiration(
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        expiration_date=date(2025, 4, 4),
+    )
+    filtered = gateway.list_contracts_for_expiration(
+        entry_date=date(2025, 4, 1),
+        contract_type="call",
+        expiration_date=date(2025, 4, 4),
+        strike_price_gte=195.0,
+        strike_price_lte=205.0,
+    )
+
+    assert warmed == contracts
+    assert filtered == [contracts[1]]
+    assert raw_store.calls == 1

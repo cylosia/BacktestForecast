@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.12,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "backtestforecast-backtest-kernels"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dynamic = ["version"]
+
+[tool.maturin]
+python-source = "../../src"
+python-packages = ["backtestforecast"]
+module-name = "backtestforecast._backtest_kernels"

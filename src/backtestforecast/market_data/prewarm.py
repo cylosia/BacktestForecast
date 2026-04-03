@@ -444,49 +444,6 @@ def _targeted_contract_groups_for_date(
         batch_fetch_by_type = getattr(gateway, "list_contracts_for_expirations_by_type", None)
         batch_fetch = getattr(gateway, "list_contracts_for_expirations", None)
         exact_fetch = getattr(gateway, "list_contracts_for_expiration", None)
-        if callable(availability_fetch_by_type):
-            available_by_type = availability_fetch_by_type(
-                entry_date=trade_date,
-                contract_types=["call", "put"],
-                expiration_dates=ordered_expirations,
-                strike_price_gte=strike_band[0],
-                strike_price_lte=strike_band[1],
-            )
-            available_calls = set(available_by_type.get("call", []))
-            available_puts = set(available_by_type.get("put", []))
-            for expiration_date in ordered_expirations:
-                if expiration_date not in available_calls or expiration_date not in available_puts:
-                    continue
-                if callable(batch_fetch_by_type):
-                    fetched_by_type = batch_fetch_by_type(
-                        entry_date=trade_date,
-                        contract_types=["call", "put"],
-                        expiration_dates=[expiration_date],
-                        strike_price_gte=strike_band[0],
-                        strike_price_lte=strike_band[1],
-                    )
-                    calls = list(fetched_by_type.get("call", {}).get(expiration_date, []))
-                    puts = list(fetched_by_type.get("put", {}).get(expiration_date, []))
-                elif callable(exact_fetch):
-                    calls = exact_fetch(
-                        entry_date=trade_date,
-                        contract_type="call",
-                        expiration_date=expiration_date,
-                        strike_price_gte=strike_band[0],
-                        strike_price_lte=strike_band[1],
-                    )
-                    puts = exact_fetch(
-                        entry_date=trade_date,
-                        contract_type="put",
-                        expiration_date=expiration_date,
-                        strike_price_gte=strike_band[0],
-                        strike_price_lte=strike_band[1],
-                    )
-                else:
-                    calls = []
-                    puts = []
-                if calls and puts:
-                    return [calls, puts]
         if callable(batch_fetch_by_type):
             fetched_by_type = batch_fetch_by_type(
                 entry_date=trade_date,
@@ -500,6 +457,36 @@ def _targeted_contract_groups_for_date(
             for expiration_date in ordered_expirations:
                 calls = list(calls_by_expiration.get(expiration_date, []))
                 puts = list(puts_by_expiration.get(expiration_date, []))
+                if calls and puts:
+                    return [calls, puts]
+
+        if callable(availability_fetch_by_type) and callable(exact_fetch):
+            available_by_type = availability_fetch_by_type(
+                entry_date=trade_date,
+                contract_types=["call", "put"],
+                expiration_dates=ordered_expirations,
+                strike_price_gte=strike_band[0],
+                strike_price_lte=strike_band[1],
+            )
+            available_calls = set(available_by_type.get("call", []))
+            available_puts = set(available_by_type.get("put", []))
+            for expiration_date in ordered_expirations:
+                if expiration_date not in available_calls or expiration_date not in available_puts:
+                    continue
+                calls = exact_fetch(
+                    entry_date=trade_date,
+                    contract_type="call",
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_band[0],
+                    strike_price_lte=strike_band[1],
+                )
+                puts = exact_fetch(
+                    entry_date=trade_date,
+                    contract_type="put",
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_band[0],
+                    strike_price_lte=strike_band[1],
+                )
                 if calls and puts:
                     return [calls, puts]
         if callable(batch_fetch):

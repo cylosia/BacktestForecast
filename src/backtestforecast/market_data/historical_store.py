@@ -190,18 +190,10 @@ class HistoricalMarketDataStore:
                 stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
             if strike_price_lte is not None:
                 stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            rows = list(
-                session.execute(
-                    stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)
-                )
+            rows = session.execute(
+                stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)
             )
-        seen: set[str] = set()
-        contracts: list[OptionContractRecord] = []
-        for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
-            if option_ticker in seen:
-                continue
-            seen.add(option_ticker)
-            contracts.append(
+            return [
                 OptionContractRecord(
                     ticker=option_ticker,
                     contract_type=row_contract_type,
@@ -209,8 +201,8 @@ class HistoricalMarketDataStore:
                     strike_price=float(row_strike_price),
                     shares_per_contract=100.0,
                 )
-            )
-        return contracts
+                for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows
+            ]
 
     def list_option_contracts_for_expirations(
         self,
@@ -225,6 +217,9 @@ class HistoricalMarketDataStore:
         if not expiration_dates:
             return {}
         requested_expirations = tuple(dict.fromkeys(expiration_dates))
+        contracts_by_expiration: dict[date, list[OptionContractRecord]] = {
+            expiration_date: [] for expiration_date in requested_expirations
+        }
         with self._session(readonly=True) as session:
             stmt = (
                 select(
@@ -244,31 +239,19 @@ class HistoricalMarketDataStore:
                 stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
             if strike_price_lte is not None:
                 stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            rows = list(
-                session.execute(
-                    stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)
-                )
+            rows = session.execute(
+                stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)
             )
-        contracts_by_expiration: dict[date, list[OptionContractRecord]] = {
-            expiration_date: [] for expiration_date in requested_expirations
-        }
-        seen_by_expiration: dict[date, set[str]] = {
-            expiration_date: set() for expiration_date in requested_expirations
-        }
-        for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
-            seen = seen_by_expiration.setdefault(row_expiration_date, set())
-            if option_ticker in seen:
-                continue
-            seen.add(option_ticker)
-            contracts_by_expiration.setdefault(row_expiration_date, []).append(
-                OptionContractRecord(
-                    ticker=option_ticker,
-                    contract_type=row_contract_type,
-                    expiration_date=row_expiration_date,
-                    strike_price=float(row_strike_price),
-                    shares_per_contract=100.0,
+            for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
+                contracts_by_expiration[row_expiration_date].append(
+                    OptionContractRecord(
+                        ticker=option_ticker,
+                        contract_type=row_contract_type,
+                        expiration_date=row_expiration_date,
+                        strike_price=float(row_strike_price),
+                        shares_per_contract=100.0,
+                    )
                 )
-            )
         return contracts_by_expiration
 
     def list_option_contracts_for_expirations_by_type(
@@ -285,6 +268,12 @@ class HistoricalMarketDataStore:
             return {}
         requested_types = tuple(dict.fromkeys(contract_types))
         requested_expirations = tuple(dict.fromkeys(expiration_dates))
+        contracts_by_type: dict[str, dict[date, list[OptionContractRecord]]] = {
+            contract_type: {
+                expiration_date: [] for expiration_date in requested_expirations
+            }
+            for contract_type in requested_types
+        }
         with self._session(readonly=True) as session:
             stmt = (
                 select(
@@ -304,41 +293,23 @@ class HistoricalMarketDataStore:
                 stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
             if strike_price_lte is not None:
                 stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            rows = list(
-                session.execute(
-                    stmt.order_by(
-                        HistoricalOptionDayBar.contract_type,
-                        HistoricalOptionDayBar.expiration_date,
-                        HistoricalOptionDayBar.strike_price,
+            rows = session.execute(
+                stmt.order_by(
+                    HistoricalOptionDayBar.contract_type,
+                    HistoricalOptionDayBar.expiration_date,
+                    HistoricalOptionDayBar.strike_price,
+                )
+            )
+            for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
+                contracts_by_type[row_contract_type][row_expiration_date].append(
+                    OptionContractRecord(
+                        ticker=option_ticker,
+                        contract_type=row_contract_type,
+                        expiration_date=row_expiration_date,
+                        strike_price=float(row_strike_price),
+                        shares_per_contract=100.0,
                     )
                 )
-            )
-        contracts_by_type: dict[str, dict[date, list[OptionContractRecord]]] = {
-            contract_type: {
-                expiration_date: [] for expiration_date in requested_expirations
-            }
-            for contract_type in requested_types
-        }
-        seen_by_bucket: dict[tuple[str, date], set[str]] = {
-            (contract_type, expiration_date): set()
-            for contract_type in requested_types
-            for expiration_date in requested_expirations
-        }
-        for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
-            bucket = (row_contract_type, row_expiration_date)
-            seen = seen_by_bucket.setdefault(bucket, set())
-            if option_ticker in seen:
-                continue
-            seen.add(option_ticker)
-            contracts_by_type.setdefault(row_contract_type, {}).setdefault(row_expiration_date, []).append(
-                OptionContractRecord(
-                    ticker=option_ticker,
-                    contract_type=row_contract_type,
-                    expiration_date=row_expiration_date,
-                    strike_price=float(row_strike_price),
-                    shares_per_contract=100.0,
-                )
-            )
         return contracts_by_type
 
     def list_available_option_expirations(
