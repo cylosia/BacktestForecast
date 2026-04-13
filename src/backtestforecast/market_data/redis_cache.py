@@ -63,6 +63,8 @@ def _serialize_contracts(contracts: list[OptionContractRecord]) -> str:
             "expiration_date": c.expiration_date.isoformat(),
             "strike_price": c.strike_price,
             "shares_per_contract": c.shares_per_contract,
+            "underlying_symbol": c.underlying_symbol,
+            "as_of_mid_price": c.as_of_mid_price,
         }
         for c in contracts
     ])
@@ -77,6 +79,8 @@ def _deserialize_contracts(raw: str) -> list[OptionContractRecord]:
             expiration_date=date.fromisoformat(r["expiration_date"]),
             strike_price=r["strike_price"],
             shares_per_contract=r["shares_per_contract"],
+            underlying_symbol=r.get("underlying_symbol"),
+            as_of_mid_price=r.get("as_of_mid_price"),
         )
         for r in rows
     ]
@@ -90,6 +94,8 @@ def _serialize_quote(quote: OptionQuoteRecord | None) -> str:
         "bid_price": quote.bid_price,
         "ask_price": quote.ask_price,
         "participant_timestamp": quote.participant_timestamp,
+        "source_option_ticker": quote.source_option_ticker,
+        "deliverable_shares_per_contract": quote.deliverable_shares_per_contract,
     })
 
 
@@ -102,6 +108,8 @@ def _deserialize_quote(raw: str) -> OptionQuoteRecord | None:
         bid_price=data["bid_price"],
         ask_price=data["ask_price"],
         participant_timestamp=data.get("participant_timestamp"),
+        source_option_ticker=data.get("source_option_ticker"),
+        deliverable_shares_per_contract=data.get("deliverable_shares_per_contract"),
     )
 
 

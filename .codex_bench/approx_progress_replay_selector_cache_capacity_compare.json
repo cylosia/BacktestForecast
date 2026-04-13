@@ -1,0 +1,26 @@
+{
+  "small": {
+    "label": "selector_caches_4096",
+    "wall_total_ms": 53873.534,
+    "mean_per_run_ms": 538.533,
+    "median_per_run_ms": 395.404,
+    "store_call_counts": {
+      "batch_exact_by_type": 3005,
+      "batch_exact": 4606
+    }
+  },
+  "large": {
+    "label": "selector_caches_16384",
+    "wall_total_ms": 52676.889,
+    "mean_per_run_ms": 526.741,
+    "median_per_run_ms": 384.096,
+    "store_call_counts": {
+      "batch_exact_by_type": 3005,
+      "batch_exact": 4606
+    }
+  },
+  "speedup_wall": 1.0227,
+  "speedup_mean": 1.0224,
+  "batch_exact_delta": 0,
+  "batch_exact_by_type_delta": 0
+}

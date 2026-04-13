@@ -609,6 +609,29 @@ def _load_resume_checkpoint(
     valid_trade_dates = set(trade_dates)
     unknown_dates = set(checkpoints) - valid_trade_dates
     if unknown_dates:
+        raw_window_start = run_signature.get("window_start")
+        raw_window_end = run_signature.get("window_end")
+        if isinstance(raw_window_start, str) and isinstance(raw_window_end, str):
+            try:
+                window_start = date.fromisoformat(raw_window_start)
+                window_end = date.fromisoformat(raw_window_end)
+            except ValueError:
+                window_start = None
+                window_end = None
+            if window_start is not None and window_end is not None:
+                ignorable_unknown_dates = {
+                    trade_date
+                    for trade_date in unknown_dates
+                    if window_start <= trade_date <= window_end and not is_trading_day(trade_date)
+                }
+                if ignorable_unknown_dates:
+                    checkpoints = {
+                        trade_date: payload
+                        for trade_date, payload in checkpoints.items()
+                        if trade_date not in ignorable_unknown_dates
+                    }
+                    unknown_dates -= ignorable_unknown_dates
+    if unknown_dates:
         sample = ", ".join(item.isoformat() for item in sorted(unknown_dates)[:5])
         raise ValueError(f"Existing status checkpoint references trade dates outside the requested window: {sample}")
 
@@ -622,10 +645,10 @@ def _load_resume_checkpoint(
     )
 
 
-def _write_status_snapshot(status_path: str | None, **fields: object) -> None:
-    if not status_path:
+def _write_status_snapshot(snapshot_path: str | None, **fields: object) -> None:
+    if not snapshot_path:
         return
-    path = Path(status_path)
+    path = Path(snapshot_path)
     payload: ImportStatusSnapshot = {}
     if path.exists():
         try:
@@ -693,6 +716,11 @@ def main() -> int:
 
     _write_status_snapshot(
         status_path,
+        started_at=initial_timestamp,
+        command=" ".join(os.sys.argv),
+        launcher_pid=os.getppid(),
+        python_pid=os.getpid(),
+        status_path=status_path,
         status="running",
         updated_at=initial_timestamp,
         window_start=start_date.isoformat(),

@@ -44,7 +44,11 @@ from backtestforecast.models import (
     User,
 )
 from backtestforecast.pagination import finalize_cursor_page, parse_cursor_param
-from backtestforecast.schemas.backtests import BacktestSummaryResponse, EquityCurvePointResponse
+from backtestforecast.schemas.backtests import (
+    BacktestSummaryResponse,
+    EquityCurvePointResponse,
+    is_calendar_strategy_type,
+)
 from backtestforecast.schemas.multi_step_backtests import (
     CreateMultiStepRunRequest,
     MultiStepEventResponse,
@@ -883,7 +887,7 @@ class MultiStepBacktestService:
         if not long_options:
             return None
         anchor_long = max(long_options, key=lambda leg: (leg.expiration_date, -leg.strike_price))
-        if step.contract_selection.strategy_type.value != "calendar_spread":
+        if not is_calendar_strategy_type(step.contract_selection.strategy_type):
             return None
         contracts = option_gateway.list_contracts(
             bar.trade_date,

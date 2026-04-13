@@ -80,6 +80,7 @@ _US_MARKET_HOLIDAYS: frozenset[date] = frozenset({
     date(2018, 7, 4),    # Independence Day
     date(2018, 9, 3),    # Labor Day
     date(2018, 11, 22),  # Thanksgiving
+    date(2018, 12, 5),   # National Day of Mourning for President George H. W. Bush
     date(2018, 12, 25),  # Christmas
     # 2019
     date(2019, 1, 1),    # New Year's Day
@@ -146,6 +147,7 @@ _US_MARKET_HOLIDAYS: frozenset[date] = frozenset({
     date(2024, 12, 25),  # Christmas
     # 2025
     date(2025, 1, 1),    # New Year's Day
+    date(2025, 1, 9),    # National Day of Mourning for President Jimmy Carter
     date(2025, 1, 20),   # MLK Day
     date(2025, 2, 17),   # Presidents' Day
     date(2025, 4, 18),   # Good Friday

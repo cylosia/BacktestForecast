@@ -33,6 +33,7 @@ from backtestforecast.backtests.types import (
     TradeResult,
 )
 from backtestforecast.errors import AppValidationError, DataUnavailableError
+from backtestforecast.market_data.historical_store import parse_option_ticker_metadata
 from backtestforecast.market_data.types import DailyBar, OptionQuoteRecord
 
 logger = structlog.get_logger(__name__)
@@ -49,6 +50,7 @@ _D0 = Decimal("0")
 _D100 = Decimal("100")
 _D365 = Decimal("365")
 _D_FIVE_CENTS = Decimal("0.05")
+_OPTION_UNDERLYING_SCALE_MISMATCH_FACTOR = 10.0
 
 
 _D_CACHE: dict[int | float, Decimal] = {
@@ -127,6 +129,13 @@ class _ExitPolicyLane:
     equity_curve: list[EquityPointResult] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)
     warning_codes: set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class _EntryRuleLaneGroup:
+    evaluator: EntryRuleEvaluator
+    lanes: list[_ExitPolicyLane] = field(default_factory=list)
+    entry_allowed_mask: list[bool] | None = None
 
 
 @dataclass(slots=True)
@@ -358,6 +367,11 @@ class OptionsBacktestEngine:
                     entry_mid=leg.entry_mid,
                     last_mid=leg.last_mid,
                     contract_multiplier=leg.contract_multiplier,
+                    deliverable_shares_per_contract=leg.deliverable_shares_per_contract,
+                    contract_root_symbol=leg.contract_root_symbol,
+                    reference_underlying_symbol=leg.reference_underlying_symbol,
+                    mark_ticker=leg.mark_ticker,
+                    is_nonstandard=leg.is_nonstandard,
                 )
                 for leg in position.option_legs
             ],
@@ -432,6 +446,90 @@ class OptionsBacktestEngine:
                 profiler=profiler,
             )
             return candidate
+
+    @staticmethod
+    def _apply_quote_metadata(
+        *,
+        leg: OpenOptionLeg,
+        position_underlying_symbol: str,
+        quote: OptionQuoteRecord | None,
+    ) -> None:
+        parsed_leg_ticker = parse_option_ticker_metadata(leg.ticker)
+        resolved_position_symbol = (
+            position_underlying_symbol
+            or leg.reference_underlying_symbol
+            or (parsed_leg_ticker[0] if parsed_leg_ticker is not None else "")
+        )
+        if resolved_position_symbol:
+            leg.reference_underlying_symbol = leg.reference_underlying_symbol or resolved_position_symbol
+        leg.mark_ticker = leg.mark_ticker or leg.ticker
+
+        if leg.contract_root_symbol is None and parsed_leg_ticker is not None:
+            leg.contract_root_symbol = parsed_leg_ticker[0]
+
+        if quote is None:
+            deliverable_shares = leg.deliverable_shares_per_contract or 100.0
+            reference_symbol = leg.reference_underlying_symbol or resolved_position_symbol
+            leg.is_nonstandard = (
+                (leg.contract_root_symbol is not None and leg.contract_root_symbol != reference_symbol)
+                or not math.isclose(deliverable_shares, 100.0, rel_tol=0.0, abs_tol=0.001)
+            )
+            return
+
+        source_option_ticker = quote.source_option_ticker or leg.mark_ticker or leg.ticker
+        leg.mark_ticker = source_option_ticker
+        parsed_source_ticker = parse_option_ticker_metadata(source_option_ticker)
+        if parsed_source_ticker is not None:
+            leg.contract_root_symbol = parsed_source_ticker[0]
+        if (
+            quote.deliverable_shares_per_contract is not None
+            and quote.deliverable_shares_per_contract > 0
+        ):
+            leg.deliverable_shares_per_contract = quote.deliverable_shares_per_contract
+        deliverable_shares = leg.deliverable_shares_per_contract or 100.0
+        reference_symbol = leg.reference_underlying_symbol or resolved_position_symbol
+        leg.is_nonstandard = (
+            (leg.contract_root_symbol is not None and leg.contract_root_symbol != reference_symbol)
+            or not math.isclose(deliverable_shares, 100.0, rel_tol=0.0, abs_tol=0.001)
+        )
+
+    def _enrich_position_option_legs(
+        self,
+        *,
+        position: OpenMultiLegPosition,
+        option_gateway: OptionDataGateway,
+    ) -> None:
+        if not position.option_legs:
+            return
+
+        if all(
+            getattr(leg, "contract_root_symbol", None)
+            and getattr(leg, "reference_underlying_symbol", None)
+            and getattr(leg, "deliverable_shares_per_contract", 0) > 0
+            for leg in position.option_legs
+        ):
+            for leg in position.option_legs:
+                self._apply_quote_metadata(
+                    leg=leg,
+                    position_underlying_symbol=position.underlying_symbol,
+                    quote=None,
+                )
+            return
+
+        quotes_by_ticker: dict[str, OptionQuoteRecord | None] = {}
+        batch_fetch = getattr(option_gateway, "get_quotes", None)
+        if callable(batch_fetch):
+            try:
+                quotes_by_ticker = dict(batch_fetch([leg.ticker for leg in position.option_legs], position.entry_date))
+            except Exception:
+                logger.warning("engine.entry_quote_metadata_fetch_failed", trade_date=str(position.entry_date), exc_info=True)
+
+        for leg in position.option_legs:
+            self._apply_quote_metadata(
+                leg=leg,
+                position_underlying_symbol=position.underlying_symbol,
+                quote=quotes_by_ticker.get(leg.ticker),
+            )
 
     def run(
         self,
@@ -683,6 +781,14 @@ class OptionsBacktestEngine:
                             "One or more entry dates were skipped because no valid same-day option quote was returned.",
                         )
                     else:
+                        self._enrich_position_option_legs(position=candidate, option_gateway=option_gateway)
+                        if self._maybe_reject_option_underlying_scale_mismatch(
+                            position=candidate,
+                            underlying_close=float(bar.close_price),
+                            warnings=warnings,
+                            warning_codes=warning_codes,
+                        ):
+                            continue
                         ev_per_unit = self._entry_value_per_unit(candidate)
                         contracts_per_unit = sum(leg.quantity_per_unit for leg in candidate.option_legs)
                         commission_per_unit = float(config.commission_per_contract) * contracts_per_unit
@@ -959,7 +1065,6 @@ class OptionsBacktestEngine:
             "account_size",
             "risk_per_trade_pct",
             "commission_per_contract",
-            "entry_rules",
             "risk_free_rate",
             "risk_free_rate_curve",
             "dividend_yield",
@@ -1023,26 +1128,37 @@ class OptionsBacktestEngine:
                     f"{pre_filter_len - len(sorted_bars)} bar(s) with non-positive close price were excluded.",
                 )
 
-        evaluator = EntryRuleEvaluator(
-            config=base_config,
-            bars=sorted_bars,
-            earnings_dates=earnings_dates,
-            option_gateway=option_gateway,
-            shared_cache=shared_entry_rule_cache,
-        )
-        entry_allowed_mask: list[bool] | None = None
+        entry_rule_groups_by_key: dict[str, _EntryRuleLaneGroup] = {}
+        entry_rule_groups: list[_EntryRuleLaneGroup] = []
+        for lane in lanes:
+            evaluator = EntryRuleEvaluator(
+                config=lane.config,
+                bars=sorted_bars,
+                earnings_dates=earnings_dates,
+                option_gateway=option_gateway,
+                shared_cache=shared_entry_rule_cache,
+            )
+            cache_key = evaluator._entry_mask_cache_key()
+            group = entry_rule_groups_by_key.get(cache_key)
+            if group is None:
+                group = _EntryRuleLaneGroup(evaluator=evaluator)
+                entry_rule_groups_by_key[cache_key] = group
+                entry_rule_groups.append(group)
+            group.lanes.append(lane)
+
         rule_precompute_start = _time.perf_counter()
-        try:
-            entry_allowed_mask = evaluator.build_entry_allowed_mask()
-        except Exception:
-            logger.warning("entry_rule_precompute_error", exc_info=True)
-            for lane in lanes:
-                self._add_warning_once(
-                    lane.warnings,
-                    lane.warning_codes,
-                    "entry_rule_evaluation_error",
-                    "One or more entry rule evaluations failed and were treated as not-allowed.",
-                )
+        for group in entry_rule_groups:
+            try:
+                group.entry_allowed_mask = group.evaluator.build_entry_allowed_mask()
+            except Exception:
+                logger.warning("entry_rule_precompute_error", exc_info=True)
+                for lane in group.lanes:
+                    self._add_warning_once(
+                        lane.warnings,
+                        lane.warning_codes,
+                        "entry_rule_evaluation_error",
+                        "One or more entry rule evaluations failed and were treated as not-allowed.",
+                    )
         timing.rule_precompute_ms += _elapsed_ms(rule_precompute_start)
 
         build_position_supports_custom_legs = (
@@ -1146,48 +1262,56 @@ class OptionsBacktestEngine:
                         exit_prices_by_lane[lane_index] = {}
 
             eligible_lanes: list[_ExitPolicyLane] = []
-            for lane in lanes:
-                just_closed_this_bar = (
-                    lane.position is None
-                    and len(lane.trades) > 0
-                    and lane.trades[-1].exit_date == bar.trade_date
-                )
-                if just_closed_this_bar:
-                    self._add_warning_once(
-                        lane.warnings,
-                        lane.warning_codes,
-                        "same_day_reentry_blocked",
-                        "One or more entry signals were suppressed because a position was "
-                        "closed on the same trading day. The engine does not re-enter on "
-                        "the same bar to avoid infinite open/close loops.",
+            for group in entry_rule_groups:
+                candidate_lanes: list[_ExitPolicyLane] = []
+                for lane in group.lanes:
+                    just_closed_this_bar = (
+                        lane.position is None
+                        and len(lane.trades) > 0
+                        and lane.trades[-1].exit_date == bar.trade_date
                     )
-                    continue
-                if lane.position is not None or bar.trade_date > lane.config.end_date:
-                    continue
-                entry_allowed = False
-                if entry_allowed_mask is not None:
-                    entry_allowed = entry_allowed_mask[index]
-                else:
-                    try:
-                        entry_allowed = evaluator.is_entry_allowed(index)
-                    except Exception:
-                        logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
+                    if just_closed_this_bar:
                         self._add_warning_once(
                             lane.warnings,
                             lane.warning_codes,
-                            "entry_rule_evaluation_error",
-                            "One or more entry rule evaluations failed and were treated as not-allowed.",
+                            "same_day_reentry_blocked",
+                            "One or more entry signals were suppressed because a position was "
+                            "closed on the same trading day. The engine does not re-enter on "
+                            "the same bar to avoid infinite open/close loops.",
                         )
+                        continue
+                    if lane.position is not None or bar.trade_date > lane.config.end_date:
+                        continue
+                    candidate_lanes.append(lane)
+                if not candidate_lanes:
+                    continue
+
+                entry_allowed = False
+                if group.entry_allowed_mask is not None:
+                    entry_allowed = group.entry_allowed_mask[index]
+                else:
+                    try:
+                        entry_allowed = group.evaluator.is_entry_allowed(index)
+                    except Exception:
+                        logger.warning("entry_rule_evaluation_error", bar_index=index, exc_info=True)
+                        for lane in candidate_lanes:
+                            self._add_warning_once(
+                                lane.warnings,
+                                lane.warning_codes,
+                                "entry_rule_evaluation_error",
+                                "One or more entry rule evaluations failed and were treated as not-allowed.",
+                            )
                 if entry_allowed:
-                    eligible_lanes.append(lane)
+                    eligible_lanes.extend(candidate_lanes)
 
             if eligible_lanes:
                 affordable_lanes = [
                     lane for lane in eligible_lanes
                     if self._can_afford_minimum_strategy_package(strategy, lane.config, bar, lane.cash)
                 ]
+                affordable_lane_ids = {id(lane) for lane in affordable_lanes}
                 for lane in eligible_lanes:
-                    if lane not in affordable_lanes:
+                    if id(lane) not in affordable_lane_ids:
                         self._add_warning_once(
                             lane.warnings,
                             lane.warning_codes,
@@ -1226,6 +1350,25 @@ class OptionsBacktestEngine:
                                     "One or more entry dates were skipped because no valid same-day option quote was returned.",
                                 )
                         else:
+                            self._enrich_position_option_legs(
+                                position=candidate_template,
+                                option_gateway=option_gateway,
+                            )
+                            primary_lane = affordable_lanes[0]
+                            if self._maybe_reject_option_underlying_scale_mismatch(
+                                position=candidate_template,
+                                underlying_close=float(bar.close_price),
+                                warnings=primary_lane.warnings,
+                                warning_codes=primary_lane.warning_codes,
+                            ):
+                                for lane in affordable_lanes[1:]:
+                                    self._add_warning_once(
+                                        lane.warnings,
+                                        lane.warning_codes,
+                                        "option_underlying_scale_mismatch",
+                                        primary_lane.warnings[-1]["message"],
+                                    )
+                                continue
                             ev_per_unit = self._entry_value_per_unit(candidate_template)
                             contracts_per_unit = sum(
                                 leg.quantity_per_unit for leg in candidate_template.option_legs
@@ -1637,7 +1780,16 @@ class OptionsBacktestEngine:
         for leg in position.option_legs:
             if leg.side >= 0:
                 continue
-            intrinsic = float(cls._intrinsic_value(leg.contract_type, leg.strike_price, bar.close_price))
+            if getattr(leg, "is_nonstandard", False):
+                continue
+            intrinsic = float(
+                cls._intrinsic_value(
+                    leg.contract_type,
+                    leg.strike_price,
+                    bar.close_price,
+                    deliverable_shares_per_contract=getattr(leg, "deliverable_shares_per_contract", 100.0),
+                )
+            )
             if intrinsic <= 0:
                 continue
             time_value = max(0.0, leg.last_mid - intrinsic)
@@ -1737,10 +1889,14 @@ class OptionsBacktestEngine:
         tickers = [leg.ticker for leg in position.option_legs]
         try:
             tickers = [leg.ticker for leg in position.option_legs]
-            position.quote_series_lookup = {
-                ticker: dict(quotes_by_date)
-                for ticker, quotes_by_date in fetch_series(tickers, start_date, end_date).items()
-            }
+            fetched_series = fetch_series(tickers, start_date, end_date)
+            if isinstance(fetched_series, dict):
+                position.quote_series_lookup = fetched_series
+            else:
+                position.quote_series_lookup = {
+                    ticker: quotes_by_date if isinstance(quotes_by_date, dict) else dict(quotes_by_date)
+                    for ticker, quotes_by_date in fetched_series.items()
+                }
             position.quote_series_loaded_tickers = set(tickers)
         except Exception:
             logger.warning(
@@ -1773,24 +1929,38 @@ class OptionsBacktestEngine:
         quote: OptionQuoteRecord | None,
         missing_quote_tickers: list[str],
     ) -> float:
+        self._apply_quote_metadata(
+            leg=leg,
+            position_underlying_symbol=getattr(leg, "reference_underlying_symbol", None) or "",
+            quote=quote,
+        )
         if quote is None:
             if bar.trade_date >= leg.expiration_date:
                 return float(self._intrinsic_value(
-                    leg.contract_type, leg.strike_price, bar.close_price,
+                    leg.contract_type,
+                    leg.strike_price,
+                    bar.close_price,
+                    deliverable_shares_per_contract=getattr(leg, "deliverable_shares_per_contract", 100.0),
                 ))
             missing_quote_tickers.append(leg.ticker)
             return leg.last_mid
         if quote.mid_price is None or not math.isfinite(quote.mid_price):
             if bar.trade_date >= leg.expiration_date:
                 return float(self._intrinsic_value(
-                    leg.contract_type, leg.strike_price, bar.close_price,
+                    leg.contract_type,
+                    leg.strike_price,
+                    bar.close_price,
+                    deliverable_shares_per_contract=getattr(leg, "deliverable_shares_per_contract", 100.0),
                 ))
             missing_quote_tickers.append(leg.ticker)
             return leg.last_mid
         if quote.mid_price <= 0:
             if bar.trade_date >= leg.expiration_date:
                 return float(self._intrinsic_value(
-                    leg.contract_type, leg.strike_price, bar.close_price,
+                    leg.contract_type,
+                    leg.strike_price,
+                    bar.close_price,
+                    deliverable_shares_per_contract=getattr(leg, "deliverable_shares_per_contract", 100.0),
                 ))
             missing_quote_tickers.append(leg.ticker)
             return leg.last_mid
@@ -2116,10 +2286,18 @@ class OptionsBacktestEngine:
     ) -> dict[str, Any]:
         detail = dict(position.detail_json)
         legs = [dict(leg) for leg in detail.get("legs", [])]
+        option_leg_metadata = {leg.ticker: leg for leg in position.option_legs}
         for leg in legs:
             ticker = leg.get("ticker")
             if isinstance(ticker, str) and ticker in exit_prices:
                 leg["exit_mid"] = exit_prices[ticker]
+            if leg.get("asset_type") == "option" and isinstance(ticker, str) and ticker in option_leg_metadata:
+                option_leg = option_leg_metadata[ticker]
+                leg["mark_ticker"] = option_leg.mark_ticker or option_leg.ticker
+                leg["contract_root_symbol"] = option_leg.contract_root_symbol
+                leg["reference_underlying_symbol"] = option_leg.reference_underlying_symbol
+                leg["deliverable_shares_per_contract"] = option_leg.deliverable_shares_per_contract
+                leg["is_nonstandard"] = option_leg.is_nonstandard
         for leg in legs:
             if leg.get("asset_type") == "stock":
                 identifier = leg.get("identifier")
@@ -2149,6 +2327,81 @@ class OptionsBacktestEngine:
                 key: value for key, value in assignment_detail.items() if key != "warning_message"
             }
         return detail
+
+    @staticmethod
+    def _detect_option_underlying_scale_mismatch(
+        position: OpenMultiLegPosition,
+        underlying_close: float,
+    ) -> dict[str, Any] | None:
+        if underlying_close <= 0 or not math.isfinite(underlying_close):
+            return None
+        strike_prices = sorted(
+            {
+                float(leg.strike_price)
+                for leg in position.option_legs
+                if leg.strike_price > 0
+                and math.isfinite(float(leg.strike_price))
+                and not getattr(leg, "is_nonstandard", False)
+            }
+        )
+        if not strike_prices:
+            return None
+        nearest_strike, scale_gap = min(
+            (
+                strike,
+                max(strike / underlying_close, underlying_close / strike),
+            )
+            for strike in strike_prices
+        )
+        if scale_gap <= _OPTION_UNDERLYING_SCALE_MISMATCH_FACTOR:
+            return None
+        return {
+            "underlying_close": underlying_close,
+            "strike_prices": strike_prices,
+            "nearest_strike": nearest_strike,
+            "scale_gap": scale_gap,
+        }
+
+    @classmethod
+    def _maybe_reject_option_underlying_scale_mismatch(
+        cls,
+        *,
+        position: OpenMultiLegPosition,
+        underlying_close: float,
+        warnings: list[dict[str, Any]],
+        warning_codes: set[str],
+    ) -> bool:
+        mismatch = cls._detect_option_underlying_scale_mismatch(position, underlying_close)
+        if mismatch is None:
+            return False
+        strike_preview = ", ".join(f"{strike:.4f}" for strike in mismatch["strike_prices"][:4])
+        if len(mismatch["strike_prices"]) > 4:
+            strike_preview += ", ..."
+        message = (
+            "One or more entries were skipped because option strikes were more than "
+            f"{_OPTION_UNDERLYING_SCALE_MISMATCH_FACTOR:.0f}x away from the underlying close "
+            f"(underlying_close={mismatch['underlying_close']:.4f}, "
+            f"nearest_strike={mismatch['nearest_strike']:.4f}, strikes=[{strike_preview}]). "
+            "This usually indicates a price-scale mismatch, such as split-adjusted underlying bars "
+            "paired with unadjusted option strikes."
+        )
+        cls._add_warning_once(
+            warnings,
+            warning_codes,
+            "option_underlying_scale_mismatch",
+            message,
+        )
+        logger.warning(
+            "engine.option_underlying_scale_mismatch",
+            ticker=position.display_ticker,
+            underlying_symbol=position.underlying_symbol,
+            entry_date=str(position.entry_date),
+            underlying_close=round(float(mismatch["underlying_close"]), 6),
+            nearest_strike=round(float(mismatch["nearest_strike"]), 6),
+            strike_prices=[round(float(strike), 6) for strike in mismatch["strike_prices"]],
+            scale_gap=round(float(mismatch["scale_gap"]), 6),
+        )
+        return True
 
     @staticmethod
     def _resolve_exit(
@@ -2202,10 +2455,17 @@ class OptionsBacktestEngine:
         return False, ""
 
     @staticmethod
-    def _intrinsic_value(contract_type: str, strike_price: float, underlying_close: float) -> Decimal:
+    def _intrinsic_value(
+        contract_type: str,
+        strike_price: float,
+        underlying_close: float,
+        *,
+        deliverable_shares_per_contract: float = 100.0,
+    ) -> Decimal:
+        effective_underlying_close = _D(underlying_close) * _D(deliverable_shares_per_contract) / _D100
         if contract_type == "call":
-            return max(_D0, _D(underlying_close) - _D(strike_price))
-        return max(_D0, _D(strike_price) - _D(underlying_close))
+            return max(_D0, effective_underlying_close - _D(strike_price))
+        return max(_D0, _D(strike_price) - effective_underlying_close)
 
     @staticmethod
     def _estimate_realized_vol(bars: list, lookback: int = 60) -> float | None:

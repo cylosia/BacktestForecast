@@ -51,6 +51,7 @@ const TRIGGER_OPTIONS = [
 
 const STRATEGY_OPTIONS = [
   { value: "calendar_spread", label: "Calendar Spread" },
+  { value: "put_calendar_spread", label: "Put Calendar Spread" },
   { value: "diagonal_spread", label: "Diagonal Spread" },
   { value: "covered_call", label: "Covered Call" },
   { value: "cash_secured_put", label: "Cash-Secured Put" },

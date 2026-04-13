@@ -268,6 +268,10 @@ class _MassiveClientCore:
                     expiration_date=date.fromisoformat(expiration_text),
                     strike_price=strike,
                     shares_per_contract=float(row.get("shares_per_contract", 100)),
+                    underlying_symbol=str(row.get("underlying_ticker")).upper()
+                    if isinstance(row.get("underlying_ticker"), str)
+                    else None,
+                    as_of_mid_price=float(row.get("close_price")) if row.get("close_price") is not None else None,
                 )
             )
         return contracts
@@ -357,29 +361,45 @@ class _MassiveClientCore:
 
     @staticmethod
     def parse_earnings_records(rows: list[dict[str, Any]]) -> list[EarningsEventRecord]:
-        records: list[EarningsEventRecord] = []
+        records_by_key: dict[tuple[date, str], EarningsEventRecord] = {}
         for row in rows:
             raw_date = row.get("date")
-            event_type = row.get("type")
-            if not isinstance(raw_date, str) or not isinstance(event_type, str):
-                continue
-            normalized_event_type = event_type.strip().lower()
-            if normalized_event_type not in {"earnings_announcement_date", "earnings_conference_call"}:
+            if not isinstance(raw_date, str):
                 continue
             try:
                 event_date = date.fromisoformat(raw_date)
             except ValueError:
                 logger.debug("massive_client.earnings.invalid_date", raw_date=raw_date)
                 continue
+
+            raw_event_type = row.get("type")
+            normalized_event_type: str
+            if isinstance(raw_event_type, str) and raw_event_type.strip():
+                normalized_event_type = raw_event_type.strip().lower()
+            else:
+                # Benzinga earnings exposes one earnings record per report date rather
+                # than multiple event sub-types. Persist those rows as the canonical
+                # earnings announcement date used by avoid-earnings logic.
+                normalized_event_type = "earnings_announcement_date"
+
+            if normalized_event_type not in {"earnings_announcement_date", "earnings_conference_call"}:
+                continue
+
             provider_event_id = row.get("id")
-            records.append(
-                EarningsEventRecord(
-                    event_date=event_date,
-                    event_type=normalized_event_type,
-                    provider_event_id=provider_event_id if isinstance(provider_event_id, str) and provider_event_id.strip() else None,
-                )
+            if not isinstance(provider_event_id, str) or not provider_event_id.strip():
+                provider_event_id = row.get("benzinga_id")
+            record = EarningsEventRecord(
+                event_date=event_date,
+                event_type=normalized_event_type,
+                provider_event_id=provider_event_id if isinstance(provider_event_id, str) and provider_event_id.strip() else None,
             )
-        return records
+            key = (record.event_date, record.event_type)
+            existing = records_by_key.get(key)
+            if existing is None or (
+                existing.provider_event_id is None and record.provider_event_id is not None
+            ):
+                records_by_key[key] = record
+        return sorted(records_by_key.values(), key=lambda item: (item.event_date, item.event_type))
 
     @staticmethod
     def parse_earnings(rows: list[dict[str, Any]]) -> set[date]:
@@ -522,17 +542,8 @@ class _MassiveClientCore:
         return [
             {
                 "ticker": symbol,
-                "type": "earnings_announcement_date,earnings_conference_call",
                 "date.gte": start_date.isoformat(),
                 "date.lte": end_date.isoformat(),
-                "sort": "date.asc",
-                "limit": 1000,
-            },
-            {
-                "ticker": symbol,
-                "type": "earnings_announcement_date,earnings_conference_call",
-                "date_gte": start_date.isoformat(),
-                "date_lte": end_date.isoformat(),
                 "sort": "date.asc",
                 "limit": 1000,
             },
@@ -569,10 +580,17 @@ class MassiveClient(_MassiveClientCore):
 
     # -- Public API ---------------------------------------------------------
 
-    def get_stock_daily_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
+    def get_stock_daily_bars(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        *,
+        adjusted: bool = True,
+    ) -> list[DailyBar]:
         payload = self._get_json(
             f"/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/day/{start_date.isoformat()}/{end_date.isoformat()}",
-            params={"adjusted": "true", "sort": "asc", "limit": 50000},
+            params={"adjusted": "true" if adjusted else "false", "sort": "asc", "limit": 50000},
         )
         return self.parse_bars(payload.get("results", []), symbol)
 
@@ -707,7 +725,7 @@ class MassiveClient(_MassiveClientCore):
         last_error: ExternalServiceError | None = None
         for params in self._earnings_param_variants(symbol, start_date, end_date):
             try:
-                rows = self._get_paginated_json("/tmx/v1/corporate-events", params=params)
+                rows = self._get_paginated_json("/benzinga/v1/earnings", params=params)
             except ExternalServiceError as exc:
                 last_error = exc
                 continue
@@ -920,10 +938,17 @@ class AsyncMassiveClient(_MassiveClientCore):
 
     # -- Public API ---------------------------------------------------------
 
-    async def get_stock_daily_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
+    async def get_stock_daily_bars(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        *,
+        adjusted: bool = True,
+    ) -> list[DailyBar]:
         payload = await self._get_json(
             f"/v2/aggs/ticker/{quote(symbol, safe='')}/range/1/day/{start_date.isoformat()}/{end_date.isoformat()}",
-            params={"adjusted": "true", "sort": "asc", "limit": 50000},
+            params={"adjusted": "true" if adjusted else "false", "sort": "asc", "limit": 50000},
         )
         return self.parse_bars(payload.get("results", []), symbol)
 
@@ -1055,7 +1080,7 @@ class AsyncMassiveClient(_MassiveClientCore):
         last_error: ExternalServiceError | None = None
         for params in self._earnings_param_variants(symbol, start_date, end_date):
             try:
-                rows = await self._get_paginated_json("/tmx/v1/corporate-events", params=params)
+                rows = await self._get_paginated_json("/benzinga/v1/earnings", params=params)
             except ExternalServiceError as exc:
                 last_error = exc
                 continue

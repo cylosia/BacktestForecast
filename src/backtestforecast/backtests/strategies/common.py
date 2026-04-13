@@ -810,6 +810,29 @@ def _build_iv_store_callback(
     return lambda value: None
 
 
+def _quote_from_contract(
+    contract: OptionContractRecord,
+    *,
+    trade_date: date,
+) -> OptionQuoteRecord | None:
+    mid_price = contract.as_of_mid_price
+    if mid_price is None or not math.isfinite(mid_price) or mid_price <= 0:
+        return None
+    deliverable_shares = contract.shares_per_contract
+    return OptionQuoteRecord(
+        trade_date=trade_date,
+        bid_price=mid_price,
+        ask_price=mid_price,
+        participant_timestamp=None,
+        source_option_ticker=contract.ticker,
+        deliverable_shares_per_contract=(
+            deliverable_shares
+            if math.isfinite(deliverable_shares) and deliverable_shares > 0
+            else None
+        ),
+    )
+
+
 def _prepare_iv_input(
     contract: OptionContractRecord,
     *,
@@ -827,7 +850,7 @@ def _prepare_iv_input(
             _increment_build_position_counter("delta_iv_cache_hits")
             return _PreparedIvInput(True, cached_val, store_iv)
         _increment_build_position_counter("delta_iv_cache_misses")
-        return _PreparedIvInput(False, None, store_iv)
+        return _PreparedIvInput(False, None, store_iv, quote=_quote_from_contract(contract, trade_date=trade_date))
 
     if iv_cache is not None:
         if cache_key in iv_cache:
@@ -835,7 +858,7 @@ def _prepare_iv_input(
             return _PreparedIvInput(True, iv_cache[cache_key], store_iv)
         _increment_build_position_counter("delta_iv_cache_misses")
 
-    return _PreparedIvInput(False, None, store_iv)
+    return _PreparedIvInput(False, None, store_iv, quote=_quote_from_contract(contract, trade_date=trade_date))
 
 
 def _prefetch_iv_inputs(
@@ -857,7 +880,7 @@ def _prefetch_iv_inputs(
             iv_cache=iv_cache,
         )
         prepared[contract.ticker] = prepared_input
-        if not prepared_input.has_cached_iv:
+        if not prepared_input.has_cached_iv and prepared_input.quote is None:
             missing_tickers.append(contract.ticker)
 
     if not missing_tickers:
@@ -1359,20 +1382,34 @@ def get_entry_quotes(
     contract_list = list(contracts)
     if not contract_list:
         return {}
-    tickers = list(dict.fromkeys(contract.ticker for contract in contract_list))
     quotes: dict[str, OptionQuoteRecord | None] = {}
+    missing_tickers: list[str] = []
+    seen_tickers: set[str] = set()
+    for contract in contract_list:
+        if contract.ticker in seen_tickers:
+            continue
+        seen_tickers.add(contract.ticker)
+        contract_quote = _quote_from_contract(contract, trade_date=trade_date)
+        if contract_quote is not None:
+            quotes[contract.ticker] = contract_quote
+        else:
+            missing_tickers.append(contract.ticker)
+
+    if not missing_tickers:
+        return quotes
+
     batch_fetch = getattr(option_gateway, "get_quotes", None)
-    if callable(batch_fetch) and len(tickers) > 1:
+    if callable(batch_fetch) and len(missing_tickers) > 1:
         try:
-            quotes.update(dict(batch_fetch(tickers, trade_date)))
+            quotes.update(dict(batch_fetch(missing_tickers, trade_date)))
         except Exception:
             _logger.debug(
                 "entry_quotes.batch_fetch_failed",
                 trade_date=str(trade_date),
-                ticker_count=len(tickers),
+                ticker_count=len(missing_tickers),
                 exc_info=True,
             )
-    for ticker in tickers:
+    for ticker in missing_tickers:
         if ticker not in quotes:
             quotes[ticker] = option_gateway.get_quote(ticker, trade_date)
     return quotes

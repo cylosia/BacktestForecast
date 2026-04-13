@@ -74,6 +74,7 @@ ADVANCED_SCANNER_STRATEGIES: frozenset[str] = BASIC_SCANNER_STRATEGIES | frozens
     "long_straddle",
     "long_strangle",
     "calendar_spread",
+    "put_calendar_spread",
     "butterfly",
     "wheel_strategy",
     "poor_mans_covered_call",

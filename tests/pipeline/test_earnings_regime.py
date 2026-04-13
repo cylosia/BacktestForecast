@@ -32,12 +32,69 @@ def _make_bars(count: int = 220, end_date: date | None = None) -> list[DailyBar]
     return bars
 
 
+def _make_trending_bars(count: int = 260, end_date: date | None = None) -> list[DailyBar]:
+    end = end_date or date(2025, 6, 15)
+    bars: list[DailyBar] = []
+    for i in range(count):
+        d = end - timedelta(days=count - 1 - i)
+        base = 100.0 + (i * 0.8)
+        bars.append(
+            DailyBar(
+                trade_date=d,
+                open_price=base - 0.4,
+                high_price=base + 1.8,
+                low_price=base - 1.0,
+                close_price=base + 0.9,
+                volume=1_000_000.0 + (i * 1_000.0),
+            )
+        )
+    return bars
+
+
+def _make_range_bound_bars(count: int = 260, end_date: date | None = None) -> list[DailyBar]:
+    end = end_date or date(2025, 6, 15)
+    bars: list[DailyBar] = []
+    for i in range(count):
+        d = end - timedelta(days=count - 1 - i)
+        phase = i % 6
+        close = 100.0 + (0.6 if phase in {1, 2} else -0.6 if phase in {4, 5} else 0.0)
+        bars.append(
+            DailyBar(
+                trade_date=d,
+                open_price=close - 0.25,
+                high_price=close + 0.7,
+                low_price=close - 0.7,
+                close_price=close,
+                volume=1_000_000.0 + ((phase - 3) * 5_000.0),
+            )
+        )
+    return bars
+
+
 # ---------------------------------------------------------------------------
 # Regime classifier: EARNINGS_IMMINENT
 # ---------------------------------------------------------------------------
 
 
 class TestClassifyRegimeEarnings:
+    def test_strong_adx_series_is_trending(self):
+        bars = _make_trending_bars()
+
+        result = classify_regime("TEST", bars)
+
+        assert result is not None
+        assert Regime.TRENDING in result.regimes
+        assert Regime.RANGE_BOUND not in result.regimes
+
+    def test_low_adx_series_is_range_bound(self):
+        bars = _make_range_bound_bars()
+
+        result = classify_regime("TEST", bars)
+
+        assert result is not None
+        assert Regime.RANGE_BOUND in result.regimes
+        assert Regime.TRENDING not in result.regimes
+
     def test_earnings_within_10_days_adds_label(self):
         bars = _make_bars(220)
         last_date = bars[-1].trade_date
@@ -111,6 +168,18 @@ class TestClassifyRegimeEarnings:
 
 
 class TestStrategyMapEarnings:
+    def test_bearish_low_iv_includes_put_calendar_spread(self):
+        regimes = frozenset({Regime.BEARISH, Regime.LOW_IV})
+        result = strategies_for_regime(regimes)
+        assert "put_calendar_spread" in result
+        assert result.index("put_calendar_spread") < result.index("bear_put_debit_spread")
+
+    def test_bearish_fallback_includes_put_calendar_spread(self):
+        regimes = frozenset({Regime.BEARISH})
+        result = strategies_for_regime(regimes)
+        assert "put_calendar_spread" in result
+        assert result.index("put_calendar_spread") > result.index("bear_put_debit_spread")
+
     def test_no_earnings_returns_unfiltered(self):
         regimes = frozenset({Regime.NEUTRAL, Regime.HIGH_IV})
         result = strategies_for_regime(regimes)

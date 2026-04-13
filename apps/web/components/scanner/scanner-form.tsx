@@ -64,6 +64,7 @@ const ADVANCED_STRATEGY_GROUPS: Array<{
       { value: "diagonal_spread", label: "Diagonal Spread" },
       { value: "double_diagonal", label: "Double Diagonal" },
       { value: "calendar_spread", label: "Calendar Spread" },
+      { value: "put_calendar_spread", label: "Put Calendar Spread" },
     ],
   },
   {

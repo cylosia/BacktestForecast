@@ -1265,6 +1265,46 @@ class HistoricalUnderlyingDayBar(Base):
     )
 
 
+class HistoricalUnderlyingRawDayBar(Base):
+    __tablename__ = "historical_underlying_raw_day_bars"
+    __table_args__ = (
+        UniqueConstraint("symbol", "trade_date", name="uq_historical_underlying_raw_day_bars_symbol_date"),
+        Index(
+            "ix_historical_underlying_raw_day_bars_covering",
+            "symbol",
+            "trade_date",
+            postgresql_include=["open_price", "high_price", "low_price", "close_price", "volume"],
+        ),
+        Index("ix_historical_underlying_raw_day_bars_trade_date_desc", text("trade_date DESC")),
+        CheckConstraint("length(symbol) > 0", name="ck_historical_underlying_raw_day_bars_symbol_not_empty"),
+        CheckConstraint("open_price > 0", name="ck_historical_underlying_raw_day_bars_open_positive"),
+        CheckConstraint("high_price > 0", name="ck_historical_underlying_raw_day_bars_high_positive"),
+        CheckConstraint("low_price > 0", name="ck_historical_underlying_raw_day_bars_low_positive"),
+        CheckConstraint("close_price > 0", name="ck_historical_underlying_raw_day_bars_close_positive"),
+        CheckConstraint("volume >= 0", name="ck_historical_underlying_raw_day_bars_volume_nonneg"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    open_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    high_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    low_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    close_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    volume: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="massive_rest_day_aggs_raw",
+        server_default="massive_rest_day_aggs_raw",
+    )
+    source_file_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class HistoricalOptionDayBar(Base):
     __tablename__ = "historical_option_day_bars"
     __table_args__ = (

@@ -1,0 +1,203 @@
+{
+  "seed": 2016,
+  "symbol": "SPY",
+  "start_date": "2016-01-04",
+  "end_date": "2016-12-30",
+  "request_count": 100,
+  "success_count": 100,
+  "error_count": 0,
+  "wall_total_ms": 70580.53,
+  "wall_total_s": 70.581,
+  "per_run_median_ms": 356.428,
+  "per_run_mean_ms": 705.693,
+  "per_run_p90_ms": 1749.387,
+  "per_run_p95_ms": 2289.525,
+  "first_run_ms": 1404.225,
+  "zero_trade_count": 2,
+  "median_trades_per_run": 29.5,
+  "mean_trades_per_run": 31.54,
+  "strategy_counts": {
+    "bear_call_credit_spread": 12,
+    "bear_put_debit_spread": 17,
+    "bull_call_debit_spread": 20,
+    "bull_put_credit_spread": 2,
+    "butterfly": 8,
+    "calendar_spread": 5,
+    "iron_condor": 5,
+    "long_call": 6,
+    "long_put": 6,
+    "long_straddle": 16,
+    "long_strangle": 3
+  },
+  "per_strategy": {
+    "bear_call_credit_spread": {
+      "count": 12,
+      "median_ms": 479.283,
+      "mean_ms": 676.937
+    },
+    "bear_put_debit_spread": {
+      "count": 17,
+      "median_ms": 274.554,
+      "mean_ms": 280.071
+    },
+    "bull_call_debit_spread": {
+      "count": 20,
+      "median_ms": 241.134,
+      "mean_ms": 258.822
+    },
+    "bull_put_credit_spread": {
+      "count": 2,
+      "median_ms": 736.592,
+      "mean_ms": 736.592
+    },
+    "butterfly": {
+      "count": 8,
+      "median_ms": 512.438,
+      "mean_ms": 465.075
+    },
+    "calendar_spread": {
+      "count": 5,
+      "median_ms": 731.879,
+      "mean_ms": 997.794
+    },
+    "iron_condor": {
+      "count": 5,
+      "median_ms": 859.542,
+      "mean_ms": 1300.667
+    },
+    "long_call": {
+      "count": 6,
+      "median_ms": 715.181,
+      "mean_ms": 741.468
+    },
+    "long_put": {
+      "count": 6,
+      "median_ms": 2589.309,
+      "mean_ms": 2964.36
+    },
+    "long_straddle": {
+      "count": 16,
+      "median_ms": 282.788,
+      "mean_ms": 359.405
+    },
+    "long_strangle": {
+      "count": 3,
+      "median_ms": 2150.125,
+      "mean_ms": 2612.291
+    }
+  },
+  "slowest_runs": [
+    {
+      "index": 38,
+      "strategy": "long_put",
+      "elapsed_ms": 6075.625,
+      "target_dte": 14,
+      "dte_tolerance_days": 6,
+      "max_holding_days": 15,
+      "trades": 94,
+      "profit_target_pct": "25",
+      "stop_loss_pct": "25"
+    },
+    {
+      "index": 26,
+      "strategy": "long_strangle",
+      "elapsed_ms": 3542.604,
+      "target_dte": 60,
+      "dte_tolerance_days": 5,
+      "max_holding_days": 10,
+      "trades": 16,
+      "profit_target_pct": null,
+      "stop_loss_pct": "75"
+    },
+    {
+      "index": 11,
+      "strategy": "long_put",
+      "elapsed_ms": 3387.352,
+      "target_dte": 30,
+      "dte_tolerance_days": 8,
+      "max_holding_days": 5,
+      "trades": 46,
+      "profit_target_pct": "50",
+      "stop_loss_pct": null
+    },
+    {
+      "index": 59,
+      "strategy": "long_put",
+      "elapsed_ms": 3038.035,
+      "target_dte": 21,
+      "dte_tolerance_days": 9,
+      "max_holding_days": 5,
+      "trades": 54,
+      "profit_target_pct": "75",
+      "stop_loss_pct": "50"
+    },
+    {
+      "index": 12,
+      "strategy": "iron_condor",
+      "elapsed_ms": 2435.331,
+      "target_dte": 14,
+      "dte_tolerance_days": 5,
+      "max_holding_days": 10,
+      "trades": 27,
+      "profit_target_pct": "50",
+      "stop_loss_pct": "25"
+    },
+    {
+      "index": 45,
+      "strategy": "iron_condor",
+      "elapsed_ms": 2289.525,
+      "target_dte": 45,
+      "dte_tolerance_days": 5,
+      "max_holding_days": 5,
+      "trades": 38,
+      "profit_target_pct": "100",
+      "stop_loss_pct": "25"
+    },
+    {
+      "index": 39,
+      "strategy": "long_strangle",
+      "elapsed_ms": 2150.125,
+      "target_dte": 14,
+      "dte_tolerance_days": 5,
+      "max_holding_days": 10,
+      "trades": 32,
+      "profit_target_pct": "25",
+      "stop_loss_pct": "75"
+    },
+    {
+      "index": 67,
+      "strategy": "long_strangle",
+      "elapsed_ms": 2144.143,
+      "target_dte": 14,
+      "dte_tolerance_days": 5,
+      "max_holding_days": 15,
+      "trades": 40,
+      "profit_target_pct": "25",
+      "stop_loss_pct": "50"
+    },
+    {
+      "index": 61,
+      "strategy": "long_put",
+      "elapsed_ms": 2140.582,
+      "target_dte": 30,
+      "dte_tolerance_days": 8,
+      "max_holding_days": 5,
+      "trades": 43,
+      "profit_target_pct": "100",
+      "stop_loss_pct": "100"
+    },
+    {
+      "index": 22,
+      "strategy": "bear_call_credit_spread",
+      "elapsed_ms": 1907.661,
+      "target_dte": 14,
+      "dte_tolerance_days": 4,
+      "max_holding_days": 5,
+      "trades": 42,
+      "profit_target_pct": "75",
+      "stop_loss_pct": "75"
+    }
+  ],
+  "errors": [],
+  "progress_path": ".codex_bench\\spy_2016_random_100_progress.jsonl"
+}

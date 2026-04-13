@@ -305,6 +305,64 @@ def test_prewarm_targeted_option_bundle_uses_shared_expiration_lookup_for_two_si
     ])
 
 
+def test_prewarm_targeted_option_bundle_prefers_specialized_shared_expiration_lookup_when_available():
+    class _PreferredCommonGateway(_TargetedGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.preferred_common_calls: list[tuple[date, int, int, float, float]] = []
+
+        def list_contracts_for_preferred_common_expiration(self, **kwargs):
+            self.preferred_common_calls.append(
+                (
+                    kwargs["entry_date"],
+                    kwargs["target_dte"],
+                    kwargs["dte_tolerance_days"],
+                    kwargs["strike_price_gte"],
+                    kwargs["strike_price_lte"],
+                )
+            )
+            expiration = date(2025, 4, 4)
+            return (
+                expiration,
+                [
+                    OptionContractRecord("O:AAPL250404C00200000", "call", expiration, 200.0, 100.0),
+                ],
+                [
+                    OptionContractRecord("O:AAPL250404P00200000", "put", expiration, 200.0, 100.0),
+                ],
+            )
+
+        def list_contracts_for_expirations_by_type(self, **kwargs):
+            raise AssertionError("specialized preferred-common lookup should take priority")
+
+    gateway = _PreferredCommonGateway()
+    request = CreateBacktestRunRequest(
+        symbol="AAPL",
+        strategy_type=StrategyType.IRON_CONDOR,
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 2),
+        target_dte=3,
+        dte_tolerance_days=1,
+        max_holding_days=7,
+        account_size=Decimal("100000"),
+        risk_per_trade_pct=Decimal("100"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[],
+    )
+    bars = [DailyBar(date(2025, 4, 1), 200, 201, 199, 200, 1_000_000)]
+    bundle = HistoricalDataBundle(bars=bars, earnings_dates=set(), ex_dividend_dates=set(), option_gateway=gateway)
+
+    summary = prewarm_targeted_option_bundle(request, bundle=bundle, include_quotes=True)
+
+    assert summary.dates_processed == 1
+    assert summary.contracts_fetched == 2
+    assert summary.quotes_fetched == 2
+    assert gateway.preferred_common_calls == [
+        (date(2025, 4, 1), 3, 1, 160.0, 240.0),
+    ]
+    assert gateway.exact_expiration_calls == []
+
+
 def test_prewarm_targeted_option_bundle_prefers_shared_batch_fetch_over_availability_probe():
     class _AvailabilityGateway(_TargetedGateway):
         def __init__(self) -> None:

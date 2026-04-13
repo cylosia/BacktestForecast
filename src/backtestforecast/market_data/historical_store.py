@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from contextlib import suppress
-from dataclasses import dataclass
+from contextlib import AbstractContextManager, contextmanager, suppress
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Callable
+from functools import lru_cache
+import threading
+from typing import Callable, Iterator
 from uuid import uuid4
 
 import structlog
+from sqlalchemy import bindparam
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import delete
 from sqlalchemy import select
@@ -24,11 +27,13 @@ from backtestforecast.models import (
     HistoricalOptionDayBar,
     HistoricalTreasuryYield,
     HistoricalUnderlyingDayBar,
+    HistoricalUnderlyingRawDayBar,
 )
 from backtestforecast.utils.dates import is_trading_day
 
 logger = structlog.get_logger("market_data.historical_store")
 _POSTGRES_MAX_BIND_PARAMS = 65_000
+_MAX_NUMERIC_ROOT_ALIASES = 9
 _OPTION_DAY_BAR_COPY_COLUMNS = (
     "id",
     "option_ticker",
@@ -44,6 +49,204 @@ _OPTION_DAY_BAR_COPY_COLUMNS = (
     "volume",
     "source_file_date",
 )
+
+
+@lru_cache(maxsize=None)
+def _contracts_for_expiration_stmt(
+    *,
+    has_expiration_date: bool,
+    has_expiration_gte: bool,
+    has_expiration_lte: bool,
+    has_strike_gte: bool,
+    has_strike_lte: bool,
+):
+    clauses = [
+        "underlying_symbol IN :symbols",
+        "trade_date = :as_of_date",
+        "contract_type IN :contract_types",
+    ]
+    if has_expiration_date:
+        clauses.append("expiration_date = :expiration_date")
+    if has_expiration_gte:
+        clauses.append("expiration_date >= :expiration_gte")
+    if has_expiration_lte:
+        clauses.append("expiration_date <= :expiration_lte")
+    if has_strike_gte:
+        clauses.append("strike_price >= :strike_price_gte")
+    if has_strike_lte:
+        clauses.append("strike_price <= :strike_price_lte")
+    return text(
+        f"""
+        SELECT option_ticker, underlying_symbol, contract_type, expiration_date, strike_price, close_price
+        FROM historical_option_day_bars
+        WHERE {' AND '.join(clauses)}
+        ORDER BY expiration_date, strike_price, underlying_symbol, option_ticker
+        """
+    ).bindparams(
+        bindparam("symbols", expanding=True),
+        bindparam("contract_types", expanding=True),
+    )
+
+
+@lru_cache(maxsize=None)
+def _contracts_for_expirations_stmt(*, has_strike_gte: bool, has_strike_lte: bool):
+    clauses = [
+        "underlying_symbol IN :symbols",
+        "trade_date = :as_of_date",
+        "contract_type = :contract_type",
+        "expiration_date IN :expiration_dates",
+    ]
+    if has_strike_gte:
+        clauses.append("strike_price >= :strike_price_gte")
+    if has_strike_lte:
+        clauses.append("strike_price <= :strike_price_lte")
+    return text(
+        f"""
+        SELECT option_ticker, underlying_symbol, contract_type, expiration_date, strike_price, close_price
+        FROM historical_option_day_bars
+        WHERE {' AND '.join(clauses)}
+        ORDER BY expiration_date, strike_price, underlying_symbol, option_ticker
+        """
+    ).bindparams(
+        bindparam("symbols", expanding=True),
+        bindparam("expiration_dates", expanding=True),
+    )
+
+
+@lru_cache(maxsize=None)
+def _contracts_for_expirations_by_type_stmt(*, has_strike_gte: bool, has_strike_lte: bool):
+    clauses = [
+        "underlying_symbol IN :symbols",
+        "trade_date = :as_of_date",
+        "contract_type IN :contract_types",
+        "expiration_date IN :expiration_dates",
+    ]
+    if has_strike_gte:
+        clauses.append("strike_price >= :strike_price_gte")
+    if has_strike_lte:
+        clauses.append("strike_price <= :strike_price_lte")
+    return text(
+        f"""
+        SELECT option_ticker, underlying_symbol, contract_type, expiration_date, strike_price, close_price
+        FROM historical_option_day_bars
+        WHERE {' AND '.join(clauses)}
+        ORDER BY contract_type, expiration_date, strike_price, underlying_symbol, option_ticker
+        """
+    ).bindparams(
+        bindparam("symbols", expanding=True),
+        bindparam("contract_types", expanding=True),
+        bindparam("expiration_dates", expanding=True),
+    )
+
+
+@lru_cache(maxsize=None)
+def _available_expirations_stmt(*, has_strike_gte: bool, has_strike_lte: bool):
+    clauses = [
+        "underlying_symbol IN :symbols",
+        "trade_date = :as_of_date",
+        "contract_type = :contract_type",
+        "expiration_date IN :expiration_dates",
+    ]
+    if has_strike_gte:
+        clauses.append("strike_price >= :strike_price_gte")
+    if has_strike_lte:
+        clauses.append("strike_price <= :strike_price_lte")
+    return text(
+        f"""
+        SELECT DISTINCT expiration_date
+        FROM historical_option_day_bars
+        WHERE {' AND '.join(clauses)}
+        ORDER BY expiration_date
+        """
+    ).bindparams(
+        bindparam("symbols", expanding=True),
+        bindparam("expiration_dates", expanding=True),
+    )
+
+
+@lru_cache(maxsize=None)
+def _available_expirations_by_type_stmt(*, has_strike_gte: bool, has_strike_lte: bool):
+    clauses = [
+        "underlying_symbol IN :symbols",
+        "trade_date = :as_of_date",
+        "contract_type IN :contract_types",
+        "expiration_date IN :expiration_dates",
+    ]
+    if has_strike_gte:
+        clauses.append("strike_price >= :strike_price_gte")
+    if has_strike_lte:
+        clauses.append("strike_price <= :strike_price_lte")
+    return text(
+        f"""
+        SELECT DISTINCT contract_type, expiration_date
+        FROM historical_option_day_bars
+        WHERE {' AND '.join(clauses)}
+        ORDER BY contract_type, expiration_date
+        """
+    ).bindparams(
+        bindparam("symbols", expanding=True),
+        bindparam("contract_types", expanding=True),
+        bindparam("expiration_dates", expanding=True),
+    )
+
+
+@lru_cache(maxsize=None)
+def _quote_for_date_stmt():
+    return text(
+        """
+        SELECT underlying_symbol, close_price
+        FROM historical_option_day_bars
+        WHERE option_ticker = :option_ticker
+          AND trade_date = :trade_date
+        """
+    )
+
+
+@lru_cache(maxsize=None)
+def _quotes_for_date_stmt():
+    return text(
+        """
+        SELECT option_ticker, underlying_symbol, close_price
+        FROM historical_option_day_bars
+        WHERE trade_date = :trade_date
+          AND option_ticker IN :option_tickers
+        """
+    ).bindparams(bindparam("option_tickers", expanding=True))
+
+
+@lru_cache(maxsize=None)
+def _quote_series_stmt():
+    return text(
+        """
+        SELECT option_ticker, trade_date, underlying_symbol, close_price
+        FROM historical_option_day_bars
+        WHERE option_ticker IN :option_tickers
+          AND trade_date >= :start_date
+          AND trade_date <= :end_date
+        """
+    ).bindparams(bindparam("option_tickers", expanding=True))
+
+
+def _normalize_text_params(params: dict[str, object], dialect_name: str) -> dict[str, object]:
+    if dialect_name != "sqlite":
+        return params
+    normalized: dict[str, object] = {}
+    for key, value in params.items():
+        if isinstance(value, date):
+            normalized[key] = value.isoformat()
+        elif isinstance(value, (tuple, list)) and value and all(isinstance(item, date) for item in value):
+            normalized[key] = [item.isoformat() for item in value]
+        else:
+            normalized[key] = value
+    return normalized
+
+
+def _coerce_row_date(value: object) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    raise TypeError(f"Unsupported date value from query row: {value!r}")
 
 
 def parse_option_ticker_metadata(option_ticker: str) -> tuple[str, date, str, float] | None:
@@ -70,14 +273,284 @@ def parse_option_ticker_metadata(option_ticker: str) -> tuple[str, date, str, fl
     return underlying, expiration, "call" if contract_flag == "C" else "put", strike
 
 
+def _normalize_symbol(symbol: str) -> str:
+    return symbol.strip().upper()
+
+
+def _base_root_symbol(symbol: str) -> str:
+    normalized = _normalize_symbol(symbol)
+    stripped = normalized.rstrip("0123456789")
+    return stripped or normalized
+
+
+def _is_related_root_symbol(base_symbol: str, candidate_symbol: str) -> bool:
+    normalized_candidate = _normalize_symbol(candidate_symbol)
+    if normalized_candidate == base_symbol:
+        return True
+    if not normalized_candidate.startswith(base_symbol):
+        return False
+    suffix = normalized_candidate[len(base_symbol):]
+    return bool(suffix) and suffix.isdigit()
+
+
+def _root_sequence_index(base_symbol: str, symbol: str) -> int | None:
+    normalized_symbol = _normalize_symbol(symbol)
+    if normalized_symbol == base_symbol:
+        return 0
+    if not _is_related_root_symbol(base_symbol, normalized_symbol):
+        return None
+    suffix = normalized_symbol[len(base_symbol):]
+    if not suffix:
+        return 0
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+def _root_sort_key(base_symbol: str, symbol: str) -> tuple[int, str]:
+    index = _root_sequence_index(base_symbol, symbol)
+    if index is None:
+        return (10_000, _normalize_symbol(symbol))
+    return (index, _normalize_symbol(symbol))
+
+
+def _related_root_symbol_candidates(base_symbol: str) -> list[str]:
+    return [base_symbol, *[f"{base_symbol}{index}" for index in range(1, _MAX_NUMERIC_ROOT_ALIASES + 1)]]
+
+
+def _family_root_symbol_candidates(symbol: str) -> list[str]:
+    return _related_root_symbol_candidates(_base_root_symbol(symbol))
+
+
+def _decimal_strike(strike_price: float) -> Decimal:
+    return Decimal(str(strike_price))
+
+
+_COMMON_SHARE_DELIVERABLE_FACTORS = (
+    0.1,
+    0.125,
+    0.2,
+    0.25,
+    1.0 / 3.0,
+    0.5,
+    2.0 / 3.0,
+    0.75,
+    0.8,
+    1.25,
+    4.0 / 3.0,
+    1.5,
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    10.0,
+)
+
+
+def _normalize_deliverable_factor(raw_factor: float) -> float:
+    nearest = min(_COMMON_SHARE_DELIVERABLE_FACTORS, key=lambda factor: abs(factor - raw_factor))
+    if nearest > 0 and abs(nearest - raw_factor) / nearest <= 0.08:
+        return nearest
+    return 1.0
+
+
+def _prefer_requested_root_rows(
+    rows: list[tuple[object, ...]],
+    *,
+    requested_symbol: str,
+    group_key: Callable[[tuple[object, ...]], object],
+) -> list[tuple[object, ...]]:
+    grouped_rows: dict[object, list[tuple[object, ...]]] = {}
+    for row in rows:
+        grouped_rows.setdefault(group_key(row), []).append(row)
+
+    preferred_rows: list[tuple[object, ...]] = []
+    for group_rows in grouped_rows.values():
+        requested_rows = [
+            row for row in group_rows
+            if _normalize_symbol(str(row[1])) == requested_symbol
+        ]
+        preferred_rows.extend(requested_rows or group_rows)
+    return preferred_rows
+
+
+@dataclass(slots=True)
+class _PinnedReadonlySessionContext(AbstractContextManager[Session]):
+    session: Session
+
+    def __enter__(self) -> Session:
+        return self.session
+
+    def __exit__(self, exc_type, exc, exc_tb) -> bool:
+        # End the implicit read transaction after each store call while keeping
+        # the underlying session/connection pinned for reuse by long-running
+        # backtest workers.
+        with suppress(Exception):
+            if self.session.in_transaction():
+                self.session.rollback()
+        return False
+
+
 @dataclass(slots=True)
 class HistoricalMarketDataStore:
     session_factory: Callable[[], Session]
     readonly_session_factory: Callable[[], Session] | None = None
+    _related_root_symbols_cache: dict[tuple[str, date | None, date | None, date | None], tuple[str, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _root_first_dates_cache: dict[str, tuple[tuple[str, date], ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _deliverable_shares_cache: dict[tuple[str, str], float] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _cache_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+    _session_local: threading.local = field(default_factory=threading.local, init=False, repr=False)
 
-    def _session(self, *, readonly: bool) -> Session:
+    def _get_pinned_readonly_session(self) -> Session | None:
+        return getattr(self._session_local, "pinned_readonly_session", None)
+
+    def _set_pinned_readonly_session(self, session: Session | None) -> None:
+        self._session_local.pinned_readonly_session = session
+
+    def _get_pinned_readonly_connection(self):
+        return getattr(self._session_local, "pinned_readonly_connection", None)
+
+    def _set_pinned_readonly_connection(self, connection) -> None:
+        self._session_local.pinned_readonly_connection = connection
+
+    def _get_pinned_readonly_depth(self) -> int:
+        return int(getattr(self._session_local, "pinned_readonly_depth", 0))
+
+    def _set_pinned_readonly_depth(self, depth: int) -> None:
+        self._session_local.pinned_readonly_depth = depth
+
+    def _session(self, *, readonly: bool) -> Session | AbstractContextManager[Session]:
+        if readonly:
+            pinned_session = self._get_pinned_readonly_session()
+            if pinned_session is not None:
+                return _PinnedReadonlySessionContext(pinned_session)
         factory = self.readonly_session_factory if readonly and self.readonly_session_factory is not None else self.session_factory
         return factory()
+
+    @contextmanager
+    def pinned_readonly_session(self) -> Iterator[Session]:
+        existing_session = self._get_pinned_readonly_session()
+        if existing_session is not None:
+            self._set_pinned_readonly_depth(self._get_pinned_readonly_depth() + 1)
+            try:
+                yield existing_session
+            finally:
+                self._set_pinned_readonly_depth(max(self._get_pinned_readonly_depth() - 1, 0))
+            return
+
+        factory = self.readonly_session_factory if self.readonly_session_factory is not None else self.session_factory
+        bootstrap_session = factory()
+        connection = None
+        session = bootstrap_session
+        bind = bootstrap_session.get_bind()
+        if bind is not None and hasattr(bind, "connect"):
+            connection = bind.connect()
+            try:
+                connection = connection.execution_options(isolation_level="AUTOCOMMIT")
+            except Exception:
+                pass
+            session = type(bootstrap_session)(
+                bind=connection,
+                autoflush=bootstrap_session.autoflush,
+                expire_on_commit=bootstrap_session.expire_on_commit,
+            )
+            with suppress(Exception):
+                bootstrap_session.close()
+        self._set_pinned_readonly_session(session)
+        self._set_pinned_readonly_connection(connection)
+        self._set_pinned_readonly_depth(1)
+        try:
+            yield session
+        finally:
+            with suppress(Exception):
+                if session.in_transaction():
+                    session.rollback()
+            with suppress(Exception):
+                session.close()
+            if connection is not None:
+                with suppress(Exception):
+                    connection.close()
+            self._set_pinned_readonly_session(None)
+            self._set_pinned_readonly_connection(None)
+            self._set_pinned_readonly_depth(0)
+
+    def _invalidate_option_cache_state(self) -> None:
+        with self._cache_lock:
+            self._related_root_symbols_cache.clear()
+            self._root_first_dates_cache.clear()
+            self._deliverable_shares_cache.clear()
+
+    def _get_related_root_symbols(
+        self,
+        session: Session,
+        symbol: str,
+        *,
+        on_date: date | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[str]:
+        normalized_symbol = _normalize_symbol(symbol)
+        cache_key = (normalized_symbol, on_date, start_date, end_date)
+        with self._cache_lock:
+            cached = self._related_root_symbols_cache.get(cache_key)
+        if cached is not None:
+            return list(cached)
+
+        related = self._list_related_root_symbols(
+            session,
+            normalized_symbol,
+            on_date=on_date,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        with self._cache_lock:
+            self._related_root_symbols_cache[cache_key] = tuple(related)
+        return related
+
+    def _get_family_root_first_dates(
+        self,
+        session: Session,
+        symbol: str,
+    ) -> dict[str, date]:
+        base_symbol = _base_root_symbol(symbol)
+        with self._cache_lock:
+            cached = self._root_first_dates_cache.get(base_symbol)
+        if cached is not None:
+            return {root_symbol: first_date for root_symbol, first_date in cached}
+
+        candidates = _related_root_symbol_candidates(base_symbol)
+        root_first_dates: dict[str, date] = {}
+        for candidate in candidates:
+            first_trade_date = session.scalars(
+                select(HistoricalOptionDayBar.trade_date)
+                .where(HistoricalOptionDayBar.underlying_symbol == candidate)
+                .order_by(HistoricalOptionDayBar.trade_date)
+                .limit(1)
+            ).first()
+            if first_trade_date is None:
+                continue
+            root_first_dates[candidate] = _coerce_row_date(first_trade_date)
+        cached_rows = tuple(
+            sorted(
+                root_first_dates.items(),
+                key=lambda item: _root_sort_key(base_symbol, item[0]),
+            )
+        )
+        with self._cache_lock:
+            self._root_first_dates_cache[base_symbol] = cached_rows
+        return dict(cached_rows)
 
     def get_underlying_day_bars(self, symbol: str, start_date: date, end_date: date) -> list[DailyBar]:
         with self._session(readonly=True) as session:
@@ -136,6 +609,212 @@ class HistoricalMarketDataStore:
             current = current.fromordinal(current.toordinal() + 1)
         return True
 
+    @staticmethod
+    def _list_related_root_symbols(
+        session: Session,
+        symbol: str,
+        *,
+        on_date: date | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[str]:
+        base_symbol = _base_root_symbol(symbol)
+        stmt = select(HistoricalOptionDayBar.underlying_symbol).distinct().where(
+            HistoricalOptionDayBar.underlying_symbol.in_(_related_root_symbol_candidates(base_symbol))
+        )
+        if on_date is not None:
+            stmt = stmt.where(HistoricalOptionDayBar.trade_date == on_date)
+        if start_date is not None:
+            stmt = stmt.where(HistoricalOptionDayBar.trade_date >= start_date)
+        if end_date is not None:
+            stmt = stmt.where(HistoricalOptionDayBar.trade_date <= end_date)
+        raw_symbols = list(session.scalars(stmt))
+        related = {
+            normalized
+            for candidate in raw_symbols
+            if candidate
+            for normalized in (_normalize_symbol(str(candidate)),)
+            if _is_related_root_symbol(base_symbol, normalized)
+        }
+        return sorted(related, key=lambda item: _root_sort_key(base_symbol, item))
+
+    def _infer_deliverable_shares_per_contract(
+        self,
+        session: Session,
+        *,
+        base_symbol: str,
+        underlying_symbol: str,
+        cache: dict[tuple[str, str], float],
+    ) -> float:
+        normalized_underlying = _normalize_symbol(underlying_symbol)
+        cache_key = (base_symbol, normalized_underlying)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        with self._cache_lock:
+            persisted = self._deliverable_shares_cache.get(cache_key)
+        if persisted is not None:
+            cache[cache_key] = persisted
+            return persisted
+        if normalized_underlying == base_symbol:
+            cache[cache_key] = 100.0
+            with self._cache_lock:
+                self._deliverable_shares_cache[cache_key] = 100.0
+            return 100.0
+
+        first_alias_date = session.scalar(
+            select(HistoricalOptionDayBar.trade_date)
+            .where(HistoricalOptionDayBar.underlying_symbol == normalized_underlying)
+            .order_by(HistoricalOptionDayBar.trade_date)
+            .limit(1)
+        )
+        if first_alias_date is None:
+            cache[cache_key] = 100.0
+            with self._cache_lock:
+                self._deliverable_shares_cache[cache_key] = 100.0
+            return 100.0
+
+        previous_close = session.scalar(
+            select(HistoricalUnderlyingDayBar.close_price)
+            .where(
+                HistoricalUnderlyingDayBar.symbol == base_symbol,
+                HistoricalUnderlyingDayBar.trade_date < first_alias_date,
+            )
+            .order_by(HistoricalUnderlyingDayBar.trade_date.desc())
+            .limit(1)
+        )
+        current_close = session.scalar(
+            select(HistoricalUnderlyingDayBar.close_price).where(
+                HistoricalUnderlyingDayBar.symbol == base_symbol,
+                HistoricalUnderlyingDayBar.trade_date == first_alias_date,
+            )
+        )
+        if previous_close is None or current_close is None:
+            cache[cache_key] = 100.0
+            with self._cache_lock:
+                self._deliverable_shares_cache[cache_key] = 100.0
+            return 100.0
+
+        previous_close_value = float(previous_close)
+        current_close_value = float(current_close)
+        if previous_close_value <= 0 or current_close_value <= 0:
+            cache[cache_key] = 100.0
+            with self._cache_lock:
+                self._deliverable_shares_cache[cache_key] = 100.0
+            return 100.0
+
+        raw_factor = previous_close_value / current_close_value
+        normalized_factor = _normalize_deliverable_factor(raw_factor)
+        deliverable_shares = round(100.0 * normalized_factor, 3)
+        if deliverable_shares <= 0:
+            deliverable_shares = 100.0
+        cache[cache_key] = deliverable_shares
+        with self._cache_lock:
+            self._deliverable_shares_cache[cache_key] = deliverable_shares
+        return deliverable_shares
+
+    def _contract_record_from_row(
+        self,
+        session: Session,
+        *,
+        base_symbol: str,
+        option_ticker: str,
+        underlying_symbol: str,
+        contract_type: str,
+        expiration_date: date,
+        strike_price: Decimal | float,
+        close_price: Decimal | float | None,
+        deliverable_cache: dict[tuple[str, str], float],
+    ) -> OptionContractRecord:
+        shares_per_contract = self._infer_deliverable_shares_per_contract(
+            session,
+            base_symbol=base_symbol,
+            underlying_symbol=underlying_symbol,
+            cache=deliverable_cache,
+        )
+        return OptionContractRecord(
+            ticker=option_ticker,
+            contract_type=contract_type,
+            expiration_date=expiration_date,
+            strike_price=float(strike_price),
+            shares_per_contract=shares_per_contract,
+            underlying_symbol=_normalize_symbol(underlying_symbol),
+            as_of_mid_price=(
+                float(close_price)
+                if close_price is not None and float(close_price) > 0
+                else None
+            ),
+        )
+
+    def _quote_record_from_row(
+        self,
+        session: Session,
+        *,
+        base_symbol: str,
+        trade_date: date,
+        close_price: Decimal | float,
+        option_ticker: str,
+        underlying_symbol: str,
+        deliverable_cache: dict[tuple[str, str], float],
+    ) -> OptionQuoteRecord | None:
+        close_value = float(close_price)
+        if close_value <= 0:
+            return None
+        return OptionQuoteRecord(
+            trade_date=trade_date,
+            bid_price=close_value,
+            ask_price=close_value,
+            participant_timestamp=None,
+            source_option_ticker=option_ticker,
+            deliverable_shares_per_contract=self._infer_deliverable_shares_per_contract(
+                session,
+                base_symbol=base_symbol,
+                underlying_symbol=underlying_symbol,
+                cache=deliverable_cache,
+            ),
+        )
+
+    @staticmethod
+    def _fetch_contract_rows(
+        session: Session,
+        *,
+        symbols: list[str],
+        as_of_date: date,
+        contract_types: list[str],
+        expiration_date: date | None = None,
+        expiration_gte: date | None = None,
+        expiration_lte: date | None = None,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+    ) -> list[tuple[str, str, str, date, Decimal, Decimal | float | None]]:
+        if not symbols or not contract_types:
+            return []
+        stmt = _contracts_for_expiration_stmt(
+            has_expiration_date=expiration_date is not None,
+            has_expiration_gte=expiration_gte is not None,
+            has_expiration_lte=expiration_lte is not None,
+            has_strike_gte=strike_price_gte is not None,
+            has_strike_lte=strike_price_lte is not None,
+        )
+        bind = session.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else ""
+        params: dict[str, object] = {
+            "symbols": list(dict.fromkeys(symbols)),
+            "as_of_date": as_of_date,
+            "contract_types": list(dict.fromkeys(contract_types)),
+        }
+        if expiration_date is not None:
+            params["expiration_date"] = expiration_date
+        if expiration_gte is not None:
+            params["expiration_gte"] = expiration_gte
+        if expiration_lte is not None:
+            params["expiration_lte"] = expiration_lte
+        if strike_price_gte is not None:
+            params["strike_price_gte"] = _decimal_strike(strike_price_gte)
+        if strike_price_lte is not None:
+            params["strike_price_lte"] = _decimal_strike(strike_price_lte)
+        return list(session.execute(stmt, _normalize_text_params(params, dialect_name)))
+
     def list_option_contracts(
         self,
         *,
@@ -166,42 +845,40 @@ class HistoricalMarketDataStore:
         strike_price_gte: float | None = None,
         strike_price_lte: float | None = None,
     ) -> list[OptionContractRecord]:
+        normalized_symbol = _normalize_symbol(symbol)
+        base_symbol = _base_root_symbol(normalized_symbol)
+        family_symbols = _family_root_symbol_candidates(normalized_symbol)
         with self._session(readonly=True) as session:
-            stmt = (
-                select(
-                    HistoricalOptionDayBar.option_ticker,
-                    HistoricalOptionDayBar.contract_type,
-                    HistoricalOptionDayBar.expiration_date,
-                    HistoricalOptionDayBar.strike_price,
-                )
-                .where(
-                    HistoricalOptionDayBar.underlying_symbol == symbol,
-                    HistoricalOptionDayBar.trade_date == as_of_date,
-                    HistoricalOptionDayBar.contract_type == contract_type,
-                )
+            rows = self._fetch_contract_rows(
+                session,
+                symbols=family_symbols,
+                as_of_date=as_of_date,
+                contract_types=[contract_type],
+                expiration_date=expiration_date,
+                expiration_gte=expiration_gte,
+                expiration_lte=expiration_lte,
+                strike_price_gte=strike_price_gte,
+                strike_price_lte=strike_price_lte,
             )
-            if expiration_date is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.expiration_date == expiration_date)
-            if expiration_gte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.expiration_date >= expiration_gte)
-            if expiration_lte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.expiration_date <= expiration_lte)
-            if strike_price_gte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
-            if strike_price_lte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            rows = session.execute(
-                stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)
+            rows = _prefer_requested_root_rows(
+                rows,
+                requested_symbol=normalized_symbol,
+                group_key=lambda row: _coerce_row_date(row[3]),
             )
+            deliverable_cache: dict[tuple[str, str], float] = {}
             return [
-                OptionContractRecord(
-                    ticker=option_ticker,
+                self._contract_record_from_row(
+                    session,
+                    base_symbol=base_symbol,
+                    option_ticker=option_ticker,
+                    underlying_symbol=underlying_symbol,
                     contract_type=row_contract_type,
-                    expiration_date=row_expiration_date,
-                    strike_price=float(row_strike_price),
-                    shares_per_contract=100.0,
+                    expiration_date=_coerce_row_date(row_expiration_date),
+                    strike_price=row_strike_price,
+                    close_price=row_close_price,
+                    deliverable_cache=deliverable_cache,
                 )
-                for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows
+                for option_ticker, underlying_symbol, row_contract_type, row_expiration_date, row_strike_price, row_close_price in rows
             ]
 
     def list_option_contracts_for_expirations(
@@ -220,36 +897,47 @@ class HistoricalMarketDataStore:
         contracts_by_expiration: dict[date, list[OptionContractRecord]] = {
             expiration_date: [] for expiration_date in requested_expirations
         }
+        normalized_symbol = _normalize_symbol(symbol)
+        base_symbol = _base_root_symbol(normalized_symbol)
+        family_symbols = _family_root_symbol_candidates(normalized_symbol)
         with self._session(readonly=True) as session:
-            stmt = (
-                select(
-                    HistoricalOptionDayBar.option_ticker,
-                    HistoricalOptionDayBar.contract_type,
-                    HistoricalOptionDayBar.expiration_date,
-                    HistoricalOptionDayBar.strike_price,
-                )
-                .where(
-                    HistoricalOptionDayBar.underlying_symbol == symbol,
-                    HistoricalOptionDayBar.trade_date == as_of_date,
-                    HistoricalOptionDayBar.contract_type == contract_type,
-                    HistoricalOptionDayBar.expiration_date.in_(requested_expirations),
-                )
+            deliverable_cache: dict[tuple[str, str], float] = {}
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
+            stmt = _contracts_for_expirations_stmt(
+                has_strike_gte=strike_price_gte is not None,
+                has_strike_lte=strike_price_lte is not None,
             )
+            params: dict[str, object] = {
+                "symbols": family_symbols,
+                "as_of_date": as_of_date,
+                "contract_type": contract_type,
+                "expiration_dates": list(requested_expirations),
+            }
             if strike_price_gte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
+                params["strike_price_gte"] = _decimal_strike(strike_price_gte)
             if strike_price_lte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            rows = session.execute(
-                stmt.order_by(HistoricalOptionDayBar.expiration_date, HistoricalOptionDayBar.strike_price)
+                params["strike_price_lte"] = _decimal_strike(strike_price_lte)
+            rows = _prefer_requested_root_rows(
+                list(session.execute(stmt, _normalize_text_params(params, dialect_name))),
+                requested_symbol=normalized_symbol,
+                group_key=lambda row: _coerce_row_date(row[3]),
             )
-            for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
-                contracts_by_expiration[row_expiration_date].append(
-                    OptionContractRecord(
-                        ticker=option_ticker,
+            for option_ticker, underlying_symbol, row_contract_type, row_expiration_date, row_strike_price, row_close_price in rows:
+                normalized_expiration = _coerce_row_date(row_expiration_date)
+                if normalized_expiration not in contracts_by_expiration:
+                    continue
+                contracts_by_expiration[normalized_expiration].append(
+                    self._contract_record_from_row(
+                        session,
+                        base_symbol=base_symbol,
+                        option_ticker=option_ticker,
+                        underlying_symbol=underlying_symbol,
                         contract_type=row_contract_type,
-                        expiration_date=row_expiration_date,
-                        strike_price=float(row_strike_price),
-                        shares_per_contract=100.0,
+                        expiration_date=normalized_expiration,
+                        strike_price=row_strike_price,
+                        close_price=row_close_price,
+                        deliverable_cache=deliverable_cache,
                     )
                 )
         return contracts_by_expiration
@@ -274,40 +962,50 @@ class HistoricalMarketDataStore:
             }
             for contract_type in requested_types
         }
+        normalized_symbol = _normalize_symbol(symbol)
+        base_symbol = _base_root_symbol(normalized_symbol)
+        family_symbols = _family_root_symbol_candidates(normalized_symbol)
         with self._session(readonly=True) as session:
-            stmt = (
-                select(
-                    HistoricalOptionDayBar.option_ticker,
-                    HistoricalOptionDayBar.contract_type,
-                    HistoricalOptionDayBar.expiration_date,
-                    HistoricalOptionDayBar.strike_price,
-                )
-                .where(
-                    HistoricalOptionDayBar.underlying_symbol == symbol,
-                    HistoricalOptionDayBar.trade_date == as_of_date,
-                    HistoricalOptionDayBar.contract_type.in_(requested_types),
-                    HistoricalOptionDayBar.expiration_date.in_(requested_expirations),
-                )
+            deliverable_cache: dict[tuple[str, str], float] = {}
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
+            stmt = _contracts_for_expirations_by_type_stmt(
+                has_strike_gte=strike_price_gte is not None,
+                has_strike_lte=strike_price_lte is not None,
             )
+            params: dict[str, object] = {
+                "symbols": family_symbols,
+                "as_of_date": as_of_date,
+                "contract_types": list(requested_types),
+                "expiration_dates": list(requested_expirations),
+            }
             if strike_price_gte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
+                params["strike_price_gte"] = _decimal_strike(strike_price_gte)
             if strike_price_lte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            rows = session.execute(
-                stmt.order_by(
-                    HistoricalOptionDayBar.contract_type,
-                    HistoricalOptionDayBar.expiration_date,
-                    HistoricalOptionDayBar.strike_price,
-                )
+                params["strike_price_lte"] = _decimal_strike(strike_price_lte)
+            rows = _prefer_requested_root_rows(
+                list(session.execute(stmt, _normalize_text_params(params, dialect_name))),
+                requested_symbol=normalized_symbol,
+                group_key=lambda row: (row[2], _coerce_row_date(row[3])),
             )
-            for option_ticker, row_contract_type, row_expiration_date, row_strike_price in rows:
-                contracts_by_type[row_contract_type][row_expiration_date].append(
-                    OptionContractRecord(
-                        ticker=option_ticker,
+            for option_ticker, underlying_symbol, row_contract_type, row_expiration_date, row_strike_price, row_close_price in rows:
+                normalized_expiration = _coerce_row_date(row_expiration_date)
+                if (
+                    row_contract_type not in contracts_by_type
+                    or normalized_expiration not in contracts_by_type[row_contract_type]
+                ):
+                    continue
+                contracts_by_type[row_contract_type][normalized_expiration].append(
+                    self._contract_record_from_row(
+                        session,
+                        base_symbol=base_symbol,
+                        option_ticker=option_ticker,
+                        underlying_symbol=underlying_symbol,
                         contract_type=row_contract_type,
-                        expiration_date=row_expiration_date,
-                        strike_price=float(row_strike_price),
-                        shares_per_contract=100.0,
+                        expiration_date=normalized_expiration,
+                        strike_price=row_strike_price,
+                        close_price=row_close_price,
+                        deliverable_cache=deliverable_cache,
                     )
                 )
         return contracts_by_type
@@ -325,23 +1023,37 @@ class HistoricalMarketDataStore:
         if not expiration_dates:
             return []
         requested_expirations = tuple(dict.fromkeys(expiration_dates))
+        normalized_symbol = _normalize_symbol(symbol)
+        family_symbols = _family_root_symbol_candidates(normalized_symbol)
         with self._session(readonly=True) as session:
-            stmt = (
-                select(HistoricalOptionDayBar.expiration_date)
-                .distinct()
-                .where(
-                    HistoricalOptionDayBar.underlying_symbol == symbol,
-                    HistoricalOptionDayBar.trade_date == as_of_date,
-                    HistoricalOptionDayBar.contract_type == contract_type,
-                    HistoricalOptionDayBar.expiration_date.in_(requested_expirations),
-                )
-                .order_by(HistoricalOptionDayBar.expiration_date)
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
+            stmt = _available_expirations_stmt(
+                has_strike_gte=strike_price_gte is not None,
+                has_strike_lte=strike_price_lte is not None,
             )
+            params: dict[str, object] = {
+                "symbols": family_symbols,
+                "as_of_date": as_of_date,
+                "contract_type": contract_type,
+                "expiration_dates": list(requested_expirations),
+            }
             if strike_price_gte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
+                params["strike_price_gte"] = _decimal_strike(strike_price_gte)
             if strike_price_lte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            return list(session.scalars(stmt))
+                params["strike_price_lte"] = _decimal_strike(strike_price_lte)
+            available_expirations = {
+                _coerce_row_date(row_expiration_date)
+                for (row_expiration_date,) in session.execute(
+                    stmt,
+                    _normalize_text_params(params, dialect_name),
+                )
+            }
+        return [
+            expiration_date
+            for expiration_date in requested_expirations
+            if expiration_date in available_expirations
+        ]
 
     def list_available_option_expirations_by_type(
         self,
@@ -357,52 +1069,182 @@ class HistoricalMarketDataStore:
             return {}
         requested_types = tuple(dict.fromkeys(contract_types))
         requested_expirations = tuple(dict.fromkeys(expiration_dates))
+        normalized_symbol = _normalize_symbol(symbol)
+        family_symbols = _family_root_symbol_candidates(normalized_symbol)
         with self._session(readonly=True) as session:
-            stmt = (
-                select(
-                    HistoricalOptionDayBar.contract_type,
-                    HistoricalOptionDayBar.expiration_date,
-                )
-                .distinct()
-                .where(
-                    HistoricalOptionDayBar.underlying_symbol == symbol,
-                    HistoricalOptionDayBar.trade_date == as_of_date,
-                    HistoricalOptionDayBar.contract_type.in_(requested_types),
-                    HistoricalOptionDayBar.expiration_date.in_(requested_expirations),
-                )
-                .order_by(HistoricalOptionDayBar.contract_type, HistoricalOptionDayBar.expiration_date)
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
+            stmt = _available_expirations_by_type_stmt(
+                has_strike_gte=strike_price_gte is not None,
+                has_strike_lte=strike_price_lte is not None,
             )
+            params: dict[str, object] = {
+                "symbols": family_symbols,
+                "as_of_date": as_of_date,
+                "contract_types": list(requested_types),
+                "expiration_dates": list(requested_expirations),
+            }
             if strike_price_gte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price >= Decimal(f"{strike_price_gte:.4f}"))
+                params["strike_price_gte"] = _decimal_strike(strike_price_gte)
             if strike_price_lte is not None:
-                stmt = stmt.where(HistoricalOptionDayBar.strike_price <= Decimal(f"{strike_price_lte:.4f}"))
-            rows = list(session.execute(stmt))
-        available_by_type: dict[str, list[date]] = {
-            contract_type: [] for contract_type in requested_types
+                params["strike_price_lte"] = _decimal_strike(strike_price_lte)
+
+            available_by_type: dict[str, set[date]] = {contract_type: set() for contract_type in requested_types}
+            for row_contract_type, row_expiration_date in session.execute(
+                stmt,
+                _normalize_text_params(params, dialect_name),
+            ):
+                if row_contract_type not in available_by_type:
+                    continue
+                available_by_type[row_contract_type].add(_coerce_row_date(row_expiration_date))
+        return {
+            contract_type: [
+                expiration_date
+                for expiration_date in requested_expirations
+                if expiration_date in available_by_type[contract_type]
+            ]
+            for contract_type in requested_types
         }
-        for contract_type, expiration_date in rows:
-            available_by_type.setdefault(contract_type, []).append(expiration_date)
-        return available_by_type
+
+    @staticmethod
+    def _fetch_signature_rows_for_date(
+        session: Session,
+        *,
+        symbols: list[str],
+        trade_date: date,
+        expiration_date: date,
+        contract_type: str,
+        strike_price: float,
+    ) -> list[tuple[str, str, Decimal | float]]:
+        if not symbols:
+            return []
+        stmt = select(
+            HistoricalOptionDayBar.option_ticker,
+            HistoricalOptionDayBar.underlying_symbol,
+            HistoricalOptionDayBar.close_price,
+        ).where(
+            HistoricalOptionDayBar.underlying_symbol.in_(symbols),
+            HistoricalOptionDayBar.trade_date == trade_date,
+            HistoricalOptionDayBar.expiration_date == expiration_date,
+            HistoricalOptionDayBar.contract_type == contract_type,
+            HistoricalOptionDayBar.strike_price == _decimal_strike(strike_price),
+        ).order_by(
+            HistoricalOptionDayBar.underlying_symbol,
+            HistoricalOptionDayBar.option_ticker,
+        )
+        return list(session.execute(stmt))
+
+    @staticmethod
+    def _fetch_signature_rows_for_range(
+        session: Session,
+        *,
+        symbols: list[str],
+        start_date: date,
+        end_date: date,
+        expiration_date: date,
+        contract_type: str,
+        strike_price: float,
+    ) -> list[tuple[date, str, str, Decimal | float]]:
+        if not symbols:
+            return []
+        stmt = select(
+            HistoricalOptionDayBar.trade_date,
+            HistoricalOptionDayBar.option_ticker,
+            HistoricalOptionDayBar.underlying_symbol,
+            HistoricalOptionDayBar.close_price,
+        ).where(
+            HistoricalOptionDayBar.underlying_symbol.in_(symbols),
+            HistoricalOptionDayBar.trade_date >= start_date,
+            HistoricalOptionDayBar.trade_date <= end_date,
+            HistoricalOptionDayBar.expiration_date == expiration_date,
+            HistoricalOptionDayBar.contract_type == contract_type,
+            HistoricalOptionDayBar.strike_price == _decimal_strike(strike_price),
+        ).order_by(
+            HistoricalOptionDayBar.trade_date,
+            HistoricalOptionDayBar.underlying_symbol,
+            HistoricalOptionDayBar.option_ticker,
+        )
+        return list(session.execute(stmt))
+
+    @staticmethod
+    def _lineage_successor_roots(
+        *,
+        base_symbol: str,
+        requested_root: str,
+        start_date: date,
+        root_first_dates: dict[str, date],
+    ) -> list[tuple[date, str]]:
+        requested_index = _root_sequence_index(base_symbol, requested_root)
+        if requested_index is None:
+            return []
+        successors: list[tuple[date, str]] = []
+        for root_symbol, first_date in root_first_dates.items():
+            root_index = _root_sequence_index(base_symbol, root_symbol)
+            if root_index is None or root_index <= requested_index or first_date <= start_date:
+                continue
+            successors.append((first_date, root_symbol))
+        successors.sort(key=lambda item: (item[0], _root_sort_key(base_symbol, item[1])))
+        return successors
 
     def get_option_quote_for_date(self, option_ticker: str, trade_date: date) -> OptionQuoteRecord | None:
         with self._session(readonly=True) as session:
-            close_price = session.scalar(
-                select(HistoricalOptionDayBar.close_price).where(
-                    HistoricalOptionDayBar.option_ticker == option_ticker,
-                    HistoricalOptionDayBar.trade_date == trade_date,
+            deliverable_cache: dict[tuple[str, str], float] = {}
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
+            exact_row = session.execute(
+                _quote_for_date_stmt(),
+                _normalize_text_params(
+                    {"option_ticker": option_ticker, "trade_date": trade_date},
+                    dialect_name,
+                ),
+            ).first()
+            metadata = parse_option_ticker_metadata(option_ticker)
+            base_symbol = _base_root_symbol(metadata[0]) if metadata is not None else None
+            if exact_row is not None and base_symbol is not None:
+                quote = self._quote_record_from_row(
+                    session,
+                    base_symbol=base_symbol,
+                    trade_date=trade_date,
+                    close_price=exact_row[1],
+                    option_ticker=option_ticker,
+                    underlying_symbol=str(exact_row[0]),
+                    deliverable_cache=deliverable_cache,
                 )
+                if quote is not None:
+                    return quote
+
+            if metadata is None:
+                return None
+            requested_root, expiration_date, contract_type, strike_price = metadata
+            family_symbols = self._get_related_root_symbols(
+                session,
+                requested_root,
+                on_date=trade_date,
             )
-        if close_price is None:
-            return None
-        close_price = float(close_price)
-        if close_price <= 0:
-            return None
-        return OptionQuoteRecord(
-            trade_date=trade_date,
-            bid_price=close_price,
-            ask_price=close_price,
-            participant_timestamp=None,
-        )
+            fallback_symbols = [symbol for symbol in family_symbols if symbol != requested_root]
+            if not fallback_symbols:
+                return None
+            fallback_rows = self._fetch_signature_rows_for_date(
+                session,
+                symbols=fallback_symbols,
+                trade_date=trade_date,
+                expiration_date=expiration_date,
+                contract_type=contract_type,
+                strike_price=strike_price,
+            )
+            for fallback_ticker, underlying_symbol, close_price in fallback_rows:
+                quote = self._quote_record_from_row(
+                    session,
+                    base_symbol=_base_root_symbol(requested_root),
+                    trade_date=trade_date,
+                    close_price=close_price,
+                    option_ticker=str(fallback_ticker),
+                    underlying_symbol=str(underlying_symbol),
+                    deliverable_cache=deliverable_cache,
+                )
+                if quote is not None:
+                    return quote
+        return None
 
     def get_option_quotes_for_date(
         self,
@@ -412,33 +1254,72 @@ class HistoricalMarketDataStore:
         if not option_tickers:
             return {}
         requested_tickers = tuple(dict.fromkeys(option_tickers))
+        quotes: dict[str, OptionQuoteRecord | None] = {ticker: None for ticker in requested_tickers}
         with self._session(readonly=True) as session:
-            rows = list(
+            deliverable_cache: dict[tuple[str, str], float] = {}
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
+            exact_rows = list(
                 session.execute(
-                    select(
-                        HistoricalOptionDayBar.option_ticker,
-                        HistoricalOptionDayBar.close_price,
-                    ).where(
-                        HistoricalOptionDayBar.trade_date == trade_date,
-                        HistoricalOptionDayBar.option_ticker.in_(requested_tickers),
-                    )
+                    _quotes_for_date_stmt(),
+                    _normalize_text_params(
+                        {"trade_date": trade_date, "option_tickers": list(requested_tickers)},
+                        dialect_name,
+                    ),
                 )
             )
-        quotes: dict[str, OptionQuoteRecord | None] = {
-            ticker: None for ticker in requested_tickers
-        }
-        for option_ticker, close_price in rows:
-            if close_price is None:
-                continue
-            close_value = float(close_price)
-            if close_value <= 0:
-                continue
-            quotes[option_ticker] = OptionQuoteRecord(
-                trade_date=trade_date,
-                bid_price=close_value,
-                ask_price=close_value,
-                participant_timestamp=None,
-            )
+            exact_hits = {
+                str(option_ticker): (str(underlying_symbol), close_price)
+                for option_ticker, underlying_symbol, close_price in exact_rows
+            }
+            for option_ticker in requested_tickers:
+                metadata = parse_option_ticker_metadata(option_ticker)
+                base_symbol = _base_root_symbol(metadata[0]) if metadata is not None else None
+                exact_hit = exact_hits.get(option_ticker)
+                if exact_hit is not None and base_symbol is not None:
+                    quote = self._quote_record_from_row(
+                        session,
+                        base_symbol=base_symbol,
+                        trade_date=trade_date,
+                        close_price=exact_hit[1],
+                        option_ticker=option_ticker,
+                        underlying_symbol=exact_hit[0],
+                        deliverable_cache=deliverable_cache,
+                    )
+                    if quote is not None:
+                        quotes[option_ticker] = quote
+                        continue
+                if metadata is None:
+                    continue
+                requested_root, expiration_date, contract_type, strike_price = metadata
+                fallback_symbols = [
+                    symbol
+                    for symbol in self._get_related_root_symbols(session, requested_root, on_date=trade_date)
+                    if symbol != requested_root
+                ]
+                if not fallback_symbols:
+                    continue
+                fallback_rows = self._fetch_signature_rows_for_date(
+                    session,
+                    symbols=fallback_symbols,
+                    trade_date=trade_date,
+                    expiration_date=expiration_date,
+                    contract_type=contract_type,
+                    strike_price=strike_price,
+                )
+                for fallback_ticker, underlying_symbol, close_price in fallback_rows:
+                    quote = self._quote_record_from_row(
+                        session,
+                        base_symbol=_base_root_symbol(requested_root),
+                        trade_date=trade_date,
+                        close_price=close_price,
+                        option_ticker=str(fallback_ticker),
+                        underlying_symbol=str(underlying_symbol),
+                        deliverable_cache=deliverable_cache,
+                    )
+                    if quote is not None:
+                        quotes[option_ticker] = quote
+                        break
         return quotes
 
     def get_option_quote_series(
@@ -450,35 +1331,149 @@ class HistoricalMarketDataStore:
         if not option_tickers:
             return {}
         requested_tickers = tuple(dict.fromkeys(option_tickers))
-        with self._session(readonly=True) as session:
-            rows = list(
-                session.execute(
-                    select(
-                        HistoricalOptionDayBar.option_ticker,
-                        HistoricalOptionDayBar.trade_date,
-                        HistoricalOptionDayBar.close_price,
-                    ).where(
-                        HistoricalOptionDayBar.option_ticker.in_(requested_tickers),
-                        HistoricalOptionDayBar.trade_date >= start_date,
-                        HistoricalOptionDayBar.trade_date <= end_date,
-                    )
-                )
-            )
         series: dict[str, dict[date, OptionQuoteRecord | None]] = {
             ticker: {} for ticker in requested_tickers
         }
-        for option_ticker, trade_date, close_price in rows:
-            if close_price is None:
-                continue
-            close_value = float(close_price)
-            if close_value <= 0:
-                continue
-            series.setdefault(option_ticker, {})[trade_date] = OptionQuoteRecord(
-                trade_date=trade_date,
-                bid_price=close_value,
-                ask_price=close_value,
-                participant_timestamp=None,
-            )
+        with self._session(readonly=True) as session:
+            deliverable_cache: dict[tuple[str, str], float] = {}
+            family_symbol_cache: dict[tuple[str, date, date], list[str]] = {}
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
+            for option_ticker in requested_tickers:
+                exact_rows = list(
+                    session.execute(
+                        _quote_series_stmt(),
+                        _normalize_text_params(
+                            {
+                                "option_tickers": [option_ticker],
+                                "start_date": start_date,
+                                "end_date": end_date,
+                            },
+                            dialect_name,
+                        ),
+                    )
+                )
+                metadata = parse_option_ticker_metadata(option_ticker)
+                if metadata is None:
+                    for _, trade_dt, underlying_symbol, close_price in exact_rows:
+                        normalized_trade_date = _coerce_row_date(trade_dt)
+                        quote = self._quote_record_from_row(
+                            session,
+                            base_symbol=_normalize_symbol(str(underlying_symbol)),
+                            trade_date=normalized_trade_date,
+                            close_price=close_price,
+                            option_ticker=option_ticker,
+                            underlying_symbol=str(underlying_symbol),
+                            deliverable_cache=deliverable_cache,
+                        )
+                        if quote is not None:
+                            series[option_ticker][normalized_trade_date] = quote
+                    continue
+
+                requested_root, expiration_date, contract_type, strike_price = metadata
+                base_symbol = _base_root_symbol(requested_root)
+                if exact_rows:
+                    exact_series: dict[date, OptionQuoteRecord | None] = {}
+                    for _, trade_dt, underlying_symbol, close_price in exact_rows:
+                        normalized_trade_date = _coerce_row_date(trade_dt)
+                        quote = self._quote_record_from_row(
+                            session,
+                            base_symbol=base_symbol,
+                            trade_date=normalized_trade_date,
+                            close_price=close_price,
+                            option_ticker=option_ticker,
+                            underlying_symbol=str(underlying_symbol),
+                            deliverable_cache=deliverable_cache,
+                        )
+                        if quote is not None:
+                            exact_series[normalized_trade_date] = quote
+                    root_first_dates = self._get_family_root_first_dates(session, requested_root)
+                    successor_roots = self._lineage_successor_roots(
+                        base_symbol=base_symbol,
+                        requested_root=requested_root,
+                        start_date=start_date,
+                        root_first_dates=root_first_dates,
+                    )
+                    if not any(first_date <= end_date for first_date, _ in successor_roots):
+                        series[option_ticker] = exact_series
+                        continue
+
+                family_cache_key = (base_symbol, start_date, end_date)
+                family_symbols = family_symbol_cache.get(family_cache_key)
+                if family_symbols is None:
+                    family_symbols = self._get_related_root_symbols(
+                        session,
+                        requested_root,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    if requested_root not in family_symbols:
+                        family_symbols = sorted(
+                            {*family_symbols, requested_root},
+                            key=lambda item: _root_sort_key(base_symbol, item),
+                        )
+                    family_symbol_cache[family_cache_key] = family_symbols
+                signature_rows = self._fetch_signature_rows_for_range(
+                    session,
+                    symbols=family_symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                    expiration_date=expiration_date,
+                    contract_type=contract_type,
+                    strike_price=strike_price,
+                )
+                if not signature_rows:
+                    continue
+
+                rows_by_date: dict[date, dict[str, tuple[str, str, Decimal | float]]] = {}
+                root_first_dates: dict[str, date] = {}
+                for trade_dt, source_option_ticker, underlying_symbol, close_price in signature_rows:
+                    normalized_trade_date = _coerce_row_date(trade_dt)
+                    normalized_root = _normalize_symbol(str(underlying_symbol))
+                    rows_by_date.setdefault(normalized_trade_date, {})[normalized_root] = (
+                        str(source_option_ticker),
+                        normalized_root,
+                        close_price,
+                    )
+                    root_first_dates.setdefault(normalized_root, normalized_trade_date)
+
+                current_root = requested_root
+                successor_roots = self._lineage_successor_roots(
+                    base_symbol=base_symbol,
+                    requested_root=requested_root,
+                    start_date=start_date,
+                    root_first_dates=root_first_dates,
+                )
+                successor_index = 0
+                for normalized_trade_date in sorted(rows_by_date):
+                    while successor_index < len(successor_roots) and successor_roots[successor_index][0] <= normalized_trade_date:
+                        current_root = successor_roots[successor_index][1]
+                        successor_index += 1
+                    day_rows = rows_by_date[normalized_trade_date]
+                    selected_row = day_rows.get(current_root)
+                    if selected_row is None:
+                        current_index = _root_sequence_index(base_symbol, current_root)
+                        ordered_roots = sorted(day_rows, key=lambda item: _root_sort_key(base_symbol, item))
+                        for root_symbol in ordered_roots:
+                            root_index = _root_sequence_index(base_symbol, root_symbol)
+                            if current_index is not None and root_index is not None and root_index < current_index:
+                                continue
+                            selected_row = day_rows[root_symbol]
+                            current_root = root_symbol
+                            break
+                    if selected_row is None:
+                        continue
+                    quote = self._quote_record_from_row(
+                        session,
+                        base_symbol=base_symbol,
+                        trade_date=normalized_trade_date,
+                        close_price=selected_row[2],
+                        option_ticker=selected_row[0],
+                        underlying_symbol=selected_row[1],
+                        deliverable_cache=deliverable_cache,
+                    )
+                    if quote is not None:
+                        series[option_ticker][normalized_trade_date] = quote
         return series
 
     def list_ex_dividend_dates(self, symbol: str, start_date: date, end_date: date) -> set[date]:
@@ -658,6 +1653,9 @@ class HistoricalMarketDataStore:
     def upsert_underlying_day_bars(self, bars: list[HistoricalUnderlyingDayBar]) -> int:
         return self._bulk_upsert(bars, HistoricalUnderlyingDayBar, ("symbol", "trade_date"))
 
+    def upsert_underlying_raw_day_bars(self, bars: list[HistoricalUnderlyingRawDayBar]) -> int:
+        return self._bulk_upsert(bars, HistoricalUnderlyingRawDayBar, ("symbol", "trade_date"))
+
     def upsert_option_day_bars(self, bars: list[HistoricalOptionDayBar]) -> int:
         return self._bulk_upsert(bars, HistoricalOptionDayBar, ("option_ticker", "trade_date"))
 
@@ -678,6 +1676,9 @@ class HistoricalMarketDataStore:
 
     def upsert_underlying_day_bar_payloads(self, rows: list[dict[str, object]]) -> int:
         return self._bulk_upsert_payloads(rows, HistoricalUnderlyingDayBar, ("symbol", "trade_date"))
+
+    def upsert_underlying_raw_day_bar_payloads(self, rows: list[dict[str, object]]) -> int:
+        return self._bulk_upsert_payloads(rows, HistoricalUnderlyingRawDayBar, ("symbol", "trade_date"))
 
     def upsert_option_day_bar_payloads(self, rows: list[dict[str, object]]) -> int:
         return self._bulk_upsert_payloads(rows, HistoricalOptionDayBar, ("option_ticker", "trade_date"))
@@ -704,6 +1705,7 @@ class HistoricalMarketDataStore:
                 ]
                 self._bulk_upsert_fallback(session, payloads, HistoricalOptionDayBar, ("option_ticker", "trade_date"))
             session.commit()
+            self._invalidate_option_cache_state()
             return len(rows)
         except Exception:
             with suppress(Exception):
@@ -845,6 +1847,8 @@ class HistoricalMarketDataStore:
             else:
                 self._bulk_upsert_fallback(session, rows, model, key_fields)
             session.commit()
+            if model in {HistoricalUnderlyingDayBar, HistoricalUnderlyingRawDayBar, HistoricalOptionDayBar}:
+                self._invalidate_option_cache_state()
             return len(rows)
         except Exception:
             with suppress(Exception):

@@ -1,0 +1,11 @@
+{
+  "build_contract_fetch_total_ms": 16489.289,
+  "gateway_list_contracts_for_preferred_expiration_exclusive_ms": 228.838,
+  "gateway_list_contracts_for_expirations_exclusive_ms": 464.578,
+  "store_list_option_contracts_for_expirations_exclusive_ms": 14796.197,
+  "store_list_option_contracts_for_expiration_exclusive_ms": 843.92,
+  "gateway_list_contracts_for_preferred_expiration_calls": 2964,
+  "gateway_list_contracts_for_expirations_calls": 5276,
+  "store_list_option_contracts_for_expirations_calls": 5216,
+  "store_list_option_contracts_for_expiration_calls": 448
+}

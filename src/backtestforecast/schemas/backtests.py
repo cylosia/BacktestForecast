@@ -10,6 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from backtestforecast.config import get_settings
+from backtestforecast.pipeline.regime import Regime
 from backtestforecast.schemas.common import (
     CursorPaginatedResponse,
     PlanTier,
@@ -50,6 +51,7 @@ class StrategyType(StrEnum):
     LONG_STRADDLE = "long_straddle"
     LONG_STRANGLE = "long_strangle"
     CALENDAR_SPREAD = "calendar_spread"
+    PUT_CALENDAR_SPREAD = "put_calendar_spread"
     BUTTERFLY = "butterfly"
     WHEEL = "wheel_strategy"
     # --- New strategies ---
@@ -203,6 +205,30 @@ class AvoidEarningsRule(BaseModel):
     def validate_non_zero_window(self) -> AvoidEarningsRule:
         if self.days_before == 0 and self.days_after == 0:
             raise ValueError("At least one of days_before or days_after must be > 0")
+        return self
+
+
+class RegimeRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["regime"]
+    required_regimes: list[Regime] = Field(default_factory=list, max_length=8)
+    blocked_regimes: list[Regime] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_regime_lists(self) -> RegimeRule:
+        if not self.required_regimes and not self.blocked_regimes:
+            raise ValueError("At least one of required_regimes or blocked_regimes must be non-empty")
+        overlap = set(self.required_regimes) & set(self.blocked_regimes)
+        if overlap:
+            overlap_values = ", ".join(sorted(value.value for value in overlap))
+            raise ValueError(f"required_regimes and blocked_regimes overlap: {overlap_values}")
+        directional = {
+            regime for regime in self.required_regimes
+            if regime in {Regime.BULLISH, Regime.BEARISH, Regime.NEUTRAL}
+        }
+        if len(directional) > 1:
+            values = ", ".join(sorted(value.value for value in directional))
+            raise ValueError(f"required_regimes cannot mix multiple directional labels: {values}")
         return self
 
 
@@ -423,6 +449,7 @@ EntryRule = Annotated[
     | VolumeSpikeRule
     | SupportResistanceRule
     | AvoidEarningsRule
+    | RegimeRule
     | IndicatorThresholdRule
     | IndicatorTrendRule
     | IndicatorLevelCrossRule
@@ -443,6 +470,13 @@ def rule_bias(rule: EntryRule) -> str | None:
             SupportResistanceMode.BREAKDOWN_BELOW_SUPPORT: "bearish",
         }
         return mapping[rule.mode]
+    if isinstance(rule, RegimeRule):
+        if Regime.BULLISH in rule.required_regimes:
+            return Regime.BULLISH.value
+        if Regime.BEARISH in rule.required_regimes:
+            return Regime.BEARISH.value
+        if Regime.NEUTRAL in rule.required_regimes:
+            return Regime.NEUTRAL.value
     return None
 
 
@@ -657,11 +691,74 @@ class StrategyOverrides(BaseModel):
     long_put_strike: StrikeSelection | None = Field(default=None, description="Override long put placement")
     calendar_contract_type: Literal["call", "put"] | None = Field(
         default=None,
-        description="Override the option type used by calendar_spread. Defaults to 'call'.",
+        description="Legacy override for calendar option type. Defaults to 'call' for calendar_spread and 'put' for put_calendar_spread.",
+    )
+    calendar_far_leg_target_dte: int | None = Field(
+        default=None,
+        ge=1,
+        le=365,
+        description="Override the long-leg target DTE used by calendar strategies. Defaults to the next later expiration.",
     )
     spread_width: SpreadWidthConfig | None = Field(
         default=None, description="Override wing/spread width for strategies with protection legs"
     )
+
+
+CALENDAR_STRATEGY_TYPES = frozenset({
+    StrategyType.CALENDAR_SPREAD,
+    StrategyType.PUT_CALENDAR_SPREAD,
+})
+
+
+def is_calendar_strategy_type(strategy_type: StrategyType | str) -> bool:
+    try:
+        normalized = strategy_type if isinstance(strategy_type, StrategyType) else StrategyType(strategy_type)
+    except ValueError:
+        return False
+    return normalized in CALENDAR_STRATEGY_TYPES
+
+
+def resolve_calendar_contract_type(
+    strategy_type: StrategyType | str,
+    strategy_overrides: StrategyOverrides | None,
+) -> Literal["call", "put"]:
+    try:
+        normalized = strategy_type if isinstance(strategy_type, StrategyType) else StrategyType(strategy_type)
+    except ValueError:
+        normalized = None
+    if normalized == StrategyType.PUT_CALENDAR_SPREAD:
+        return "put"
+    return strategy_overrides.calendar_contract_type if strategy_overrides and strategy_overrides.calendar_contract_type else "call"
+
+
+def validate_calendar_strategy_overrides(
+    *,
+    strategy_type: StrategyType | str,
+    strategy_overrides: StrategyOverrides | None,
+    target_dte: int,
+) -> None:
+    if strategy_overrides is None:
+        return
+    uses_calendar_overrides = (
+        strategy_overrides.calendar_contract_type is not None
+        or strategy_overrides.calendar_far_leg_target_dte is not None
+    )
+    if not uses_calendar_overrides:
+        return
+    if not is_calendar_strategy_type(strategy_type):
+        raise ValueError("calendar strategy overrides are only valid for calendar_spread or put_calendar_spread")
+    normalized = strategy_type if isinstance(strategy_type, StrategyType) else StrategyType(strategy_type)
+    if (
+        normalized == StrategyType.PUT_CALENDAR_SPREAD
+        and strategy_overrides.calendar_contract_type is not None
+        and strategy_overrides.calendar_contract_type != "put"
+    ):
+        raise ValueError("put_calendar_spread always uses put contracts; calendar_contract_type cannot be set to 'call'")
+    if (
+        strategy_overrides.calendar_far_leg_target_dte is not None
+        and strategy_overrides.calendar_far_leg_target_dte <= target_dte
+    ):
+        raise ValueError("calendar_far_leg_target_dte must be greater than target_dte for calendar_spread")
 
 
 class CreateBacktestRunRequest(BaseModel):
@@ -765,12 +862,11 @@ class CreateBacktestRunRequest(BaseModel):
             if len(unique_expiration_dates) > 3:
                 raise ValueError("custom_legs support at most 3 unique option expiration_date values")
 
-        if (
-            self.strategy_overrides
-            and self.strategy_type != StrategyType.CALENDAR_SPREAD
-            and self.strategy_overrides.calendar_contract_type is not None
-        ):
-            raise ValueError("calendar_contract_type override is only valid for calendar_spread")
+        validate_calendar_strategy_overrides(
+            strategy_type=self.strategy_type,
+            strategy_overrides=self.strategy_overrides,
+            target_dte=self.target_dte,
+        )
 
         return self
 

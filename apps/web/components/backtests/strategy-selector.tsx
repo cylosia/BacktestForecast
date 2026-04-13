@@ -27,6 +27,7 @@ const FALLBACK_LABELS: Record<string, string> = {
   long_straddle: "Long Straddle",
   long_strangle: "Long Strangle",
   calendar_spread: "Calendar Spread",
+  put_calendar_spread: "Put Calendar Spread",
   butterfly: "Butterfly Spread",
   short_straddle: "Short Straddle",
   short_strangle: "Short Strangle",

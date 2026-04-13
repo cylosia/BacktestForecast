@@ -53,6 +53,29 @@ class _StubMarketDataService:
         return self._bundle
 
 
+class _PreparingStubMarketDataService:
+    def __init__(self) -> None:
+        self.client = SimpleNamespace(close=lambda: None)
+        self._redis_cache = None
+        self.prepare_call_count = 0
+
+    def prepare_backtest(self, request: CreateBacktestRunRequest) -> HistoricalDataBundle:
+        self.prepare_call_count += 1
+        gateway = SimpleNamespace(gateway_id=self.prepare_call_count)
+        bars = []
+        current = request.start_date - timedelta(days=120)
+        end = request.end_date + timedelta(days=180)
+        while current <= end:
+            bars.append(SimpleNamespace(trade_date=current))
+            current += timedelta(days=1)
+        return HistoricalDataBundle(
+            bars=bars,
+            earnings_dates=set(),
+            ex_dividend_dates=set(),
+            option_gateway=gateway,
+        )
+
+
 class _CapturingEngine:
     def __init__(self) -> None:
         self.shared_entry_rule_cache = None
@@ -118,6 +141,36 @@ class _CapturingEngine:
             )
             results.append(BacktestExecutionResult(summary=summary, trades=[], equity_curve=curve, warnings=[]))
         return results
+
+
+class _RecordingExecutionEngine:
+    def __init__(self) -> None:
+        self.option_gateways: list[object] = []
+        self.shared_entry_rule_caches: list[object] = []
+        self.bars_counts: list[int] = []
+
+    def run(self, *, config, bars, earnings_dates, ex_dividend_dates, option_gateway, shared_entry_rule_cache=None):
+        self.option_gateways.append(option_gateway)
+        self.shared_entry_rule_caches.append(shared_entry_rule_cache)
+        self.bars_counts.append(len(bars))
+        curve = [
+            EquityPointResult(
+                trade_date=bars[0].trade_date,
+                equity=Decimal("10000"),
+                cash=Decimal("10000"),
+                position_value=Decimal("0"),
+                drawdown_pct=Decimal("0"),
+            ),
+            EquityPointResult(
+                trade_date=bars[-1].trade_date,
+                equity=Decimal("10100"),
+                cash=Decimal("10100"),
+                position_value=Decimal("0"),
+                drawdown_pct=Decimal("0"),
+            ),
+        ]
+        summary = build_summary(10000.0, 10100.0, [], curve, risk_free_rate=config.risk_free_rate)
+        return BacktestExecutionResult(summary=summary, trades=[], equity_curve=curve, warnings=[])
 
 
 def test_execution_service_prefetches_contracts_for_single_backtests(monkeypatch) -> None:
@@ -414,6 +467,7 @@ def test_execution_service_logs_phase_timings(monkeypatch) -> None:
 
     assert logged["event"] == "backtest.execute_timing"
     assert logged["used_prepared_bundle"] is True
+    assert logged["prepared_bundle_cache_hit"] is False
     assert logged["data_source"] == "historical_flatfile"
     assert logged["prepare_ms"] == 2.0
     assert logged["prefetch_ms"] == 2.0
@@ -421,6 +475,144 @@ def test_execution_service_logs_phase_timings(monkeypatch) -> None:
     assert logged["engine_ms"] == 8.0
     assert logged["staleness_ms"] == 1.0
     assert logged["total_ms"] == 22.0
+
+
+def test_execution_service_reuses_internal_prepared_bundle_cache_for_narrower_requests(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    settings = SimpleNamespace(
+        option_cache_warn_age_seconds=259_200,
+        backtest_option_prefetch_enabled=False,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=4,
+        backtest_prefetch_timeout_seconds=77,
+    )
+
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "build_backtest_risk_free_rate_curve", lambda *args, **kwargs: None)
+
+    market_data_service = _PreparingStubMarketDataService()
+    engine = _RecordingExecutionEngine()
+    service = BacktestExecutionService(
+        market_data_service=market_data_service,
+        engine=engine,
+    )
+    first_request = CreateBacktestRunRequest(
+        symbol="SPY",
+        strategy_type="long_call",
+        start_date="2025-01-02",
+        end_date="2025-03-31",
+        target_dte=60,
+        dte_tolerance_days=10,
+        max_holding_days=20,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[
+            {"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 21},
+            {"type": "avoid_earnings", "days_before": 5, "days_after": 3},
+        ],
+    )
+    second_request = CreateBacktestRunRequest(
+        symbol="SPY",
+        strategy_type="long_put",
+        start_date="2025-01-02",
+        end_date="2025-03-31",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[
+            {"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 14},
+            {"type": "avoid_earnings", "days_before": 2, "days_after": 1},
+        ],
+    )
+    resolved = ResolvedExecutionParameters(
+        risk_free_rate=0.01,
+        risk_free_rate_source="configured_fallback",
+        risk_free_rate_field_name="yield_3_month",
+        risk_free_rate_model="curve_default",
+        dividend_yield=0.0,
+        source_of_truth="test",
+    )
+
+    service.execute_request(first_request, resolved_parameters=resolved)
+    service.execute_request(second_request, resolved_parameters=resolved)
+
+    assert market_data_service.prepare_call_count == 1
+    assert len(engine.option_gateways) == 2
+    assert engine.option_gateways[0] is engine.option_gateways[1]
+    assert len(engine.shared_entry_rule_caches) == 2
+    assert engine.shared_entry_rule_caches[0] is not engine.shared_entry_rule_caches[1]
+    assert len(engine.bars_counts) == 2
+    assert engine.bars_counts[1] < engine.bars_counts[0]
+
+
+def test_execution_service_rebuilds_internal_prepared_bundle_when_coverage_grows(monkeypatch) -> None:
+    import backtestforecast.services.backtest_execution as module
+
+    settings = SimpleNamespace(
+        option_cache_warn_age_seconds=259_200,
+        backtest_option_prefetch_enabled=False,
+        backtest_prefetch_min_trade_dates=2,
+        backtest_prefetch_max_dates=4,
+        backtest_prefetch_timeout_seconds=77,
+    )
+
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "build_backtest_risk_free_rate_curve", lambda *args, **kwargs: None)
+
+    market_data_service = _PreparingStubMarketDataService()
+    service = BacktestExecutionService(
+        market_data_service=market_data_service,
+        engine=_CapturingEngine(),
+    )
+    first_request = CreateBacktestRunRequest(
+        symbol="SPY",
+        strategy_type="long_call",
+        start_date="2025-01-02",
+        end_date="2025-03-31",
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[
+            {"type": "avoid_earnings", "days_before": 1, "days_after": 1},
+        ],
+    )
+    second_request = CreateBacktestRunRequest(
+        symbol="SPY",
+        strategy_type="long_put",
+        start_date="2025-01-02",
+        end_date="2025-03-31",
+        target_dte=75,
+        dte_tolerance_days=10,
+        max_holding_days=30,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("1"),
+        entry_rules=[
+            {"type": "rsi", "operator": "lte", "threshold": Decimal("35"), "period": 21},
+            {"type": "avoid_earnings", "days_before": 5, "days_after": 3},
+        ],
+    )
+    resolved = ResolvedExecutionParameters(
+        risk_free_rate=0.01,
+        risk_free_rate_source="configured_fallback",
+        risk_free_rate_field_name="yield_3_month",
+        risk_free_rate_model="curve_default",
+        dividend_yield=0.0,
+        source_of_truth="test",
+    )
+
+    service.execute_request(first_request, resolved_parameters=resolved)
+    service.execute_request(second_request, resolved_parameters=resolved)
+
+    assert market_data_service.prepare_call_count == 2
 
 
 def test_execution_service_deduplicates_inflight_prefetch_across_bundle_clones(monkeypatch) -> None:
@@ -687,6 +879,162 @@ def test_resolve_calendar_contract_groups_reuses_selection_cache() -> None:
 
     assert calls == [date(2025, 4, 8), date(2025, 4, 9)]
     assert first == second
+
+
+def test_delta_lookup_uses_contract_as_of_mid_price_without_gateway_quote_fetch(monkeypatch) -> None:
+    import backtestforecast.backtests.rules as rules_module
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.value = 0.0
+
+        def perf_counter(self) -> float:
+            return self.value
+
+        def advance(self, seconds: float) -> None:
+            self.value += seconds
+
+    class _Gateway:
+        def __init__(self) -> None:
+            self.iv_cache: dict[tuple[str, date], float | None] = {}
+
+        def get_iv(self, key):
+            return key in self.iv_cache, self.iv_cache.get(key)
+
+        def store_iv(self, key, value):
+            self.iv_cache[key] = value
+
+        def get_quote(self, option_ticker, trade_date):
+            raise AssertionError("contract as_of_mid_price should avoid quote fetch")
+
+        def get_quotes(self, option_tickers, trade_date):
+            raise AssertionError("contract as_of_mid_price should avoid batch quote fetch")
+
+    clock = _Clock()
+    monkeypatch.setattr(common_module._time, "perf_counter", clock.perf_counter)
+
+    def _fake_implied_volatility_from_price(**kwargs):
+        clock.advance(0.006)
+        return 0.22
+
+    def _fake_approx_bsm_delta_many(*args, **kwargs):
+        clock.advance(0.008)
+        return [0.31]
+
+    monkeypatch.setattr(rules_module, "implied_volatility_from_price", _fake_implied_volatility_from_price)
+    monkeypatch.setattr(common_module, "_kernel_approx_bsm_delta_many", _fake_approx_bsm_delta_many)
+
+    selection = StrikeSelection(mode=StrikeSelectionMode.DELTA_TARGET, value=Decimal("30"))
+    contracts = [
+        OptionContractRecord(
+            "O:AAPL250502C00100000",
+            "call",
+            date(2025, 5, 2),
+            100.0,
+            100.0,
+            as_of_mid_price=2.0,
+        )
+    ]
+    gateway = _Gateway()
+
+    with common_module._DELTA_LOOKUP_CACHE_LOCK:
+        common_module._DELTA_LOOKUP_CACHE.clear()
+
+    profiler = common_module.BuildPositionProfiler()
+    token = common_module.activate_build_position_profiler(profiler)
+    try:
+        lookup = maybe_build_contract_delta_lookup(
+            selection=selection,
+            contracts=contracts,
+            option_gateway=gateway,
+            trade_date=date(2025, 4, 1),
+            underlying_close=100.0,
+            dte_days=31,
+        )
+    finally:
+        common_module.reset_build_position_profiler(token)
+        with common_module._DELTA_LOOKUP_CACHE_LOCK:
+            common_module._DELTA_LOOKUP_CACHE.clear()
+
+    assert lookup == {(100.0, date(2025, 5, 2)): 0.31}
+    assert profiler.delta_iv_quote_fetch_ms == pytest.approx(0.0)
+    assert profiler.delta_iv_solve_ms == pytest.approx(6.0)
+    assert profiler.delta_kernel_ms == pytest.approx(8.0)
+
+
+def test_get_entry_quotes_prefers_contract_as_of_mid_price() -> None:
+    contracts = [
+        OptionContractRecord(
+            "O:AAPL250502C00100000",
+            "call",
+            date(2025, 5, 2),
+            100.0,
+            100.0,
+            as_of_mid_price=2.0,
+        ),
+        OptionContractRecord(
+            "O:AAPL250502C00105000",
+            "call",
+            date(2025, 5, 2),
+            105.0,
+            100.0,
+            as_of_mid_price=1.0,
+        ),
+    ]
+
+    class _Gateway:
+        def get_quotes(self, option_tickers, trade_date):
+            raise AssertionError("contract as_of_mid_price should avoid batch quote fetch")
+
+        def get_quote(self, option_ticker, trade_date):
+            raise AssertionError("contract as_of_mid_price should avoid quote fetch")
+
+    quotes = common_module.get_entry_quotes(
+        _Gateway(),
+        trade_date=date(2025, 4, 1),
+        contracts=contracts,
+    )
+
+    assert quotes["O:AAPL250502C00100000"].mid_price == 2.0
+    assert quotes["O:AAPL250502C00105000"].mid_price == 1.0
+
+
+def test_engine_enrich_position_option_legs_skips_quote_fetch_when_metadata_seeded() -> None:
+    engine = OptionsBacktestEngine()
+    position = OpenMultiLegPosition(
+        display_ticker="O:AAPL250502C00100000",
+        strategy_type="calendar_spread",
+        underlying_symbol="AAPL",
+        entry_date=date(2025, 4, 1),
+        entry_index=0,
+        quantity=1,
+        dte_at_open=31,
+        option_legs=[
+            OpenOptionLeg(
+                ticker="O:AAPL250502C00100000",
+                contract_type="call",
+                side=1,
+                strike_price=100.0,
+                expiration_date=date(2025, 5, 2),
+                quantity_per_unit=1,
+                entry_mid=2.0,
+                last_mid=2.0,
+                deliverable_shares_per_contract=100.0,
+                contract_root_symbol="AAPL",
+                reference_underlying_symbol="AAPL",
+            )
+        ],
+    )
+
+    class _Gateway:
+        def get_quotes(self, option_tickers, trade_date):
+            raise AssertionError("pre-seeded metadata should avoid enrichment quote fetch")
+
+    engine._enrich_position_option_legs(position=position, option_gateway=_Gateway())
+
+    assert position.option_legs[0].contract_root_symbol == "AAPL"
+    assert position.option_legs[0].reference_underlying_symbol == "AAPL"
+    assert position.option_legs[0].is_nonstandard is False
 
 
 def test_engine_run_logs_phase_timing_breakdown(monkeypatch) -> None:
@@ -1026,6 +1374,46 @@ def test_engine_run_exit_policy_variants_attaches_quote_series_only_after_viable
     assert len(results) == 2
     assert attach_calls == [(date(2025, 9, 2), date(2025, 9, 3))]
     assert [result.summary.trade_count for result in results] == [0, 1]
+
+
+def test_attach_position_quote_series_reuses_gateway_dict_payload() -> None:
+    quote_series = {
+        "O:LEG1": {
+            date(2025, 9, 2): OptionQuoteRecord(date(2025, 9, 2), 1.9, 2.1, None),
+            date(2025, 9, 3): OptionQuoteRecord(date(2025, 9, 3), 2.4, 2.6, None),
+        },
+    }
+
+    class _Gateway:
+        def get_quote_series(self, option_tickers, start_date, end_date):
+            assert option_tickers == ["O:LEG1"]
+            assert start_date == date(2025, 9, 2)
+            assert end_date == date(2025, 9, 3)
+            return quote_series
+
+    position = OpenMultiLegPosition(
+        display_ticker="O:LEG1",
+        strategy_type="long_call",
+        underlying_symbol="AAPL",
+        entry_date=date(2025, 9, 2),
+        entry_index=0,
+        quantity=1,
+        dte_at_open=10,
+        option_legs=[
+            OpenOptionLeg("O:LEG1", "call", 1, 100.0, date(2025, 9, 12), 1, 2.0, 2.0),
+        ],
+    )
+
+    OptionsBacktestEngine._attach_position_quote_series(
+        position,
+        option_gateway=_Gateway(),
+        start_date=date(2025, 9, 2),
+        end_date=date(2025, 9, 3),
+    )
+
+    assert position.quote_series_lookup is quote_series
+    assert position.quote_series_lookup["O:LEG1"] is quote_series["O:LEG1"]
+    assert position.quote_series_loaded_tickers == {"O:LEG1"}
 
 
 def test_delta_lookup_profiler_tracks_quote_iv_kernel_and_cache_metrics(monkeypatch) -> None:

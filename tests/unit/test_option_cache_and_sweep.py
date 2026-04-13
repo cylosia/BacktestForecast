@@ -379,6 +379,43 @@ class TestHistoricalGatewayRunScopedCache:
         assert result2 == contracts
         store.list_option_contracts.assert_called_once()
 
+    def test_gateway_filters_adjusted_root_contracts_even_when_deliverable_shares_look_standard(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        expiration = date(2019, 7, 5)
+        standard_contract = OptionContractRecord(
+            ticker="O:TZA190705C00045000",
+            contract_type="call",
+            expiration_date=expiration,
+            strike_price=45.0,
+            shares_per_contract=100.0,
+            underlying_symbol="TZA",
+        )
+        adjusted_contract = OptionContractRecord(
+            ticker="O:TZA1190705C00010000",
+            contract_type="call",
+            expiration_date=expiration,
+            strike_price=10.0,
+            shares_per_contract=100.0,
+            underlying_symbol="TZA1",
+        )
+
+        store = MagicMock()
+        store.list_option_contracts.return_value = [adjusted_contract, standard_contract]
+        store.list_option_contracts_for_expiration.return_value = [adjusted_contract, standard_contract]
+
+        gw = HistoricalOptionGateway(store, "TZA")
+
+        broad = gw.list_contracts(date(2019, 6, 28), "call", 7, 2)
+        exact = gw.list_contracts_for_expiration(
+            entry_date=date(2019, 6, 28),
+            contract_type="call",
+            expiration_date=expiration,
+        )
+
+        assert broad == [standard_contract]
+        assert exact == [standard_contract]
+
     def test_list_contracts_cache_is_shared_across_gateway_instances_for_same_store(self):
         from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 
@@ -687,6 +724,79 @@ class TestHistoricalGatewayRunScopedCache:
             strike_price_lte=275.0,
         )
 
+    def test_filtered_exact_cache_index_drops_evicted_entries(self, monkeypatch):
+        import backtestforecast.market_data.historical_gateway as module
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        monkeypatch.setattr(module, "_FILTERED_EXACT_CONTRACT_CACHE_MAX", 2)
+
+        entry_date = date(2025, 3, 14)
+        expiration_a = date(2025, 4, 18)
+        expiration_b = date(2025, 4, 25)
+        expiration_c = date(2025, 5, 2)
+
+        class _Store:
+            def __init__(self) -> None:
+                self.calls: list[tuple[date, float | None, float | None]] = []
+                self.expiration_call_counts: dict[date, int] = {}
+
+            def list_option_contracts_for_expiration(self, **kwargs):
+                expiration_date = kwargs["expiration_date"]
+                strike_price_gte = kwargs.get("strike_price_gte")
+                strike_price_lte = kwargs.get("strike_price_lte")
+                self.calls.append((expiration_date, strike_price_gte, strike_price_lte))
+                call_number = self.expiration_call_counts.get(expiration_date, 0) + 1
+                self.expiration_call_counts[expiration_date] = call_number
+                return [
+                    OptionContractRecord(
+                        f"O:{expiration_date.isoformat()}:{call_number}",
+                        "call",
+                        expiration_date,
+                        280.0,
+                        100.0,
+                    )
+                ]
+
+        store = _Store()
+        gw = HistoricalOptionGateway(store, "TSLA")
+
+        gw.list_contracts_for_expiration(
+            entry_date=entry_date,
+            contract_type="call",
+            expiration_date=expiration_a,
+            strike_price_gte=250.0,
+            strike_price_lte=285.0,
+        )
+        gw.list_contracts_for_expiration(
+            entry_date=entry_date,
+            contract_type="call",
+            expiration_date=expiration_b,
+            strike_price_gte=250.0,
+            strike_price_lte=285.0,
+        )
+        gw.list_contracts_for_expiration(
+            entry_date=entry_date,
+            contract_type="call",
+            expiration_date=expiration_c,
+            strike_price_gte=250.0,
+            strike_price_lte=285.0,
+        )
+        result = gw.list_contracts_for_expiration(
+            entry_date=entry_date,
+            contract_type="call",
+            expiration_date=expiration_a,
+            strike_price_gte=270.0,
+            strike_price_lte=285.0,
+        )
+
+        assert [contract.ticker for contract in result] == [f"O:{expiration_a.isoformat()}:2"]
+        assert store.calls == [
+            (expiration_a, 250.0, 285.0),
+            (expiration_b, 250.0, 285.0),
+            (expiration_c, 250.0, 285.0),
+            (expiration_a, 270.0, 285.0),
+        ]
+
     def test_list_contracts_for_expirations_batches_store_calls(self):
         from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 
@@ -815,6 +925,134 @@ class TestHistoricalGatewayRunScopedCache:
         assert result[1][0].ticker == "O:CALL1"
         assert result[2][0].ticker == "O:PUT1"
         assert store.calls == 1
+
+    def test_list_contracts_for_preferred_common_expiration_probes_small_unknown_prefix_before_cached_hit(
+        self,
+        monkeypatch,
+    ):
+        import backtestforecast.market_data.historical_gateway as module
+        from backtestforecast.backtests.strategies.common import preferred_expiration_dates
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        monkeypatch.setattr(module, "_PREFERRED_COMMON_EXPIRATION_EXACT_PROBE_MAX_UNKNOWN", 2)
+
+        entry_date = date(2025, 4, 1)
+        ordered_expirations = preferred_expiration_dates(entry_date, 7, 2)
+        fallback_expiration = ordered_expirations[2]
+        call_contract = OptionContractRecord("O:CALL_FALLBACK", "call", fallback_expiration, 250.0, 100.0)
+        put_contract = OptionContractRecord("O:PUT_FALLBACK", "put", fallback_expiration, 245.0, 100.0)
+
+        class _Store:
+            def __init__(self) -> None:
+                self.exact_calls: list[tuple[str, date | None]] = []
+                self.batch_calls = 0
+
+            def list_option_contracts_for_expiration(self, **kwargs):
+                expiration_date = kwargs["expiration_date"]
+                contract_type = kwargs["contract_type"]
+                self.exact_calls.append((contract_type, expiration_date))
+                if expiration_date == fallback_expiration:
+                    return [call_contract] if contract_type == "call" else [put_contract]
+                return []
+
+            def list_option_contracts_for_expirations_by_type(self, **kwargs):
+                self.batch_calls += 1
+                raise AssertionError("small unresolved prefix should use exact probes before batched fetch")
+
+        store = _Store()
+        gw = HistoricalOptionGateway(store, "TSLA")
+
+        assert gw.list_contracts_for_expiration(
+            entry_date=entry_date,
+            contract_type="call",
+            expiration_date=fallback_expiration,
+        ) == [call_contract]
+        assert gw.list_contracts_for_expiration(
+            entry_date=entry_date,
+            contract_type="put",
+            expiration_date=fallback_expiration,
+        ) == [put_contract]
+
+        resolved = gw.list_contracts_for_preferred_common_expiration(
+            entry_date=entry_date,
+            target_dte=7,
+            dte_tolerance_days=2,
+        )
+
+        assert resolved == (fallback_expiration, [call_contract], [put_contract])
+        assert store.batch_calls == 0
+        assert store.exact_calls == [
+            ("call", fallback_expiration),
+            ("put", fallback_expiration),
+            ("call", ordered_expirations[0]),
+            ("put", ordered_expirations[0]),
+            ("call", ordered_expirations[1]),
+            ("put", ordered_expirations[1]),
+        ]
+
+    def test_list_contracts_for_preferred_common_expiration_returns_cached_fallback_after_large_prefix_batch_miss(
+        self,
+        monkeypatch,
+    ):
+        import backtestforecast.market_data.historical_gateway as module
+        from backtestforecast.backtests.strategies.common import preferred_expiration_dates
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        monkeypatch.setattr(module, "_PREFERRED_COMMON_EXPIRATION_EXACT_PROBE_MAX_UNKNOWN", 2)
+
+        entry_date = date(2025, 4, 1)
+        ordered_expirations = preferred_expiration_dates(entry_date, 7, 3)
+        fallback_expiration = ordered_expirations[3]
+        unresolved_prefix = ordered_expirations[:3]
+        call_contract = OptionContractRecord("O:CALL_FALLBACK", "call", fallback_expiration, 250.0, 100.0)
+        put_contract = OptionContractRecord("O:PUT_FALLBACK", "put", fallback_expiration, 245.0, 100.0)
+
+        class _Store:
+            def __init__(self) -> None:
+                self.exact_calls: list[tuple[str, date | None]] = []
+                self.batch_calls: list[tuple[date, ...]] = []
+
+            def list_option_contracts_for_expiration(self, **kwargs):
+                expiration_date = kwargs["expiration_date"]
+                contract_type = kwargs["contract_type"]
+                self.exact_calls.append((contract_type, expiration_date))
+                if expiration_date == fallback_expiration:
+                    return [call_contract] if contract_type == "call" else [put_contract]
+                return []
+
+            def list_option_contracts_for_expirations_by_type(self, **kwargs):
+                self.batch_calls.append(tuple(kwargs["expiration_dates"]))
+                return {
+                    "call": {expiration_date: [] for expiration_date in kwargs["expiration_dates"]},
+                    "put": {expiration_date: [] for expiration_date in kwargs["expiration_dates"]},
+                }
+
+        store = _Store()
+        gw = HistoricalOptionGateway(store, "TSLA")
+
+        assert gw.list_contracts_for_expiration(
+            entry_date=entry_date,
+            contract_type="call",
+            expiration_date=fallback_expiration,
+        ) == [call_contract]
+        assert gw.list_contracts_for_expiration(
+            entry_date=entry_date,
+            contract_type="put",
+            expiration_date=fallback_expiration,
+        ) == [put_contract]
+
+        resolved = gw.list_contracts_for_preferred_common_expiration(
+            entry_date=entry_date,
+            target_dte=7,
+            dte_tolerance_days=3,
+        )
+
+        assert resolved == (fallback_expiration, [call_contract], [put_contract])
+        assert store.batch_calls == [tuple(unresolved_prefix)]
+        assert store.exact_calls == [
+            ("call", fallback_expiration),
+            ("put", fallback_expiration),
+        ]
 
     def test_get_quote_caches_missing_result(self):
         from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
@@ -1010,6 +1248,47 @@ class TestHistoricalGatewayRunScopedCache:
         assert series_again["O:B"][date(2025, 3, 17)].mid_price == pytest.approx(5.1)
         assert quotes["O:A"] is not None
         assert quotes["O:A"].mid_price == pytest.approx(3.1)
+
+    def test_get_quote_series_reuses_wider_cached_range_for_same_ticker(self):
+        from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
+
+        class _Store:
+            def __init__(self) -> None:
+                self.series_calls = 0
+
+            def get_option_quote_series(self, option_tickers, start_date, end_date):
+                self.series_calls += 1
+                return {
+                    ticker: {
+                        start_date + timedelta(days=offset): OptionQuoteRecord(
+                            start_date + timedelta(days=offset),
+                            2.0 + offset,
+                            2.2 + offset,
+                            None,
+                        )
+                        for offset in range((end_date - start_date).days + 1)
+                    }
+                    for ticker in option_tickers
+                }
+
+        store = _Store()
+        gw = HistoricalOptionGateway(store, "TSLA")
+
+        full_series = gw.get_quote_series(
+            ["O:A"],
+            date(2025, 3, 14),
+            date(2025, 3, 20),
+        )
+        sliced_series = gw.get_quote_series(
+            ["O:A"],
+            date(2025, 3, 17),
+            date(2025, 3, 20),
+        )
+
+        assert store.series_calls == 1
+        assert full_series["O:A"][date(2025, 3, 14)].mid_price == pytest.approx(2.1)
+        assert sliced_series["O:A"][date(2025, 3, 17)].mid_price == pytest.approx(5.1)
+        assert sliced_series["O:A"][date(2025, 3, 20)].mid_price == pytest.approx(8.1)
 
 
 # ---------------------------------------------------------------------------

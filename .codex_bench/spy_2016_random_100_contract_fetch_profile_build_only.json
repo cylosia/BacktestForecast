@@ -1,0 +1,292 @@
+{
+  "build_contract_fetch_total_ms": 17883.516,
+  "wrapped_exclusive_total_ms": 17680.382,
+  "wrapped_share_of_build_contract_fetch_pct": 98.86,
+  "unattributed_build_contract_fetch_ms": 203.134,
+  "methods": [
+    {
+      "method": "store.list_option_contracts_for_expirations",
+      "calls": 5634,
+      "total_ms": 16043.868,
+      "exclusive_ms": 16043.868,
+      "share_of_wrapped_exclusive_pct": 90.74,
+      "share_of_build_contract_fetch_pct": 89.71,
+      "avg_ms_per_call": 2.848,
+      "returned_contracts": 493085,
+      "returned_expirations": 79905,
+      "top_strategies_by_total_ms": [
+        {
+          "strategy": "long_straddle",
+          "calls": 1113,
+          "total_ms": 2777.387,
+          "avg_ms_per_call": 2.495
+        },
+        {
+          "strategy": "bull_call_debit_spread",
+          "calls": 916,
+          "total_ms": 2695.229,
+          "avg_ms_per_call": 2.942
+        },
+        {
+          "strategy": "bear_put_debit_spread",
+          "calls": 693,
+          "total_ms": 2010.845,
+          "avg_ms_per_call": 2.902
+        },
+        {
+          "strategy": "butterfly",
+          "calls": 667,
+          "total_ms": 1749.799,
+          "avg_ms_per_call": 2.623
+        },
+        {
+          "strategy": "calendar_spread",
+          "calls": 679,
+          "total_ms": 1599.069,
+          "avg_ms_per_call": 2.355
+        }
+      ]
+    },
+    {
+      "method": "store.list_option_contracts_for_expiration",
+      "calls": 448,
+      "total_ms": 850.465,
+      "exclusive_ms": 850.465,
+      "share_of_wrapped_exclusive_pct": 4.81,
+      "share_of_build_contract_fetch_pct": 4.76,
+      "avg_ms_per_call": 1.898,
+      "returned_contracts": 0,
+      "returned_expirations": 0,
+      "top_strategies_by_total_ms": [
+        {
+          "strategy": "long_straddle",
+          "calls": 192,
+          "total_ms": 326.108,
+          "avg_ms_per_call": 1.698
+        },
+        {
+          "strategy": "long_strangle",
+          "calls": 152,
+          "total_ms": 324.615,
+          "avg_ms_per_call": 2.136
+        },
+        {
+          "strategy": "iron_condor",
+          "calls": 104,
+          "total_ms": 199.743,
+          "avg_ms_per_call": 1.921
+        }
+      ]
+    },
+    {
+      "method": "gateway.list_contracts_for_expirations",
+      "calls": 5700,
+      "total_ms": 16461.267,
+      "exclusive_ms": 417.399,
+      "share_of_wrapped_exclusive_pct": 2.36,
+      "share_of_build_contract_fetch_pct": 2.33,
+      "avg_ms_per_call": 2.888,
+      "returned_contracts": 507080,
+      "returned_expirations": 81506,
+      "top_strategies_by_total_ms": [
+        {
+          "strategy": "long_straddle",
+          "calls": 1114,
+          "total_ms": 2848.224,
+          "avg_ms_per_call": 2.557
+        },
+        {
+          "strategy": "bull_call_debit_spread",
+          "calls": 920,
+          "total_ms": 2759.873,
+          "avg_ms_per_call": 3.0
+        },
+        {
+          "strategy": "bear_put_debit_spread",
+          "calls": 704,
+          "total_ms": 2079.82,
+          "avg_ms_per_call": 2.954
+        },
+        {
+          "strategy": "butterfly",
+          "calls": 667,
+          "total_ms": 1798.063,
+          "avg_ms_per_call": 2.696
+        },
+        {
+          "strategy": "calendar_spread",
+          "calls": 679,
+          "total_ms": 1649.973,
+          "avg_ms_per_call": 2.43
+        }
+      ]
+    },
+    {
+      "method": "gateway.list_contracts_for_preferred_expiration",
+      "calls": 3233,
+      "total_ms": 10450.6,
+      "exclusive_ms": 261.083,
+      "share_of_wrapped_exclusive_pct": 1.48,
+      "share_of_build_contract_fetch_pct": 1.46,
+      "avg_ms_per_call": 3.232,
+      "returned_contracts": 128508,
+      "returned_expirations": 0,
+      "top_strategies_by_total_ms": [
+        {
+          "strategy": "bull_call_debit_spread",
+          "calls": 920,
+          "total_ms": 2843.856,
+          "avg_ms_per_call": 3.091
+        },
+        {
+          "strategy": "bear_put_debit_spread",
+          "calls": 704,
+          "total_ms": 2122.795,
+          "avg_ms_per_call": 3.015
+        },
+        {
+          "strategy": "butterfly",
+          "calls": 667,
+          "total_ms": 1840.651,
+          "avg_ms_per_call": 2.76
+        },
+        {
+          "strategy": "long_put",
+          "calls": 315,
+          "total_ms": 1588.489,
+          "avg_ms_per_call": 5.043
+        },
+        {
+          "strategy": "bear_call_credit_spread",
+          "calls": 324,
+          "total_ms": 965.29,
+          "avg_ms_per_call": 2.979
+        }
+      ]
+    },
+    {
+      "method": "gateway.list_contracts_for_expiration",
+      "calls": 7648,
+      "total_ms": 71.855,
+      "exclusive_ms": 62.788,
+      "share_of_wrapped_exclusive_pct": 0.36,
+      "share_of_build_contract_fetch_pct": 0.35,
+      "avg_ms_per_call": 0.009,
+      "returned_contracts": 0,
+      "returned_expirations": 0,
+      "top_strategies_by_total_ms": [
+        {
+          "strategy": "iron_condor",
+          "calls": 1280,
+          "total_ms": 48.792,
+          "avg_ms_per_call": 0.038
+        },
+        {
+          "strategy": "long_straddle",
+          "calls": 4696,
+          "total_ms": 16.75,
+          "avg_ms_per_call": 0.004
+        },
+        {
+          "strategy": "long_strangle",
+          "calls": 1672,
+          "total_ms": 6.312,
+          "avg_ms_per_call": 0.004
+        }
+      ]
+    },
+    {
+      "method": "gateway.list_contracts",
+      "calls": 600,
+      "total_ms": 886.177,
+      "exclusive_ms": 31.164,
+      "share_of_wrapped_exclusive_pct": 0.18,
+      "share_of_build_contract_fetch_pct": 0.17,
+      "avg_ms_per_call": 1.477,
+      "returned_contracts": 0,
+      "returned_expirations": 0,
+      "top_strategies_by_total_ms": [
+        {
+          "strategy": "long_straddle",
+          "calls": 344,
+          "total_ms": 349.782,
+          "avg_ms_per_call": 1.017
+        },
+        {
+          "strategy": "long_strangle",
+          "calls": 152,
+          "total_ms": 331.968,
+          "avg_ms_per_call": 2.184
+        },
+        {
+          "strategy": "iron_condor",
+          "calls": 104,
+          "total_ms": 204.428,
+          "avg_ms_per_call": 1.966
+        }
+      ]
+    },
+    {
+      "method": "gateway._list_contracts_for_exact_expiration",
+      "calls": 7648,
+      "total_ms": 9.067,
+      "exclusive_ms": 9.067,
+      "share_of_wrapped_exclusive_pct": 0.05,
+      "share_of_build_contract_fetch_pct": 0.05,
+      "avg_ms_per_call": 0.001,
+      "returned_contracts": 0,
+      "returned_expirations": 0,
+      "top_strategies_by_total_ms": [
+        {
+          "strategy": "long_straddle",
+          "calls": 4696,
+          "total_ms": 5.463,
+          "avg_ms_per_call": 0.001
+        },
+        {
+          "strategy": "long_strangle",
+          "calls": 1672,
+          "total_ms": 2.057,
+          "avg_ms_per_call": 0.001
+        },
+        {
+          "strategy": "iron_condor",
+          "calls": 1280,
+          "total_ms": 1.547,
+          "avg_ms_per_call": 0.001
+        }
+      ]
+    },
+    {
+      "method": "store.list_option_contracts",
+      "calls": 448,
+      "total_ms": 855.014,
+      "exclusive_ms": 4.548,
+      "share_of_wrapped_exclusive_pct": 0.03,
+      "share_of_build_contract_fetch_pct": 0.03,
+      "avg_ms_per_call": 1.909,
+      "returned_contracts": 0,
+      "returned_expirations": 0,
+      "top_strategies_by_total_ms": [
+        {
+          "strategy": "long_straddle",
+          "calls": 192,
+          "total_ms": 327.992,
+          "avg_ms_per_call": 1.708
+        },
+        {
+          "strategy": "long_strangle",
+          "calls": 152,
+          "total_ms": 326.253,
+          "avg_ms_per_call": 2.146
+        },
+        {
+          "strategy": "iron_condor",
+          "calls": 104,
+          "total_ms": 200.768,
+          "avg_ms_per_call": 1.93
+        }
+      ]
+    }
+  ]
+}

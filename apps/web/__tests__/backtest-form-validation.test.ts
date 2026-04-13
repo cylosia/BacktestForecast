@@ -129,15 +129,15 @@ describe("backtest form submission edge cases", () => {
     expect(payload!.symbol).toBe("AAPL");
   });
 
-  it("serializes put calendar selection into strategy_overrides", () => {
+  it("serializes put calendar selection as a first-class strategy type", () => {
     const values = {
       ...getDefaultBacktestFormValues(),
-      strategyType: "calendar_spread" as const,
-      calendarContractType: "put" as const,
+      strategyType: "put_calendar_spread" as const,
     };
     const { errors, payload } = validateBacktestForm(values);
     expect(Object.keys(errors)).toHaveLength(0);
-    expect(payload?.strategy_overrides).toEqual({ calendar_contract_type: "put" });
+    expect(payload?.strategy_type).toBe("put_calendar_spread");
+    expect(payload?.strategy_overrides).toBeUndefined();
   });
 
   it("serializes advanced generic indicator rules into the payload", () => {

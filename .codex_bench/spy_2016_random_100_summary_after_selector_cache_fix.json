@@ -1,0 +1,70 @@
+{
+  "seed": 2016,
+  "request_count": 100,
+  "wall_total_ms": 52543.397,
+  "wall_total_s": 52.543,
+  "per_run_median_ms": 370.957,
+  "per_run_mean_ms": 525.408,
+  "per_run_p90_ms": 1103.779,
+  "per_run_p95_ms": 1395.917,
+  "zero_trade_count": 2,
+  "median_trades_per_run": 28.5,
+  "mean_trades_per_run": 31.37,
+  "per_strategy": {
+    "bear_call_credit_spread": {
+      "count": 12,
+      "median_ms": 256.386,
+      "mean_ms": 331.517
+    },
+    "bear_put_debit_spread": {
+      "count": 17,
+      "median_ms": 238.05,
+      "mean_ms": 328.075
+    },
+    "bull_call_debit_spread": {
+      "count": 20,
+      "median_ms": 328.508,
+      "mean_ms": 321.412
+    },
+    "bull_put_credit_spread": {
+      "count": 2,
+      "median_ms": 750.199,
+      "mean_ms": 750.199
+    },
+    "butterfly": {
+      "count": 8,
+      "median_ms": 423.407,
+      "mean_ms": 464.852
+    },
+    "calendar_spread": {
+      "count": 5,
+      "median_ms": 788.951,
+      "mean_ms": 847.378
+    },
+    "iron_condor": {
+      "count": 5,
+      "median_ms": 1042.898,
+      "mean_ms": 1123.019
+    },
+    "long_call": {
+      "count": 6,
+      "median_ms": 442.43,
+      "mean_ms": 575.147
+    },
+    "long_put": {
+      "count": 6,
+      "median_ms": 1224.533,
+      "mean_ms": 1187.161
+    },
+    "long_straddle": {
+      "count": 16,
+      "median_ms": 362.427,
+      "mean_ms": 490.381
+    },
+    "long_strangle": {
+      "count": 3,
+      "median_ms": 994.543,
+      "mean_ms": 1021.991
+    }
+  }
+}

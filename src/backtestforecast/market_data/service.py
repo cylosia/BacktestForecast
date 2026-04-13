@@ -24,6 +24,7 @@ from backtestforecast.market_data.historical_store import HistoricalMarketDataSt
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
 from backtestforecast.models import HistoricalEarningsEvent, HistoricalExDividendDate, HistoricalOptionContractCatalogSnapshot
 from backtestforecast.observability.metrics import MARKET_DATA_CACHE_HITS, MARKET_DATA_CACHE_MISSES
+from backtestforecast.pipeline.regime import MIN_BARS as REGIME_MIN_BARS
 from backtestforecast.schemas.backtests import (
     AdxSeries,
     AvoidEarningsRule,
@@ -49,6 +50,7 @@ from backtestforecast.schemas.backtests import (
     MacdSignalSeries,
     MfiSeries,
     MovingAverageCrossoverRule,
+    RegimeRule,
     RocSeries,
     RsiRule,
     RsiSeriesSpec,
@@ -1315,6 +1317,8 @@ class MarketDataService:
                 warmup = max(warmup, rule.lookback_days + 5)
             elif isinstance(rule, (VolumeSpikeRule, SupportResistanceRule)):
                 warmup = max(warmup, rule.lookback_period + 2)
+            elif isinstance(rule, RegimeRule):
+                warmup = max(warmup, REGIME_MIN_BARS)
             elif isinstance(rule, IndicatorThresholdRule):
                 warmup = max(warmup, MarketDataService._indicator_series_warmup(rule.series))
             elif isinstance(rule, IndicatorTrendRule):

@@ -35,6 +35,7 @@ REGIME_STRATEGY_MAP: dict[tuple[Regime, Regime | None], list[str]] = {
     # --- Bearish ---
     (Regime.BEARISH, Regime.LOW_IV): [
         "long_put",
+        "put_calendar_spread",
         "bear_put_debit_spread",
         "ratio_put_backspread",
         "synthetic_put",
@@ -46,6 +47,7 @@ REGIME_STRATEGY_MAP: dict[tuple[Regime, Regime | None], list[str]] = {
     (Regime.BEARISH, None): [
         "long_put",
         "bear_put_debit_spread",
+        "put_calendar_spread",
         "bear_call_credit_spread",
     ],
     # --- Neutral ---

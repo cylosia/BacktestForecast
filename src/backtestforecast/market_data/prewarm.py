@@ -11,7 +11,11 @@ from backtestforecast.config import get_settings
 from backtestforecast.market_data.historical_gateway import HistoricalOptionGateway
 from backtestforecast.market_data.service import HistoricalDataBundle, MarketDataService
 from backtestforecast.market_data.types import DailyBar
-from backtestforecast.schemas.backtests import CreateBacktestRunRequest, StrategyType
+from backtestforecast.schemas.backtests import (
+    CreateBacktestRunRequest,
+    StrategyType,
+    resolve_calendar_contract_type,
+)
 
 _TARGETED_SINGLE_TYPE_STRATEGIES: dict[StrategyType, str] = {
     StrategyType.COVERED_CALL: "call",
@@ -41,6 +45,7 @@ _TARGETED_SHARED_EXPIRATION_STRATEGIES: set[StrategyType] = {
 
 _TARGETED_CALENDAR_STRATEGIES: set[StrategyType] = {
     StrategyType.CALENDAR_SPREAD,
+    StrategyType.PUT_CALENDAR_SPREAD,
 }
 
 
@@ -314,7 +319,7 @@ def targeted_exact_quote_prewarm_signature(request: CreateBacktestRunRequest) ->
     if request.strategy_type in _TARGETED_CALENDAR_STRATEGIES:
         return {
             "group": "calendar",
-            "contract_type": getattr(request.strategy_overrides, "calendar_contract_type", None) or "call",
+            "contract_type": resolve_calendar_contract_type(request.strategy_type, request.strategy_overrides),
         }
     return None
 
@@ -440,10 +445,20 @@ def _targeted_contract_groups_for_date(
             request.target_dte,
             request.dte_tolerance_days,
         )
+        preferred_common_fetch = getattr(gateway, "list_contracts_for_preferred_common_expiration", None)
         availability_fetch_by_type = getattr(gateway, "list_available_expirations_by_type", None)
         batch_fetch_by_type = getattr(gateway, "list_contracts_for_expirations_by_type", None)
         batch_fetch = getattr(gateway, "list_contracts_for_expirations", None)
         exact_fetch = getattr(gateway, "list_contracts_for_expiration", None)
+        if callable(preferred_common_fetch):
+            _expiration, calls, puts = preferred_common_fetch(
+                entry_date=trade_date,
+                target_dte=request.target_dte,
+                dte_tolerance_days=request.dte_tolerance_days,
+                strike_price_gte=strike_band[0],
+                strike_price_lte=strike_band[1],
+            )
+            return [calls, puts]
         if callable(batch_fetch_by_type):
             fetched_by_type = batch_fetch_by_type(
                 entry_date=trade_date,
@@ -529,13 +544,15 @@ def _targeted_contract_groups_for_date(
         raise ValueError("No shared expiration was available for targeted prewarm")
 
     if request.strategy_type in _TARGETED_CALENDAR_STRATEGIES:
-        contract_type = getattr(request.strategy_overrides, "calendar_contract_type", None) or "call"
+        contract_type = resolve_calendar_contract_type(request.strategy_type, request.strategy_overrides)
+        far_leg_target_dte = getattr(request.strategy_overrides, "calendar_far_leg_target_dte", None)
         _, near_contracts, _, far_contracts = resolve_calendar_contract_groups(
             gateway,
             entry_date=trade_date,
             contract_type=contract_type,
             target_dte=request.target_dte,
             dte_tolerance_days=request.dte_tolerance_days,
+            far_leg_target_dte=far_leg_target_dte,
             strike_price_gte=strike_band[0],
             strike_price_lte=strike_band[1],
         )

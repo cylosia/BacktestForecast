@@ -234,6 +234,11 @@ class OpenOptionLeg:
     entry_mid: float
     last_mid: float
     contract_multiplier: float = 100.0
+    deliverable_shares_per_contract: float = 100.0
+    contract_root_symbol: str | None = None
+    reference_underlying_symbol: str | None = None
+    mark_ticker: str | None = None
+    is_nonstandard: bool = False
 
 
 @dataclass(slots=True)

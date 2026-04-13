@@ -65,7 +65,10 @@ def test_extended_indicator_payload_is_accepted() -> None:
 
 
 def test_rejects_calendar_override_for_non_calendar_strategy() -> None:
-    with pytest.raises(PydanticValidationError, match="calendar_contract_type override is only valid for calendar_spread"):
+    with pytest.raises(
+        PydanticValidationError,
+        match="calendar strategy overrides are only valid for calendar_spread or put_calendar_spread",
+    ):
         CreateBacktestRunRequest(
             symbol="SPY",
             strategy_type="long_call",
@@ -79,4 +82,88 @@ def test_rejects_calendar_override_for_non_calendar_strategy() -> None:
             commission_per_contract=0.65,
             entry_rules=[{"type": "rsi", "operator": "lt", "threshold": 35, "period": 14}],
             strategy_overrides={"calendar_contract_type": "put"},
+        )
+
+
+def test_rejects_far_leg_target_dte_for_non_calendar_strategy() -> None:
+    with pytest.raises(
+        PydanticValidationError,
+        match="calendar strategy overrides are only valid for calendar_spread or put_calendar_spread",
+    ):
+        CreateBacktestRunRequest(
+            symbol="SPY",
+            strategy_type="long_call",
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 10),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=10,
+            account_size=10000,
+            risk_per_trade_pct=2,
+            commission_per_contract=0.65,
+            entry_rules=[{"type": "rsi", "operator": "lt", "threshold": 35, "period": 14}],
+            strategy_overrides={"calendar_far_leg_target_dte": 45},
+        )
+
+
+def test_rejects_far_leg_target_dte_not_greater_than_target_dte() -> None:
+    with pytest.raises(
+        PydanticValidationError,
+        match="calendar_far_leg_target_dte must be greater than target_dte for calendar_spread",
+    ):
+        CreateBacktestRunRequest(
+            symbol="SPY",
+            strategy_type="calendar_spread",
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 10),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=10,
+            account_size=10000,
+            risk_per_trade_pct=2,
+            commission_per_contract=0.65,
+            entry_rules=[{"type": "rsi", "operator": "lt", "threshold": 35, "period": 14}],
+            strategy_overrides={"calendar_far_leg_target_dte": 30},
+        )
+
+
+def test_accepts_put_calendar_spread_without_contract_override() -> None:
+    request = CreateBacktestRunRequest(
+        symbol="SPY",
+        strategy_type="put_calendar_spread",
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 10),
+        target_dte=30,
+        dte_tolerance_days=5,
+        max_holding_days=10,
+        account_size=10000,
+        risk_per_trade_pct=2,
+        commission_per_contract=0.65,
+        entry_rules=[{"type": "rsi", "operator": "lt", "threshold": 35, "period": 14}],
+        strategy_overrides={"calendar_far_leg_target_dte": 45},
+    )
+
+    assert request.strategy_type.value == "put_calendar_spread"
+    assert request.strategy_overrides is not None
+    assert request.strategy_overrides.calendar_far_leg_target_dte == 45
+
+
+def test_rejects_call_override_for_put_calendar_spread() -> None:
+    with pytest.raises(
+        PydanticValidationError,
+        match="put_calendar_spread always uses put contracts; calendar_contract_type cannot be set to 'call'",
+    ):
+        CreateBacktestRunRequest(
+            symbol="SPY",
+            strategy_type="put_calendar_spread",
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 10),
+            target_dte=30,
+            dte_tolerance_days=5,
+            max_holding_days=10,
+            account_size=10000,
+            risk_per_trade_pct=2,
+            commission_per_contract=0.65,
+            entry_rules=[{"type": "rsi", "operator": "lt", "threshold": 35, "period": 14}],
+            strategy_overrides={"calendar_contract_type": "call"},
         )

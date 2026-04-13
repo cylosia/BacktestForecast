@@ -1,0 +1,27 @@
+{
+  "separate": {
+    "label": "separate_call_put_batches",
+    "request_count": 100,
+    "wall_total_ms": 52651.593,
+    "mean_per_run_ms": 526.281,
+    "median_per_run_ms": 357.19,
+    "store_call_counts": {
+      "batch_exact": 10379
+    }
+  },
+  "combined": {
+    "label": "combined_shared_type_batch",
+    "request_count": 100,
+    "wall_total_ms": 50814.602,
+    "mean_per_run_ms": 508.113,
+    "median_per_run_ms": 365.315,
+    "store_call_counts": {
+      "batch_exact_by_type": 3005,
+      "batch_exact": 4606
+    }
+  },
+  "speedup_wall": 1.0362,
+  "speedup_mean": 1.0358,
+  "batch_exact_delta": 5773,
+  "batch_exact_by_type_added": 3005
+}

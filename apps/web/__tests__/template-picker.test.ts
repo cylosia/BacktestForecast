@@ -154,7 +154,7 @@ describe("templateToFormValues", () => {
     };
     const patch = templateToFormValues(template);
     expect(patch).not.toBeNull();
-    expect(patch!.strategyType).toBe("calendar_spread");
+    expect(patch!.strategyType).toBe("put_calendar_spread");
     expect(patch!.calendarContractType).toBe("put");
   });
 
@@ -190,11 +190,10 @@ describe("templateToFormValues", () => {
 });
 
 describe("formValuesToTemplateConfig", () => {
-  it("preserves non-RSI rules and calendar overrides when saving templates", () => {
+  it("preserves non-RSI rules for put calendar templates without legacy overrides", () => {
     const values = {
       ...getDefaultBacktestFormValues(),
-      strategyType: "calendar_spread" as const,
-      calendarContractType: "put" as const,
+      strategyType: "put_calendar_spread" as const,
       rsiEnabled: false,
       macdEnabled: true,
       bollingerEnabled: true,
@@ -207,7 +206,8 @@ describe("formValuesToTemplateConfig", () => {
 
     const config = formValuesToTemplateConfig(values);
 
-    expect(config.strategy_overrides).toEqual({ calendar_contract_type: "put" });
+    expect(config.strategy_type).toBe("put_calendar_spread");
+    expect(config.strategy_overrides).toBeUndefined();
     expect(config.entry_rules).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "macd", fast_period: 12, slow_period: 26, signal_period: 9 }),

@@ -1,0 +1,38 @@
+{
+  "availability_first": {
+    "label": "availability_first_fallback",
+    "request_count": 100,
+    "wall_total_ms": 36954.488,
+    "mean_per_run_ms": 369.543,
+    "median_per_run_ms": 306.242,
+    "store_call_counts": {
+      "availability_by_type": 850,
+      "batch_exact_by_type": 808,
+      "range": 534,
+      "availability": 2454,
+      "exact": 1877,
+      "batch_exact": 706
+    }
+  },
+  "store_preferred": {
+    "label": "store_preferred_queries",
+    "request_count": 100,
+    "wall_total_ms": 39321.757,
+    "mean_per_run_ms": 393.216,
+    "median_per_run_ms": 303.843,
+    "store_call_counts": {
+      "preferred_common_by_type": 932,
+      "availability_by_type": 289,
+      "batch_exact_by_type": 247,
+      "range": 534,
+      "preferred_exact": 2758,
+      "batch_exact": 706
+    }
+  },
+  "speedup_wall": 0.9398,
+  "speedup_mean": 0.9398,
+  "batch_exact_delta": 0,
+  "exact_delta": 1877,
+  "availability_delta": 3015,
+  "preferred_query_total": 3690
+}

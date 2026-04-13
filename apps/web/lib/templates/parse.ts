@@ -7,7 +7,7 @@ const KNOWN_STRATEGY_TYPES = new Set([
   "bull_call_debit_spread", "bear_put_debit_spread",
   "bull_put_credit_spread", "bear_call_credit_spread",
   "iron_condor", "long_straddle", "long_strangle",
-  "calendar_spread", "butterfly", "wheel_strategy",
+  "calendar_spread", "put_calendar_spread", "butterfly", "wheel_strategy",
   "poor_mans_covered_call", "ratio_call_backspread", "ratio_put_backspread",
   "collar", "diagonal_spread", "double_diagonal",
   "short_straddle", "short_strangle", "covered_strangle",
@@ -49,8 +49,14 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
     return null;
   }
 
+  const strategyType = (
+    typed.strategy_type === "calendar_spread" && typed.strategy_overrides?.calendar_contract_type === "put"
+      ? "put_calendar_spread"
+      : typed.strategy_type
+  ) as BacktestFormValues["strategyType"];
+
   const patch: Partial<BacktestFormValues> = {
-    strategyType: typed.strategy_type as BacktestFormValues["strategyType"],
+    strategyType,
     targetDte: String(typed.target_dte),
     dteToleranceDays: String(typed.dte_tolerance_days),
     maxHoldingDays: String(typed.max_holding_days),
@@ -66,7 +72,7 @@ export function templateToFormValues(template: TemplateResponse): Partial<Backte
     volumeSpikeEnabled: false,
     supportResistanceEnabled: false,
     avoidEarningsEnabled: false,
-    calendarContractType: typed.strategy_overrides?.calendar_contract_type === "put" ? "put" : "call",
+    calendarContractType: strategyType === "put_calendar_spread" ? "put" : "call",
     advancedRules: [],
   };
 

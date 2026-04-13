@@ -1,0 +1,26 @@
+{
+  "legacy": {
+    "label": "legacy_single_exact_cache",
+    "request_count": 100,
+    "wall_total_ms": 56342.708,
+    "mean_per_run_ms": 563.425,
+    "median_per_run_ms": 386.529,
+    "store_call_counts": {
+      "batch_exact": 11194
+    }
+  },
+  "current": {
+    "label": "current_split_exact_cache",
+    "request_count": 100,
+    "wall_total_ms": 52116.017,
+    "mean_per_run_ms": 521.159,
+    "median_per_run_ms": 379.923,
+    "store_call_counts": {
+      "batch_exact": 10379
+    }
+  },
+  "speedup_wall": 1.0811,
+  "speedup_mean": 1.0811,
+  "store_batch_call_delta": 815,
+  "store_single_call_delta": 0
+}

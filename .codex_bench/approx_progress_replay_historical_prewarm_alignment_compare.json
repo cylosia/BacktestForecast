@@ -1,0 +1,24 @@
+{
+  "current": {
+    "wall_total_ms": 50607.582,
+    "mean_per_run_ms": 506.021,
+    "median_per_run_ms": 383.417,
+    "store_call_counts": {
+      "batch_exact_by_type": 3005,
+      "batch_exact": 4606
+    }
+  },
+  "aligned_historical_prewarm": {
+    "wall_total_ms": 50593.879,
+    "mean_per_run_ms": 505.91,
+    "median_per_run_ms": 372.249,
+    "store_call_counts": {
+      "batch_exact_by_type": 2931,
+      "batch_exact": 4605
+    }
+  },
+  "speedup_wall": 1.0003,
+  "speedup_mean": 1.0002,
+  "batch_exact_delta": 1,
+  "batch_exact_by_type_delta": 74
+}

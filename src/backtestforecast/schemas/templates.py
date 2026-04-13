@@ -12,6 +12,7 @@ from backtestforecast.schemas.backtests import (
     EntryRule,
     StrategyOverrides,
     StrategyType,
+    validate_calendar_strategy_overrides,
     validate_entry_rule_collection,
 )
 
@@ -62,12 +63,11 @@ class TemplateConfig(BaseModel):
             raise ValueError("dte_tolerance_days must be less than target_dte")
         if self.entry_rules:
             validate_entry_rule_collection(self.entry_rules)
-        if (
-            self.strategy_overrides
-            and self.strategy_type != StrategyType.CALENDAR_SPREAD
-            and self.strategy_overrides.calendar_contract_type is not None
-        ):
-            raise ValueError("calendar_contract_type override is only valid for calendar_spread")
+        validate_calendar_strategy_overrides(
+            strategy_type=self.strategy_type,
+            strategy_overrides=self.strategy_overrides,
+            target_dte=self.target_dte,
+        )
         return self
 
 

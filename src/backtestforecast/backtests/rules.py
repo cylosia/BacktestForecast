@@ -29,6 +29,7 @@ from backtestforecast.indicators.calculations import (
     williams_r,
 )
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord
+from backtestforecast.pipeline.regime import Regime, build_regime_snapshots
 from backtestforecast.schemas.backtests import (
     AdxSeries,
     AvoidEarningsRule,
@@ -56,6 +57,7 @@ from backtestforecast.schemas.backtests import (
     MacdSignalSeries,
     MfiSeries,
     MovingAverageCrossoverRule,
+    RegimeRule,
     RocSeries,
     RsiRule,
     RsiSeriesSpec,
@@ -102,6 +104,7 @@ class EntryRuleComputationCache:
     adx_cache: dict[int, list[float | None]] = field(default_factory=dict)
     williams_r_cache: dict[int, list[float | None]] = field(default_factory=dict)
     generic_series_cache: dict[str, list[float | None]] = field(default_factory=dict)
+    regime_snapshot_cache: dict[str, list[frozenset[Regime] | None]] = field(default_factory=dict)
     entry_allowed_masks: dict[str, list[bool]] = field(default_factory=dict)
 
 
@@ -139,6 +142,7 @@ class EntryRuleEvaluator:
     adx_cache: dict[int, list[float | None]] = field(default_factory=dict)
     williams_r_cache: dict[int, list[float | None]] = field(default_factory=dict)
     generic_series_cache: dict[str, list[float | None]] = field(default_factory=dict)
+    regime_snapshot_cache: dict[str, list[frozenset[Regime] | None]] = field(default_factory=dict)
     _sorted_earnings: list[date] = field(init=False)
     _entry_allowed_mask: list[bool] | None = field(default=None, init=False, repr=False)
 
@@ -168,6 +172,7 @@ class EntryRuleEvaluator:
             self.adx_cache = self.shared_cache.adx_cache
             self.williams_r_cache = self.shared_cache.williams_r_cache
             self.generic_series_cache = self.shared_cache.generic_series_cache
+            self.regime_snapshot_cache = self.shared_cache.regime_snapshot_cache
 
     def is_entry_allowed(self, index: int) -> bool:
         if self._entry_allowed_mask is None and self.shared_cache is not None:
@@ -207,6 +212,9 @@ class EntryRuleEvaluator:
                     return False
             elif isinstance(rule, AvoidEarningsRule):
                 if not self._evaluate_avoid_earnings_rule(rule, index):
+                    return False
+            elif isinstance(rule, RegimeRule):
+                if not self._evaluate_regime_rule(rule, index):
                     return False
             elif isinstance(rule, IndicatorThresholdRule):
                 if not self._evaluate_indicator_threshold_rule(rule, index):
@@ -277,6 +285,8 @@ class EntryRuleEvaluator:
             return self._build_support_resistance_mask(rule)
         if isinstance(rule, AvoidEarningsRule):
             return self._build_avoid_earnings_mask(rule)
+        if isinstance(rule, RegimeRule):
+            return self._build_regime_mask(rule)
         if isinstance(rule, IndicatorThresholdRule):
             return self._build_indicator_threshold_mask(rule)
         if isinstance(rule, IndicatorTrendRule):
@@ -418,6 +428,14 @@ class EntryRuleEvaluator:
 
     def _build_avoid_earnings_mask(self, rule: AvoidEarningsRule) -> list[bool]:
         return [self._evaluate_avoid_earnings_rule(rule, index) for index in range(len(self.bars))]
+
+    def _build_regime_mask(self, rule: RegimeRule) -> list[bool]:
+        required = frozenset(rule.required_regimes)
+        blocked = frozenset(rule.blocked_regimes)
+        return [
+            regimes is not None and required.issubset(regimes) and not blocked.intersection(regimes)
+            for regimes in self._get_regime_series()
+        ]
 
     def _build_indicator_threshold_mask(self, rule: IndicatorThresholdRule) -> list[bool]:
         return self._mask_from_series_level(
@@ -644,6 +662,16 @@ class EntryRuleEvaluator:
         lo = bisect.bisect_left(self._sorted_earnings, blackout_start)
         return lo >= len(self._sorted_earnings) or self._sorted_earnings[lo] > blackout_end
 
+    def _evaluate_regime_rule(self, rule: RegimeRule, index: int) -> bool:
+        if index < 0 or index >= len(self.bars):
+            return False
+        regimes = self._get_regime_series()[index]
+        if regimes is None:
+            return False
+        required = frozenset(rule.required_regimes)
+        blocked = frozenset(rule.blocked_regimes)
+        return required.issubset(regimes) and not blocked.intersection(regimes)
+
     def _evaluate_indicator_threshold_rule(self, rule: IndicatorThresholdRule, index: int) -> bool:
         series = self._get_indicator_series(rule.series)
         current_value = series[index]
@@ -862,6 +890,20 @@ class EntryRuleEvaluator:
         self.iv_series_cache[cache_key] = series
         return series
 
+    def _get_regime_series(self) -> list[frozenset[Regime] | None]:
+        cache_key = self._regime_cache_key()
+        cached = self.regime_snapshot_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        snapshots = build_regime_snapshots(
+            self.config.symbol,
+            self.bars,
+            earnings_dates=self.earnings_dates,
+        )
+        series = [snapshot.regimes if snapshot is not None else None for snapshot in snapshots]
+        self.regime_snapshot_cache[cache_key] = series
+        return series
+
     def _entry_mask_cache_key(self) -> str:
         payload = {
             "entry_rules": [
@@ -881,6 +923,13 @@ class EntryRuleEvaluator:
             "dte_tolerance_days": self.config.dte_tolerance_days,
             "risk_free_rate": self.config.risk_free_rate,
             "dividend_yield": self.config.dividend_yield,
+        }
+        return json.dumps(payload, sort_keys=True, default=str)
+
+    def _regime_cache_key(self) -> str:
+        payload = {
+            "symbol": self.config.symbol,
+            "earnings_dates": [value.isoformat() for value in self._sorted_earnings],
         }
         return json.dumps(payload, sort_keys=True, default=str)
 

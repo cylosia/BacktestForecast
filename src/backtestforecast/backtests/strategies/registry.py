@@ -2,7 +2,10 @@
 
 from backtestforecast.backtests.strategies.base import StrategyDefinition
 from backtestforecast.backtests.strategies.butterfly import BUTTERFLY_STRATEGY
-from backtestforecast.backtests.strategies.calendar import CALENDAR_SPREAD_STRATEGY
+from backtestforecast.backtests.strategies.calendar import (
+    CALENDAR_SPREAD_STRATEGY,
+    PUT_CALENDAR_SPREAD_STRATEGY,
+)
 from backtestforecast.backtests.strategies.cash_secured_put import CASH_SECURED_PUT_STRATEGY
 from backtestforecast.backtests.strategies.collar_strangle import (
     COLLAR_STRATEGY,
@@ -88,6 +91,7 @@ NEUTRAL_STRATEGIES: frozenset[str] = frozenset({
     "long_strangle",
     "butterfly",
     "calendar_spread",
+    "put_calendar_spread",
     "double_diagonal",
     "covered_strangle",
     "jade_lizard",
@@ -107,6 +111,7 @@ STRATEGY_REGISTRY: dict[str, StrategyDefinition] = {
     LONG_STRADDLE_STRATEGY.strategy_type: LONG_STRADDLE_STRATEGY,
     LONG_STRANGLE_STRATEGY.strategy_type: LONG_STRANGLE_STRATEGY,
     CALENDAR_SPREAD_STRATEGY.strategy_type: CALENDAR_SPREAD_STRATEGY,
+    PUT_CALENDAR_SPREAD_STRATEGY.strategy_type: PUT_CALENDAR_SPREAD_STRATEGY,
     BUTTERFLY_STRATEGY.strategy_type: BUTTERFLY_STRATEGY,
     SHORT_STRADDLE_STRATEGY.strategy_type: SHORT_STRADDLE_STRATEGY,
     SHORT_STRANGLE_STRATEGY.strategy_type: SHORT_STRANGLE_STRATEGY,

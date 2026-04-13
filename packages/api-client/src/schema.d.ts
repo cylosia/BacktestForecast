@@ -4366,7 +4366,7 @@ export interface components {
          * StrategyType
          * @enum {string}
          */
-        StrategyType: "long_call" | "long_put" | "covered_call" | "cash_secured_put" | "bull_call_debit_spread" | "bear_put_debit_spread" | "bull_put_credit_spread" | "bear_call_credit_spread" | "iron_condor" | "long_straddle" | "long_strangle" | "calendar_spread" | "butterfly" | "wheel_strategy" | "poor_mans_covered_call" | "ratio_call_backspread" | "ratio_put_backspread" | "collar" | "diagonal_spread" | "double_diagonal" | "short_straddle" | "short_strangle" | "covered_strangle" | "synthetic_put" | "reverse_conversion" | "jade_lizard" | "iron_butterfly" | "custom_2_leg" | "custom_3_leg" | "custom_4_leg" | "custom_5_leg" | "custom_6_leg" | "custom_7_leg" | "custom_8_leg" | "naked_call" | "naked_put";
+        StrategyType: "long_call" | "long_put" | "covered_call" | "cash_secured_put" | "bull_call_debit_spread" | "bear_put_debit_spread" | "bull_put_credit_spread" | "bear_call_credit_spread" | "iron_condor" | "long_straddle" | "long_strangle" | "calendar_spread" | "put_calendar_spread" | "butterfly" | "wheel_strategy" | "poor_mans_covered_call" | "ratio_call_backspread" | "ratio_put_backspread" | "collar" | "diagonal_spread" | "double_diagonal" | "short_straddle" | "short_strangle" | "covered_strangle" | "synthetic_put" | "reverse_conversion" | "jade_lizard" | "iron_butterfly" | "custom_2_leg" | "custom_3_leg" | "custom_4_leg" | "custom_5_leg" | "custom_6_leg" | "custom_7_leg" | "custom_8_leg" | "naked_call" | "naked_put";
         /**
          * StrikeSelection
          * @description Configuration for where a strategy leg's strike is placed relative to the underlying.

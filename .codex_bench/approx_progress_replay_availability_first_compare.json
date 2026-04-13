@@ -1,0 +1,35 @@
+{
+  "legacy": {
+    "label": "legacy_combined_exact_batches",
+    "request_count": 100,
+    "wall_total_ms": 44254.799,
+    "mean_per_run_ms": 442.544,
+    "median_per_run_ms": 358.553,
+    "store_call_counts": {
+      "batch_exact_by_type": 1038,
+      "range": 534,
+      "batch_exact": 4482
+    }
+  },
+  "current": {
+    "label": "current_availability_first",
+    "request_count": 100,
+    "wall_total_ms": 44688.767,
+    "mean_per_run_ms": 446.884,
+    "median_per_run_ms": 347.539,
+    "store_call_counts": {
+      "availability_by_type": 951,
+      "batch_exact_by_type": 799,
+      "range": 534,
+      "availability": 3965,
+      "exact": 2056,
+      "batch_exact": 702
+    }
+  },
+  "speedup_wall": 0.9903,
+  "speedup_mean": 0.9903,
+  "batch_exact_delta": 3780,
+  "batch_exact_by_type_delta": 239,
+  "availability_added": 4916,
+  "exact_delta": -2056
+}

@@ -32,6 +32,8 @@ def _serialize_contracts(contracts: list[OptionContractRecord]) -> list[dict[str
             "expiration_date": contract.expiration_date.isoformat(),
             "strike_price": contract.strike_price,
             "shares_per_contract": contract.shares_per_contract,
+            "underlying_symbol": contract.underlying_symbol,
+            "as_of_mid_price": contract.as_of_mid_price,
         }
         for contract in contracts
     ]
@@ -45,6 +47,7 @@ def _deserialize_contracts(rows: list[dict[str, object]]) -> list[OptionContract
         expiration_date = row.get("expiration_date")
         strike_price = row.get("strike_price")
         shares_per_contract = row.get("shares_per_contract", 100.0)
+        underlying_symbol = row.get("underlying_symbol")
         if not isinstance(ticker, str) or not isinstance(contract_type, str) or not isinstance(expiration_date, str):
             continue
         if strike_price is None:
@@ -57,6 +60,12 @@ def _deserialize_contracts(rows: list[dict[str, object]]) -> list[OptionContract
                     expiration_date=date.fromisoformat(expiration_date),
                     strike_price=float(strike_price),
                     shares_per_contract=float(shares_per_contract),
+                    underlying_symbol=str(underlying_symbol) if isinstance(underlying_symbol, str) else None,
+                    as_of_mid_price=(
+                        float(row["as_of_mid_price"])
+                        if row.get("as_of_mid_price") is not None
+                        else None
+                    ),
                 )
             )
         except (TypeError, ValueError):

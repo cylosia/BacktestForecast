@@ -92,6 +92,9 @@ def _run_main(
         stack.enter_context(patch.object(sys, "argv", argv))
         if env is not None:
             stack.enter_context(patch.dict(os.environ, env, clear=False))
+        stack.enter_context(patch.object(module, "_iso_now", return_value="2026-03-29T14:02:55-05:00"))
+        stack.enter_context(patch.object(module.os, "getpid", return_value=12345))
+        stack.enter_context(patch.object(module.os, "getppid", return_value=67890))
         stack.enter_context(patch.object(module, "get_settings", return_value=SimpleNamespace(
             historical_data_start_year=2014,
             historical_data_sync_symbols=[],
@@ -1085,6 +1088,8 @@ def test_main_updates_status_file_to_completed() -> None:
         assert payload["window_coverage_status"] == "complete"
         assert payload["remaining_trade_dates"] == 0
         assert payload["started_at"] == "2026-03-29T14:02:55-05:00"
+        assert payload["command"] == "sync_historical_market_data.py --start-date 2025-04-01 --end-date 2025-04-02 --dry-run --status-path " + str(status_path)
+        assert payload["launcher_pid"] == 67890
         assert payload["python_pid"] == 12345
         assert payload["stdout_log_path"] == "stdout.log"
         assert payload["stderr_log_path"] == "stderr.log"
@@ -1117,6 +1122,8 @@ def test_main_updates_status_file_to_failed_on_exception() -> None:
         assert payload["error"] == "boom"
         assert payload["failed_at"] == payload["updated_at"]
         assert payload["started_at"] == "2026-03-29T14:02:55-05:00"
+        assert payload["command"] == "sync_historical_market_data.py --start-date 2025-04-01 --end-date 2025-04-02 --dry-run --status-path " + str(status_path)
+        assert payload["launcher_pid"] == 67890
         assert payload["python_pid"] == 12345
         assert payload["stdout_log_path"] == "stdout.log"
         assert payload["stderr_log_path"] == "stderr.log"
@@ -1349,6 +1356,61 @@ def test_main_resume_rejects_checkpoint_signature_mismatch() -> None:
                 include_status_flag=True,
                 resume=True,
             )
+    finally:
+        status_path.unlink(missing_ok=True)
+
+
+def test_load_resume_checkpoint_ignores_non_trading_dates_within_window() -> None:
+    module = _load_sync_script_module()
+    status_path = _status_file_path()
+    try:
+        _seed_status_file(
+            status_path,
+            run_signature={
+                "window_start": "2025-01-01",
+                "window_end": "2025-01-10",
+                "symbols": [],
+                "dry_run": True,
+                "skip_rest_enrichment": False,
+            },
+            trade_date_checkpoints={
+                "2025-01-08": {
+                    "stock_count": 2,
+                    "option_count": 1,
+                    "stock_error": None,
+                    "option_error": None,
+                },
+                "2025-01-09": {
+                    "stock_count": 0,
+                    "option_count": 0,
+                    "stock_error": "Massive flat file not found for 2025-01-09: us_stocks_sip/day_aggs_v1",
+                    "option_error": "Massive flat file not found for 2025-01-09: us_options_opra/day_aggs_v1",
+                },
+            },
+        )
+
+        checkpoint = module._load_resume_checkpoint(
+            status_path=str(status_path),
+            run_signature={
+                "window_start": "2025-01-01",
+                "window_end": "2025-01-10",
+                "symbols": [],
+                "dry_run": True,
+                "skip_rest_enrichment": False,
+            },
+            trade_dates=[
+                date(2025, 1, 2),
+                date(2025, 1, 3),
+                date(2025, 1, 6),
+                date(2025, 1, 7),
+                date(2025, 1, 8),
+                date(2025, 1, 10),
+            ],
+            resume_requested=True,
+        )
+
+        assert checkpoint.applied is True
+        assert set(checkpoint.trade_date_checkpoints) == {date(2025, 1, 8)}
     finally:
         status_path.unlink(missing_ok=True)
 

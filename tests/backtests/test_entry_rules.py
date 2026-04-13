@@ -9,6 +9,7 @@ import backtestforecast.backtests.rules as rules_mod
 from backtestforecast.backtests.rules import EntryRuleComputationCache, EntryRuleEvaluator
 from backtestforecast.backtests.types import BacktestConfig
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
+from backtestforecast.pipeline.regime import Regime, RegimeSnapshot
 from backtestforecast.schemas.backtests import (
     AvoidEarningsRule,
     BollingerBand,
@@ -18,6 +19,7 @@ from backtestforecast.schemas.backtests import (
     IvRankRule,
     MacdRule,
     MovingAverageCrossoverRule,
+    RegimeRule,
     RsiRule,
     SupportResistanceMode,
     SupportResistanceRule,
@@ -529,6 +531,68 @@ def test_avoid_earnings_allows_outside_window():
     rule = AvoidEarningsRule(type="avoid_earnings", days_before=2, days_after=2)
     ev = _build_evaluator(closes, [rule], earnings_dates=earnings)
     assert ev.is_entry_allowed(15) is True
+
+
+def test_regime_rule_requires_and_blocks_labels(monkeypatch):
+    closes = [100.0] * 220
+    bars = _make_bars(closes)
+    snapshots: list[RegimeSnapshot | None] = [None] * len(bars)
+    snapshots[-2] = RegimeSnapshot(
+        symbol="TEST",
+        regimes=frozenset({Regime.BEARISH, Regime.LOW_IV, Regime.TRENDING}),
+        close_price=95.0,
+    )
+    snapshots[-1] = RegimeSnapshot(
+        symbol="TEST",
+        regimes=frozenset({Regime.BEARISH, Regime.HIGH_IV, Regime.TRENDING}),
+        close_price=94.0,
+    )
+    monkeypatch.setattr(rules_mod, "build_regime_snapshots", lambda symbol, bars, earnings_dates=None: snapshots)
+
+    rule = RegimeRule(
+        type="regime",
+        required_regimes=[Regime.BEARISH, Regime.TRENDING],
+        blocked_regimes=[Regime.HIGH_IV],
+    )
+    ev = _build_evaluator(closes, [rule])
+
+    assert ev.is_entry_allowed(len(closes) - 2) is True
+    assert ev.is_entry_allowed(len(closes) - 1) is False
+
+
+def test_regime_rule_shared_cache_reuses_snapshot_series(monkeypatch):
+    closes = [100.0] * 220
+    shared_cache = EntryRuleComputationCache()
+    call_count = 0
+
+    def _fake_build_regime_snapshots(symbol, bars, earnings_dates=None):
+        nonlocal call_count
+        call_count += 1
+        return [
+            RegimeSnapshot(
+                symbol=symbol,
+                regimes=frozenset({Regime.BEARISH, Regime.LOW_IV}),
+                close_price=100.0,
+            )
+            if index >= 209
+            else None
+            for index, _bar in enumerate(bars)
+        ]
+
+    monkeypatch.setattr(rules_mod, "build_regime_snapshots", _fake_build_regime_snapshots)
+
+    first_rule = RegimeRule(type="regime", required_regimes=[Regime.BEARISH], blocked_regimes=[])
+    second_rule = RegimeRule(type="regime", required_regimes=[Regime.BEARISH], blocked_regimes=[Regime.HIGH_IV])
+
+    evaluator_one = _build_evaluator(closes, [first_rule], shared_cache=shared_cache)
+    first_mask = evaluator_one.build_entry_allowed_mask()
+
+    evaluator_two = _build_evaluator(closes, [second_rule], shared_cache=shared_cache)
+    second_mask = evaluator_two.build_entry_allowed_mask()
+
+    assert first_mask[-1] is True
+    assert second_mask[-1] is True
+    assert call_count == 1
 
 
 # ---------------------------------------------------------------------------

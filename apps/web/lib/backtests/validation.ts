@@ -546,11 +546,6 @@ export function validateBacktestForm(values: BacktestFormValues): {
     slippage_pct: slippage,
     risk_free_rate: rfr,
   };
-  if (values.strategyType === "calendar_spread" && values.calendarContractType === "put") {
-    payload.strategy_overrides = {
-      calendar_contract_type: "put",
-    };
-  }
   if (values.profitTargetEnabled) {
     payload.profit_target_pct = parseNumber(values.profitTargetPct);
   }

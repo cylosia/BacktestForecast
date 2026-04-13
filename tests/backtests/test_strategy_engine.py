@@ -12,6 +12,7 @@ from backtestforecast.backtests.types import BacktestConfig
 from backtestforecast.errors import DataUnavailableError
 from backtestforecast.market_data.types import DailyBar, OptionContractRecord, OptionQuoteRecord
 from backtestforecast.schemas.backtests import (
+    AvoidEarningsRule,
     CreateBacktestRunRequest,
     CustomLegDefinition,
     StrategyOverrides,
@@ -265,7 +266,7 @@ def test_calendar_spread_exits_on_near_leg_expiration() -> None:
     assert trade.detail_json["legs"][0]["ticker"] == "FAR100"
 
 
-def test_put_calendar_spread_uses_put_contracts_when_overridden() -> None:
+def test_put_calendar_spread_uses_put_contracts_without_override() -> None:
     engine = OptionsBacktestEngine()
     bars = [
         make_bar(date(2025, 2, 1), 100),
@@ -288,7 +289,7 @@ def test_put_calendar_spread_uses_put_contracts_when_overridden() -> None:
     result = engine.run(
         BacktestConfig(
             symbol="SPY",
-            strategy_type="calendar_spread",
+            strategy_type="put_calendar_spread",
             start_date=date(2025, 2, 1),
             end_date=date(2025, 2, 3),
             target_dte=2,
@@ -298,7 +299,6 @@ def test_put_calendar_spread_uses_put_contracts_when_overridden() -> None:
             risk_per_trade_pct=3,
             commission_per_contract=0,
             entry_rules=[],
-            strategy_overrides=StrategyOverrides(calendar_contract_type="put"),
         ),
         bars,
         set(),
@@ -471,6 +471,65 @@ def test_calendar_spread_prefers_exact_expiration_fetch_when_gateway_supports_it
     assert result.summary.trade_count == 1
     assert (entry_date, "call", near_expiration) in gateway.exact_calls
     assert (entry_date, "call", far_expiration) in gateway.exact_calls
+
+
+def test_calendar_spread_can_target_explicit_far_leg_dte() -> None:
+    engine = OptionsBacktestEngine()
+    entry_date = date(2025, 2, 2)
+    near_expiration = date(2025, 2, 4)
+    intermediate_expiration = date(2025, 2, 7)
+    far_expiration = date(2025, 2, 12)
+    bars = [
+        make_bar(date(2025, 2, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 2, 3), 100),
+        make_bar(near_expiration, 100),
+    ]
+    contracts = {
+        (entry_date, "put"): [
+            OptionContractRecord("NEARP100", "put", near_expiration, 100, 100),
+            OptionContractRecord("MIDP100", "put", intermediate_expiration, 100, 100),
+            OptionContractRecord("FARP100", "put", far_expiration, 100, 100),
+        ]
+    }
+    quotes = {
+        ("NEARP100", entry_date): make_quote(entry_date, 1.0),
+        ("FARP100", entry_date): make_quote(entry_date, 2.4),
+        ("FARP100", near_expiration): make_quote(near_expiration, 2.0),
+    }
+    gateway = ExactCalendarGateway(contracts=contracts, quotes=quotes)
+
+    result = engine.run(
+        BacktestConfig(
+            symbol="F",
+            strategy_type="calendar_spread",
+            start_date=date(2025, 2, 1),
+            end_date=date(2025, 2, 3),
+            target_dte=2,
+            dte_tolerance_days=0,
+            max_holding_days=30,
+            account_size=10_000,
+            risk_per_trade_pct=3,
+            commission_per_contract=0,
+            entry_rules=[],
+            strategy_overrides=StrategyOverrides(
+                calendar_contract_type="put",
+                calendar_far_leg_target_dte=10,
+            ),
+        ),
+        bars,
+        set(),
+        gateway,
+    )
+
+    assert result.summary.trade_count == 1
+    trade = result.trades[0]
+    assert trade.detail_json["legs"][0]["ticker"] == "FARP100"
+    assert trade.detail_json["legs"][1]["ticker"] == "NEARP100"
+    assert (entry_date, "put", near_expiration) in gateway.exact_calls
+    assert (entry_date, "put", far_expiration) in gateway.exact_calls
+    assert (entry_date, "put", intermediate_expiration) not in gateway.exact_calls
+    assert "calendar_far_leg_target_dte=10" in trade.detail_json["assumptions"][1]
 
 
 def test_custom_2_leg_stock_only_uses_end_date() -> None:
@@ -1302,6 +1361,164 @@ def test_run_exit_policy_variants_matches_individual_runs() -> None:
         assert actual_result.trades[0].exit_date == expected_result.trades[0].exit_date
         assert actual_result.trades[0].exit_reason == expected_result.trades[0].exit_reason
         assert actual_result.trades[0].net_pnl == expected_result.trades[0].net_pnl
+
+
+def test_run_exit_policy_variants_matches_individual_runs_with_different_entry_rules() -> None:
+    entry_date = date(2025, 9, 2)
+    expiration = date(2025, 10, 17)
+    bars = [
+        make_bar(date(2025, 9, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 9, 3), 100),
+        make_bar(date(2025, 9, 4), 100),
+        make_bar(date(2025, 9, 5), 100),
+    ]
+    contracts = {
+        (entry_date, "call"): [
+            OptionContractRecord("C100", "call", expiration, 100, 100),
+        ],
+    }
+    quotes = {
+        ("C100", entry_date): make_quote(entry_date, 2.0),
+        ("C100", date(2025, 9, 3)): make_quote(date(2025, 9, 3), 3.2),
+        ("C100", date(2025, 9, 4)): make_quote(date(2025, 9, 4), 3.7),
+        ("C100", date(2025, 9, 5)): make_quote(date(2025, 9, 5), 3.5),
+    }
+    gateway = FakeGateway(contracts=contracts, quotes=quotes)
+    earnings_dates = {entry_date}
+
+    base_kwargs = dict(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=entry_date,
+        end_date=entry_date,
+        target_dte=30,
+        dte_tolerance_days=30,
+        max_holding_days=10,
+        account_size=10_000,
+        risk_per_trade_pct=5,
+        commission_per_contract=0.65,
+    )
+    config_no_filter = BacktestConfig(**base_kwargs, entry_rules=[], profit_target_pct=50)
+    config_avoid_earnings = BacktestConfig(
+        **base_kwargs,
+        entry_rules=[AvoidEarningsRule(type="avoid_earnings", days_before=1, days_after=0)],
+        profit_target_pct=50,
+    )
+
+    expected_engine = OptionsBacktestEngine()
+    expected = [
+        expected_engine.run(config_no_filter, bars, earnings_dates, gateway),
+        expected_engine.run(config_avoid_earnings, bars, earnings_dates, gateway),
+    ]
+
+    actual_engine = OptionsBacktestEngine()
+    actual = actual_engine.run_exit_policy_variants(
+        configs=[config_no_filter, config_avoid_earnings],
+        bars=bars,
+        earnings_dates=earnings_dates,
+        option_gateway=gateway,
+    )
+
+    assert len(actual) == 2
+    for actual_result, expected_result in zip(actual, expected, strict=True):
+        assert actual_result.summary.trade_count == expected_result.summary.trade_count
+        assert actual_result.summary.ending_equity == expected_result.summary.ending_equity
+        assert actual_result.summary.total_net_pnl == expected_result.summary.total_net_pnl
+    assert len(actual_result.trades) == len(expected_result.trades)
+    assert actual[0].summary.trade_count == 1
+    assert actual[1].summary.trade_count == 0
+
+
+def test_engine_skips_entry_when_option_strike_scale_mismatches_underlying() -> None:
+    entry_date = date(2025, 9, 2)
+    expiration = date(2025, 10, 17)
+    bars = [
+        make_bar(date(2025, 9, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 9, 3), 101),
+    ]
+    contracts = {
+        (entry_date, "call"): [
+            OptionContractRecord("C2500", "call", expiration, 2500, 100),
+        ],
+    }
+    quotes = {
+        ("C2500", entry_date): make_quote(entry_date, 1.5),
+        ("C2500", date(2025, 9, 3)): make_quote(date(2025, 9, 3), 1.8),
+    }
+
+    result = OptionsBacktestEngine().run(
+        BacktestConfig(
+            symbol="AAPL",
+            strategy_type="long_call",
+            start_date=entry_date,
+            end_date=entry_date,
+            target_dte=30,
+            dte_tolerance_days=30,
+            max_holding_days=10,
+            account_size=10_000,
+            risk_per_trade_pct=5,
+            commission_per_contract=0.65,
+            entry_rules=[],
+        ),
+        bars,
+        set(),
+        FakeGateway(contracts=contracts, quotes=quotes),
+    )
+
+    assert result.summary.trade_count == 0
+    assert result.trades == []
+    assert any(w["code"] == "option_underlying_scale_mismatch" for w in result.warnings)
+
+
+def test_run_exit_policy_variants_skips_mismatched_option_scales_for_all_lanes() -> None:
+    entry_date = date(2025, 9, 2)
+    expiration = date(2025, 10, 17)
+    bars = [
+        make_bar(date(2025, 9, 1), 100),
+        make_bar(entry_date, 100),
+        make_bar(date(2025, 9, 3), 101),
+    ]
+    contracts = {
+        (entry_date, "call"): [
+            OptionContractRecord("C2500", "call", expiration, 2500, 100),
+        ],
+    }
+    quotes = {
+        ("C2500", entry_date): make_quote(entry_date, 1.5),
+        ("C2500", date(2025, 9, 3)): make_quote(date(2025, 9, 3), 1.8),
+    }
+    gateway = FakeGateway(contracts=contracts, quotes=quotes)
+    base_kwargs = dict(
+        symbol="AAPL",
+        strategy_type="long_call",
+        start_date=entry_date,
+        end_date=entry_date,
+        target_dte=30,
+        dte_tolerance_days=30,
+        max_holding_days=10,
+        account_size=10_000,
+        risk_per_trade_pct=5,
+        commission_per_contract=0.65,
+        entry_rules=[],
+    )
+
+    results = OptionsBacktestEngine().run_exit_policy_variants(
+        configs=[
+            BacktestConfig(**base_kwargs, profit_target_pct=50),
+            BacktestConfig(**base_kwargs, profit_target_pct=75),
+        ],
+        bars=bars,
+        earnings_dates=set(),
+        option_gateway=gateway,
+    )
+
+    assert len(results) == 2
+    for result in results:
+        assert result.summary.trade_count == 0
+        assert result.trades == []
+        assert any(w["code"] == "option_underlying_scale_mismatch" for w in result.warnings)
 
 
 def test_engine_run_prefers_quote_series_for_open_position_marks() -> None:

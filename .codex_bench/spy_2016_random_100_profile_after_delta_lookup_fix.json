@@ -1,0 +1,302 @@
+{
+  "seed": 2016,
+  "request_count": 100,
+  "execute_totals_ms": {
+    "prepare_ms": 1336.818,
+    "prefetch_ms": 4302.794,
+    "parameter_ms": 1.577,
+    "engine_ms": 56244.823,
+    "staleness_ms": 66.571,
+    "total_ms": 61982.442
+  },
+  "execute_phase_breakdown": [
+    {
+      "phase": "engine_ms",
+      "total_ms": 56244.823,
+      "share_of_execute_pct": 90.74,
+      "avg_ms_per_run": 562.448
+    },
+    {
+      "phase": "prefetch_ms",
+      "total_ms": 4302.794,
+      "share_of_execute_pct": 6.94,
+      "avg_ms_per_run": 43.028
+    },
+    {
+      "phase": "prepare_ms",
+      "total_ms": 1336.818,
+      "share_of_execute_pct": 2.16,
+      "avg_ms_per_run": 13.368
+    },
+    {
+      "phase": "staleness_ms",
+      "total_ms": 66.571,
+      "share_of_execute_pct": 0.11,
+      "avg_ms_per_run": 0.666
+    },
+    {
+      "phase": "parameter_ms",
+      "total_ms": 1.577,
+      "share_of_execute_pct": 0.0,
+      "avg_ms_per_run": 0.016
+    }
+  ],
+  "engine_totals_ms": {
+    "build_position_ms": 45810.768,
+    "attach_quote_series_ms": 9198.886,
+    "mark_position_ms": 286.124,
+    "close_position_ms": 218.986,
+    "current_position_value_ms": 98.541,
+    "exit_resolution_ms": 36.929,
+    "equity_curve_ms": 101.554,
+    "summary_ms": 64.334,
+    "force_close_ms": 0.0,
+    "rule_precompute_ms": 3.337,
+    "position_sizing_ms": 9299.287
+  },
+  "engine_phase_breakdown": [
+    {
+      "phase": "build_position_ms",
+      "total_ms": 45810.768,
+      "share_of_engine_pct": 81.45,
+      "avg_ms_per_run": 458.108
+    },
+    {
+      "phase": "position_sizing_ms",
+      "total_ms": 9299.287,
+      "share_of_engine_pct": 16.53,
+      "avg_ms_per_run": 92.993
+    },
+    {
+      "phase": "attach_quote_series_ms",
+      "total_ms": 9198.886,
+      "share_of_engine_pct": 16.36,
+      "avg_ms_per_run": 91.989
+    },
+    {
+      "phase": "mark_position_ms",
+      "total_ms": 286.124,
+      "share_of_engine_pct": 0.51,
+      "avg_ms_per_run": 2.861
+    },
+    {
+      "phase": "close_position_ms",
+      "total_ms": 218.986,
+      "share_of_engine_pct": 0.39,
+      "avg_ms_per_run": 2.19
+    },
+    {
+      "phase": "equity_curve_ms",
+      "total_ms": 101.554,
+      "share_of_engine_pct": 0.18,
+      "avg_ms_per_run": 1.016
+    },
+    {
+      "phase": "current_position_value_ms",
+      "total_ms": 98.541,
+      "share_of_engine_pct": 0.18,
+      "avg_ms_per_run": 0.985
+    },
+    {
+      "phase": "summary_ms",
+      "total_ms": 64.334,
+      "share_of_engine_pct": 0.11,
+      "avg_ms_per_run": 0.643
+    },
+    {
+      "phase": "exit_resolution_ms",
+      "total_ms": 36.929,
+      "share_of_engine_pct": 0.07,
+      "avg_ms_per_run": 0.369
+    },
+    {
+      "phase": "rule_precompute_ms",
+      "total_ms": 3.337,
+      "share_of_engine_pct": 0.01,
+      "avg_ms_per_run": 0.033
+    },
+    {
+      "phase": "force_close_ms",
+      "total_ms": 0.0,
+      "share_of_engine_pct": 0.0,
+      "avg_ms_per_run": 0.0
+    }
+  ],
+  "build_position_subtotals_ms": {
+    "build_contract_fetch_ms": 19344.518,
+    "build_delta_resolution_ms": 21314.741,
+    "build_entry_quote_fetch_ms": 4450.069,
+    "build_object_construction_ms": 701.436
+  },
+  "build_position_breakdown": [
+    {
+      "phase": "build_delta_resolution_ms",
+      "total_ms": 21314.741,
+      "share_of_build_position_pct": 46.53,
+      "avg_ms_per_run": 213.147
+    },
+    {
+      "phase": "build_contract_fetch_ms",
+      "total_ms": 19344.518,
+      "share_of_build_position_pct": 42.23,
+      "avg_ms_per_run": 193.445
+    },
+    {
+      "phase": "build_entry_quote_fetch_ms",
+      "total_ms": 4450.069,
+      "share_of_build_position_pct": 9.71,
+      "avg_ms_per_run": 44.501
+    },
+    {
+      "phase": "build_object_construction_ms",
+      "total_ms": 701.436,
+      "share_of_build_position_pct": 1.53,
+      "avg_ms_per_run": 7.014
+    }
+  ],
+  "prepare_totals_ms": {
+    "bars_fetch_ms": 705.998,
+    "bars_validate_ms": 31.569,
+    "earnings_ms": 0.453,
+    "ex_dividend_ms": 240.219,
+    "gateway_ms": 1.452,
+    "total_ms": 988.87
+  },
+  "hot_strategies": [
+    {
+      "strategy": "long_put",
+      "count": 6,
+      "total_engine_ms": 12295.754,
+      "share_of_engine_pct": 21.86,
+      "avg_engine_ms": 2049.292,
+      "avg_build_position_ms": 1822.283,
+      "total_build_contract_fetch_ms": 1926.121,
+      "total_build_delta_resolution_ms": 8944.057,
+      "total_attach_quote_series_ms": 1279.455
+    },
+    {
+      "strategy": "bear_call_credit_spread",
+      "count": 12,
+      "total_engine_ms": 5957.053,
+      "share_of_engine_pct": 10.59,
+      "avg_engine_ms": 496.421,
+      "avg_build_position_ms": 389.308,
+      "total_build_contract_fetch_ms": 891.261,
+      "total_build_delta_resolution_ms": 3489.778,
+      "total_attach_quote_series_ms": 1132.172
+    },
+    {
+      "strategy": "bull_call_debit_spread",
+      "count": 20,
+      "total_engine_ms": 5801.878,
+      "share_of_engine_pct": 10.32,
+      "avg_engine_ms": 290.094,
+      "avg_build_position_ms": 204.828,
+      "total_build_contract_fetch_ms": 2780.903,
+      "total_build_delta_resolution_ms": 2.716,
+      "total_attach_quote_series_ms": 1500.623
+    },
+    {
+      "strategy": "bear_put_debit_spread",
+      "count": 17,
+      "total_engine_ms": 5260.011,
+      "share_of_engine_pct": 9.35,
+      "avg_engine_ms": 309.412,
+      "avg_build_position_ms": 215.777,
+      "total_build_contract_fetch_ms": 2582.383,
+      "total_build_delta_resolution_ms": 3.057,
+      "total_attach_quote_series_ms": 1391.997
+    },
+    {
+      "strategy": "long_straddle",
+      "count": 16,
+      "total_engine_ms": 5255.458,
+      "share_of_engine_pct": 9.34,
+      "avg_engine_ms": 328.466,
+      "avg_build_position_ms": 257.508,
+      "total_build_contract_fetch_ms": 3346.983,
+      "total_build_delta_resolution_ms": 0.0,
+      "total_attach_quote_series_ms": 965.736
+    },
+    {
+      "strategy": "iron_condor",
+      "count": 5,
+      "total_engine_ms": 5027.784,
+      "share_of_engine_pct": 8.94,
+      "avg_engine_ms": 1005.557,
+      "avg_build_position_ms": 913.848,
+      "total_build_contract_fetch_ms": 1234.85,
+      "total_build_delta_resolution_ms": 3291.685,
+      "total_attach_quote_series_ms": 370.776
+    },
+    {
+      "strategy": "calendar_spread",
+      "count": 5,
+      "total_engine_ms": 4179.737,
+      "share_of_engine_pct": 7.43,
+      "avg_engine_ms": 835.947,
+      "avg_build_position_ms": 737.515,
+      "total_build_contract_fetch_ms": 1988.132,
+      "total_build_delta_resolution_ms": 1309.134,
+      "total_attach_quote_series_ms": 433.634
+    },
+    {
+      "strategy": "butterfly",
+      "count": 8,
+      "total_engine_ms": 4154.197,
+      "share_of_engine_pct": 7.39,
+      "avg_engine_ms": 519.275,
+      "avg_build_position_ms": 392.056,
+      "total_build_contract_fetch_ms": 2248.531,
+      "total_build_delta_resolution_ms": 0.0,
+      "total_attach_quote_series_ms": 899.126
+    },
+    {
+      "strategy": "long_strangle",
+      "count": 3,
+      "total_engine_ms": 4128.333,
+      "share_of_engine_pct": 7.34,
+      "avg_engine_ms": 1376.111,
+      "avg_build_position_ms": 1243.199,
+      "total_build_contract_fetch_ms": 1205.544,
+      "total_build_delta_resolution_ms": 2378.369,
+      "total_attach_quote_series_ms": 365.608
+    },
+    {
+      "strategy": "long_call",
+      "count": 6,
+      "total_engine_ms": 2711.248,
+      "share_of_engine_pct": 4.82,
+      "avg_engine_ms": 451.875,
+      "avg_build_position_ms": 356.588,
+      "total_build_contract_fetch_ms": 759.3,
+      "total_build_delta_resolution_ms": 1289.408,
+      "total_attach_quote_series_ms": 510.575
+    },
+    {
+      "strategy": "bull_put_credit_spread",
+      "count": 2,
+      "total_engine_ms": 1465.876,
+      "share_of_engine_pct": 2.61,
+      "avg_engine_ms": 732.938,
+      "avg_build_position_ms": 529.051,
+      "total_build_contract_fetch_ms": 380.51,
+      "total_build_delta_resolution_ms": 606.537,
+      "total_attach_quote_series_ms": 349.184
+    }
+  ],
+  "prefetch_modes": {
+    "targeted_exact_quotes": {
+      "count": 12.0,
+      "contracts_fetched": 3590.0,
+      "quotes_fetched": 35257.0,
+      "dates_processed": 72.0
+    },
+    "targeted_strategy_exact_contracts": {
+      "count": 88.0,
+      "contracts_fetched": 28330.0,
+      "quotes_fetched": 28330.0,
+      "dates_processed": 417.0
+    }
+  }
+}

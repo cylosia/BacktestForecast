@@ -30,7 +30,9 @@ from backtestforecast.backtests.types import (
     OptionDataGateway,
 )
 from backtestforecast.errors import DataUnavailableError
+from backtestforecast.market_data.historical_store import parse_option_ticker_metadata
 from backtestforecast.market_data.types import DailyBar
+from backtestforecast.schemas.backtests import resolve_calendar_contract_type
 
 CALENDAR_MIN_FAR_LEG_EXTRA_DAYS = 1
 CALENDAR_MIN_DTE_TOLERANCE_DAYS = 8
@@ -75,15 +77,35 @@ def resolve_calendar_contract_groups(
     contract_type: str,
     target_dte: int,
     dte_tolerance_days: int,
+    far_leg_target_dte: int | None = None,
     strike_price_gte: float | None = None,
     strike_price_lte: float | None = None,
 ) -> tuple[date, list[OptionContractRecord], date, list[OptionContractRecord]]:
-    effective_tolerance_days = max(dte_tolerance_days, CALENDAR_MIN_DTE_TOLERANCE_DAYS)
+    explicit_far_leg = far_leg_target_dte is not None
+    effective_tolerance_days = (
+        dte_tolerance_days if explicit_far_leg else max(dte_tolerance_days, CALENDAR_MIN_DTE_TOLERANCE_DAYS)
+    )
+    near_expirations = preferred_expiration_dates(
+        entry_date,
+        target_dte,
+        effective_tolerance_days,
+    )
+    far_expirations = (
+        preferred_expiration_dates(
+            entry_date,
+            far_leg_target_dte,
+            effective_tolerance_days,
+        )
+        if explicit_far_leg
+        else near_expirations
+    )
+    ordered_expirations = list(dict.fromkeys([*near_expirations, *far_expirations]))
     cache_key = (
         _gateway_cache_identity(option_gateway),
         entry_date,
         contract_type,
         target_dte,
+        far_leg_target_dte,
         effective_tolerance_days,
         _normalized_bound(strike_price_gte),
         _normalized_bound(strike_price_lte),
@@ -93,11 +115,6 @@ def resolve_calendar_contract_groups(
         _increment_build_position_counter("contract_selection_cache_hits")
         return cached
     _increment_build_position_counter("contract_selection_cache_misses")
-    ordered_expirations = preferred_expiration_dates(
-        entry_date,
-        target_dte,
-        effective_tolerance_days,
-    )
     batch_fetch = getattr(option_gateway, "list_contracts_for_expirations", None)
     if callable(batch_fetch):
         with _profile_build_position_metric("contract_batch_fetch_ms"):
@@ -110,7 +127,7 @@ def resolve_calendar_contract_groups(
             )
         near_expiration: date | None = None
         near_contracts: list[OptionContractRecord] = []
-        for expiration_date in ordered_expirations:
+        for expiration_date in near_expirations:
             contracts = contracts_by_expiration.get(expiration_date, [])
             if contracts:
                 near_expiration = expiration_date
@@ -119,23 +136,25 @@ def resolve_calendar_contract_groups(
         if near_expiration is None:
             raise DataUnavailableError("No eligible option expirations were available.")
         minimum_target = (near_expiration - entry_date).days + CALENDAR_MIN_FAR_LEG_EXTRA_DAYS
-        for expiration_date in ordered_expirations:
+        for expiration_date in far_expirations:
             if expiration_date <= near_expiration:
                 continue
-            if (expiration_date - entry_date).days < minimum_target:
+            if not explicit_far_leg and (expiration_date - entry_date).days < minimum_target:
                 continue
             contracts = contracts_by_expiration.get(expiration_date, [])
             if contracts:
                 result = (near_expiration, near_contracts, expiration_date, contracts)
                 _store_cached_calendar_groups(cache_key, result)
                 return result
+        if explicit_far_leg:
+            raise DataUnavailableError("Calendar spread requires a later expiration near calendar_far_leg_target_dte.")
         raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
 
     exact_fetch = getattr(option_gateway, "list_contracts_for_expiration", None)
     if callable(exact_fetch):
         near_expiration: date | None = None
         near_contracts: list[OptionContractRecord] = []
-        for expiration_date in ordered_expirations:
+        for expiration_date in near_expirations:
             with _profile_build_position_metric("contract_exact_fetch_ms"):
                 contracts = exact_fetch(
                     entry_date=entry_date,
@@ -152,11 +171,12 @@ def resolve_calendar_contract_groups(
             raise DataUnavailableError("No eligible option expirations were available.")
 
         minimum_target = (near_expiration - entry_date).days + CALENDAR_MIN_FAR_LEG_EXTRA_DAYS
-        later_expirations = sorted(
+        later_expirations = [
             expiration_date
-            for expiration_date in ordered_expirations
-            if expiration_date > near_expiration and (expiration_date - entry_date).days >= minimum_target
-        )
+            for expiration_date in far_expirations
+            if expiration_date > near_expiration
+            and (explicit_far_leg or (expiration_date - entry_date).days >= minimum_target)
+        ]
         for expiration_date in later_expirations:
             with _profile_build_position_metric("contract_exact_fetch_ms"):
                 contracts = exact_fetch(
@@ -170,28 +190,49 @@ def resolve_calendar_contract_groups(
                 result = (near_expiration, near_contracts, expiration_date, contracts)
                 _store_cached_calendar_groups(cache_key, result)
                 return result
+        if explicit_far_leg:
+            raise DataUnavailableError("Calendar spread requires a later expiration near calendar_far_leg_target_dte.")
         raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
 
-    contracts = option_gateway.list_contracts(
+    near_pool = option_gateway.list_contracts(
         entry_date,
         contract_type,
         target_dte,
         effective_tolerance_days,
     )
-    near_expiration = choose_primary_expiration(contracts, entry_date, target_dte)
-    far_expiration = choose_secondary_expiration(
-        contracts,
-        entry_date,
-        near_expiration,
-        min_extra_days=CALENDAR_MIN_FAR_LEG_EXTRA_DAYS,
-    )
-    if far_expiration is None:
-        raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
+    near_expiration = choose_primary_expiration(near_pool, entry_date, target_dte)
+    near_contracts = contracts_for_expiration(near_pool, near_expiration)
+    if explicit_far_leg:
+        far_pool = option_gateway.list_contracts(
+            entry_date,
+            contract_type,
+            far_leg_target_dte,
+            effective_tolerance_days,
+        )
+        later_far_pool = [
+            contract
+            for contract in far_pool
+            if contract.expiration_date > near_expiration
+        ]
+        if not later_far_pool:
+            raise DataUnavailableError("Calendar spread requires a later expiration near calendar_far_leg_target_dte.")
+        far_expiration = choose_primary_expiration(later_far_pool, entry_date, far_leg_target_dte)
+        far_contracts = contracts_for_expiration(later_far_pool, far_expiration)
+    else:
+        far_expiration = choose_secondary_expiration(
+            near_pool,
+            entry_date,
+            near_expiration,
+            min_extra_days=CALENDAR_MIN_FAR_LEG_EXTRA_DAYS,
+        )
+        if far_expiration is None:
+            raise DataUnavailableError("Calendar spread requires a later expiration beyond the target cycle.")
+        far_contracts = contracts_for_expiration(near_pool, far_expiration)
     result = (
         near_expiration,
-        contracts_for_expiration(contracts, near_expiration),
+        near_contracts,
         far_expiration,
-        contracts_for_expiration(contracts, far_expiration),
+        far_contracts,
     )
     _store_cached_calendar_groups(cache_key, result)
     return result
@@ -210,7 +251,8 @@ class CalendarSpreadStrategy(StrategyDefinition):
         option_gateway: OptionDataGateway,
     ) -> OpenMultiLegPosition | None:
         overrides = get_overrides(config.strategy_overrides)
-        contract_type = overrides.calendar_contract_type or "call"
+        contract_type = resolve_calendar_contract_type(config.strategy_type, overrides)
+        far_leg_target_dte = overrides.calendar_far_leg_target_dte
         strike_selection = (
             overrides.short_put_strike or overrides.long_put_strike
             if contract_type == "put"
@@ -222,6 +264,7 @@ class CalendarSpreadStrategy(StrategyDefinition):
             contract_type=contract_type,
             target_dte=config.target_dte,
             dte_tolerance_days=config.dte_tolerance_days,
+            far_leg_target_dte=far_leg_target_dte,
         )
         common_strikes = common_sorted_strikes(near_calls, far_calls)
         if not common_strikes:
@@ -312,9 +355,17 @@ class CalendarSpreadStrategy(StrategyDefinition):
             ],
             "assumptions": [
                 f"Calendar spread is modeled as a {contract_type} calendar in this slice.",
-                "The short leg uses the expiration nearest target_dte and the long leg uses"
-                " the next later expiration at least 1 day farther out when available."
-                f" Expiration search uses at least {CALENDAR_MIN_DTE_TOLERANCE_DAYS} DTE tolerance days.",
+                (
+                    "The short leg uses the expiration nearest target_dte and the long leg uses"
+                    f" the later expiration nearest calendar_far_leg_target_dte={far_leg_target_dte}."
+                    f" Expiration search uses {config.dte_tolerance_days} DTE tolerance days for both legs."
+                )
+                if far_leg_target_dte is not None
+                else (
+                    "The short leg uses the expiration nearest target_dte and the long leg uses"
+                    " the next later expiration at least 1 day farther out when available."
+                    f" Expiration search uses at least {CALENDAR_MIN_DTE_TOLERANCE_DAYS} DTE tolerance days."
+                ),
                 "The package exits at the near-leg expiration, max_holding_days, or backtest end;"
                 " the far leg is closed at market on that exit date.",
             ],
@@ -323,6 +374,8 @@ class CalendarSpreadStrategy(StrategyDefinition):
             "max_profit_per_unit": None,
             "entry_package_market_value": entry_value_per_unit,
         }
+        long_far_root = parse_option_ticker_metadata(long_far.ticker)
+        short_near_root = parse_option_ticker_metadata(short_near.ticker)
         return OpenMultiLegPosition(
             display_ticker=synthetic_ticker([long_far.ticker, short_near.ticker]),
             strategy_type=self.strategy_type,
@@ -341,6 +394,9 @@ class CalendarSpreadStrategy(StrategyDefinition):
                     1,
                     long_quote.mid_price,
                     long_quote.mid_price,
+                    deliverable_shares_per_contract=long_far.shares_per_contract,
+                    contract_root_symbol=long_far_root[0] if long_far_root is not None else None,
+                    reference_underlying_symbol=long_far.underlying_symbol or config.symbol,
                 ),
                 OpenOptionLeg(
                     short_near.ticker,
@@ -351,6 +407,9 @@ class CalendarSpreadStrategy(StrategyDefinition):
                     1,
                     short_quote.mid_price,
                     short_quote.mid_price,
+                    deliverable_shares_per_contract=short_near.shares_per_contract,
+                    contract_root_symbol=short_near_root[0] if short_near_root is not None else None,
+                    reference_underlying_symbol=short_near.underlying_symbol or config.symbol,
                 ),
             ],
             scheduled_exit_date=near_expiration,
@@ -360,5 +419,5 @@ class CalendarSpreadStrategy(StrategyDefinition):
             detail_json=detail_json,
         )
 
-
 CALENDAR_SPREAD_STRATEGY = CalendarSpreadStrategy()
+PUT_CALENDAR_SPREAD_STRATEGY = CalendarSpreadStrategy(strategy_type="put_calendar_spread")

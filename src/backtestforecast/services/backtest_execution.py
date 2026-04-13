@@ -5,6 +5,7 @@ import inspect
 import json
 import threading
 import time as _time
+from datetime import timedelta
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -34,6 +35,7 @@ from backtestforecast.services.risk_free_rate import (
 _logger = structlog.get_logger("services.backtest_execution")
 _thread_local_execution_services = threading.local()
 _EXECUTION_INPUTS_CACHE_MAX = 256
+_PREPARED_BUNDLE_CACHE_MAX = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,20 @@ class _ResolvedExecutionInputsCacheEntry:
     risk_free_rate_curve: object | None
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedBundleCoverage:
+    warmup_trading_days: int
+    forward_window_days: int
+    earnings_days_before: int
+    earnings_days_after: int
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedBundleCacheEntry:
+    bundle: HistoricalDataBundle
+    coverage: _PreparedBundleCoverage
+
+
 class BacktestExecutionService:
     """Orchestrates market data fetching and backtest engine execution.
 
@@ -79,6 +95,10 @@ class BacktestExecutionService:
         self._execution_inputs_cache: OrderedDict[
             tuple[object, ...],
             _ResolvedExecutionInputsCacheEntry,
+        ] = OrderedDict()
+        self._prepared_bundle_cache: OrderedDict[
+            tuple[object, ...],
+            _PreparedBundleCacheEntry,
         ] = OrderedDict()
         self._engine_supports_shared_entry_rule_cache = (
             "shared_entry_rule_cache" in inspect.signature(self.engine.run).parameters
@@ -121,7 +141,10 @@ class BacktestExecutionService:
         total_start = _time.perf_counter()
         settings = get_settings()
         prepare_start = _time.perf_counter()
-        resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
+        resolved_bundle, prepared_bundle_cache_hit = self._resolve_bundle_for_request(
+            request,
+            bundle=bundle,
+        )
         prepare_ms = round((_time.perf_counter() - prepare_start) * 1000, 3)
         prefetch_start = _time.perf_counter()
         self._maybe_prefetch_option_data(request, resolved_bundle, settings)
@@ -164,6 +187,7 @@ class BacktestExecutionService:
             bars=len(resolved_bundle.bars),
             trade_dates=sum(1 for bar in resolved_bundle.bars if request.start_date <= bar.trade_date <= request.end_date),
             used_prepared_bundle=bundle is not None,
+            prepared_bundle_cache_hit=prepared_bundle_cache_hit,
             data_source=resolved_bundle.data_source,
             prepare_ms=prepare_ms,
             prefetch_ms=prefetch_ms,
@@ -207,7 +231,10 @@ class BacktestExecutionService:
         total_start = _time.perf_counter()
         settings = get_settings()
         prepare_start = _time.perf_counter()
-        resolved_bundle = bundle or self.market_data_service.prepare_backtest(request)
+        resolved_bundle, prepared_bundle_cache_hit = self._resolve_bundle_for_request(
+            request,
+            bundle=bundle,
+        )
         prepare_ms = round((_time.perf_counter() - prepare_start) * 1000, 3)
         prefetch_start = _time.perf_counter()
         self._maybe_prefetch_option_data(request, resolved_bundle, settings)
@@ -280,6 +307,7 @@ class BacktestExecutionService:
             bars=len(resolved_bundle.bars),
             trade_dates=sum(1 for bar in resolved_bundle.bars if request.start_date <= bar.trade_date <= request.end_date),
             used_prepared_bundle=bundle is not None,
+            prepared_bundle_cache_hit=prepared_bundle_cache_hit,
             data_source=resolved_bundle.data_source,
             prepare_ms=prepare_ms,
             prefetch_ms=prefetch_ms,
@@ -289,6 +317,161 @@ class BacktestExecutionService:
             total_ms=total_ms,
         )
         return results
+
+    def _resolve_bundle_for_request(
+        self,
+        request: CreateBacktestRunRequest,
+        *,
+        bundle: HistoricalDataBundle | None,
+    ) -> tuple[HistoricalDataBundle, bool]:
+        if bundle is not None:
+            return bundle, False
+        cache_key = self._prepared_bundle_cache_key(request)
+        required_coverage = self._prepared_bundle_coverage(request)
+        cached_bundle = self._get_cached_prepared_bundle(
+            cache_key,
+            required_coverage=required_coverage,
+        )
+        if cached_bundle is not None:
+            return self._build_execution_bundle(
+                cached_bundle,
+                request=request,
+                coverage=required_coverage,
+            ), True
+        prepared_bundle = self.market_data_service.prepare_backtest(request)
+        self._store_prepared_bundle(
+            cache_key,
+            _PreparedBundleCacheEntry(
+                bundle=prepared_bundle,
+                coverage=required_coverage,
+            ),
+        )
+        return self._build_execution_bundle(
+            prepared_bundle,
+            request=request,
+            coverage=required_coverage,
+        ), False
+
+    @staticmethod
+    def _prepared_bundle_cache_key(
+        request: CreateBacktestRunRequest,
+    ) -> tuple[object, ...]:
+        return (
+            request.symbol,
+            request.start_date,
+            request.end_date,
+        )
+
+    @staticmethod
+    def _prepared_bundle_coverage(
+        request: CreateBacktestRunRequest,
+    ) -> _PreparedBundleCoverage:
+        avoid_rules = MarketDataService._collect_avoid_earnings_rules(request.entry_rules)
+        return _PreparedBundleCoverage(
+            warmup_trading_days=MarketDataService._resolve_warmup_trading_days(request),
+            forward_window_days=max(
+                request.max_holding_days,
+                request.target_dte + request.dte_tolerance_days,
+            ) + 45,
+            earnings_days_before=max((rule.days_before for rule in avoid_rules), default=0),
+            earnings_days_after=max((rule.days_after for rule in avoid_rules), default=0),
+        )
+
+    @staticmethod
+    def _prepared_bundle_covers(
+        cached_coverage: _PreparedBundleCoverage,
+        *,
+        required_coverage: _PreparedBundleCoverage,
+    ) -> bool:
+        return (
+            cached_coverage.warmup_trading_days >= required_coverage.warmup_trading_days
+            and cached_coverage.forward_window_days >= required_coverage.forward_window_days
+            and cached_coverage.earnings_days_before >= required_coverage.earnings_days_before
+            and cached_coverage.earnings_days_after >= required_coverage.earnings_days_after
+        )
+
+    def _get_cached_prepared_bundle(
+        self,
+        cache_key: tuple[object, ...],
+        *,
+        required_coverage: _PreparedBundleCoverage,
+    ) -> HistoricalDataBundle | None:
+        cached = self._prepared_bundle_cache.get(cache_key)
+        if cached is None:
+            return None
+        if not self._prepared_bundle_covers(
+            cached.coverage,
+            required_coverage=required_coverage,
+        ):
+            return None
+        self._prepared_bundle_cache.move_to_end(cache_key)
+        return cached.bundle
+
+    def _store_prepared_bundle(
+        self,
+        cache_key: tuple[object, ...],
+        entry: _PreparedBundleCacheEntry,
+    ) -> None:
+        existing = self._prepared_bundle_cache.get(cache_key)
+        if existing is not None and self._prepared_bundle_covers(
+            existing.coverage,
+            required_coverage=entry.coverage,
+        ):
+            self._prepared_bundle_cache.move_to_end(cache_key)
+            return
+        self._prepared_bundle_cache[cache_key] = entry
+        self._prepared_bundle_cache.move_to_end(cache_key)
+        while len(self._prepared_bundle_cache) > _PREPARED_BUNDLE_CACHE_MAX:
+            self._prepared_bundle_cache.popitem(last=False)
+
+    @staticmethod
+    def _build_execution_bundle(
+        bundle: HistoricalDataBundle,
+        *,
+        request: CreateBacktestRunRequest,
+        coverage: _PreparedBundleCoverage,
+    ) -> HistoricalDataBundle:
+        sliced_bars = BacktestExecutionService._slice_bundle_bars(
+            bundle.bars,
+            request=request,
+            coverage=coverage,
+        )
+        return HistoricalDataBundle(
+            bars=sliced_bars,
+            earnings_dates=bundle.earnings_dates,
+            ex_dividend_dates=bundle.ex_dividend_dates,
+            option_gateway=bundle.option_gateway,
+            data_source=bundle.data_source,
+            warnings=list(bundle.warnings) if bundle.warnings is not None else None,
+            prefetched_signatures=bundle.prefetched_signatures,
+            prefetched_summaries=bundle.prefetched_summaries,
+            prefetch_lock=bundle.prefetch_lock,
+            prefetch_inflight=bundle.prefetch_inflight,
+        )
+
+    @staticmethod
+    def _slice_bundle_bars(
+        bars: list[object],
+        *,
+        request: CreateBacktestRunRequest,
+        coverage: _PreparedBundleCoverage,
+    ) -> list[object]:
+        if not bars:
+            return []
+        first_entry_index = next(
+            (index for index, bar in enumerate(bars) if bar.trade_date >= request.start_date),
+            None,
+        )
+        if first_entry_index is None:
+            return list(bars)
+        start_index = max(0, first_entry_index - coverage.warmup_trading_days)
+        latest_required_trade_date = request.end_date + timedelta(days=coverage.forward_window_days)
+        end_index = len(bars) - 1
+        for index in range(len(bars) - 1, -1, -1):
+            if bars[index].trade_date <= latest_required_trade_date:
+                end_index = index
+                break
+        return list(bars[start_index:end_index + 1])
 
     def resolve_execution_inputs(
         self,

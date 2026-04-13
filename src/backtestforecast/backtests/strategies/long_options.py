@@ -10,6 +10,7 @@ from backtestforecast.backtests.strategies.common import (
     maybe_build_contract_delta_lookup,
     require_contract_for_strike,
     resolve_strike,
+    select_preferred_expiration_contracts,
     sorted_unique_strikes,
     valid_entry_mids,
 )
@@ -65,7 +66,8 @@ class LongOptionStrategy(StrategyDefinition):
         strike_band = self._preferred_strike_band(bar.close_price, strike_override)
         exact_expiration_fetch = getattr(option_gateway, "list_contracts_for_preferred_expiration", None)
         if callable(exact_expiration_fetch):
-            exp_contracts = exact_expiration_fetch(
+            primary_expiration, exp_contracts = select_preferred_expiration_contracts(
+                option_gateway,
                 entry_date=bar.trade_date,
                 contract_type=self.contract_type,
                 target_dte=config.target_dte,
@@ -73,7 +75,6 @@ class LongOptionStrategy(StrategyDefinition):
                 strike_price_gte=strike_band[0] if strike_band is not None else None,
                 strike_price_lte=strike_band[1] if strike_band is not None else None,
             )
-            primary_expiration = exp_contracts[0].expiration_date
         else:
             all_contracts = option_gateway.list_contracts(
                 entry_date=bar.trade_date,

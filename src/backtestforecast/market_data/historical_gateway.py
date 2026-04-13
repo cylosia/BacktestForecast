@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ from backtestforecast.backtests.strategies.common import (
     preferred_expiration_dates,
 )
 from backtestforecast.errors import DataUnavailableError
-from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
+from backtestforecast.market_data.historical_store import HistoricalMarketDataStore, parse_option_ticker_metadata
 from backtestforecast.market_data.types import OptionContractRecord, OptionQuoteRecord, OptionSnapshotRecord
 
 if TYPE_CHECKING:
@@ -26,8 +27,10 @@ _FILTERED_EXACT_CONTRACT_CACHE_MAX = 1_024
 _EXPIRATION_AVAILABILITY_CACHE_MAX = 32_768
 _EXPIRATION_AVAILABILITY_BY_TYPE_CACHE_MAX = 16_384
 _PREFERRED_EXPIRATION_EXACT_PROBE_MAX_UNKNOWN = 2
+_PREFERRED_COMMON_EXPIRATION_EXACT_PROBE_MAX_UNKNOWN = 2
 _QUOTE_CACHE_MAX = 50_000
 _QUOTE_SERIES_CACHE_MAX = 4_096
+_QUOTE_SERIES_BY_TICKER_CACHE_MAX = 4_096
 _IV_CACHE_MAX = 50_000
 _SHARED_STORE_CACHE_MAX = 16
 _STORE_SHARED_STATE_LOCK = threading.Lock()
@@ -50,6 +53,33 @@ def _filter_contracts_by_strike_bounds(
     ]
 
 
+def _is_standard_contract_for_symbol(symbol: str, contract: OptionContractRecord) -> bool:
+    normalized_symbol = symbol.strip().upper()
+    if contract.underlying_symbol is not None and contract.underlying_symbol.strip().upper() != normalized_symbol:
+        return False
+    metadata = parse_option_ticker_metadata(contract.ticker)
+    if metadata is not None and metadata[0] != normalized_symbol:
+        return False
+    shares_per_contract = float(contract.shares_per_contract)
+    return math.isfinite(shares_per_contract) and math.isclose(
+        shares_per_contract,
+        100.0,
+        rel_tol=0.0,
+        abs_tol=0.001,
+    )
+
+
+def _filter_standard_contracts_for_symbol(
+    symbol: str,
+    contracts: list[OptionContractRecord],
+) -> list[OptionContractRecord]:
+    return [
+        contract
+        for contract in contracts
+        if _is_standard_contract_for_symbol(symbol, contract)
+    ]
+
+
 @dataclass(slots=True)
 class _HistoricalGatewaySharedState:
     contract_cache: OrderedDict[tuple[date, str, int, int], list[OptionContractRecord]] = field(default_factory=OrderedDict)
@@ -69,10 +99,18 @@ class _HistoricalGatewaySharedState:
         tuple[date, str, date, float | None, float | None],
         list[OptionContractRecord],
     ] = field(default_factory=OrderedDict)
+    exact_contract_cache_index: dict[
+        tuple[date, str, date],
+        OrderedDict[tuple[float | None, float | None], None],
+    ] = field(default_factory=dict)
     quote_cache: OrderedDict[tuple[str, date], OptionQuoteRecord | None] = field(default_factory=OrderedDict)
     quote_series_cache: OrderedDict[
         tuple[tuple[str, ...], date, date],
         dict[str, dict[date, OptionQuoteRecord | None]],
+    ] = field(default_factory=OrderedDict)
+    quote_series_by_ticker_cache: OrderedDict[
+        str,
+        tuple[date, date, dict[date, OptionQuoteRecord | None]],
     ] = field(default_factory=OrderedDict)
     iv_cache: OrderedDict[tuple[str, date], float | None] = field(default_factory=OrderedDict)
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -196,6 +234,7 @@ class HistoricalOptionGateway:
                 expiration_gte=lower,
                 expiration_lte=upper,
             )
+            contracts = _filter_standard_contracts_for_symbol(self.symbol, contracts)
             with self._shared_state.lock:
                 _store_lru(
                     self._shared_state.contract_cache,
@@ -302,6 +341,7 @@ class HistoricalOptionGateway:
                 strike_price_gte=strike_floor,
                 strike_price_lte=strike_ceiling,
             )
+            ranged_contracts = _filter_standard_contracts_for_symbol(self.symbol, list(ranged_contracts))
             for contract in ranged_contracts:
                 grouped_contracts.setdefault(contract.expiration_date, []).append(contract)
         if grouped_contracts:
@@ -375,6 +415,7 @@ class HistoricalOptionGateway:
         strike_floor = round(strike_price_gte, 4) if strike_price_gte is not None else None
         strike_ceiling = round(strike_price_lte, 4) if strike_price_lte is not None else None
         missing_expirations: list[date] = []
+        cached_fallback: tuple[date, list[OptionContractRecord], list[OptionContractRecord]] | None = None
 
         with self._shared_state.lock:
             for expiration_date in ordered_expirations:
@@ -394,7 +435,10 @@ class HistoricalOptionGateway:
                 )
                 if calls is not None and puts is not None:
                     if calls and puts:
-                        return expiration_date, calls, puts
+                        if not missing_expirations:
+                            return expiration_date, calls, puts
+                        cached_fallback = (expiration_date, calls, puts)
+                        break
                     continue
                 if calls == [] or puts == []:
                     continue
@@ -402,6 +446,29 @@ class HistoricalOptionGateway:
 
         if not missing_expirations:
             raise DataUnavailableError("No shared option expiration was available in local historical data.")
+
+        if (
+            cached_fallback is not None
+            and 0 < len(missing_expirations) <= _PREFERRED_COMMON_EXPIRATION_EXACT_PROBE_MAX_UNKNOWN
+        ):
+            for expiration_date in missing_expirations:
+                calls = self._list_contracts_for_exact_expiration(
+                    entry_date=entry_date,
+                    contract_type="call",
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_floor,
+                    strike_price_lte=strike_ceiling,
+                )
+                puts = self._list_contracts_for_exact_expiration(
+                    entry_date=entry_date,
+                    contract_type="put",
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike_floor,
+                    strike_price_lte=strike_ceiling,
+                )
+                if calls and puts:
+                    return expiration_date, calls, puts
+            return cached_fallback
 
         fetched_by_type = self.list_contracts_for_expirations_by_type(
             entry_date=entry_date,
@@ -417,6 +484,8 @@ class HistoricalOptionGateway:
             puts = puts_by_expiration.get(expiration_date, [])
             if calls and puts:
                 return expiration_date, calls, puts
+        if cached_fallback is not None:
+            return cached_fallback
         raise DataUnavailableError("No shared option expiration was available in local historical data.")
 
     def list_contracts_for_expiration(
@@ -482,7 +551,10 @@ class HistoricalOptionGateway:
             )
             with self._shared_state.lock:
                 for expiration_date in missing:
-                    contracts = list(fetched.get(expiration_date, []))
+                    contracts = _filter_standard_contracts_for_symbol(
+                        self.symbol,
+                        list(fetched.get(expiration_date, [])),
+                    )
                     self._store_exact_contracts_locked(
                         entry_date=entry_date,
                         contract_type=contract_type,
@@ -557,7 +629,10 @@ class HistoricalOptionGateway:
                 for contract_type in missing_types:
                     fetched_by_expiration = fetched.get(contract_type, {})
                     for expiration_date in missing_by_type[contract_type]:
-                        contracts = list(fetched_by_expiration.get(expiration_date, []))
+                        contracts = _filter_standard_contracts_for_symbol(
+                            self.symbol,
+                            list(fetched_by_expiration.get(expiration_date, [])),
+                        )
                         self._store_exact_contracts_locked(
                             entry_date=entry_date,
                             contract_type=contract_type,
@@ -834,14 +909,45 @@ class HistoricalOptionGateway:
                     ticker: dict(cached.get(ticker, {}))
                     for ticker in requested_tickers
                 }
-        series_lookup = getattr(self.store, "get_option_quote_series", None)
-        if not inspect.ismethod(series_lookup):
-            return {ticker: {} for ticker in requested_tickers}
-        series = series_lookup(requested_tickers, start_date, end_date)
-        normalized: dict[str, dict[date, OptionQuoteRecord | None]] = {
-            ticker: dict(series.get(ticker, {}))
-            for ticker in requested_tickers
-        }
+
+        normalized: dict[str, dict[date, OptionQuoteRecord | None]] = {}
+        missing_tickers: list[str] = []
+        with self._shared_state.lock:
+            for option_ticker in requested_tickers:
+                cached_series = self._get_cached_quote_series_for_ticker_locked(
+                    option_ticker=option_ticker,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                if cached_series is None:
+                    missing_tickers.append(option_ticker)
+                    continue
+                normalized[option_ticker] = cached_series
+
+        if missing_tickers:
+            series_lookup = getattr(self.store, "get_option_quote_series", None)
+            if inspect.ismethod(series_lookup):
+                series = series_lookup(missing_tickers, start_date, end_date)
+            else:
+                series = {ticker: {} for ticker in missing_tickers}
+            with self._shared_state.lock:
+                for option_ticker in missing_tickers:
+                    quotes_by_date = dict(series.get(option_ticker, {}))
+                    normalized[option_ticker] = quotes_by_date
+                    self._store_quote_series_for_ticker_locked(
+                        option_ticker=option_ticker,
+                        start_date=start_date,
+                        end_date=end_date,
+                        quotes_by_date=quotes_by_date,
+                    )
+                    for trade_date, quote in quotes_by_date.items():
+                        _store_lru(
+                            self._shared_state.quote_cache,
+                            (option_ticker, trade_date),
+                            quote,
+                            max_size=_QUOTE_CACHE_MAX,
+                        )
+                        self._shared_state.inflight_errors.pop(("quotes", (option_ticker, trade_date)), None)
         with self._shared_state.lock:
             _store_lru(
                 self._shared_state.quote_series_cache,
@@ -862,6 +968,54 @@ class HistoricalOptionGateway:
                     )
                     self._shared_state.inflight_errors.pop(("quotes", (option_ticker, trade_date)), None)
         return normalized
+
+    def _get_cached_quote_series_for_ticker_locked(
+        self,
+        *,
+        option_ticker: str,
+        start_date: date,
+        end_date: date,
+    ) -> dict[date, OptionQuoteRecord | None] | None:
+        cached = self._shared_state.quote_series_by_ticker_cache.get(option_ticker)
+        if cached is None:
+            return None
+        cached_start, cached_end, cached_quotes = cached
+        if cached_start > start_date or cached_end < end_date:
+            return None
+        self._shared_state.quote_series_by_ticker_cache.move_to_end(option_ticker)
+        return {
+            trade_date: quote
+            for trade_date, quote in cached_quotes.items()
+            if start_date <= trade_date <= end_date
+        }
+
+    def _store_quote_series_for_ticker_locked(
+        self,
+        *,
+        option_ticker: str,
+        start_date: date,
+        end_date: date,
+        quotes_by_date: dict[date, OptionQuoteRecord | None],
+    ) -> None:
+        existing = self._shared_state.quote_series_by_ticker_cache.get(option_ticker)
+        if existing is None:
+            merged_start = start_date
+            merged_end = end_date
+            merged_quotes = dict(quotes_by_date)
+        else:
+            cached_start, cached_end, cached_quotes = existing
+            merged_start = min(cached_start, start_date)
+            merged_end = max(cached_end, end_date)
+            merged_quotes = dict(cached_quotes)
+            merged_quotes.update(quotes_by_date)
+        self._shared_state.quote_series_by_ticker_cache[option_ticker] = (
+            merged_start,
+            merged_end,
+            merged_quotes,
+        )
+        self._shared_state.quote_series_by_ticker_cache.move_to_end(option_ticker)
+        while len(self._shared_state.quote_series_by_ticker_cache) > _QUOTE_SERIES_BY_TICKER_CACHE_MAX:
+            self._shared_state.quote_series_by_ticker_cache.popitem(last=False)
 
     def set_ex_dividend_dates(self, ex_dividend_dates: set[date]) -> None:
         self._ex_dividend_dates = set(ex_dividend_dates)
@@ -952,6 +1106,7 @@ class HistoricalOptionGateway:
                     strike_price_lte=strike_ceiling,
                 )
                 if cached is not None:
+                    cached = _filter_standard_contracts_for_symbol(self.symbol, list(cached))
                     with self._shared_state.lock:
                         self._store_exact_contracts_locked(
                             entry_date=entry_date,
@@ -974,6 +1129,7 @@ class HistoricalOptionGateway:
                     strike_price_lte=strike_ceiling,
                 )
                 if cached is not None:
+                    cached = _filter_standard_contracts_for_symbol(self.symbol, list(cached))
                     with self._shared_state.lock:
                         self._store_exact_contracts_locked(
                             entry_date=entry_date,
@@ -994,6 +1150,7 @@ class HistoricalOptionGateway:
                 strike_price_gte=strike_floor,
                 strike_price_lte=strike_ceiling,
             )
+            contracts = _filter_standard_contracts_for_symbol(self.symbol, contracts)
             if self.contract_catalog is not None:
                 self.contract_catalog.upsert_contracts(
                     symbol=self.symbol,
@@ -1057,22 +1214,29 @@ class HistoricalOptionGateway:
         filtered_cache_key = (entry_date, contract_type, expiration_date, strike_floor, strike_ceiling)
         contracts = _cache_hit(self._shared_state.exact_contract_cache, filtered_cache_key)
         if contracts is not None:
+            self._touch_filtered_exact_contract_index_locked(
+                entry_date=entry_date,
+                contract_type=contract_type,
+                expiration_date=expiration_date,
+                strike_floor=strike_floor,
+                strike_ceiling=strike_ceiling,
+            )
             _increment_build_position_counter("contract_gateway_exact_cache_hits")
             return contracts
         full_contracts = _cache_hit(self._shared_state.full_exact_contract_cache, full_cache_key)
         if full_contracts is None:
-            for (
-                cached_entry_date,
-                cached_contract_type,
-                cached_expiration_date,
-                cached_floor,
-                cached_ceiling,
-            ), cached_contracts in reversed(list(self._shared_state.exact_contract_cache.items())):
-                if (
-                    cached_entry_date != entry_date
-                    or cached_contract_type != contract_type
-                    or cached_expiration_date != expiration_date
-                ):
+            indexed_bounds = self._shared_state.exact_contract_cache_index.get(full_cache_key)
+            if indexed_bounds is None:
+                _increment_build_position_counter("contract_gateway_exact_cache_misses")
+                return None
+            stale_bounds: list[tuple[float | None, float | None]] = []
+            for cached_floor, cached_ceiling in reversed(list(indexed_bounds.keys())):
+                cached_contracts = _cache_hit(
+                    self._shared_state.exact_contract_cache,
+                    (entry_date, contract_type, expiration_date, cached_floor, cached_ceiling),
+                )
+                if cached_contracts is None:
+                    stale_bounds.append((cached_floor, cached_ceiling))
                     continue
                 lower_covers = (
                     strike_floor is not None
@@ -1089,14 +1253,22 @@ class HistoricalOptionGateway:
                     strike_floor=strike_floor,
                     strike_ceiling=strike_ceiling,
                 )
-                _store_lru(
-                    self._shared_state.exact_contract_cache,
-                    filtered_cache_key,
-                    filtered_contracts,
-                    max_size=_FILTERED_EXACT_CONTRACT_CACHE_MAX,
+                self._shared_state.exact_contract_cache[filtered_cache_key] = filtered_contracts
+                self._shared_state.exact_contract_cache.move_to_end(filtered_cache_key)
+                self._touch_filtered_exact_contract_index_locked(
+                    entry_date=entry_date,
+                    contract_type=contract_type,
+                    expiration_date=expiration_date,
+                    strike_floor=strike_floor,
+                    strike_ceiling=strike_ceiling,
                 )
+                self._prune_filtered_exact_contract_cache_locked()
                 _increment_build_position_counter("contract_gateway_exact_cache_hits")
                 return filtered_contracts
+            for bounds_key in stale_bounds:
+                indexed_bounds.pop(bounds_key, None)
+            if not indexed_bounds:
+                self._shared_state.exact_contract_cache_index.pop(full_cache_key, None)
             _increment_build_position_counter("contract_gateway_exact_cache_misses")
             return None
         filtered_contracts = _filter_contracts_by_strike_bounds(
@@ -1104,12 +1276,16 @@ class HistoricalOptionGateway:
             strike_floor=strike_floor,
             strike_ceiling=strike_ceiling,
         )
-        _store_lru(
-            self._shared_state.exact_contract_cache,
-            filtered_cache_key,
-            filtered_contracts,
-            max_size=_FILTERED_EXACT_CONTRACT_CACHE_MAX,
+        self._shared_state.exact_contract_cache[filtered_cache_key] = filtered_contracts
+        self._shared_state.exact_contract_cache.move_to_end(filtered_cache_key)
+        self._touch_filtered_exact_contract_index_locked(
+            entry_date=entry_date,
+            contract_type=contract_type,
+            expiration_date=expiration_date,
+            strike_floor=strike_floor,
+            strike_ceiling=strike_ceiling,
         )
+        self._prune_filtered_exact_contract_cache_locked()
         _increment_build_position_counter("contract_gateway_exact_cache_hits")
         return filtered_contracts
 
@@ -1131,9 +1307,44 @@ class HistoricalOptionGateway:
                 max_size=_FULL_EXACT_CONTRACT_CACHE_MAX,
             )
             return
-        _store_lru(
-            self._shared_state.exact_contract_cache,
-            (entry_date, contract_type, expiration_date, strike_floor, strike_ceiling),
-            contracts,
-            max_size=_FILTERED_EXACT_CONTRACT_CACHE_MAX,
+        filtered_cache_key = (entry_date, contract_type, expiration_date, strike_floor, strike_ceiling)
+        self._shared_state.exact_contract_cache[filtered_cache_key] = contracts
+        self._shared_state.exact_contract_cache.move_to_end(filtered_cache_key)
+        self._touch_filtered_exact_contract_index_locked(
+            entry_date=entry_date,
+            contract_type=contract_type,
+            expiration_date=expiration_date,
+            strike_floor=strike_floor,
+            strike_ceiling=strike_ceiling,
         )
+        self._prune_filtered_exact_contract_cache_locked()
+
+    def _touch_filtered_exact_contract_index_locked(
+        self,
+        *,
+        entry_date: date,
+        contract_type: str,
+        expiration_date: date,
+        strike_floor: float | None,
+        strike_ceiling: float | None,
+    ) -> None:
+        root_key = (entry_date, contract_type, expiration_date)
+        bounds_key = (strike_floor, strike_ceiling)
+        indexed_bounds = self._shared_state.exact_contract_cache_index.get(root_key)
+        if indexed_bounds is None:
+            indexed_bounds = OrderedDict()
+            self._shared_state.exact_contract_cache_index[root_key] = indexed_bounds
+        indexed_bounds.pop(bounds_key, None)
+        indexed_bounds[bounds_key] = None
+
+    def _prune_filtered_exact_contract_cache_locked(self) -> None:
+        while len(self._shared_state.exact_contract_cache) > _FILTERED_EXACT_CONTRACT_CACHE_MAX:
+            evicted_key, _ = self._shared_state.exact_contract_cache.popitem(last=False)
+            root_key = (evicted_key[0], evicted_key[1], evicted_key[2])
+            bounds_key = (evicted_key[3], evicted_key[4])
+            indexed_bounds = self._shared_state.exact_contract_cache_index.get(root_key)
+            if indexed_bounds is None:
+                continue
+            indexed_bounds.pop(bounds_key, None)
+            if not indexed_bounds:
+                self._shared_state.exact_contract_cache_index.pop(root_key, None)

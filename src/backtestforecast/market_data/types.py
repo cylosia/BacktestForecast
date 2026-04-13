@@ -22,6 +22,8 @@ class OptionContractRecord:
     expiration_date: date
     strike_price: float  # Precision note: float cannot represent all decimals exactly. Use Decimal(str(strike_price)) at financial computation boundaries.
     shares_per_contract: float
+    underlying_symbol: str | None = None
+    as_of_mid_price: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +40,8 @@ class OptionQuoteRecord:
     bid_price: float
     ask_price: float
     participant_timestamp: int | None
+    source_option_ticker: str | None = None
+    deliverable_shares_per_contract: float | None = None
 
     @property
     def mid_price(self) -> float | None:

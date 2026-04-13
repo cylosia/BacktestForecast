@@ -8,6 +8,7 @@ from __future__ import annotations
 import threading
 import time
 from datetime import date, timedelta
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +22,8 @@ from backtestforecast.market_data.historical_store import HistoricalMarketDataSt
 from backtestforecast.market_data.service import MarketDataService
 from backtestforecast.market_data.types import DailyBar, EarningsEventRecord, ExDividendRecord
 from backtestforecast.models import HistoricalEarningsEvent, HistoricalUnderlyingDayBar
-from backtestforecast.schemas.backtests import AvoidEarningsRule, CreateBacktestRunRequest
+from backtestforecast.pipeline.regime import Regime
+from backtestforecast.schemas.backtests import AvoidEarningsRule, CreateBacktestRunRequest, RegimeRule
 from backtestforecast.utils.dates import is_market_holiday, is_trading_day
 
 
@@ -84,6 +86,30 @@ def _make_historical_store(
         current += timedelta(days=1)
     store.upsert_underlying_day_bars(rows)
     return store
+
+
+def test_resolve_warmup_trading_days_honors_regime_rule_minimum() -> None:
+    request = CreateBacktestRunRequest(
+        symbol="UVXY",
+        strategy_type="long_put",
+        start_date=date(2020, 1, 2),
+        end_date=date(2020, 12, 31),
+        target_dte=14,
+        dte_tolerance_days=5,
+        max_holding_days=30,
+        account_size=Decimal("10000"),
+        risk_per_trade_pct=Decimal("5"),
+        commission_per_contract=Decimal("0.65"),
+        entry_rules=[
+            RegimeRule(
+                type="regime",
+                required_regimes=[Regime.BEARISH],
+                blocked_regimes=[Regime.HIGH_IV],
+            )
+        ],
+    )
+
+    assert MarketDataService._resolve_warmup_trading_days(request) >= 210
 
 
 class TestBarsCacheHit:
@@ -519,13 +545,17 @@ class TestHistoricalEarningsStorage:
 
 def test_historical_market_holiday_calendar_covers_backfill_years() -> None:
     assert is_market_holiday(date(2014, 7, 4))
+    assert is_market_holiday(date(2018, 12, 5))
     assert is_market_holiday(date(2019, 4, 19))
     assert is_market_holiday(date(2020, 7, 3))
     assert is_market_holiday(date(2022, 4, 15))
     assert is_market_holiday(date(2023, 4, 7))
     assert is_market_holiday(date(2024, 3, 29))
+    assert is_market_holiday(date(2025, 1, 9))
     assert not is_trading_day(date(2014, 9, 1))
+    assert not is_trading_day(date(2018, 12, 5))
     assert not is_trading_day(date(2022, 4, 15))
+    assert not is_trading_day(date(2025, 1, 9))
 
 
 def test_fetch_bars_coalesced_uses_local_history_when_padding_precedes_first_loaded_bar() -> None:

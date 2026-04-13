@@ -225,6 +225,8 @@ def test_historical_store_batches_contracts_for_multiple_expirations() -> None:
     assert [contract.ticker for contract in contracts_by_expiration[date(2025, 4, 25)]] == [
         "O:AAPL250425C00190000"
     ]
+    assert contracts_by_expiration[date(2025, 4, 18)][0].as_of_mid_price == 5.25
+    assert contracts_by_expiration[date(2025, 4, 25)][0].as_of_mid_price == 5.7
 
 
 def test_historical_store_batches_contracts_for_multiple_expirations_by_type() -> None:
@@ -324,6 +326,509 @@ def test_historical_store_batches_quotes_for_same_trade_date() -> None:
     assert quotes["O:AAPL250418P00190000"] is not None
     assert quotes["O:AAPL250418P00190000"].mid_price == 4.25
     assert quotes["O:MISSING"] is None
+
+
+def test_related_root_symbol_lookup_only_returns_numeric_successors() -> None:
+    store = _store()
+    trade_date = date(2025, 4, 1)
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:SPY250418C00500000",
+                underlying_symbol="SPY",
+                trade_date=trade_date,
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("500"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=trade_date,
+            ),
+            HistoricalOptionDayBar(
+                option_ticker="O:SPY1250418C00500000",
+                underlying_symbol="SPY1",
+                trade_date=trade_date,
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("500"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=trade_date,
+            ),
+            HistoricalOptionDayBar(
+                option_ticker="O:SPYV250418C00500000",
+                underlying_symbol="SPYV",
+                trade_date=trade_date,
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("500"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=trade_date,
+            ),
+        ]
+    )
+
+    with store._session(readonly=True) as session:
+        related = store._list_related_root_symbols(session, "SPY", on_date=trade_date)
+
+    assert related == ["SPY", "SPY1"]
+
+
+def test_related_root_symbol_cache_invalidates_after_option_upsert() -> None:
+    store = _store()
+    trade_date = date(2025, 4, 1)
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:SPY250418C00500000",
+                underlying_symbol="SPY",
+                trade_date=trade_date,
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("500"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=trade_date,
+            ),
+        ]
+    )
+
+    with store._session(readonly=True) as session:
+        related = store._get_related_root_symbols(session, "SPY", on_date=trade_date)
+
+    assert related == ["SPY"]
+
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:SPY1250418C00505000",
+                underlying_symbol="SPY1",
+                trade_date=trade_date,
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("505"),
+                open_price=Decimal("4.80"),
+                high_price=Decimal("5.10"),
+                low_price=Decimal("4.40"),
+                close_price=Decimal("4.95"),
+                volume=Decimal("12"),
+                source_file_date=trade_date,
+            ),
+        ]
+    )
+
+    with store._session(readonly=True) as session:
+        refreshed = store._get_related_root_symbols(session, "SPY", on_date=trade_date)
+
+    assert refreshed == ["SPY", "SPY1"]
+
+
+def test_deliverable_cache_invalidates_after_underlying_upsert() -> None:
+    store = _store()
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="UVXY",
+                trade_date=date(2015, 5, 19),
+                open_price=Decimal("7.80"),
+                high_price=Decimal("8.20"),
+                low_price=Decimal("7.60"),
+                close_price=Decimal("8.00"),
+                volume=Decimal("1000"),
+                source_file_date=date(2015, 5, 19),
+            ),
+            HistoricalUnderlyingDayBar(
+                symbol="UVXY",
+                trade_date=date(2015, 5, 20),
+                open_price=Decimal("31.50"),
+                high_price=Decimal("32.50"),
+                low_price=Decimal("31.00"),
+                close_price=Decimal("32.00"),
+                volume=Decimal("1000"),
+                source_file_date=date(2015, 5, 20),
+            ),
+        ]
+    )
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:UVXY1150619C00007000",
+                underlying_symbol="UVXY1",
+                trade_date=date(2015, 5, 20),
+                expiration_date=date(2015, 6, 19),
+                contract_type="call",
+                strike_price=Decimal("7"),
+                open_price=Decimal("1.10"),
+                high_price=Decimal("1.40"),
+                low_price=Decimal("0.90"),
+                close_price=Decimal("1.20"),
+                volume=Decimal("15"),
+                source_file_date=date(2015, 5, 20),
+            ),
+        ]
+    )
+
+    first_contracts = store.list_option_contracts_for_expiration(
+        symbol="UVXY",
+        as_of_date=date(2015, 5, 20),
+        contract_type="call",
+        expiration_date=date(2015, 6, 19),
+    )
+
+    assert first_contracts[0].shares_per_contract == 25.0
+
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="UVXY",
+                trade_date=date(2015, 5, 20),
+                open_price=Decimal("15.50"),
+                high_price=Decimal("16.50"),
+                low_price=Decimal("15.10"),
+                close_price=Decimal("16.00"),
+                volume=Decimal("1000"),
+                source_file_date=date(2015, 5, 20),
+            ),
+        ]
+    )
+
+    refreshed_contracts = store.list_option_contracts_for_expiration(
+        symbol="UVXY",
+        as_of_date=date(2015, 5, 20),
+        contract_type="call",
+        expiration_date=date(2015, 6, 19),
+    )
+
+    assert refreshed_contracts[0].shares_per_contract == 50.0
+
+
+def test_historical_store_falls_back_to_adjusted_root_when_standard_contracts_are_missing() -> None:
+    store = _store()
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="UVXY",
+                trade_date=date(2015, 5, 19),
+                open_price=Decimal("8.10"),
+                high_price=Decimal("8.40"),
+                low_price=Decimal("7.90"),
+                close_price=Decimal("8.23"),
+                volume=Decimal("1000"),
+                source_file_date=date(2015, 5, 19),
+            ),
+            HistoricalUnderlyingDayBar(
+                symbol="UVXY",
+                trade_date=date(2015, 5, 20),
+                open_price=Decimal("40.50"),
+                high_price=Decimal("41.80"),
+                low_price=Decimal("39.90"),
+                close_price=Decimal("41.29"),
+                volume=Decimal("1000"),
+                source_file_date=date(2015, 5, 20),
+            ),
+        ]
+    )
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:UVXY1150619C00007000",
+                underlying_symbol="UVXY1",
+                trade_date=date(2015, 5, 20),
+                expiration_date=date(2015, 6, 19),
+                contract_type="call",
+                strike_price=Decimal("7"),
+                open_price=Decimal("1.10"),
+                high_price=Decimal("1.40"),
+                low_price=Decimal("0.90"),
+                close_price=Decimal("1.20"),
+                volume=Decimal("15"),
+                source_file_date=date(2015, 5, 20),
+            )
+        ]
+    )
+
+    contracts = store.list_option_contracts_for_expiration(
+        symbol="UVXY",
+        as_of_date=date(2015, 5, 20),
+        contract_type="call",
+        expiration_date=date(2015, 6, 19),
+    )
+
+    assert [contract.ticker for contract in contracts] == ["O:UVXY1150619C00007000"]
+    assert contracts[0].underlying_symbol == "UVXY1"
+    assert contracts[0].shares_per_contract == 20.0
+
+
+def test_historical_store_prefers_standard_root_for_new_entry_contracts() -> None:
+    store = _store()
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="UVXY",
+                trade_date=date(2015, 5, 21),
+                open_price=Decimal("39.10"),
+                high_price=Decimal("40.20"),
+                low_price=Decimal("38.70"),
+                close_price=Decimal("38.99"),
+                volume=Decimal("1000"),
+                source_file_date=date(2015, 5, 21),
+            )
+        ]
+    )
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:UVXY150619C00040000",
+                underlying_symbol="UVXY",
+                trade_date=date(2015, 5, 21),
+                expiration_date=date(2015, 6, 19),
+                contract_type="call",
+                strike_price=Decimal("40"),
+                open_price=Decimal("4.80"),
+                high_price=Decimal("5.10"),
+                low_price=Decimal("4.50"),
+                close_price=Decimal("4.90"),
+                volume=Decimal("20"),
+                source_file_date=date(2015, 5, 21),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker="O:UVXY1150619C00010000",
+                underlying_symbol="UVXY1",
+                trade_date=date(2015, 5, 21),
+                expiration_date=date(2015, 6, 19),
+                contract_type="call",
+                strike_price=Decimal("10"),
+                open_price=Decimal("0.90"),
+                high_price=Decimal("1.10"),
+                low_price=Decimal("0.70"),
+                close_price=Decimal("0.95"),
+                volume=Decimal("20"),
+                source_file_date=date(2015, 5, 21),
+            ),
+        ]
+    )
+
+    contracts = store.list_option_contracts_for_expiration(
+        symbol="UVXY",
+        as_of_date=date(2015, 5, 21),
+        contract_type="call",
+        expiration_date=date(2015, 6, 19),
+    )
+
+    assert [contract.underlying_symbol for contract in contracts] == ["UVXY"]
+    assert [contract.ticker for contract in contracts] == ["O:UVXY150619C00040000"]
+
+
+def test_historical_store_quote_series_switches_to_successor_root_during_split() -> None:
+    store = _store()
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="UVXY",
+                trade_date=date(2015, 5, 19),
+                open_price=Decimal("8.10"),
+                high_price=Decimal("8.40"),
+                low_price=Decimal("7.90"),
+                close_price=Decimal("8.23"),
+                volume=Decimal("1000"),
+                source_file_date=date(2015, 5, 19),
+            ),
+            HistoricalUnderlyingDayBar(
+                symbol="UVXY",
+                trade_date=date(2015, 5, 20),
+                open_price=Decimal("40.50"),
+                high_price=Decimal("41.80"),
+                low_price=Decimal("39.90"),
+                close_price=Decimal("41.29"),
+                volume=Decimal("1000"),
+                source_file_date=date(2015, 5, 20),
+            ),
+        ]
+    )
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:UVXY150619C00010000",
+                underlying_symbol="UVXY",
+                trade_date=date(2015, 5, 19),
+                expiration_date=date(2015, 6, 19),
+                contract_type="call",
+                strike_price=Decimal("10"),
+                open_price=Decimal("1.20"),
+                high_price=Decimal("1.40"),
+                low_price=Decimal("1.10"),
+                close_price=Decimal("1.30"),
+                volume=Decimal("10"),
+                source_file_date=date(2015, 5, 19),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker="O:UVXY150619C00010000",
+                underlying_symbol="UVXY",
+                trade_date=date(2015, 5, 20),
+                expiration_date=date(2015, 6, 19),
+                contract_type="call",
+                strike_price=Decimal("10"),
+                open_price=Decimal("4.90"),
+                high_price=Decimal("5.30"),
+                low_price=Decimal("4.60"),
+                close_price=Decimal("5.10"),
+                volume=Decimal("10"),
+                source_file_date=date(2015, 5, 20),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker="O:UVXY1150619C00010000",
+                underlying_symbol="UVXY1",
+                trade_date=date(2015, 5, 20),
+                expiration_date=date(2015, 6, 19),
+                contract_type="call",
+                strike_price=Decimal("10"),
+                open_price=Decimal("0.80"),
+                high_price=Decimal("1.00"),
+                low_price=Decimal("0.70"),
+                close_price=Decimal("0.90"),
+                volume=Decimal("10"),
+                source_file_date=date(2015, 5, 20),
+            ),
+        ]
+    )
+
+    series = store.get_option_quote_series(
+        ["O:UVXY150619C00010000"],
+        start_date=date(2015, 5, 19),
+        end_date=date(2015, 5, 20),
+    )
+
+    assert series["O:UVXY150619C00010000"][date(2015, 5, 19)].source_option_ticker == "O:UVXY150619C00010000"
+    assert series["O:UVXY150619C00010000"][date(2015, 5, 19)].deliverable_shares_per_contract == 100.0
+    assert series["O:UVXY150619C00010000"][date(2015, 5, 20)].source_option_ticker == "O:UVXY1150619C00010000"
+    assert series["O:UVXY150619C00010000"][date(2015, 5, 20)].deliverable_shares_per_contract == 20.0
+    assert series["O:UVXY150619C00010000"][date(2015, 5, 20)].mid_price == 0.9
+
+
+def test_historical_store_quote_series_uses_exact_ticker_fast_path(
+    monkeypatch,
+) -> None:
+    store = _store()
+    option_ticker = "O:AAPL250418C00190000"
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker=option_ticker,
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.50"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=date(2025, 4, 1),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker=option_ticker,
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 2),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.30"),
+                high_price=Decimal("5.70"),
+                low_price=Decimal("5.00"),
+                close_price=Decimal("5.45"),
+                volume=Decimal("11"),
+                source_file_date=date(2025, 4, 2),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker=option_ticker,
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 3),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.40"),
+                high_price=Decimal("5.80"),
+                low_price=Decimal("5.10"),
+                close_price=Decimal("5.60"),
+                volume=Decimal("12"),
+                source_file_date=date(2025, 4, 3),
+            ),
+        ]
+    )
+
+    def _unexpected_related_root_lookup(*args, **kwargs):
+        raise AssertionError("exact quote-series lookup should not need related-root discovery")
+
+    monkeypatch.setattr(
+        HistoricalMarketDataStore,
+        "_get_related_root_symbols",
+        _unexpected_related_root_lookup,
+    )
+
+    series = store.get_option_quote_series(
+        [option_ticker],
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 3),
+    )
+
+    assert series[option_ticker][date(2025, 4, 1)].mid_price == 5.25
+    assert series[option_ticker][date(2025, 4, 3)].mid_price == 5.6
+
+
+def test_historical_store_pinned_readonly_session_reuses_single_session() -> None:
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    base_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, class_=Session)
+    readonly_session_creations = 0
+
+    def counting_factory() -> Session:
+        nonlocal readonly_session_creations
+        readonly_session_creations += 1
+        return base_factory()
+
+    store = HistoricalMarketDataStore(counting_factory, counting_factory)
+    store.upsert_underlying_day_bars(
+        [
+            HistoricalUnderlyingDayBar(
+                symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                open_price=Decimal("100"),
+                high_price=Decimal("101"),
+                low_price=Decimal("99"),
+                close_price=Decimal("100"),
+                volume=Decimal("1000"),
+                source_file_date=date(2025, 4, 1),
+            )
+        ]
+    )
+
+    readonly_session_creations = 0
+    store.get_underlying_day_bars("AAPL", date(2025, 4, 1), date(2025, 4, 1))
+    store.get_underlying_day_bars("AAPL", date(2025, 4, 1), date(2025, 4, 1))
+    assert readonly_session_creations == 2
+
+    readonly_session_creations = 0
+    with store.pinned_readonly_session():
+        with store.pinned_readonly_session():
+            bars = store.get_underlying_day_bars("AAPL", date(2025, 4, 1), date(2025, 4, 1))
+        repeated_bars = store.get_underlying_day_bars("AAPL", date(2025, 4, 1), date(2025, 4, 1))
+    assert readonly_session_creations == 1
+    assert len(bars) == 1
+    assert len(repeated_bars) == 1
 
 
 def test_ex_dividend_upsert_preserves_multiple_provider_records_for_same_day() -> None:
