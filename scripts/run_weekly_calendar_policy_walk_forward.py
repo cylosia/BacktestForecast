@@ -7,6 +7,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from decimal import Decimal
+from math import ceil, floor
 from pathlib import Path
 from statistics import median
 from types import SimpleNamespace
@@ -29,6 +30,7 @@ from grid_search_weekly_calendar_policy_two_stage import (  # noqa: E402
     _label_maps,
     _ranking_key,
     _resolve_latest_available_date_from_bundle,
+    _strategy_with_profit_target,
 )
 from run_uvxy_post_2018_rule_book_replay import (  # noqa: E402
     _install_quote_series_expiration_cap,
@@ -54,14 +56,17 @@ DEFAULT_TOP_K = 20
 DEFAULT_MAX_WORKERS = 2
 DEFAULT_WEIGHTING_SCHEME = "total_roi_shrunk"
 DEFAULT_MAX_SYMBOL_WEIGHT_PCT = 8.0
+DEFAULT_STABILITY_TOP_POOL = 60
+DEFAULT_STABILITY_MIN_POSITIVE_MONTHS = 21
+DEFAULT_STABILITY_MIN_P25_MONTHLY_MEDIAN_ROI_PCT = 25.0
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run a weekly calendar policy walk-forward using frozen training results. "
-            "By default this selects the top 20 symbols by training median ROI per trade "
-            "from the combined 103-symbol 2025-12-31 median-ranked training batch."
+            "By default this ranks symbols by training median ROI, applies the monthly stability filter "
+            "to the top 60 candidates, and then selects the top 20 survivors."
         )
     )
     parser.add_argument("--summary-csv", type=Path, default=DEFAULT_SUMMARY_CSV)
@@ -104,6 +109,33 @@ def _parse_args() -> argparse.Namespace:
         "--max-training-put-assignment-rate-pct",
         type=float,
         help="Optional maximum allowed training deep-ITM put-assignment rate, as a percent of entered trades.",
+    )
+    parser.add_argument(
+        "--stability-top-pool",
+        type=int,
+        default=DEFAULT_STABILITY_TOP_POOL,
+        help=(
+            "Apply the monthly training stability filter to the top-N ranked candidates before final selection. "
+            f"Defaults to {DEFAULT_STABILITY_TOP_POOL}. Set to 0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--stability-min-positive-months",
+        type=int,
+        default=DEFAULT_STABILITY_MIN_POSITIVE_MONTHS,
+        help=(
+            "Minimum number of positive training months required to pass the stability filter. "
+            f"Defaults to {DEFAULT_STABILITY_MIN_POSITIVE_MONTHS}."
+        ),
+    )
+    parser.add_argument(
+        "--stability-min-p25-monthly-median-roi-pct",
+        type=float,
+        default=DEFAULT_STABILITY_MIN_P25_MONTHLY_MEDIAN_ROI_PCT,
+        help=(
+            "Minimum 25th-percentile monthly median ROI on margin required to pass the stability filter. "
+            f"Defaults to {DEFAULT_STABILITY_MIN_P25_MONTHLY_MEDIAN_ROI_PCT}."
+        ),
     )
     parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS)
     parser.add_argument(
@@ -227,6 +259,20 @@ def _safe_int(value: object) -> int | None:
         return None
 
 
+def _round_or_blank(value: object, *, digits: int = 4) -> float | str:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return ""
+    return round(parsed, digits)
+
+
+def _int_or_blank(value: object) -> int | str:
+    parsed = _safe_int(value)
+    if parsed is None:
+        return ""
+    return parsed
+
+
 def _is_assignment_exit_reason(exit_reason: object) -> bool:
     return str(exit_reason or "").startswith("early_assignment_")
 
@@ -253,6 +299,10 @@ def _assignment_filter_requested(
     )
 
 
+def _stability_filter_requested(*, stability_top_pool: int) -> bool:
+    return stability_top_pool > 0
+
+
 def _passes_assignment_filters(
     *,
     metrics: dict[str, object],
@@ -276,6 +326,22 @@ def _passes_assignment_filters(
     return True
 
 
+def _interpolated_percentile(*, sorted_values: list[float], quantile: float) -> float:
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    bounded_quantile = min(max(quantile, 0.0), 1.0)
+    index = (len(sorted_values) - 1) * bounded_quantile
+    low_index = floor(index)
+    high_index = ceil(index)
+    if low_index == high_index:
+        return sorted_values[low_index]
+    low_value = sorted_values[low_index]
+    high_value = sorted_values[high_index]
+    return low_value * (high_index - index) + high_value * (index - low_index)
+
+
 def _resolve_candidate_components(candidate: dict[str, object]) -> dict[str, object]:
     payload = dict(candidate["payload"])
     best = dict(candidate["best"])
@@ -284,7 +350,14 @@ def _resolve_candidate_components(candidate: dict[str, object]) -> dict[str, obj
     latest_available_date = date.fromisoformat(payload["period"].get("latest_available_date") or payload["period"]["requested_end"])
 
     bullish_strategies, bearish_strategies, neutral_strategies = _build_strategy_sets(symbol)
-    all_strategies = bullish_strategies + bearish_strategies + neutral_strategies
+    all_strategies = _expand_candidate_strategy_variants(
+        bullish_strategies + bearish_strategies + neutral_strategies,
+        (
+            str(best["bull_strategy"]),
+            str(best["bear_strategy"]),
+            str(best["neutral_strategy"]),
+        ),
+    )
     bull_filters = _build_default_bull_filters()
     bear_filters = _build_default_bear_filters()
     bull_filter_lookup, bear_filter_lookup, strategy_lookup = _label_maps(
@@ -313,6 +386,28 @@ def _resolve_candidate_components(candidate: dict[str, object]) -> dict[str, obj
     }
 
 
+def _expand_candidate_strategy_variants(
+    base_strategies: tuple[object, ...],
+    required_labels: tuple[str, ...],
+) -> tuple[object, ...]:
+    strategies = list(base_strategies)
+    strategy_by_label = {strategy.label: strategy for strategy in strategies}
+    strategy_by_prefix = {str(strategy.label).rpartition("_pt")[0]: strategy for strategy in strategies}
+    for label in required_labels:
+        if label in strategy_by_label:
+            continue
+        label_prefix, separator, profit_target_suffix = label.rpartition("_pt")
+        if not separator:
+            raise KeyError(label)
+        template = strategy_by_prefix.get(label_prefix)
+        if template is None:
+            raise KeyError(label)
+        strategy = _strategy_with_profit_target(template, int(profit_target_suffix))
+        strategies.append(strategy)
+        strategy_by_label[label] = strategy
+    return tuple(strategies)
+
+
 def _trade_map_cache_path(*, symbol: str, start_date: date, latest_available_date: date, strategy_label: str) -> Path:
     return (
         two_stage.CACHE_ROOT
@@ -331,21 +426,10 @@ def _load_cached_trade_map_rows(cache_path: Path) -> dict[date, dict[str, object
     }
 
 
-def _load_candidate_training_assignment_metrics(candidate: dict[str, object]) -> dict[str, object]:
-    best = dict(candidate["best"])
-    embedded_keys = (
-        "assignment_count",
-        "assignment_rate_pct",
-        "put_assignment_count",
-        "put_assignment_rate_pct",
-    )
-    if all(key in best for key in embedded_keys):
-        return {
-            "training_assignment_count": int(best["assignment_count"]),
-            "training_assignment_rate_pct": round(float(best["assignment_rate_pct"]), 4),
-            "training_put_assignment_count": int(best["put_assignment_count"]),
-            "training_put_assignment_rate_pct": round(float(best["put_assignment_rate_pct"]), 4),
-        }
+def _load_candidate_training_trade_rows(candidate: dict[str, object]) -> list[dict[str, object]]:
+    cached_rows = candidate.get("training_trade_rows")
+    if isinstance(cached_rows, list):
+        return cached_rows
 
     components = _resolve_candidate_components(candidate)
     symbol = str(components["symbol"])
@@ -403,9 +487,7 @@ def _load_candidate_training_assignment_metrics(candidate: dict[str, object]) ->
             worker_count=1,
         )
 
-    trade_count = 0
-    assignment_count = 0
-    put_assignment_count = 0
+    training_trade_rows: list[dict[str, object]] = []
     for entry_date in trading_fridays:
         indicator_row = indicators.get(entry_date)
         bull = bull_filter.matches(indicator_row)
@@ -419,6 +501,38 @@ def _load_candidate_training_assignment_metrics(candidate: dict[str, object]) ->
         trade_row = trade_maps.get(strategy.label, {}).get(entry_date)
         if trade_row is None:
             continue
+        training_trade_rows.append(
+            {
+                **dict(trade_row),
+                "_entry_date": entry_date,
+            }
+        )
+
+    candidate["training_trade_rows"] = training_trade_rows
+    return training_trade_rows
+
+
+def _load_candidate_training_assignment_metrics(candidate: dict[str, object]) -> dict[str, object]:
+    best = dict(candidate["best"])
+    embedded_keys = (
+        "assignment_count",
+        "assignment_rate_pct",
+        "put_assignment_count",
+        "put_assignment_rate_pct",
+    )
+    if all(key in best for key in embedded_keys):
+        return {
+            "training_assignment_count": int(best["assignment_count"]),
+            "training_assignment_rate_pct": round(float(best["assignment_rate_pct"]), 4),
+            "training_put_assignment_count": int(best["put_assignment_count"]),
+            "training_put_assignment_rate_pct": round(float(best["put_assignment_rate_pct"]), 4),
+        }
+
+    training_trade_rows = _load_candidate_training_trade_rows(candidate)
+    trade_count = 0
+    assignment_count = 0
+    put_assignment_count = 0
+    for trade_row in training_trade_rows:
         trade_count += 1
         exit_reason = trade_row.get("exit_reason")
         if _is_assignment_exit_reason(exit_reason):
@@ -431,6 +545,100 @@ def _load_candidate_training_assignment_metrics(candidate: dict[str, object]) ->
         "training_assignment_rate_pct": round((assignment_count / trade_count * 100.0) if trade_count else 0.0, 4),
         "training_put_assignment_count": put_assignment_count,
         "training_put_assignment_rate_pct": round((put_assignment_count / trade_count * 100.0) if trade_count else 0.0, 4),
+    }
+
+
+def _load_candidate_training_stability_metrics(candidate: dict[str, object]) -> dict[str, object]:
+    cached_metrics = candidate.get("training_stability_metrics")
+    if isinstance(cached_metrics, dict):
+        return cached_metrics
+
+    training_trade_rows = _load_candidate_training_trade_rows(candidate)
+    roi_by_month: dict[str, list[float]] = defaultdict(list)
+    for trade_row in training_trade_rows:
+        entry_date = trade_row.get("_entry_date")
+        if not isinstance(entry_date, date):
+            continue
+        roi_on_margin_pct = _safe_float(trade_row.get("roi_on_margin_pct"))
+        if roi_on_margin_pct is None:
+            continue
+        roi_by_month[entry_date.strftime("%Y-%m")].append(roi_on_margin_pct)
+
+    monthly_medians = [
+        median(month_values)
+        for _, month_values in sorted(roi_by_month.items())
+        if month_values
+    ]
+    sorted_monthly_medians = sorted(monthly_medians)
+    metrics = {
+        "training_months_with_trades": len(monthly_medians),
+        "training_positive_month_count": sum(1 for value in monthly_medians if value > 0.0),
+        "training_negative_month_count": sum(1 for value in monthly_medians if value < 0.0),
+        "training_worst_month_median_roi_pct": min(sorted_monthly_medians) if sorted_monthly_medians else None,
+        "training_p25_monthly_median_roi_pct": (
+            _interpolated_percentile(sorted_values=sorted_monthly_medians, quantile=0.25)
+            if sorted_monthly_medians
+            else None
+        ),
+        "training_median_monthly_median_roi_pct": (
+            _interpolated_percentile(sorted_values=sorted_monthly_medians, quantile=0.5)
+            if sorted_monthly_medians
+            else None
+        ),
+        "training_best_month_median_roi_pct": max(sorted_monthly_medians) if sorted_monthly_medians else None,
+    }
+    candidate["training_stability_metrics"] = metrics
+    return metrics
+
+
+def _stability_ranking_key(
+    candidate: dict[str, object],
+    *,
+    objective: str,
+) -> tuple[float, float, tuple[float, float, float, float, int]]:
+    metrics = dict(candidate.get("training_stability_metrics") or {})
+    return (
+        _safe_float(metrics.get("training_p25_monthly_median_roi_pct")) or float("-inf"),
+        _safe_float(metrics.get("training_median_monthly_median_roi_pct")) or float("-inf"),
+        _ranking_key(dict(candidate["best"]), objective=objective),
+    )
+
+
+def _apply_stability_filter(
+    *,
+    candidates: list[dict[str, object]],
+    stability_top_pool: int,
+    stability_min_positive_months: int,
+    stability_min_p25_monthly_median_roi_pct: float,
+    train_objective: str,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    if not _stability_filter_requested(stability_top_pool=stability_top_pool):
+        return candidates, {
+            "stability_filter_enabled": False,
+            "stability_top_pool_count": 0,
+            "stability_filtered_out_count": 0,
+            "stability_survivor_count": len(candidates),
+        }
+
+    top_pool_candidates = list(candidates[: min(stability_top_pool, len(candidates))])
+    survivors: list[dict[str, object]] = []
+    for candidate in top_pool_candidates:
+        metrics = _load_candidate_training_stability_metrics(candidate)
+        candidate["training_stability_metrics"] = metrics
+        positive_month_count = _safe_int(metrics.get("training_positive_month_count")) or 0
+        p25_monthly_median_roi_pct = _safe_float(metrics.get("training_p25_monthly_median_roi_pct")) or float("-inf")
+        if (
+            positive_month_count >= stability_min_positive_months
+            and p25_monthly_median_roi_pct >= stability_min_p25_monthly_median_roi_pct
+        ):
+            survivors.append(candidate)
+
+    survivors.sort(key=lambda item: _stability_ranking_key(item, objective=train_objective), reverse=True)
+    return survivors, {
+        "stability_filter_enabled": True,
+        "stability_top_pool_count": len(top_pool_candidates),
+        "stability_filtered_out_count": len(top_pool_candidates) - len(survivors),
+        "stability_survivor_count": len(survivors),
     }
 
 
@@ -672,15 +880,34 @@ def main() -> int:
         max_training_put_assignment_count=args.max_training_put_assignment_count,
         max_training_put_assignment_rate_pct=args.max_training_put_assignment_rate_pct,
     )
+    candidates, stability_stats = _apply_stability_filter(
+        candidates=candidates,
+        stability_top_pool=args.stability_top_pool,
+        stability_min_positive_months=args.stability_min_positive_months,
+        stability_min_p25_monthly_median_roi_pct=args.stability_min_p25_monthly_median_roi_pct,
+        train_objective=args.train_objective,
+    )
+    candidate_stats.update(stability_stats)
+    if len(candidates) < args.top_k:
+        if candidate_stats.get("stability_filter_enabled"):
+            raise SystemExit(
+                "Stability filter left only "
+                f"{len(candidates)} candidates for top-{args.top_k} selection. "
+                "Reduce the stability thresholds or set --stability-top-pool 0 to disable it."
+            )
+        raise SystemExit(f"Only {len(candidates)} candidates passed the requested filters, below top-k={args.top_k}.")
     selected = candidates[: args.top_k]
     for item in selected:
         if "training_assignment_metrics" not in item:
             item["training_assignment_metrics"] = _load_candidate_training_assignment_metrics(item)
+        if "training_stability_metrics" not in item and candidate_stats.get("stability_filter_enabled"):
+            item["training_stability_metrics"] = _load_candidate_training_stability_metrics(item)
 
     selection_rows: list[dict[str, object]] = []
     for rank, item in enumerate(selected, start=1):
         best = dict(item["best"])
         assignment_metrics = dict(item.get("training_assignment_metrics") or {})
+        stability_metrics = dict(item.get("training_stability_metrics") or {})
         selection_rows.append(
             {
                 "rank": rank,
@@ -698,6 +925,21 @@ def main() -> int:
                 "training_assignment_rate_pct": round(float(assignment_metrics.get("training_assignment_rate_pct") or 0.0), 4),
                 "training_put_assignment_count": int(assignment_metrics.get("training_put_assignment_count") or 0),
                 "training_put_assignment_rate_pct": round(float(assignment_metrics.get("training_put_assignment_rate_pct") or 0.0), 4),
+                "training_months_with_trades": _int_or_blank(stability_metrics.get("training_months_with_trades")),
+                "training_positive_month_count": _int_or_blank(stability_metrics.get("training_positive_month_count")),
+                "training_negative_month_count": _int_or_blank(stability_metrics.get("training_negative_month_count")),
+                "training_worst_month_median_roi_pct": _round_or_blank(
+                    stability_metrics.get("training_worst_month_median_roi_pct")
+                ),
+                "training_p25_monthly_median_roi_pct": _round_or_blank(
+                    stability_metrics.get("training_p25_monthly_median_roi_pct")
+                ),
+                "training_median_monthly_median_roi_pct": _round_or_blank(
+                    stability_metrics.get("training_median_monthly_median_roi_pct")
+                ),
+                "training_best_month_median_roi_pct": _round_or_blank(
+                    stability_metrics.get("training_best_month_median_roi_pct")
+                ),
                 "output_path": str(Path(item["output_path"]).relative_to(ROOT)).replace("\\", "/"),
             }
         )
@@ -827,6 +1069,17 @@ def main() -> int:
         "max_training_assignment_rate_pct": args.max_training_assignment_rate_pct,
         "max_training_put_assignment_count": args.max_training_put_assignment_count,
         "max_training_put_assignment_rate_pct": args.max_training_put_assignment_rate_pct,
+        "stability_filter_enabled": bool(candidate_stats.get("stability_filter_enabled")),
+        "stability_top_pool": args.stability_top_pool,
+        "stability_min_positive_months": (
+            args.stability_min_positive_months if candidate_stats.get("stability_filter_enabled") else None
+        ),
+        "stability_min_p25_monthly_median_roi_pct": (
+            args.stability_min_p25_monthly_median_roi_pct if candidate_stats.get("stability_filter_enabled") else None
+        ),
+        "stability_top_pool_count": int(candidate_stats.get("stability_top_pool_count") or 0),
+        "stability_filtered_out_count": int(candidate_stats.get("stability_filtered_out_count") or 0),
+        "stability_survivor_count": int(candidate_stats.get("stability_survivor_count") or len(candidates)),
         "trade_count": len(ledger_rows),
         "total_capital_required": round(quarter_total_capital, 4),
         "total_net_pnl": round(quarter_total_pnl, 4),

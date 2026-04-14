@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -207,4 +208,161 @@ def test_load_candidates_filters_assignment_risk_and_attaches_metrics(monkeypatc
     assert stats == {
         "base_candidate_count": 2,
         "assignment_filtered_out_count": 1,
+    }
+
+
+def test_resolve_candidate_components_supports_refine_only_profit_targets() -> None:
+    candidate = {
+        "symbol": "SIG",
+        "payload": {
+            "period": {
+                "start": "2024-01-01",
+                "requested_end": "2025-12-31",
+                "latest_available_date": "2025-12-31",
+            }
+        },
+        "best": {
+            "roc_period": 63,
+            "adx_period": 14,
+            "rsi_period": 14,
+            "bull_filter": "roc0_adx10_rsinone",
+            "bear_filter": "roc0_adx14_rsinone",
+            "bull_strategy": "sig_call_d40_pt80",
+            "bear_strategy": "bear_sig_put_d30_pt60",
+            "neutral_strategy": "neutral_sig_call_d50_pt70",
+        },
+    }
+
+    components = walk_forward._resolve_candidate_components(candidate)
+
+    assert components["bull_strategy"].label == "sig_call_d40_pt80"
+    assert components["bull_strategy"].profit_target_pct == 80
+    assert components["bear_strategy"].label == "bear_sig_put_d30_pt60"
+    assert components["bear_strategy"].profit_target_pct == 60
+    assert components["neutral_strategy"].label == "neutral_sig_call_d50_pt70"
+    assert components["neutral_strategy"].profit_target_pct == 70
+
+
+def test_load_candidate_training_stability_metrics_aggregates_monthly_medians(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate: dict[str, object] = {}
+    monkeypatch.setattr(
+        walk_forward,
+        "_load_candidate_training_trade_rows",
+        lambda _candidate: [
+            {"_entry_date": date(2024, 1, 5), "roi_on_margin_pct": 10.0},
+            {"_entry_date": date(2024, 1, 12), "roi_on_margin_pct": 30.0},
+            {"_entry_date": date(2024, 2, 2), "roi_on_margin_pct": -20.0},
+            {"_entry_date": date(2024, 2, 9), "roi_on_margin_pct": 40.0},
+            {"_entry_date": date(2024, 3, 1), "roi_on_margin_pct": 50.0},
+        ],
+    )
+
+    metrics = walk_forward._load_candidate_training_stability_metrics(candidate)
+
+    assert metrics == {
+        "training_months_with_trades": 3,
+        "training_positive_month_count": 3,
+        "training_negative_month_count": 0,
+        "training_worst_month_median_roi_pct": 10.0,
+        "training_p25_monthly_median_roi_pct": 15.0,
+        "training_median_monthly_median_roi_pct": 20.0,
+        "training_best_month_median_roi_pct": 50.0,
+    }
+    assert candidate["training_stability_metrics"] == metrics
+
+
+def test_apply_stability_filter_reranks_survivors_by_monthly_consistency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidates = [
+        {
+            "symbol": "AAA",
+            "best": {
+                "median_roi_on_margin_pct": 95.0,
+                "average_roi_on_margin_pct": 90.0,
+                "total_roi_pct": 3.0,
+                "win_rate_pct": 70.0,
+                "trade_count": 100,
+            },
+        },
+        {
+            "symbol": "BBB",
+            "best": {
+                "median_roi_on_margin_pct": 90.0,
+                "average_roi_on_margin_pct": 85.0,
+                "total_roi_pct": 2.0,
+                "win_rate_pct": 68.0,
+                "trade_count": 95,
+            },
+        },
+        {
+            "symbol": "CCC",
+            "best": {
+                "median_roi_on_margin_pct": 85.0,
+                "average_roi_on_margin_pct": 80.0,
+                "total_roi_pct": 1.0,
+                "win_rate_pct": 66.0,
+                "trade_count": 90,
+            },
+        },
+    ]
+    metrics_by_symbol = {
+        "AAA": {
+            "training_positive_month_count": 21,
+            "training_p25_monthly_median_roi_pct": 30.0,
+            "training_median_monthly_median_roi_pct": 70.0,
+        },
+        "BBB": {
+            "training_positive_month_count": 22,
+            "training_p25_monthly_median_roi_pct": 40.0,
+            "training_median_monthly_median_roi_pct": 60.0,
+        },
+        "CCC": {
+            "training_positive_month_count": 20,
+            "training_p25_monthly_median_roi_pct": 50.0,
+            "training_median_monthly_median_roi_pct": 80.0,
+        },
+    }
+    monkeypatch.setattr(
+        walk_forward,
+        "_load_candidate_training_stability_metrics",
+        lambda candidate: metrics_by_symbol[str(candidate["symbol"])],
+    )
+
+    survivors, stats = walk_forward._apply_stability_filter(
+        candidates=candidates,
+        stability_top_pool=3,
+        stability_min_positive_months=21,
+        stability_min_p25_monthly_median_roi_pct=25.0,
+        train_objective="median",
+    )
+
+    assert [candidate["symbol"] for candidate in survivors] == ["BBB", "AAA"]
+    assert stats == {
+        "stability_filter_enabled": True,
+        "stability_top_pool_count": 3,
+        "stability_filtered_out_count": 1,
+        "stability_survivor_count": 2,
+    }
+
+
+def test_apply_stability_filter_returns_original_candidates_when_disabled() -> None:
+    candidates = [{"symbol": "AAA"}, {"symbol": "BBB"}]
+
+    survivors, stats = walk_forward._apply_stability_filter(
+        candidates=candidates,
+        stability_top_pool=0,
+        stability_min_positive_months=21,
+        stability_min_p25_monthly_median_roi_pct=25.0,
+        train_objective="median",
+    )
+
+    assert survivors == candidates
+    assert stats == {
+        "stability_filter_enabled": False,
+        "stability_top_pool_count": 0,
+        "stability_filtered_out_count": 0,
+        "stability_survivor_count": 2,
     }
