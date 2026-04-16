@@ -87,6 +87,12 @@ def _parse_args() -> argparse.Namespace:
         help="Primary ranking objective passed through to the two-stage runner. Defaults to average ROI on margin.",
     )
     parser.add_argument(
+        "--regime-mode",
+        choices=("all", "best_regime_only"),
+        default="best_regime_only",
+        help="Regime selection mode passed through to the two-stage runner. Defaults to best_regime_only.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Rerun symbols even if a completed output JSON already exists.",
@@ -94,6 +100,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run-label",
         help="Optional batch run label. Defaults to a timestamp.",
+    )
+    parser.add_argument(
+        "--output-suffix",
+        default="",
+        help="Optional suffix inserted before each per-symbol JSON filename.",
     )
     return parser.parse_args()
 
@@ -149,14 +160,14 @@ def _resolve_symbol_start_dates(
     return resolved
 
 
-def _result_output_path(*, symbol: str, start_date: date, requested_end_date: date) -> Path:
+def _result_output_path(*, symbol: str, start_date: date, requested_end_date: date, output_suffix: str = "") -> Path:
     return LOGS_DIR / (
         f"{symbol.lower()}_weekly_calendar_policy_two_stage_"
-        f"{start_date.year}_{requested_end_date.year}.json"
+        f"{start_date.year}_{requested_end_date.year}{output_suffix}.json"
     )
 
 
-def _is_completed_output(path: Path, *, objective: str) -> bool:
+def _is_completed_output(path: Path, *, objective: str, regime_mode: str) -> bool:
     if not path.exists():
         return False
     try:
@@ -166,7 +177,8 @@ def _is_completed_output(path: Path, *, objective: str) -> bool:
     if "combined_best_result" not in payload:
         return False
     payload_objective = payload.get("selection_objective", "average")
-    return payload_objective == objective
+    payload_regime_mode = payload.get("selection_regime_mode", "all")
+    return payload_objective == objective and payload_regime_mode == regime_mode
 
 
 def _append_jsonl(path: Path, row: dict[str, object], lock: threading.Lock) -> None:
@@ -183,24 +195,27 @@ def _run_symbol(
     precompute_workers: int,
     indicator_workers: int,
     objective: str,
+    regime_mode: str,
     force: bool,
     status_jsonl: Path,
     status_lock: threading.Lock,
 ) -> dict[str, object]:
     start_ts = time.perf_counter()
-    if not force and _is_completed_output(item.output_path, objective=objective):
+    if not force and _is_completed_output(item.output_path, objective=objective, regime_mode=regime_mode):
         payload = json.loads(item.output_path.read_text(encoding="utf-8"))
         best = dict(payload["combined_best_result"])
         row = {
             "symbol": item.symbol,
             "status": "skipped_existing",
             "objective": payload.get("selection_objective", objective),
+            "regime_mode": payload.get("selection_regime_mode", regime_mode),
             "start_date": item.start_date.isoformat(),
             "requested_end_date": item.requested_end_date.isoformat(),
             "output_path": str(item.output_path.relative_to(ROOT)).replace("\\", "/"),
             "log_path": str(item.log_path.relative_to(ROOT)).replace("\\", "/"),
             "elapsed_seconds": 0.0,
             "best_stage": best.get("stage"),
+            "active_regime": best.get("active_regime"),
             "trade_count": best.get("trade_count"),
             "assignment_count": best.get("assignment_count"),
             "assignment_rate_pct": best.get("assignment_rate_pct"),
@@ -230,6 +245,8 @@ def _run_symbol(
         str(indicator_workers),
         "--objective",
         objective,
+        "--regime-mode",
+        regime_mode,
     ]
     item.log_path.parent.mkdir(parents=True, exist_ok=True)
     with item.log_path.open("w", encoding="utf-8") as handle:
@@ -246,19 +263,21 @@ def _run_symbol(
         handle.write(f"\nEXIT_CODE: {completed.returncode}\n")
 
     elapsed = round(time.perf_counter() - start_ts, 3)
-    if completed.returncode == 0 and _is_completed_output(item.output_path, objective=objective):
+    if completed.returncode == 0 and _is_completed_output(item.output_path, objective=objective, regime_mode=regime_mode):
         payload = json.loads(item.output_path.read_text(encoding="utf-8"))
         best = dict(payload["combined_best_result"])
         row = {
             "symbol": item.symbol,
             "status": "completed",
             "objective": payload.get("selection_objective", objective),
+            "regime_mode": payload.get("selection_regime_mode", regime_mode),
             "start_date": item.start_date.isoformat(),
             "requested_end_date": item.requested_end_date.isoformat(),
             "output_path": str(item.output_path.relative_to(ROOT)).replace("\\", "/"),
             "log_path": str(item.log_path.relative_to(ROOT)).replace("\\", "/"),
             "elapsed_seconds": elapsed,
             "best_stage": best.get("stage"),
+            "active_regime": best.get("active_regime"),
             "trade_count": best.get("trade_count"),
             "assignment_count": best.get("assignment_count"),
             "assignment_rate_pct": best.get("assignment_rate_pct"),
@@ -275,6 +294,7 @@ def _run_symbol(
         "symbol": item.symbol,
         "status": "failed",
         "objective": objective,
+        "regime_mode": regime_mode,
         "start_date": item.start_date.isoformat(),
         "requested_end_date": item.requested_end_date.isoformat(),
         "output_path": str(item.output_path.relative_to(ROOT)).replace("\\", "/"),
@@ -291,12 +311,14 @@ def _write_summary_csv(*, rows: list[dict[str, object]], path: Path) -> None:
         "symbol",
         "status",
         "objective",
+        "regime_mode",
         "start_date",
         "requested_end_date",
         "output_path",
         "log_path",
         "elapsed_seconds",
         "best_stage",
+        "active_regime",
         "trade_count",
         "assignment_count",
         "assignment_rate_pct",
@@ -344,6 +366,7 @@ def main() -> int:
                 symbol=symbol,
                 start_date=start_dates[symbol],
                 requested_end_date=args.requested_end_date,
+                output_suffix=args.output_suffix,
             ),
             log_path=batch_dir / f"{symbol.lower()}.log",
         )
@@ -378,6 +401,7 @@ def main() -> int:
                 precompute_workers=args.precompute_workers,
                 indicator_workers=args.indicator_workers,
                 objective=args.objective,
+                regime_mode=args.regime_mode,
                 force=args.force,
                 status_jsonl=status_jsonl,
                 status_lock=status_lock,

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import heapq
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -50,11 +51,19 @@ DEFAULT_REFINE_TOP_PERIOD_SEEDS = 3
 DEFAULT_REFINE_TOP_STRATEGY_TRIPLETS = 4
 DEFAULT_REFINE_TOP_BULL_FILTERS = 6
 DEFAULT_REFINE_TOP_BEAR_FILTERS = 6
+DEFAULT_REFINE_DELTA_STEP = 5
+DEFAULT_REFINE_PROFIT_TARGET_PCTS = (50, 60, 70, 75, 80)
 DEFAULT_PRECOMPUTE_WORKERS = 4
 DEFAULT_INDICATOR_WORKERS = 4
 DEFAULT_PROGRESS_INTERVAL = 10_000
 CACHE_ROOT = ROOT / "logs" / "search_cache" / "weekly_calendar_policy_two_stage"
 STARTING_EQUITY_PCT_MULTIPLIER = 100.0 / STARTING_EQUITY
+_STRATEGY_LABEL_PATTERN = re.compile(r"^(?P<prefix>.+)_d(?P<delta>\d+)_pt(?P<profit_target>\d+)$")
+HEAVY_ROC_BUFFER = 5.0
+HEAVY_ADX_BUFFER = 4.0
+HEAVY_RSI_BUFFER = 5.0
+REGIME_MODE_ALL = "all"
+REGIME_MODE_BEST_REGIME_ONLY = "best_regime_only"
 
 
 def _is_assignment_exit_reason(exit_reason: object) -> bool:
@@ -71,6 +80,8 @@ class StageSearchConfig:
     bull_filters: tuple[FilterConfig, ...]
     bear_filters: tuple[NegativeFilterConfig, ...]
     strategy_triplets: tuple[tuple[StrategyConfig, StrategyConfig, StrategyConfig], ...]
+    heavy_bull_strategies: tuple[StrategyConfig, ...] = ()
+    heavy_bear_strategies: tuple[StrategyConfig, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,14 +110,18 @@ class StrategyMaskSummary:
 
 @dataclass(frozen=True, slots=True)
 class StageCandidate:
+    regime_mode: str
+    active_regime: str | None
     indicator_periods: IndicatorPeriodConfig
     bull_filter: FilterConfig
     bear_filter: NegativeFilterConfig
+    heavy_bull_strategy: StrategyConfig | None
     bull_strategy: StrategyConfig
     bear_strategy: StrategyConfig
+    heavy_bear_strategy: StrategyConfig | None
     neutral_strategy: StrategyConfig
-    selection_counts: tuple[int, int, int]
-    entered_counts: tuple[int, int, int]
+    selection_counts: dict[str, int]
+    entered_counts: dict[str, int]
     overlap_signal_count: int
     trade_count: int
     assignment_count: int
@@ -178,6 +193,24 @@ def _parse_args() -> argparse.Namespace:
         help="How many unique broad bearish filters to keep for refinement.",
     )
     parser.add_argument(
+        "--refine-delta-step",
+        type=int,
+        default=DEFAULT_REFINE_DELTA_STEP,
+        help=(
+            "Delta step used by refine-stage one-branch-at-a-time neighborhood expansion. "
+            "Use 0 to disable delta expansion. Defaults to 5."
+        ),
+    )
+    parser.add_argument(
+        "--refine-profit-target-pcts",
+        type=_parse_profit_target_pcts,
+        default=DEFAULT_REFINE_PROFIT_TARGET_PCTS,
+        help=(
+            "Comma-separated profit-target percentages to probe during refine-stage TP expansion. "
+            "Defaults to 50,60,70,75,80."
+        ),
+    )
+    parser.add_argument(
         "--disable-cache",
         action="store_true",
         help="Disable disk caching for precomputed trade maps and indicator series.",
@@ -200,7 +233,46 @@ def _parse_args() -> argparse.Namespace:
         default="average",
         help="Ranking objective for the primary best-result selection. Defaults to average ROI on margin.",
     )
+    parser.add_argument(
+        "--regime-mode",
+        choices=(REGIME_MODE_ALL, REGIME_MODE_BEST_REGIME_ONLY),
+        default=REGIME_MODE_BEST_REGIME_ONLY,
+        help=(
+            "Whether to optimize across all regimes together or select a single best regime and "
+            "optimize only that branch. Defaults to best_regime_only."
+        ),
+    )
     return parser.parse_args()
+
+
+def _parse_profit_target_pcts(raw_value: str) -> tuple[int, ...]:
+    values: list[int] = []
+    seen: set[int] = set()
+    for chunk in raw_value.split(","):
+        item = chunk.strip()
+        if not item:
+            continue
+        value = int(item)
+        if value <= 0:
+            raise argparse.ArgumentTypeError("Profit-target percentages must be positive integers.")
+        if value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    if not values:
+        raise argparse.ArgumentTypeError("At least one refine-stage profit-target percentage is required.")
+    return tuple(values)
+
+
+def _parse_strategy_label(label: str) -> tuple[str, int, int]:
+    match = _STRATEGY_LABEL_PATTERN.fullmatch(label)
+    if match is None:
+        raise ValueError(f"Unsupported strategy label format: {label}")
+    return (
+        match.group("prefix"),
+        int(match.group("delta")),
+        int(match.group("profit_target")),
+    )
 
 
 def _build_default_bull_filters() -> tuple[FilterConfig, ...]:
@@ -246,14 +318,10 @@ def _build_strategy_sets(symbol: str) -> tuple[tuple[StrategyConfig, ...], tuple
         StrategyConfig(f"{lower}_call_d50_pt75", symbol, StrategyType.CALENDAR_SPREAD, 50, 75),
     )
     bearish = (
-        StrategyConfig(f"bear_{lower}_call_d30_pt50", symbol, StrategyType.CALENDAR_SPREAD, 30, 50),
-        StrategyConfig(f"bear_{lower}_call_d30_pt75", symbol, StrategyType.CALENDAR_SPREAD, 30, 75),
         StrategyConfig(f"bear_{lower}_call_d40_pt50", symbol, StrategyType.CALENDAR_SPREAD, 40, 50),
         StrategyConfig(f"bear_{lower}_call_d40_pt75", symbol, StrategyType.CALENDAR_SPREAD, 40, 75),
         StrategyConfig(f"bear_{lower}_call_d50_pt50", symbol, StrategyType.CALENDAR_SPREAD, 50, 50),
         StrategyConfig(f"bear_{lower}_call_d50_pt75", symbol, StrategyType.CALENDAR_SPREAD, 50, 75),
-        StrategyConfig(f"bear_{lower}_put_d30_pt50", symbol, StrategyType.PUT_CALENDAR_SPREAD, 30, 50),
-        StrategyConfig(f"bear_{lower}_put_d30_pt75", symbol, StrategyType.PUT_CALENDAR_SPREAD, 30, 75),
         StrategyConfig(f"bear_{lower}_put_d40_pt50", symbol, StrategyType.PUT_CALENDAR_SPREAD, 40, 50),
         StrategyConfig(f"bear_{lower}_put_d40_pt75", symbol, StrategyType.PUT_CALENDAR_SPREAD, 40, 75),
         StrategyConfig(f"bear_{lower}_put_d50_pt50", symbol, StrategyType.PUT_CALENDAR_SPREAD, 50, 50),
@@ -266,6 +334,21 @@ def _build_strategy_sets(symbol: str) -> tuple[tuple[StrategyConfig, ...], tuple
         StrategyConfig(f"neutral_{lower}_call_d50_pt75", symbol, StrategyType.CALENDAR_SPREAD, 50, 75),
     )
     return bullish, bearish, neutral
+
+
+def _build_heavy_strategy_sets(symbol: str) -> tuple[tuple[StrategyConfig, ...], tuple[StrategyConfig, ...]]:
+    lower = symbol.lower()
+    heavy_bullish = (
+        StrategyConfig(f"{lower}_call_d30_pt50", symbol, StrategyType.CALENDAR_SPREAD, 30, 50),
+        StrategyConfig(f"{lower}_call_d30_pt75", symbol, StrategyType.CALENDAR_SPREAD, 30, 75),
+    )
+    heavy_bearish = (
+        StrategyConfig(f"bear_{lower}_call_d30_pt50", symbol, StrategyType.CALENDAR_SPREAD, 30, 50),
+        StrategyConfig(f"bear_{lower}_call_d30_pt75", symbol, StrategyType.CALENDAR_SPREAD, 30, 75),
+        StrategyConfig(f"bear_{lower}_put_d30_pt50", symbol, StrategyType.PUT_CALENDAR_SPREAD, 30, 50),
+        StrategyConfig(f"bear_{lower}_put_d30_pt75", symbol, StrategyType.PUT_CALENDAR_SPREAD, 30, 75),
+    )
+    return heavy_bullish, heavy_bearish
 
 
 def _resolve_latest_available_date_from_bundle(bundle, requested_end: date) -> date:
@@ -417,17 +500,13 @@ def _summarize_series_for_mask(
     )
 
 
-def _combine_median_value(
-    first: StrategyMaskSummary,
-    second: StrategyMaskSummary,
-    third: StrategyMaskSummary,
-) -> float:
-    roi_count = first.roi_count + second.roi_count + third.roi_count
+def _combine_median_value(*summaries: StrategyMaskSummary) -> float:
+    roi_count = sum(summary.roi_count for summary in summaries)
     if roi_count == 0:
         return 0.0
     median_low_index = (roi_count - 1) // 2
     median_high_index = roi_count // 2
-    merged_rois = sorted(first.roi_values + second.roi_values + third.roi_values)
+    merged_rois = sorted(roi for summary in summaries for roi in summary.roi_values)
     return (merged_rois[median_low_index] + merged_rois[median_high_index]) / 2.0
 
 
@@ -459,14 +538,18 @@ def _metric_ranking_key(
 
 def _build_stage_candidate(
     *,
-    selection_counts: tuple[int, int, int],
-    entered_counts: tuple[int, int, int],
+    regime_mode: str,
+    active_regime: str | None,
+    selection_counts: dict[str, int],
+    entered_counts: dict[str, int],
     overlap_signal_count: int,
     indicator_periods: IndicatorPeriodConfig,
     bull_filter: FilterConfig,
     bear_filter: NegativeFilterConfig,
+    heavy_bull_strategy: StrategyConfig | None,
     bull_strategy: StrategyConfig,
     bear_strategy: StrategyConfig,
+    heavy_bear_strategy: StrategyConfig | None,
     neutral_strategy: StrategyConfig,
     trade_count: int,
     assignment_count: int,
@@ -480,11 +563,15 @@ def _build_stage_candidate(
     average_loss: float,
 ) -> StageCandidate:
     return StageCandidate(
+        regime_mode=regime_mode,
+        active_regime=active_regime,
         indicator_periods=indicator_periods,
         bull_filter=bull_filter,
         bear_filter=bear_filter,
+        heavy_bull_strategy=heavy_bull_strategy,
         bull_strategy=bull_strategy,
         bear_strategy=bear_strategy,
+        heavy_bear_strategy=heavy_bear_strategy,
         neutral_strategy=neutral_strategy,
         selection_counts=selection_counts,
         entered_counts=entered_counts,
@@ -508,30 +595,34 @@ def _candidate_to_row(candidate: StageCandidate | None) -> dict[str, object] | N
     if candidate is None:
         return None
     return {
+        "regime_mode": candidate.regime_mode,
+        **({"active_regime": candidate.active_regime} if candidate.active_regime is not None else {}),
         "indicator_periods": candidate.indicator_periods.label,
         "roc_period": candidate.indicator_periods.roc_period,
         "adx_period": candidate.indicator_periods.adx_period,
         "rsi_period": candidate.indicator_periods.rsi_period,
         "bull_filter": candidate.bull_filter.label,
         "bear_filter": candidate.bear_filter.label,
+        **(
+            {"heavy_bull_strategy": candidate.heavy_bull_strategy.label}
+            if candidate.heavy_bull_strategy is not None
+            else {}
+        ),
         "bull_strategy": candidate.bull_strategy.label,
         "bear_strategy": candidate.bear_strategy.label,
+        **(
+            {"heavy_bear_strategy": candidate.heavy_bear_strategy.label}
+            if candidate.heavy_bear_strategy is not None
+            else {}
+        ),
         "neutral_strategy": candidate.neutral_strategy.label,
         "trade_count": candidate.trade_count,
         "assignment_count": candidate.assignment_count,
         "assignment_rate_pct": candidate.assignment_rate_pct,
         "put_assignment_count": candidate.put_assignment_count,
         "put_assignment_rate_pct": candidate.put_assignment_rate_pct,
-        "selection_counts": {
-            "bullish": candidate.selection_counts[0],
-            "bearish": candidate.selection_counts[1],
-            "neutral": candidate.selection_counts[2],
-        },
-        "entered_counts": {
-            "bullish": candidate.entered_counts[0],
-            "bearish": candidate.entered_counts[1],
-            "neutral": candidate.entered_counts[2],
-        },
+        "selection_counts": dict(candidate.selection_counts),
+        "entered_counts": dict(candidate.entered_counts),
         "overlap_signal_count": candidate.overlap_signal_count,
         "total_net_pnl": candidate.total_net_pnl,
         "total_roi_pct": candidate.total_roi_pct,
@@ -581,6 +672,124 @@ def _push_top_candidate(
         heapq.heapreplace(heap, entry)
 
 
+def _available_regime_labels(*, heavy_bull_enabled: bool, heavy_bear_enabled: bool) -> tuple[str, ...]:
+    labels: list[str] = []
+    if heavy_bull_enabled:
+        labels.append("heavy_bullish")
+    labels.extend(("bullish", "neutral", "bearish"))
+    if heavy_bear_enabled:
+        labels.append("heavy_bearish")
+    return tuple(labels)
+
+
+def _indicator_triplet_from_row(
+    indicator_row: dict[str, float | None] | None,
+) -> tuple[float | None, float | None, float | None]:
+    if indicator_row is None:
+        return (None, None, None)
+    return (
+        indicator_row.get("roc63"),
+        indicator_row.get("adx14"),
+        indicator_row.get("rsi14"),
+    )
+
+
+def _bull_filter_matches_triplet(
+    *,
+    filter_config: FilterConfig,
+    indicator_triplet: tuple[float | None, float | None, float | None],
+) -> bool:
+    roc_threshold = filter_config.roc_threshold
+    adx_threshold = filter_config.adx_threshold
+    rsi_threshold = filter_config.rsi_threshold
+    roc_value, adx_value, rsi_value = indicator_triplet
+    if roc_value is None or roc_value <= roc_threshold:
+        return False
+    adx_ok = adx_value is not None and adx_value > adx_threshold
+    if rsi_threshold is None:
+        return adx_ok
+    return adx_ok or (rsi_value is not None and rsi_value > rsi_threshold)
+
+
+def _bear_filter_matches_triplet(
+    *,
+    filter_config: NegativeFilterConfig,
+    indicator_triplet: tuple[float | None, float | None, float | None],
+) -> bool:
+    roc_threshold = filter_config.roc_threshold
+    adx_threshold = filter_config.adx_threshold
+    rsi_threshold = filter_config.rsi_threshold
+    roc_value, adx_value, rsi_value = indicator_triplet
+    if roc_value is None or roc_value >= roc_threshold:
+        return False
+    adx_ok = adx_value is not None and adx_value > adx_threshold
+    if rsi_threshold is None:
+        return adx_ok
+    return adx_ok or (rsi_value is not None and rsi_value < rsi_threshold)
+
+
+def _heavy_bull_filter_matches_triplet(
+    *,
+    filter_config: FilterConfig,
+    indicator_triplet: tuple[float | None, float | None, float | None],
+) -> bool:
+    roc_threshold = filter_config.roc_threshold + HEAVY_ROC_BUFFER
+    adx_threshold = filter_config.adx_threshold + HEAVY_ADX_BUFFER
+    rsi_threshold = None if filter_config.rsi_threshold is None else filter_config.rsi_threshold + HEAVY_RSI_BUFFER
+    roc_value, adx_value, rsi_value = indicator_triplet
+    if roc_value is None or roc_value <= roc_threshold:
+        return False
+    adx_ok = adx_value is not None and adx_value > adx_threshold
+    if rsi_threshold is None:
+        return adx_ok
+    return adx_ok or (rsi_value is not None and rsi_value > rsi_threshold)
+
+
+def _heavy_bear_filter_matches_triplet(
+    *,
+    filter_config: NegativeFilterConfig,
+    indicator_triplet: tuple[float | None, float | None, float | None],
+) -> bool:
+    roc_threshold = filter_config.roc_threshold - HEAVY_ROC_BUFFER
+    adx_threshold = filter_config.adx_threshold + HEAVY_ADX_BUFFER
+    rsi_threshold = None if filter_config.rsi_threshold is None else filter_config.rsi_threshold - HEAVY_RSI_BUFFER
+    roc_value, adx_value, rsi_value = indicator_triplet
+    if roc_value is None or roc_value >= roc_threshold:
+        return False
+    adx_ok = adx_value is not None and adx_value > adx_threshold
+    if rsi_threshold is None:
+        return adx_ok
+    return adx_ok or (rsi_value is not None and rsi_value < rsi_threshold)
+
+
+def _classify_trade_regime(
+    *,
+    indicator_row: dict[str, float | None] | None,
+    bull_filter: FilterConfig,
+    bear_filter: NegativeFilterConfig,
+    enable_heavy_bull: bool,
+    enable_heavy_bear: bool,
+) -> str:
+    indicator_triplet = _indicator_triplet_from_row(indicator_row)
+    bull = _bull_filter_matches_triplet(filter_config=bull_filter, indicator_triplet=indicator_triplet)
+    bear = _bear_filter_matches_triplet(filter_config=bear_filter, indicator_triplet=indicator_triplet)
+    if bull and not bear:
+        if enable_heavy_bull and _heavy_bull_filter_matches_triplet(
+            filter_config=bull_filter,
+            indicator_triplet=indicator_triplet,
+        ):
+            return "heavy_bullish"
+        return "bullish"
+    if bear and not bull:
+        if enable_heavy_bear and _heavy_bear_filter_matches_triplet(
+            filter_config=bear_filter,
+            indicator_triplet=indicator_triplet,
+        ):
+            return "heavy_bearish"
+        return "bearish"
+    return "neutral"
+
+
 def _indicator_triplets_for_trading_fridays(
     *,
     indicators: dict[date, dict[str, float | None]],
@@ -588,17 +797,7 @@ def _indicator_triplets_for_trading_fridays(
 ) -> list[tuple[float | None, float | None, float | None]]:
     indicator_triplets: list[tuple[float | None, float | None, float | None]] = []
     for trade_date in trading_fridays:
-        indicator_row = indicators.get(trade_date)
-        if indicator_row is None:
-            indicator_triplets.append((None, None, None))
-            continue
-        indicator_triplets.append(
-            (
-                indicator_row.get("roc63"),
-                indicator_row.get("adx14"),
-                indicator_row.get("rsi14"),
-            )
-        )
+        indicator_triplets.append(_indicator_triplet_from_row(indicators.get(trade_date)))
     return indicator_triplets
 
 
@@ -608,18 +807,11 @@ def _build_bull_filter_mask(
     indicator_triplets: list[tuple[float | None, float | None, float | None]],
 ) -> int:
     mask = 0
-    roc_threshold = filter_config.roc_threshold
-    adx_threshold = filter_config.adx_threshold
-    rsi_threshold = filter_config.rsi_threshold
-    if rsi_threshold is None:
-        for trade_index, (roc_value, adx_value, _) in enumerate(indicator_triplets):
-            if roc_value is not None and roc_value > roc_threshold and adx_value is not None and adx_value > adx_threshold:
-                mask |= 1 << trade_index
-        return mask
-    for trade_index, (roc_value, adx_value, rsi_value) in enumerate(indicator_triplets):
-        if roc_value is None or roc_value <= roc_threshold:
-            continue
-        if (adx_value is not None and adx_value > adx_threshold) or (rsi_value is not None and rsi_value > rsi_threshold):
+    for trade_index, indicator_triplet in enumerate(indicator_triplets):
+        if _bull_filter_matches_triplet(
+            filter_config=filter_config,
+            indicator_triplet=indicator_triplet,
+        ):
             mask |= 1 << trade_index
     return mask
 
@@ -630,26 +822,49 @@ def _build_bear_filter_mask(
     indicator_triplets: list[tuple[float | None, float | None, float | None]],
 ) -> int:
     mask = 0
-    roc_threshold = filter_config.roc_threshold
-    adx_threshold = filter_config.adx_threshold
-    rsi_threshold = filter_config.rsi_threshold
-    if rsi_threshold is None:
-        for trade_index, (roc_value, adx_value, _) in enumerate(indicator_triplets):
-            if roc_value is not None and roc_value < roc_threshold and adx_value is not None and adx_value > adx_threshold:
-                mask |= 1 << trade_index
-        return mask
-    for trade_index, (roc_value, adx_value, rsi_value) in enumerate(indicator_triplets):
-        if roc_value is None or roc_value >= roc_threshold:
-            continue
-        if (adx_value is not None and adx_value > adx_threshold) or (rsi_value is not None and rsi_value < rsi_threshold):
+    for trade_index, indicator_triplet in enumerate(indicator_triplets):
+        if _bear_filter_matches_triplet(
+            filter_config=filter_config,
+            indicator_triplet=indicator_triplet,
+        ):
+            mask |= 1 << trade_index
+    return mask
+
+
+def _build_heavy_bull_filter_mask(
+    *,
+    filter_config: FilterConfig,
+    indicator_triplets: list[tuple[float | None, float | None, float | None]],
+) -> int:
+    mask = 0
+    for trade_index, indicator_triplet in enumerate(indicator_triplets):
+        if _heavy_bull_filter_matches_triplet(
+            filter_config=filter_config,
+            indicator_triplet=indicator_triplet,
+        ):
+            mask |= 1 << trade_index
+    return mask
+
+
+def _build_heavy_bear_filter_mask(
+    *,
+    filter_config: NegativeFilterConfig,
+    indicator_triplets: list[tuple[float | None, float | None, float | None]],
+) -> int:
+    mask = 0
+    for trade_index, indicator_triplet in enumerate(indicator_triplets):
+        if _heavy_bear_filter_matches_triplet(
+            filter_config=filter_config,
+            indicator_triplet=indicator_triplet,
+        ):
             mask |= 1 << trade_index
     return mask
 
 
 def _summarize_from_branch_summaries(
     *,
-    selection_counts: tuple[int, int, int],
-    entered_counts: tuple[int, int, int],
+    selection_counts: dict[str, int],
+    entered_counts: dict[str, int],
     overlap_signal_count: int,
     indicator_periods: IndicatorPeriodConfig,
     bull_filter: FilterConfig,
@@ -675,14 +890,18 @@ def _summarize_from_branch_summaries(
     total_loss_sum = bull_summary.loss_sum + bear_summary.loss_sum + neutral_summary.loss_sum
     return _candidate_to_row(
         _build_stage_candidate(
+            regime_mode=REGIME_MODE_ALL,
+            active_regime=None,
             selection_counts=selection_counts,
             entered_counts=entered_counts,
             overlap_signal_count=overlap_signal_count,
             indicator_periods=indicator_periods,
             bull_filter=bull_filter,
             bear_filter=bear_filter,
+            heavy_bull_strategy=None,
             bull_strategy=bull_strategy,
             bear_strategy=bear_strategy,
+            heavy_bear_strategy=None,
             neutral_strategy=neutral_strategy,
             trade_count=trade_count,
             assignment_count=assignment_count,
@@ -869,17 +1088,29 @@ def _evaluate_stage(
     trading_fridays: list[date],
     strategy_series: dict[str, StrategyTradeSeries],
     indicators_by_period: dict[str, dict[date, dict[str, float | None]]],
+    regime_mode: str = REGIME_MODE_ALL,
+    forced_active_regime: str | None = None,
 ) -> dict[str, object]:
     metric_ranking_key = _metric_ranking_key
     build_stage_candidate = _build_stage_candidate
     combine_median_value = _combine_median_value
     build_bull_filter_mask = _build_bull_filter_mask
     build_bear_filter_mask = _build_bear_filter_mask
+    if regime_mode not in {REGIME_MODE_ALL, REGIME_MODE_BEST_REGIME_ONLY}:
+        raise ValueError(f"Unsupported regime mode: {regime_mode}")
     branch_strategy_labels = {
         "bullish": tuple(sorted({triplet[0].label for triplet in search_config.strategy_triplets})),
         "bearish": tuple(sorted({triplet[1].label for triplet in search_config.strategy_triplets})),
         "neutral": tuple(sorted({triplet[2].label for triplet in search_config.strategy_triplets})),
     }
+    if search_config.heavy_bull_strategies:
+        branch_strategy_labels["heavy_bullish"] = tuple(
+            sorted(strategy.label for strategy in search_config.heavy_bull_strategies)
+        )
+    if search_config.heavy_bear_strategies:
+        branch_strategy_labels["heavy_bearish"] = tuple(
+            sorted(strategy.label for strategy in search_config.heavy_bear_strategies)
+        )
     summary_cache: dict[tuple[str, int], StrategyMaskSummary] = {}
     top_ranked_heap: list[tuple[tuple[float, float, float, float, int], int, StageCandidate]] = []
     best_result: StageCandidate | None = None
@@ -887,14 +1118,27 @@ def _evaluate_stage(
     best_total_roi_result: StageCandidate | None = None
     best_total_roi_pct: float | None = None
     combo_count = 0
+    heavy_bull_combo_count = max(1, len(search_config.heavy_bull_strategies))
+    heavy_bear_combo_count = max(1, len(search_config.heavy_bear_strategies))
     total_combos = (
         len(search_config.period_configs)
         * len(search_config.bull_filters)
         * len(search_config.bear_filters)
         * len(search_config.strategy_triplets)
+        * heavy_bull_combo_count
+        * heavy_bear_combo_count
     )
     row_counter = 0
     all_dates_mask = (1 << len(trading_fridays)) - 1
+    zero_summary = _zero_summary()
+    allowed_active_regimes = (
+        (forced_active_regime,)
+        if forced_active_regime is not None
+        else _available_regime_labels(
+            heavy_bull_enabled=bool(search_config.heavy_bull_strategies),
+            heavy_bear_enabled=bool(search_config.heavy_bear_strategies),
+        )
+    )
 
     for period_config in search_config.period_configs:
         indicators = indicators_by_period[period_config.label]
@@ -918,28 +1162,58 @@ def _evaluate_stage(
         }
         for bull_filter in search_config.bull_filters:
             bull_mask = bull_masks[bull_filter]
+            heavy_bull_mask = 0
+            if search_config.heavy_bull_strategies:
+                heavy_bull_mask = _build_heavy_bull_filter_mask(
+                    filter_config=bull_filter,
+                    indicator_triplets=indicator_triplets,
+                )
             for bear_filter in search_config.bear_filters:
                 bear_mask = bear_masks[bear_filter]
+                heavy_bear_mask = 0
+                if search_config.heavy_bear_strategies:
+                    heavy_bear_mask = _build_heavy_bear_filter_mask(
+                        filter_config=bear_filter,
+                        indicator_triplets=indicator_triplets,
+                    )
                 bull_only_mask = bull_mask & ~bear_mask
                 bear_only_mask = bear_mask & ~bull_mask
-                neutral_mask = all_dates_mask & ~(bull_only_mask | bear_only_mask)
-                overlap_signal_count = (bull_mask & bear_mask).bit_count()
-                selection_counts = (
-                    bull_only_mask.bit_count(),
-                    bear_only_mask.bit_count(),
-                    neutral_mask.bit_count(),
+                heavy_bull_only_mask = heavy_bull_mask & bull_only_mask
+                heavy_bear_only_mask = heavy_bear_mask & bear_only_mask
+                regular_bull_mask = bull_only_mask & ~heavy_bull_only_mask
+                regular_bear_mask = bear_only_mask & ~heavy_bear_only_mask
+                neutral_mask = all_dates_mask & ~(
+                    heavy_bull_only_mask | regular_bull_mask | regular_bear_mask | heavy_bear_only_mask
                 )
+                overlap_signal_count = (bull_mask & bear_mask).bit_count()
+                selection_counts = {
+                    "bullish": regular_bull_mask.bit_count(),
+                    "bearish": regular_bear_mask.bit_count(),
+                    "neutral": neutral_mask.bit_count(),
+                }
+                if search_config.heavy_bull_strategies:
+                    selection_counts["heavy_bullish"] = heavy_bull_only_mask.bit_count()
+                if search_config.heavy_bear_strategies:
+                    selection_counts["heavy_bearish"] = heavy_bear_only_mask.bit_count()
 
                 branch_masks = {
-                    "bullish": bull_only_mask,
-                    "bearish": bear_only_mask,
+                    "bullish": regular_bull_mask,
+                    "bearish": regular_bear_mask,
                     "neutral": neutral_mask,
                 }
+                if search_config.heavy_bull_strategies:
+                    branch_masks["heavy_bullish"] = heavy_bull_only_mask
+                if search_config.heavy_bear_strategies:
+                    branch_masks["heavy_bearish"] = heavy_bear_only_mask
                 branch_summaries: dict[str, dict[str, StrategyMaskSummary]] = {
                     "bullish": {},
                     "bearish": {},
                     "neutral": {},
                 }
+                if search_config.heavy_bull_strategies:
+                    branch_summaries["heavy_bullish"] = {}
+                if search_config.heavy_bear_strategies:
+                    branch_summaries["heavy_bearish"] = {}
                 for branch_name, branch_mask in branch_masks.items():
                     for strategy_label in branch_strategy_labels[branch_name]:
                         cache_key = (strategy_label, branch_mask)
@@ -952,102 +1226,146 @@ def _evaluate_stage(
                             summary_cache[cache_key] = cached_summary
                         branch_summaries[branch_name][strategy_label] = cached_summary
 
+                heavy_bull_strategies = search_config.heavy_bull_strategies or (None,)
+                heavy_bear_strategies = search_config.heavy_bear_strategies or (None,)
                 for bull_strategy, bear_strategy, neutral_strategy in search_config.strategy_triplets:
-                    combo_count += 1
                     bull_summary = branch_summaries["bullish"][bull_strategy.label]
                     bear_summary = branch_summaries["bearish"][bear_strategy.label]
                     neutral_summary = branch_summaries["neutral"][neutral_strategy.label]
-                    trade_count = bull_summary.trade_count + bear_summary.trade_count + neutral_summary.trade_count
-                    assignment_count = (
-                        bull_summary.assignment_count + bear_summary.assignment_count + neutral_summary.assignment_count
-                    )
-                    put_assignment_count = (
-                        bull_summary.put_assignment_count
-                        + bear_summary.put_assignment_count
-                        + neutral_summary.put_assignment_count
-                    )
-                    total_net_pnl = bull_summary.total_net_pnl + bear_summary.total_net_pnl + neutral_summary.total_net_pnl
-                    total_roi_count = bull_summary.roi_count + bear_summary.roi_count + neutral_summary.roi_count
-                    total_roi_sum = bull_summary.roi_sum + bear_summary.roi_sum + neutral_summary.roi_sum
-                    total_win_count = bull_summary.win_count + bear_summary.win_count + neutral_summary.win_count
-                    total_loss_count = bull_summary.loss_count + bear_summary.loss_count + neutral_summary.loss_count
-                    total_win_sum = bull_summary.win_sum + bear_summary.win_sum + neutral_summary.win_sum
-                    total_loss_sum = bull_summary.loss_sum + bear_summary.loss_sum + neutral_summary.loss_sum
-                    total_roi_pct = total_net_pnl * STARTING_EQUITY_PCT_MULTIPLIER
-                    average_roi_on_margin_pct = (total_roi_sum / total_roi_count) if total_roi_count else 0.0
-                    median_roi_on_margin_pct = combine_median_value(bull_summary, bear_summary, neutral_summary)
-                    win_rate_pct = (total_win_count / trade_count * 100.0) if trade_count else 0.0
-                    average_win = (total_win_sum / total_win_count) if total_win_count else 0.0
-                    average_loss = (total_loss_sum / total_loss_count) if total_loss_count else 0.0
-                    ranking_key = metric_ranking_key(
-                        average_roi_on_margin_pct=average_roi_on_margin_pct,
-                        median_roi_on_margin_pct=median_roi_on_margin_pct,
-                        total_roi_pct=total_roi_pct,
-                        win_rate_pct=win_rate_pct,
-                        trade_count=trade_count,
-                        objective=objective,
-                    )
-                    row_counter += 1
-                    needs_candidate = False
-                    if best_result_key is None or ranking_key > best_result_key:
-                        needs_candidate = True
-                    if best_total_roi_pct is None or total_roi_pct > best_total_roi_pct:
-                        needs_candidate = True
-                    if len(top_ranked_heap) < TOP_RESULT_LIMIT or ranking_key > top_ranked_heap[0][0]:
-                        needs_candidate = True
-                    if needs_candidate:
-                        entered_counts = (
-                            bull_summary.trade_count,
-                            bear_summary.trade_count,
-                            neutral_summary.trade_count,
+                    for heavy_bull_strategy in heavy_bull_strategies:
+                        heavy_bull_summary = (
+                            branch_summaries["heavy_bullish"][heavy_bull_strategy.label]
+                            if heavy_bull_strategy is not None
+                            else zero_summary
                         )
-                        candidate = build_stage_candidate(
-                            selection_counts=selection_counts,
-                            entered_counts=entered_counts,
-                            overlap_signal_count=overlap_signal_count,
-                            indicator_periods=period_config,
-                            bull_filter=bull_filter,
-                            bear_filter=bear_filter,
-                            bull_strategy=bull_strategy,
-                            bear_strategy=bear_strategy,
-                            neutral_strategy=neutral_strategy,
-                            trade_count=trade_count,
-                            assignment_count=assignment_count,
-                            put_assignment_count=put_assignment_count,
-                            total_net_pnl=total_net_pnl,
-                            total_roi_pct=total_roi_pct,
-                            average_roi_on_margin_pct=average_roi_on_margin_pct,
-                            median_roi_on_margin_pct=median_roi_on_margin_pct,
-                            win_rate_pct=win_rate_pct,
-                            average_win=average_win,
-                            average_loss=average_loss,
-                        )
-                        if best_result_key is None or ranking_key > best_result_key:
-                            best_result = candidate
-                            best_result_key = ranking_key
-                        if best_total_roi_pct is None or total_roi_pct > best_total_roi_pct:
-                            best_total_roi_result = candidate
-                            best_total_roi_pct = total_roi_pct
-                        if len(top_ranked_heap) < TOP_RESULT_LIMIT or ranking_key > top_ranked_heap[0][0]:
-                            _push_top_candidate(
-                                heap=top_ranked_heap,
-                                candidate=candidate,
-                                counter=row_counter,
-                                limit=TOP_RESULT_LIMIT,
-                                objective=objective,
+                        for heavy_bear_strategy in heavy_bear_strategies:
+                            combo_count += 1
+                            heavy_bear_summary = (
+                                branch_summaries["heavy_bearish"][heavy_bear_strategy.label]
+                                if heavy_bear_strategy is not None
+                                else zero_summary
                             )
-                    if combo_count % DEFAULT_PROGRESS_INTERVAL == 0 or combo_count == total_combos:
-                        best_metric = 0.0
-                        if best_result is not None:
-                            best_metric = (
-                                best_result.median_roi_on_margin_pct
-                                if objective == "median"
-                                else best_result.average_roi_on_margin_pct
-                            )
-                        print(
-                            f"[{stage_name} {combo_count}/{total_combos}] "
-                            f"objective={objective} best-so-far={best_metric:.4f}"
-                        )
+                            summaries_by_regime: dict[str, StrategyMaskSummary] = {
+                                "bullish": bull_summary,
+                                "bearish": bear_summary,
+                                "neutral": neutral_summary,
+                            }
+                            if heavy_bull_strategy is not None:
+                                summaries_by_regime["heavy_bullish"] = heavy_bull_summary
+                            if heavy_bear_strategy is not None:
+                                summaries_by_regime["heavy_bearish"] = heavy_bear_summary
+                            entered_counts = {
+                                regime_label: summary.trade_count
+                                for regime_label, summary in summaries_by_regime.items()
+                            }
+
+                            candidate_specs: list[tuple[str | None, tuple[StrategyMaskSummary, ...]]] = []
+                            if regime_mode == REGIME_MODE_ALL:
+                                candidate_specs.append(
+                                    (
+                                        None,
+                                        tuple(
+                                            summaries_by_regime[regime_label]
+                                            for regime_label in _available_regime_labels(
+                                                heavy_bull_enabled=heavy_bull_strategy is not None,
+                                                heavy_bear_enabled=heavy_bear_strategy is not None,
+                                            )
+                                            if regime_label in summaries_by_regime
+                                        ),
+                                    )
+                                )
+                            else:
+                                for active_regime in allowed_active_regimes:
+                                    active_summary = summaries_by_regime.get(active_regime)
+                                    if active_summary is None or active_summary.trade_count == 0:
+                                        continue
+                                    candidate_specs.append((active_regime, (active_summary,)))
+
+                            for active_regime, candidate_summaries in candidate_specs:
+                                trade_count = sum(summary.trade_count for summary in candidate_summaries)
+                                assignment_count = sum(summary.assignment_count for summary in candidate_summaries)
+                                put_assignment_count = sum(summary.put_assignment_count for summary in candidate_summaries)
+                                total_net_pnl = sum(summary.total_net_pnl for summary in candidate_summaries)
+                                total_roi_count = sum(summary.roi_count for summary in candidate_summaries)
+                                total_roi_sum = sum(summary.roi_sum for summary in candidate_summaries)
+                                total_win_count = sum(summary.win_count for summary in candidate_summaries)
+                                total_loss_count = sum(summary.loss_count for summary in candidate_summaries)
+                                total_win_sum = sum(summary.win_sum for summary in candidate_summaries)
+                                total_loss_sum = sum(summary.loss_sum for summary in candidate_summaries)
+                                total_roi_pct = total_net_pnl * STARTING_EQUITY_PCT_MULTIPLIER
+                                average_roi_on_margin_pct = (total_roi_sum / total_roi_count) if total_roi_count else 0.0
+                                median_roi_on_margin_pct = combine_median_value(*candidate_summaries)
+                                win_rate_pct = (total_win_count / trade_count * 100.0) if trade_count else 0.0
+                                average_win = (total_win_sum / total_win_count) if total_win_count else 0.0
+                                average_loss = (total_loss_sum / total_loss_count) if total_loss_count else 0.0
+                                ranking_key = metric_ranking_key(
+                                    average_roi_on_margin_pct=average_roi_on_margin_pct,
+                                    median_roi_on_margin_pct=median_roi_on_margin_pct,
+                                    total_roi_pct=total_roi_pct,
+                                    win_rate_pct=win_rate_pct,
+                                    trade_count=trade_count,
+                                    objective=objective,
+                                )
+                                row_counter += 1
+                                needs_candidate = False
+                                if best_result_key is None or ranking_key > best_result_key:
+                                    needs_candidate = True
+                                if best_total_roi_pct is None or total_roi_pct > best_total_roi_pct:
+                                    needs_candidate = True
+                                if len(top_ranked_heap) < TOP_RESULT_LIMIT or ranking_key > top_ranked_heap[0][0]:
+                                    needs_candidate = True
+                                if needs_candidate:
+                                    candidate = build_stage_candidate(
+                                        regime_mode=regime_mode,
+                                        active_regime=active_regime,
+                                        selection_counts=selection_counts,
+                                        entered_counts=entered_counts,
+                                        overlap_signal_count=overlap_signal_count,
+                                        indicator_periods=period_config,
+                                        bull_filter=bull_filter,
+                                        bear_filter=bear_filter,
+                                        heavy_bull_strategy=heavy_bull_strategy,
+                                        bull_strategy=bull_strategy,
+                                        bear_strategy=bear_strategy,
+                                        heavy_bear_strategy=heavy_bear_strategy,
+                                        neutral_strategy=neutral_strategy,
+                                        trade_count=trade_count,
+                                        assignment_count=assignment_count,
+                                        put_assignment_count=put_assignment_count,
+                                        total_net_pnl=total_net_pnl,
+                                        total_roi_pct=total_roi_pct,
+                                        average_roi_on_margin_pct=average_roi_on_margin_pct,
+                                        median_roi_on_margin_pct=median_roi_on_margin_pct,
+                                        win_rate_pct=win_rate_pct,
+                                        average_win=average_win,
+                                        average_loss=average_loss,
+                                    )
+                                    if best_result_key is None or ranking_key > best_result_key:
+                                        best_result = candidate
+                                        best_result_key = ranking_key
+                                    if best_total_roi_pct is None or total_roi_pct > best_total_roi_pct:
+                                        best_total_roi_result = candidate
+                                        best_total_roi_pct = total_roi_pct
+                                    if len(top_ranked_heap) < TOP_RESULT_LIMIT or ranking_key > top_ranked_heap[0][0]:
+                                        _push_top_candidate(
+                                            heap=top_ranked_heap,
+                                            candidate=candidate,
+                                            counter=row_counter,
+                                            limit=TOP_RESULT_LIMIT,
+                                            objective=objective,
+                                        )
+                            if combo_count % DEFAULT_PROGRESS_INTERVAL == 0 or combo_count == total_combos:
+                                best_metric = 0.0
+                                if best_result is not None:
+                                    best_metric = (
+                                        best_result.median_roi_on_margin_pct
+                                        if objective == "median"
+                                        else best_result.average_roi_on_margin_pct
+                                    )
+                                print(
+                                    f"[{stage_name} {combo_count}/{total_combos}] "
+                                    f"objective={objective} best-so-far={best_metric:.4f}"
+                                )
 
     ranked = [
         _candidate_to_row(item[2])
@@ -1060,11 +1378,15 @@ def _evaluate_stage(
     return {
         "stage_name": stage_name,
         "objective": objective,
+        "regime_mode": regime_mode,
+        "forced_active_regime": forced_active_regime,
         "evaluated_combo_count": combo_count,
         "search_space": {
             "indicator_period_search": _indicator_search_payload(search_config.period_configs),
             "bull_filters": [item.label for item in search_config.bull_filters],
             "bear_filters": [item.label for item in search_config.bear_filters],
+            "heavy_bull_strategies": [item.label for item in search_config.heavy_bull_strategies],
+            "heavy_bear_strategies": [item.label for item in search_config.heavy_bear_strategies],
             "strategy_triplets": [
                 {
                     "bull_strategy": bull_strategy.label,
@@ -1141,17 +1463,189 @@ def _unique_strategy_triplets(
     strategy_lookup: dict[str, StrategyConfig],
     limit: int,
 ) -> tuple[tuple[StrategyConfig, StrategyConfig, StrategyConfig], ...]:
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[tuple[str, int], tuple[str, int], tuple[str, int]]] = set()
     selected: list[tuple[StrategyConfig, StrategyConfig, StrategyConfig]] = []
     for row in rows:
-        key = (str(row["bull_strategy"]), str(row["bear_strategy"]), str(row["neutral_strategy"]))
+        bull_strategy = strategy_lookup[str(row["bull_strategy"])]
+        bear_strategy = strategy_lookup[str(row["bear_strategy"])]
+        neutral_strategy = strategy_lookup[str(row["neutral_strategy"])]
+        key = (
+            (bull_strategy.strategy_type.value, bull_strategy.delta_target),
+            (bear_strategy.strategy_type.value, bear_strategy.delta_target),
+            (neutral_strategy.strategy_type.value, neutral_strategy.delta_target),
+        )
         if key in seen:
             continue
         seen.add(key)
-        selected.append((strategy_lookup[key[0]], strategy_lookup[key[1]], strategy_lookup[key[2]]))
+        selected.append((bull_strategy, bear_strategy, neutral_strategy))
         if len(selected) >= limit:
             break
     return tuple(selected)
+
+
+def _strategy_with_delta_and_profit_target(
+    strategy: StrategyConfig,
+    *,
+    delta_target: int | None = None,
+    profit_target_pct: int | None = None,
+) -> StrategyConfig:
+    target_delta = strategy.delta_target if delta_target is None else int(delta_target)
+    target_profit_target = strategy.profit_target_pct if profit_target_pct is None else int(profit_target_pct)
+    if strategy.delta_target == target_delta and strategy.profit_target_pct == target_profit_target:
+        return strategy
+    label_prefix, _, _ = _parse_strategy_label(strategy.label)
+    return StrategyConfig(
+        label=f"{label_prefix}_d{target_delta}_pt{target_profit_target}",
+        symbol=strategy.symbol,
+        strategy_type=strategy.strategy_type,
+        delta_target=target_delta,
+        profit_target_pct=target_profit_target,
+    )
+
+
+def _strategy_with_delta_target(strategy: StrategyConfig, delta_target: int) -> StrategyConfig:
+    return _strategy_with_delta_and_profit_target(strategy, delta_target=delta_target)
+
+
+def _strategy_with_profit_target(strategy: StrategyConfig, profit_target_pct: int) -> StrategyConfig:
+    return _strategy_with_delta_and_profit_target(strategy, profit_target_pct=profit_target_pct)
+
+
+def _refine_delta_values(seed: int, step: int) -> tuple[int, ...]:
+    values = {seed, 30}
+    if step > 0:
+        values.update({seed - step, seed + step})
+    return tuple(
+        value
+        for value in sorted(values)
+        if 1 <= value <= 99
+    )
+
+
+def _expand_strategy_triplet_delta_neighborhood(
+    strategy_triplets: tuple[tuple[StrategyConfig, StrategyConfig, StrategyConfig], ...],
+    delta_step: int,
+) -> tuple[tuple[StrategyConfig, StrategyConfig, StrategyConfig], ...]:
+    expanded: list[tuple[StrategyConfig, StrategyConfig, StrategyConfig]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def _append(
+        bull_strategy: StrategyConfig,
+        bear_strategy: StrategyConfig,
+        neutral_strategy: StrategyConfig,
+    ) -> None:
+        key = (bull_strategy.label, bear_strategy.label, neutral_strategy.label)
+        if key in seen:
+            return
+        seen.add(key)
+        expanded.append((bull_strategy, bear_strategy, neutral_strategy))
+
+    for bull_strategy, bear_strategy, neutral_strategy in strategy_triplets:
+        _append(bull_strategy, bear_strategy, neutral_strategy)
+        for delta_target in _refine_delta_values(bull_strategy.delta_target, delta_step):
+            _append(_strategy_with_delta_target(bull_strategy, delta_target), bear_strategy, neutral_strategy)
+        for delta_target in _refine_delta_values(bear_strategy.delta_target, delta_step):
+            _append(bull_strategy, _strategy_with_delta_target(bear_strategy, delta_target), neutral_strategy)
+        for delta_target in _refine_delta_values(neutral_strategy.delta_target, delta_step):
+            _append(bull_strategy, bear_strategy, _strategy_with_delta_target(neutral_strategy, delta_target))
+
+    return tuple(expanded)
+
+
+def _expand_strategy_triplet_profit_target_neighborhood(
+    strategy_triplets: tuple[tuple[StrategyConfig, StrategyConfig, StrategyConfig], ...],
+    profit_target_pcts: tuple[int, ...],
+) -> tuple[tuple[StrategyConfig, StrategyConfig, StrategyConfig], ...]:
+    expanded: list[tuple[StrategyConfig, StrategyConfig, StrategyConfig]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def _append(
+        bull_strategy: StrategyConfig,
+        bear_strategy: StrategyConfig,
+        neutral_strategy: StrategyConfig,
+    ) -> None:
+        key = (bull_strategy.label, bear_strategy.label, neutral_strategy.label)
+        if key in seen:
+            return
+        seen.add(key)
+        expanded.append((bull_strategy, bear_strategy, neutral_strategy))
+
+    for bull_strategy, bear_strategy, neutral_strategy in strategy_triplets:
+        _append(bull_strategy, bear_strategy, neutral_strategy)
+        for profit_target_pct in profit_target_pcts:
+            _append(_strategy_with_profit_target(bull_strategy, profit_target_pct), bear_strategy, neutral_strategy)
+            _append(bull_strategy, _strategy_with_profit_target(bear_strategy, profit_target_pct), neutral_strategy)
+            _append(bull_strategy, bear_strategy, _strategy_with_profit_target(neutral_strategy, profit_target_pct))
+
+    return tuple(expanded)
+
+
+def _unique_strategies_from_triplets(
+    strategy_triplets: tuple[tuple[StrategyConfig, StrategyConfig, StrategyConfig], ...],
+) -> tuple[StrategyConfig, ...]:
+    ordered: list[StrategyConfig] = []
+    seen: set[str] = set()
+    for bull_strategy, bear_strategy, neutral_strategy in strategy_triplets:
+        for strategy in (bull_strategy, bear_strategy, neutral_strategy):
+            if strategy.label in seen:
+                continue
+            seen.add(strategy.label)
+            ordered.append(strategy)
+    return tuple(ordered)
+
+
+def _unique_strategy_seeds(
+    rows: list[dict[str, object]],
+    strategy_lookup: dict[str, StrategyConfig],
+    field_name: str,
+    limit: int,
+) -> tuple[StrategyConfig, ...]:
+    seen: set[tuple[str, int]] = set()
+    selected: list[StrategyConfig] = []
+    for row in rows:
+        label = row.get(field_name)
+        if not label:
+            continue
+        strategy = strategy_lookup[str(label)]
+        key = (strategy.strategy_type.value, strategy.delta_target)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(strategy)
+        if len(selected) >= limit:
+            break
+    return tuple(selected)
+
+
+def _expand_strategy_neighborhood(
+    strategies: tuple[StrategyConfig, ...],
+    *,
+    delta_step: int,
+    profit_target_pcts: tuple[int, ...],
+) -> tuple[StrategyConfig, ...]:
+    if not strategies:
+        return ()
+
+    delta_expanded: list[StrategyConfig] = []
+    seen_delta_labels: set[str] = set()
+    for strategy in strategies:
+        for delta_target in _refine_delta_values(strategy.delta_target, delta_step):
+            candidate = _strategy_with_delta_target(strategy, delta_target)
+            if candidate.label in seen_delta_labels:
+                continue
+            seen_delta_labels.add(candidate.label)
+            delta_expanded.append(candidate)
+
+    expanded: list[StrategyConfig] = []
+    seen_labels: set[str] = set()
+    for strategy in delta_expanded:
+        for profit_target_pct in profit_target_pcts:
+            candidate = _strategy_with_profit_target(strategy, profit_target_pct)
+            if candidate.label in seen_labels:
+                continue
+            seen_labels.add(candidate.label)
+            expanded.append(candidate)
+    return tuple(expanded)
 
 
 def _roc_refine_values(seed: int) -> list[int]:
@@ -1324,6 +1818,8 @@ def _with_stage(row: dict[str, object] | None, stage_name: str) -> dict[str, obj
 
 def main() -> int:
     args = _parse_args()
+    if args.refine_delta_step < 0:
+        raise SystemExit("--refine-delta-step must be >= 0.")
     symbol = args.symbol.upper()
     output_json = args.output or ROOT / "logs" / f"{symbol.lower()}_weekly_calendar_policy_two_stage_{args.start_date.isoformat()}_{args.requested_end_date.isoformat()}.json"
     use_cache = not args.disable_cache
@@ -1333,7 +1829,14 @@ def main() -> int:
     _install_single_contract_position_sizing()
 
     bullish_strategies, bearish_strategies, neutral_strategies = _build_strategy_sets(symbol)
-    all_strategies = bullish_strategies + bearish_strategies + neutral_strategies
+    heavy_bullish_strategies, heavy_bearish_strategies = _build_heavy_strategy_sets(symbol)
+    all_strategies = (
+        bullish_strategies
+        + bearish_strategies
+        + neutral_strategies
+        + heavy_bullish_strategies
+        + heavy_bearish_strategies
+    )
     bull_filters = _build_default_bull_filters()
     bear_filters = _build_default_bear_filters()
     bull_filter_lookup, bear_filter_lookup, strategy_lookup = _label_maps(
@@ -1397,15 +1900,31 @@ def main() -> int:
             bull_filters=bull_filters,
             bear_filters=bear_filters,
             strategy_triplets=broad_strategy_triplets,
+            heavy_bull_strategies=heavy_bullish_strategies,
+            heavy_bear_strategies=heavy_bearish_strategies,
         ),
         trading_fridays=trading_fridays,
         strategy_series=strategy_series,
         indicators_by_period=indicator_cache,
+        regime_mode=args.regime_mode,
     )
 
     broad_ranked = list(broad_stage["top_100_ranked_results"])
+    refine_active_regime: str | None = None
+    if args.regime_mode == REGIME_MODE_BEST_REGIME_ONLY and broad_stage["best_result"] is not None:
+        active_regime = broad_stage["best_result"].get("active_regime")
+        if active_regime:
+            refine_active_regime = str(active_regime)
+            broad_ranked = [
+                row
+                for row in broad_ranked
+                if str(row.get("active_regime") or "") == refine_active_regime
+            ]
     broad_seeds_source = broad_ranked[: args.refine_top_rows]
-    if broad_stage["best_result_by_total_roi_pct"] is not None:
+    if broad_stage["best_result_by_total_roi_pct"] is not None and (
+        args.regime_mode != REGIME_MODE_BEST_REGIME_ONLY
+        or str(broad_stage["best_result_by_total_roi_pct"].get("active_regime") or "") == refine_active_regime
+    ):
         broad_seeds_source.append(broad_stage["best_result_by_total_roi_pct"])
 
     refine_period_seeds = _unique_period_seeds(broad_seeds_source, args.refine_top_period_seeds)
@@ -1422,11 +1941,65 @@ def main() -> int:
 
     refine_bull_filters = _unique_bull_filters(broad_seeds_source, bull_filter_lookup, args.refine_top_bull_filters)
     refine_bear_filters = _unique_bear_filters(broad_seeds_source, bear_filter_lookup, args.refine_top_bear_filters)
-    refine_strategy_triplets = _unique_strategy_triplets(
+    refine_strategy_triplet_seeds = _unique_strategy_triplets(
         broad_seeds_source,
         strategy_lookup,
         args.refine_top_strategy_triplets,
     )
+    refine_delta_expanded_triplets = _expand_strategy_triplet_delta_neighborhood(
+        refine_strategy_triplet_seeds,
+        args.refine_delta_step,
+    )
+    refine_strategy_triplets = _expand_strategy_triplet_profit_target_neighborhood(
+        refine_delta_expanded_triplets,
+        args.refine_profit_target_pcts,
+    )
+    refine_strategies = _unique_strategies_from_triplets(refine_strategy_triplets)
+    refine_heavy_bull_seeds = _unique_strategy_seeds(
+        broad_seeds_source,
+        strategy_lookup,
+        "heavy_bull_strategy",
+        args.refine_top_strategy_triplets,
+    )
+    refine_heavy_bear_seeds = _unique_strategy_seeds(
+        broad_seeds_source,
+        strategy_lookup,
+        "heavy_bear_strategy",
+        args.refine_top_strategy_triplets,
+    )
+    refine_heavy_bull_strategies = _expand_strategy_neighborhood(
+        refine_heavy_bull_seeds,
+        delta_step=args.refine_delta_step,
+        profit_target_pcts=args.refine_profit_target_pcts,
+    )
+    refine_heavy_bear_strategies = _expand_strategy_neighborhood(
+        refine_heavy_bear_seeds,
+        delta_step=args.refine_delta_step,
+        profit_target_pcts=args.refine_profit_target_pcts,
+    )
+    missing_refine_strategies = tuple(
+        strategy
+        for strategy in refine_strategies + refine_heavy_bull_strategies + refine_heavy_bear_strategies
+        if strategy.label not in strategy_series
+    )
+    if missing_refine_strategies:
+        extra_precomputed = _precompute_trade_maps(
+            strategies=missing_refine_strategies,
+            bundle=bundle,
+            trading_fridays=trading_fridays,
+            latest_available_date=latest_available_date,
+            curve=curve,
+            start_date=args.start_date,
+            use_cache=use_cache,
+            worker_count=args.precompute_workers,
+        )
+        strategy_series.update(
+            _build_strategy_trade_series(
+                strategies=missing_refine_strategies,
+                precomputed=extra_precomputed,
+                trading_fridays=trading_fridays,
+            )
+        )
     refine_stage = _evaluate_stage(
         stage_name="refine",
         objective=args.objective,
@@ -1435,34 +2008,26 @@ def main() -> int:
             bull_filters=refine_bull_filters,
             bear_filters=refine_bear_filters,
             strategy_triplets=refine_strategy_triplets,
+            heavy_bull_strategies=refine_heavy_bull_strategies or heavy_bullish_strategies,
+            heavy_bear_strategies=refine_heavy_bear_strategies or heavy_bearish_strategies,
         ),
         trading_fridays=trading_fridays,
         strategy_series=strategy_series,
         indicators_by_period=indicator_cache,
+        regime_mode=args.regime_mode,
+        forced_active_regime=refine_active_regime,
     )
 
-    best_primary = broad_stage["best_result"]
-    best_primary_stage = "broad"
-    if refine_stage["best_result"] is not None and (
-        best_primary is None
-        or _ranking_key(refine_stage["best_result"], objective=args.objective)
-        > _ranking_key(best_primary, objective=args.objective)
-    ):
-        best_primary = refine_stage["best_result"]
-        best_primary_stage = "refine"
+    best_primary = refine_stage["best_result"] or broad_stage["best_result"]
+    best_primary_stage = "refine" if refine_stage["best_result"] is not None else "broad"
 
-    best_total = broad_stage["best_result_by_total_roi_pct"]
-    best_total_stage = "broad"
-    if refine_stage["best_result_by_total_roi_pct"] is not None and (
-        best_total is None
-        or float(refine_stage["best_result_by_total_roi_pct"]["total_roi_pct"]) > float(best_total["total_roi_pct"])
-    ):
-        best_total = refine_stage["best_result_by_total_roi_pct"]
-        best_total_stage = "refine"
+    best_total = refine_stage["best_result_by_total_roi_pct"] or broad_stage["best_result_by_total_roi_pct"]
+    best_total_stage = "refine" if refine_stage["best_result_by_total_roi_pct"] is not None else "broad"
 
     payload = {
         "symbol": symbol,
         "selection_objective": args.objective,
+        "selection_regime_mode": args.regime_mode,
         "period": {
             "start": args.start_date.isoformat(),
             "requested_end": args.requested_end_date.isoformat(),
@@ -1482,8 +2047,29 @@ def main() -> int:
                     "bear_strategy": bear_strategy.label,
                     "neutral_strategy": neutral_strategy.label,
                 }
+                for bull_strategy, bear_strategy, neutral_strategy in refine_strategy_triplet_seeds
+            ],
+            "refine_delta_step": args.refine_delta_step,
+            "refine_profit_target_pcts": list(args.refine_profit_target_pcts),
+            "forced_active_regime": refine_active_regime,
+            "delta_expanded_strategy_triplets": [
+                {
+                    "bull_strategy": bull_strategy.label,
+                    "bear_strategy": bear_strategy.label,
+                    "neutral_strategy": neutral_strategy.label,
+                }
+                for bull_strategy, bear_strategy, neutral_strategy in refine_delta_expanded_triplets
+            ],
+            "expanded_strategy_triplets": [
+                {
+                    "bull_strategy": bull_strategy.label,
+                    "bear_strategy": bear_strategy.label,
+                    "neutral_strategy": neutral_strategy.label,
+                }
                 for bull_strategy, bear_strategy, neutral_strategy in refine_strategy_triplets
             ],
+            "expanded_heavy_bull_strategies": [strategy.label for strategy in refine_heavy_bull_strategies],
+            "expanded_heavy_bear_strategies": [strategy.label for strategy in refine_heavy_bear_strategies],
         },
         "combined_best_result": _with_stage(best_primary, best_primary_stage),
         "combined_best_result_by_total_roi_pct": _with_stage(best_total, best_total_stage),
