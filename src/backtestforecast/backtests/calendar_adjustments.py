@@ -927,6 +927,7 @@ def _close_campaign(
     detail_json["campaign_initial_assumptions"] = campaign.initial_assumptions
     detail_json["campaign_adjustment_events"] = campaign.adjustment_events
     detail_json["campaign_roll_count"] = campaign.roll_count
+    detail_json["campaign_max_capital_at_risk"] = float(campaign.max_capital_at_risk)
     detail_json["campaign_total_commissions"] = float(campaign.total_commissions)
     detail_json["campaign_total_slippage"] = float(campaign.total_slippage)
     detail_json["campaign_gross_cash_balance"] = float(campaign.gross_cash_balance)

@@ -5,6 +5,7 @@ import csv
 import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 from math import ceil, floor
@@ -20,23 +21,27 @@ from backtestforecast.backtests.engine import OptionsBacktestEngine  # noqa: E40
 import backtestforecast.backtests.engine as engine_module  # noqa: E402
 from backtestforecast.db.session import create_readonly_session, create_session  # noqa: E402
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore  # noqa: E402
+from backtestforecast.models import HistoricalUnderlyingDayBar  # noqa: E402
+from backtestforecast.schemas.backtests import AvoidEarningsRule  # noqa: E402
 from grid_search_weekly_calendar_policy_two_stage import (  # noqa: E402
     IndicatorPeriodConfig,
+    _build_heavy_strategy_sets,
     _build_bundle,
     _build_default_bear_filters,
     _build_default_bull_filters,
     _build_period_cache,
     _build_strategy_sets,
+    _classify_trade_regime,
     _label_maps,
     _ranking_key,
     _resolve_latest_available_date_from_bundle,
-    _strategy_with_profit_target,
 )
 from run_uvxy_post_2018_rule_book_replay import (  # noqa: E402
     _install_quote_series_expiration_cap,
     _install_single_contract_position_sizing,
 )
 from portfolio_weighting import BASE_SCHEMES, _build_weight_scheme, _weighted_median  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 
 import grid_search_weekly_calendar_policy_two_stage as two_stage  # noqa: E402
 
@@ -59,6 +64,9 @@ DEFAULT_MAX_SYMBOL_WEIGHT_PCT = 8.0
 DEFAULT_STABILITY_TOP_POOL = 60
 DEFAULT_STABILITY_MIN_POSITIVE_MONTHS = 21
 DEFAULT_STABILITY_MIN_P25_MONTHLY_MEDIAN_ROI_PCT = 25.0
+DEFAULT_AVOID_EARNINGS_DAYS_BEFORE = 10
+DEFAULT_AVOID_EARNINGS_DAYS_AFTER = 10
+_ORIGINAL_CHECK_EARLY_ASSIGNMENT = OptionsBacktestEngine._check_early_assignment.__func__
 
 
 def _parse_args() -> argparse.Namespace:
@@ -89,6 +97,14 @@ def _parse_args() -> argparse.Namespace:
         "--min-median-roi",
         type=float,
         help="Optional minimum training median ROI per trade filter before ranking.",
+    )
+    parser.add_argument(
+        "--min-spot-price",
+        type=float,
+        help=(
+            "Optional minimum underlying spot close required for selection, using the latest stored close on or before "
+            "the replay data end date."
+        ),
     )
     parser.add_argument(
         "--max-training-assignment-count",
@@ -163,6 +179,43 @@ def _parse_args() -> argparse.Namespace:
         help="Trade-count shrink cap used by median-shrunk and total-roi-shrunk weighting schemes. Defaults to 100.",
     )
     parser.add_argument(
+        "--stop-loss-pct",
+        type=float,
+        help=(
+            "Optional stop-loss percent, measured against capital at risk, applied only during walk-forward replay. "
+            "This does not rerun training or change the frozen training selection."
+        ),
+    )
+    parser.add_argument(
+        "--avoid-earnings-days-before",
+        type=int,
+        default=DEFAULT_AVOID_EARNINGS_DAYS_BEFORE,
+        help=(
+            "Earnings blackout window before an earnings date, in trading days, applied only during "
+            f"walk-forward replay. Defaults to {DEFAULT_AVOID_EARNINGS_DAYS_BEFORE}. "
+            "Entries inside the window are skipped."
+        ),
+    )
+    parser.add_argument(
+        "--avoid-earnings-days-after",
+        type=int,
+        default=DEFAULT_AVOID_EARNINGS_DAYS_AFTER,
+        help=(
+            "Earnings blackout window after an earnings date, in trading days, applied only during "
+            f"walk-forward replay. Defaults to {DEFAULT_AVOID_EARNINGS_DAYS_AFTER}. "
+            "Entries inside the window are skipped."
+        ),
+    )
+    parser.add_argument(
+        "--ignore-assignment-exit-reasons",
+        nargs="*",
+        help=(
+            "Optional early-assignment exit reasons to ignore during walk-forward replay only. "
+            "Accepts space- or comma-separated reasons such as "
+            "early_assignment_call_ex_div early_assignment_put_deep_itm."
+        ),
+    )
+    parser.add_argument(
         "--output-prefix",
         type=Path,
         help="Optional output prefix. Defaults to logs/weekly_calendar_policy_walk_forward_topK_trainYYYYMMDD_q1_2026",
@@ -170,8 +223,68 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _default_output_prefix(*, top_k: int) -> Path:
-    return ROOT / "logs" / f"weekly_calendar_policy_walk_forward_top{top_k}_train20251231_q1_2026"
+def _format_numeric_suffix(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else str(value).replace(".", "p")
+
+
+def _normalize_assignment_exit_reasons(raw_reasons: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_reason in raw_reasons or ():
+        for reason in str(raw_reason).split(","):
+            cleaned = reason.strip()
+            if not cleaned or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            normalized.append(cleaned)
+    return tuple(normalized)
+
+
+def _format_assignment_exit_reason_suffix(ignored_assignment_exit_reasons: tuple[str, ...]) -> str:
+    if not ignored_assignment_exit_reasons:
+        return ""
+    formatted_reasons = [
+        reason.removeprefix("early_assignment_")
+        for reason in ignored_assignment_exit_reasons
+    ]
+    return "_ignoreassign_" + "__".join(formatted_reasons)
+
+
+def _format_avoid_earnings_suffix(
+    avoid_earnings_days_before: int,
+    avoid_earnings_days_after: int,
+) -> str:
+    if avoid_earnings_days_before <= 0 and avoid_earnings_days_after <= 0:
+        return ""
+    return f"_earningsb{avoid_earnings_days_before}a{avoid_earnings_days_after}"
+
+
+def _default_output_prefix(
+    *,
+    top_k: int,
+    stop_loss_pct: float | None,
+    min_spot_price: float | None,
+    avoid_earnings_days_before: int,
+    avoid_earnings_days_after: int,
+    ignored_assignment_exit_reasons: tuple[str, ...],
+) -> Path:
+    stop_loss_suffix = ""
+    if stop_loss_pct is not None:
+        stop_loss_suffix = f"_sl{_format_numeric_suffix(stop_loss_pct)}"
+    min_spot_suffix = ""
+    if min_spot_price is not None:
+        min_spot_suffix = f"_minspot{_format_numeric_suffix(min_spot_price)}"
+    earnings_suffix = _format_avoid_earnings_suffix(
+        avoid_earnings_days_before,
+        avoid_earnings_days_after,
+    )
+    ignore_assignment_suffix = _format_assignment_exit_reason_suffix(ignored_assignment_exit_reasons)
+    return (
+        ROOT
+        / "logs"
+        / f"weekly_calendar_policy_walk_forward_top{top_k}_train20251231_q1_2026"
+        f"{stop_loss_suffix}{min_spot_suffix}{earnings_suffix}{ignore_assignment_suffix}"
+    )
 
 
 def _load_candidates(
@@ -273,6 +386,15 @@ def _int_or_blank(value: object) -> int | str:
     return parsed
 
 
+def _calculate_trade_roi_medians(
+    roi_values: list[float],
+    roi_weights: list[float],
+) -> tuple[float, float]:
+    weighted_median = _weighted_median(roi_values, roi_weights)
+    unweighted_median = median(roi_values) if roi_values else 0.0
+    return weighted_median, unweighted_median
+
+
 def _is_assignment_exit_reason(exit_reason: object) -> bool:
     return str(exit_reason or "").startswith("early_assignment_")
 
@@ -350,13 +472,25 @@ def _resolve_candidate_components(candidate: dict[str, object]) -> dict[str, obj
     latest_available_date = date.fromisoformat(payload["period"].get("latest_available_date") or payload["period"]["requested_end"])
 
     bullish_strategies, bearish_strategies, neutral_strategies = _build_strategy_sets(symbol)
-    all_strategies = _expand_candidate_strategy_variants(
-        bullish_strategies + bearish_strategies + neutral_strategies,
-        (
-            str(best["bull_strategy"]),
-            str(best["bear_strategy"]),
-            str(best["neutral_strategy"]),
+    heavy_bullish_strategies, heavy_bearish_strategies = _build_heavy_strategy_sets(symbol)
+    required_labels = (
+        str(best["bull_strategy"]),
+        str(best["bear_strategy"]),
+        str(best["neutral_strategy"]),
+        *(
+            (str(best["heavy_bull_strategy"]),)
+            if best.get("heavy_bull_strategy")
+            else ()
         ),
+        *(
+            (str(best["heavy_bear_strategy"]),)
+            if best.get("heavy_bear_strategy")
+            else ()
+        ),
+    )
+    all_strategies = _expand_candidate_strategy_variants(
+        bullish_strategies + bearish_strategies + neutral_strategies + heavy_bullish_strategies + heavy_bearish_strategies,
+        required_labels,
     )
     bull_filters = _build_default_bull_filters()
     bear_filters = _build_default_bear_filters()
@@ -378,10 +512,22 @@ def _resolve_candidate_components(candidate: dict[str, object]) -> dict[str, obj
         "train_start_date": train_start_date,
         "latest_available_date": latest_available_date,
         "period_config": period_config,
+        "regime_mode": str(best.get("regime_mode") or "all"),
+        "active_regime": str(best.get("active_regime")) if best.get("active_regime") else None,
         "bull_filter": bull_filter_lookup[str(best["bull_filter"])],
         "bear_filter": bear_filter_lookup[str(best["bear_filter"])],
+        "heavy_bull_strategy": (
+            strategy_lookup[str(best["heavy_bull_strategy"])]
+            if best.get("heavy_bull_strategy")
+            else None
+        ),
         "bull_strategy": strategy_lookup[str(best["bull_strategy"])],
         "bear_strategy": strategy_lookup[str(best["bear_strategy"])],
+        "heavy_bear_strategy": (
+            strategy_lookup[str(best["heavy_bear_strategy"])]
+            if best.get("heavy_bear_strategy")
+            else None
+        ),
         "neutral_strategy": strategy_lookup[str(best["neutral_strategy"])],
     }
 
@@ -392,17 +538,22 @@ def _expand_candidate_strategy_variants(
 ) -> tuple[object, ...]:
     strategies = list(base_strategies)
     strategy_by_label = {strategy.label: strategy for strategy in strategies}
-    strategy_by_prefix = {str(strategy.label).rpartition("_pt")[0]: strategy for strategy in strategies}
+    strategy_by_prefix = {
+        two_stage._parse_strategy_label(str(strategy.label))[0]: strategy
+        for strategy in strategies
+    }
     for label in required_labels:
         if label in strategy_by_label:
             continue
-        label_prefix, separator, profit_target_suffix = label.rpartition("_pt")
-        if not separator:
-            raise KeyError(label)
+        label_prefix, delta_target, profit_target_pct = two_stage._parse_strategy_label(label)
         template = strategy_by_prefix.get(label_prefix)
         if template is None:
             raise KeyError(label)
-        strategy = _strategy_with_profit_target(template, int(profit_target_suffix))
+        strategy = two_stage._strategy_with_delta_and_profit_target(
+            template,
+            delta_target=delta_target,
+            profit_target_pct=profit_target_pct,
+        )
         strategies.append(strategy)
         strategy_by_label[label] = strategy
     return tuple(strategies)
@@ -426,6 +577,35 @@ def _load_cached_trade_map_rows(cache_path: Path) -> dict[date, dict[str, object
     }
 
 
+def _select_regime_strategy_for_candidate(
+    *,
+    indicator_row: dict[str, float | None] | None,
+    bull_filter: object,
+    bear_filter: object,
+    heavy_bull_strategy: object | None,
+    bull_strategy: object,
+    bear_strategy: object,
+    heavy_bear_strategy: object | None,
+    neutral_strategy: object,
+) -> tuple[str, object]:
+    regime = _classify_trade_regime(
+        indicator_row=indicator_row,
+        bull_filter=bull_filter,
+        bear_filter=bear_filter,
+        enable_heavy_bull=heavy_bull_strategy is not None,
+        enable_heavy_bear=heavy_bear_strategy is not None,
+    )
+    if regime == "heavy_bullish" and heavy_bull_strategy is not None:
+        return regime, heavy_bull_strategy
+    if regime == "bullish":
+        return regime, bull_strategy
+    if regime == "bearish":
+        return regime, bear_strategy
+    if regime == "heavy_bearish" and heavy_bear_strategy is not None:
+        return regime, heavy_bear_strategy
+    return "neutral", neutral_strategy
+
+
 def _load_candidate_training_trade_rows(candidate: dict[str, object]) -> list[dict[str, object]]:
     cached_rows = candidate.get("training_trade_rows")
     if isinstance(cached_rows, list):
@@ -435,9 +615,12 @@ def _load_candidate_training_trade_rows(candidate: dict[str, object]) -> list[di
     symbol = str(components["symbol"])
     train_start_date = components["train_start_date"]
     latest_available_date = components["latest_available_date"]
+    active_regime = components["active_regime"]
     bull_strategy = components["bull_strategy"]
     bear_strategy = components["bear_strategy"]
     neutral_strategy = components["neutral_strategy"]
+    heavy_bull_strategy = components["heavy_bull_strategy"]
+    heavy_bear_strategy = components["heavy_bear_strategy"]
     period_config = components["period_config"]
     bull_filter = components["bull_filter"]
     bear_filter = components["bear_filter"]
@@ -458,7 +641,17 @@ def _load_candidate_training_trade_rows(candidate: dict[str, object]) -> list[di
     ]
 
     trade_maps: dict[str, dict[date, dict[str, object]]] = {}
-    strategies = (bull_strategy, bear_strategy, neutral_strategy)
+    strategies = tuple(
+        strategy
+        for strategy in (
+            heavy_bull_strategy,
+            bull_strategy,
+            bear_strategy,
+            heavy_bear_strategy,
+            neutral_strategy,
+        )
+        if strategy is not None
+    )
     missing_cache = False
     for strategy in strategies:
         cache_path = _trade_map_cache_path(
@@ -490,14 +683,18 @@ def _load_candidate_training_trade_rows(candidate: dict[str, object]) -> list[di
     training_trade_rows: list[dict[str, object]] = []
     for entry_date in trading_fridays:
         indicator_row = indicators.get(entry_date)
-        bull = bull_filter.matches(indicator_row)
-        bear = bear_filter.matches(indicator_row)
-        if bull and not bear:
-            strategy = bull_strategy
-        elif bear and not bull:
-            strategy = bear_strategy
-        else:
-            strategy = neutral_strategy
+        regime, strategy = _select_regime_strategy_for_candidate(
+            indicator_row=indicator_row,
+            bull_filter=bull_filter,
+            bear_filter=bear_filter,
+            heavy_bull_strategy=heavy_bull_strategy,
+            bull_strategy=bull_strategy,
+            bear_strategy=bear_strategy,
+            heavy_bear_strategy=heavy_bear_strategy,
+            neutral_strategy=neutral_strategy,
+        )
+        if active_regime is not None and regime != active_regime:
+            continue
         trade_row = trade_maps.get(strategy.label, {}).get(entry_date)
         if trade_row is None:
             continue
@@ -642,12 +839,99 @@ def _apply_stability_filter(
     }
 
 
+def _load_latest_spot_price_metrics(
+    *,
+    symbols: list[str],
+    as_of_date: date,
+) -> dict[str, dict[str, object]]:
+    if not symbols:
+        return {}
+
+    ranked_bars = (
+        select(
+            HistoricalUnderlyingDayBar.symbol.label("symbol"),
+            HistoricalUnderlyingDayBar.trade_date.label("trade_date"),
+            HistoricalUnderlyingDayBar.close_price.label("close_price"),
+            func.row_number()
+            .over(
+                partition_by=HistoricalUnderlyingDayBar.symbol,
+                order_by=HistoricalUnderlyingDayBar.trade_date.desc(),
+            )
+            .label("symbol_rank"),
+        )
+        .where(
+            HistoricalUnderlyingDayBar.symbol.in_(symbols),
+            HistoricalUnderlyingDayBar.trade_date <= as_of_date,
+        )
+        .subquery()
+    )
+    statement = select(
+        ranked_bars.c.symbol,
+        ranked_bars.c.trade_date,
+        ranked_bars.c.close_price,
+    ).where(ranked_bars.c.symbol_rank == 1)
+
+    with create_readonly_session() as session:
+        rows = session.execute(statement).mappings().all()
+    return {
+        str(row["symbol"]): {
+            "selection_spot_trade_date": row["trade_date"].isoformat(),
+            "selection_spot_price": float(row["close_price"]),
+        }
+        for row in rows
+    }
+
+
+def _apply_spot_price_filter(
+    *,
+    candidates: list[dict[str, object]],
+    min_spot_price: float | None,
+    as_of_date: date,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    if min_spot_price is None:
+        return candidates, {
+            "spot_filter_enabled": False,
+            "spot_filter_as_of_date": None,
+            "spot_filtered_out_count": 0,
+            "spot_missing_count": 0,
+        }
+
+    spot_metrics_by_symbol = _load_latest_spot_price_metrics(
+        symbols=[str(candidate["symbol"]) for candidate in candidates],
+        as_of_date=as_of_date,
+    )
+    survivors: list[dict[str, object]] = []
+    spot_filtered_out_count = 0
+    spot_missing_count = 0
+    for candidate in candidates:
+        metrics = spot_metrics_by_symbol.get(str(candidate["symbol"]))
+        if metrics is None:
+            spot_missing_count += 1
+            spot_filtered_out_count += 1
+            continue
+        candidate["selection_spot_metrics"] = dict(metrics)
+        if float(metrics["selection_spot_price"]) < float(min_spot_price):
+            spot_filtered_out_count += 1
+            continue
+        survivors.append(candidate)
+
+    return survivors, {
+        "spot_filter_enabled": True,
+        "spot_filter_as_of_date": as_of_date.isoformat(),
+        "spot_filtered_out_count": spot_filtered_out_count,
+        "spot_missing_count": spot_missing_count,
+    }
+
+
 def _replay_symbol(
     *,
     candidate: dict[str, object],
     entry_start_date: date,
     entry_end_date: date,
     replay_data_end: date,
+    stop_loss_pct: float | None,
+    avoid_earnings_days_before: int,
+    avoid_earnings_days_after: int,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     components = _resolve_candidate_components(candidate)
     payload = dict(components["payload"])
@@ -655,10 +939,14 @@ def _replay_symbol(
     symbol = str(components["symbol"])
     train_start_date = components["train_start_date"]
     period_config = components["period_config"]
+    regime_mode = str(components["regime_mode"])
+    active_regime = components["active_regime"]
     bull_filter = components["bull_filter"]
     bear_filter = components["bear_filter"]
+    heavy_bull_strategy = components["heavy_bull_strategy"]
     bull_strategy = components["bull_strategy"]
     bear_strategy = components["bear_strategy"]
+    heavy_bear_strategy = components["heavy_bear_strategy"]
     neutral_strategy = components["neutral_strategy"]
     training_assignment_metrics = dict(candidate.get("training_assignment_metrics") or {})
 
@@ -681,18 +969,31 @@ def _replay_symbol(
         if entry_start_date <= bar.trade_date <= entry_end_date and bar.trade_date.weekday() == 4
     ]
 
-    strategies_to_run = (bull_strategy, bear_strategy, neutral_strategy)
+    strategies_to_run = tuple(
+        strategy
+        for strategy in (
+            heavy_bull_strategy,
+            bull_strategy,
+            bear_strategy,
+            heavy_bear_strategy,
+            neutral_strategy,
+        )
+        if strategy is not None
+    )
     engine = OptionsBacktestEngine()
     trade_map: dict[str, dict[date, object]] = {}
     for strategy in strategies_to_run:
         local_entry_rule_cache = bundle.entry_rule_cache.__class__()
         per_date: dict[date, object] = {}
         for entry_date in entry_dates:
-            config = two_stage._build_calendar_config(
+            config = _build_replay_calendar_config(
                 strategy=strategy,
                 entry_date=entry_date,
                 latest_available_date=latest_available_date,
                 risk_free_curve=curve,
+                stop_loss_pct=stop_loss_pct,
+                avoid_earnings_days_before=avoid_earnings_days_before,
+                avoid_earnings_days_after=avoid_earnings_days_after,
             )
             result = engine.run(
                 config=config,
@@ -710,17 +1011,18 @@ def _replay_symbol(
     ledger_rows: list[dict[str, object]] = []
     for entry_date in entry_dates:
         indicator_row = indicators.get(entry_date)
-        bull = bull_filter.matches(indicator_row)
-        bear = bear_filter.matches(indicator_row)
-        if bull and not bear:
-            regime = "bullish"
-            strategy = bull_strategy
-        elif bear and not bull:
-            regime = "bearish"
-            strategy = bear_strategy
-        else:
-            regime = "neutral"
-            strategy = neutral_strategy
+        regime, strategy = _select_regime_strategy_for_candidate(
+            indicator_row=indicator_row,
+            bull_filter=bull_filter,
+            bear_filter=bear_filter,
+            heavy_bull_strategy=heavy_bull_strategy,
+            bull_strategy=bull_strategy,
+            bear_strategy=bear_strategy,
+            heavy_bear_strategy=heavy_bear_strategy,
+            neutral_strategy=neutral_strategy,
+        )
+        if active_regime is not None and regime != active_regime:
+            continue
         trade = trade_map[strategy.label].get(entry_date)
         if trade is None:
             continue
@@ -741,6 +1043,8 @@ def _replay_symbol(
                 "symbol": symbol,
                 "entry_date": trade.entry_date.isoformat(),
                 "exit_date": trade.exit_date.isoformat(),
+                "regime_mode": regime_mode,
+                "active_regime": active_regime or "",
                 "regime": regime,
                 "strategy": strategy.label,
                 "option_ticker": getattr(trade, "option_ticker", ""),
@@ -761,6 +1065,9 @@ def _replay_symbol(
                 "training_assignment_rate_pct": round(float(training_assignment_metrics.get("training_assignment_rate_pct") or 0.0), 4),
                 "training_put_assignment_count": int(training_assignment_metrics.get("training_put_assignment_count") or 0),
                 "training_put_assignment_rate_pct": round(float(training_assignment_metrics.get("training_put_assignment_rate_pct") or 0.0), 4),
+                "stop_loss_pct": round(float(stop_loss_pct), 4) if stop_loss_pct is not None else "",
+                "avoid_earnings_days_before": int(avoid_earnings_days_before) if avoid_earnings_days_before > 0 else "",
+                "avoid_earnings_days_after": int(avoid_earnings_days_after) if avoid_earnings_days_after > 0 else "",
             }
         )
 
@@ -776,6 +1083,8 @@ def _replay_symbol(
         "entry_window_end": entry_end_date.isoformat(),
         "replay_data_end": latest_available_date.isoformat(),
         "training_stage": best.get("stage", ""),
+        "regime_mode": regime_mode,
+        "active_regime": active_regime or "",
         "training_trade_count": int(best["trade_count"]),
         "training_total_net_pnl": round(float(best["total_net_pnl"]), 4),
         "training_average_roi_on_margin_pct": round(float(best["average_roi_on_margin_pct"]), 4),
@@ -784,6 +1093,9 @@ def _replay_symbol(
         "training_assignment_rate_pct": round(float(training_assignment_metrics.get("training_assignment_rate_pct") or 0.0), 4),
         "training_put_assignment_count": int(training_assignment_metrics.get("training_put_assignment_count") or 0),
         "training_put_assignment_rate_pct": round(float(training_assignment_metrics.get("training_put_assignment_rate_pct") or 0.0), 4),
+        "stop_loss_pct": round(float(stop_loss_pct), 4) if stop_loss_pct is not None else "",
+        "avoid_earnings_days_before": int(avoid_earnings_days_before) if avoid_earnings_days_before > 0 else "",
+        "avoid_earnings_days_after": int(avoid_earnings_days_after) if avoid_earnings_days_after > 0 else "",
         "trade_count": len(ledger_rows),
         "total_capital_required": round(total_capital, 4),
         "total_net_pnl": round(total_pnl, 4),
@@ -792,6 +1104,72 @@ def _replay_symbol(
         "median_roi_on_capital_required_pct": round(median(roi_values), 4) if roi_values else 0.0,
     }
     return result_row, ledger_rows
+
+
+def _build_replay_calendar_config(
+    *,
+    strategy: object,
+    entry_date: date,
+    latest_available_date: date,
+    risk_free_curve: object,
+    stop_loss_pct: float | None,
+    avoid_earnings_days_before: int,
+    avoid_earnings_days_after: int,
+):
+    config = two_stage._build_calendar_config(
+        strategy=strategy,
+        entry_date=entry_date,
+        latest_available_date=latest_available_date,
+        risk_free_curve=risk_free_curve,
+    )
+    overrides: dict[str, object] = {}
+    if stop_loss_pct is not None:
+        overrides["stop_loss_pct"] = float(stop_loss_pct)
+    if avoid_earnings_days_before > 0 or avoid_earnings_days_after > 0:
+        entry_rules = list(config.entry_rules)
+        entry_rules.append(
+            AvoidEarningsRule(
+                type="avoid_earnings",
+                days_before=int(avoid_earnings_days_before),
+                days_after=int(avoid_earnings_days_after),
+            )
+        )
+        overrides["entry_rules"] = entry_rules
+    if not overrides:
+        return config
+    return replace(config, **overrides)
+
+
+def _install_assignment_exit_ignore_filter(
+    *,
+    ignored_assignment_exit_reasons: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    normalized_reasons = _normalize_assignment_exit_reasons(ignored_assignment_exit_reasons)
+    OptionsBacktestEngine._check_early_assignment = classmethod(_ORIGINAL_CHECK_EARLY_ASSIGNMENT)
+    if not normalized_reasons:
+        return ()
+
+    ignored_reason_set = frozenset(normalized_reasons)
+
+    def _patched_check_early_assignment(
+        cls,
+        *,
+        position: object,
+        bar: object,
+        ex_dividend_dates: set[date],
+    ) -> tuple[str | None, dict[str, object] | None]:
+        exit_reason, assignment_detail = _ORIGINAL_CHECK_EARLY_ASSIGNMENT(
+            cls,
+            position=position,
+            bar=bar,
+            ex_dividend_dates=ex_dividend_dates,
+        )
+        if exit_reason in ignored_reason_set:
+            return None, None
+        return exit_reason, assignment_detail
+
+    OptionsBacktestEngine._check_early_assignment = classmethod(_patched_check_early_assignment)
+    return normalized_reasons
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) -> None:
@@ -861,8 +1239,26 @@ def _apply_portfolio_weights(
 
 def main() -> int:
     args = _parse_args()
+    if args.stop_loss_pct is not None and args.stop_loss_pct <= 0:
+        raise SystemExit("--stop-loss-pct must be > 0.")
+    if args.min_spot_price is not None and args.min_spot_price <= 0:
+        raise SystemExit("--min-spot-price must be > 0.")
+    if args.avoid_earnings_days_before < 0:
+        raise SystemExit("--avoid-earnings-days-before must be >= 0.")
+    if args.avoid_earnings_days_after < 0:
+        raise SystemExit("--avoid-earnings-days-after must be >= 0.")
+    ignored_assignment_exit_reasons = _install_assignment_exit_ignore_filter(
+        ignored_assignment_exit_reasons=args.ignore_assignment_exit_reasons,
+    )
     replay_data_end = args.replay_data_end or (args.entry_end_date + timedelta(days=14))
-    output_prefix = args.output_prefix or _default_output_prefix(top_k=args.top_k)
+    output_prefix = args.output_prefix or _default_output_prefix(
+        top_k=args.top_k,
+        stop_loss_pct=args.stop_loss_pct,
+        min_spot_price=args.min_spot_price,
+        avoid_earnings_days_before=args.avoid_earnings_days_before,
+        avoid_earnings_days_after=args.avoid_earnings_days_after,
+        ignored_assignment_exit_reasons=ignored_assignment_exit_reasons,
+    )
     if not output_prefix.is_absolute():
         output_prefix = ROOT / output_prefix
 
@@ -888,7 +1284,18 @@ def main() -> int:
         train_objective=args.train_objective,
     )
     candidate_stats.update(stability_stats)
+    candidates, spot_stats = _apply_spot_price_filter(
+        candidates=candidates,
+        min_spot_price=args.min_spot_price,
+        as_of_date=replay_data_end,
+    )
+    candidate_stats.update(spot_stats)
     if len(candidates) < args.top_k:
+        if candidate_stats.get("spot_filter_enabled"):
+            raise SystemExit(
+                f"Spot filter left only {len(candidates)} candidates for top-{args.top_k} selection. "
+                "Lower --min-spot-price or reduce top-k."
+            )
         if candidate_stats.get("stability_filter_enabled"):
             raise SystemExit(
                 "Stability filter left only "
@@ -902,12 +1309,18 @@ def main() -> int:
             item["training_assignment_metrics"] = _load_candidate_training_assignment_metrics(item)
         if "training_stability_metrics" not in item and candidate_stats.get("stability_filter_enabled"):
             item["training_stability_metrics"] = _load_candidate_training_stability_metrics(item)
+        if "selection_spot_metrics" not in item and candidate_stats.get("spot_filter_enabled"):
+            item["selection_spot_metrics"] = _load_latest_spot_price_metrics(
+                symbols=[str(item["symbol"])],
+                as_of_date=replay_data_end,
+            ).get(str(item["symbol"]), {})
 
     selection_rows: list[dict[str, object]] = []
     for rank, item in enumerate(selected, start=1):
         best = dict(item["best"])
         assignment_metrics = dict(item.get("training_assignment_metrics") or {})
         stability_metrics = dict(item.get("training_stability_metrics") or {})
+        spot_metrics = dict(item.get("selection_spot_metrics") or {})
         selection_rows.append(
             {
                 "rank": rank,
@@ -915,6 +1328,8 @@ def main() -> int:
                 "train_start_date": item["payload"]["period"]["start"],
                 "train_end_date": item["payload"]["period"]["requested_end"],
                 "training_stage": best.get("stage", ""),
+                "regime_mode": best.get("regime_mode", "all"),
+                "active_regime": best.get("active_regime", ""),
                 "training_trade_count": int(best["trade_count"]),
                 "training_total_net_pnl": round(float(best["total_net_pnl"]), 4),
                 "training_average_roi_on_margin_pct": round(float(best["average_roi_on_margin_pct"]), 4),
@@ -940,6 +1355,8 @@ def main() -> int:
                 "training_best_month_median_roi_pct": _round_or_blank(
                     stability_metrics.get("training_best_month_median_roi_pct")
                 ),
+                "selection_spot_trade_date": spot_metrics.get("selection_spot_trade_date", ""),
+                "selection_spot_price": _round_or_blank(spot_metrics.get("selection_spot_price")),
                 "output_path": str(Path(item["output_path"]).relative_to(ROOT)).replace("\\", "/"),
             }
         )
@@ -954,6 +1371,9 @@ def main() -> int:
                 entry_start_date=args.entry_start_date,
                 entry_end_date=args.entry_end_date,
                 replay_data_end=replay_data_end,
+                stop_loss_pct=args.stop_loss_pct,
+                avoid_earnings_days_before=args.avoid_earnings_days_before,
+                avoid_earnings_days_after=args.avoid_earnings_days_after,
             ): str(item["symbol"])
             for item in selected
         }
@@ -1013,7 +1433,7 @@ def main() -> int:
         debit = float(agg["total_entry_debit"])
         capital = float(agg["total_capital_required"])
         pnl = float(agg["total_net_pnl"])
-        median_trade_roi = _weighted_median(
+        median_trade_roi, unweighted_median_trade_roi = _calculate_trade_roi_medians(
             list(agg["roi_values"]),
             list(agg["roi_weights"]),
         )
@@ -1028,6 +1448,7 @@ def main() -> int:
                 "roi_on_debit_pct": round(pnl / debit * 100.0, 4) if debit > 0 else "",
                 "roi_on_capital_required_pct": round(pnl / capital * 100.0, 4) if capital > 0 else "",
                 "median_roi_per_trade_pct": round(median_trade_roi, 4),
+                "unweighted_median_roi_per_trade_pct": round(unweighted_median_trade_roi, 4),
             }
         )
 
@@ -1052,7 +1473,10 @@ def main() -> int:
         if trade_roi_weights
         else 0.0
     )
-    median_trade_roi = _weighted_median(trade_roi_values, trade_roi_weights)
+    median_trade_roi, unweighted_median_trade_roi = _calculate_trade_roi_medians(
+        trade_roi_values,
+        trade_roi_weights,
+    )
     summary = {
         "candidate_pool_count": len(candidates),
         "base_candidate_count": candidate_stats["base_candidate_count"],
@@ -1065,6 +1489,11 @@ def main() -> int:
         "requested_weighting_scheme": args.weighting_scheme,
         "max_symbol_weight_pct": args.max_symbol_weight_pct,
         "weight_trade_count_cap": args.weight_trade_count_cap,
+        "stop_loss_pct": args.stop_loss_pct,
+        "min_spot_price": args.min_spot_price,
+        "avoid_earnings_days_before": args.avoid_earnings_days_before,
+        "avoid_earnings_days_after": args.avoid_earnings_days_after,
+        "ignored_assignment_exit_reasons": list(ignored_assignment_exit_reasons),
         "max_training_assignment_count": args.max_training_assignment_count,
         "max_training_assignment_rate_pct": args.max_training_assignment_rate_pct,
         "max_training_put_assignment_count": args.max_training_put_assignment_count,
@@ -1080,6 +1509,10 @@ def main() -> int:
         "stability_top_pool_count": int(candidate_stats.get("stability_top_pool_count") or 0),
         "stability_filtered_out_count": int(candidate_stats.get("stability_filtered_out_count") or 0),
         "stability_survivor_count": int(candidate_stats.get("stability_survivor_count") or len(candidates)),
+        "spot_filter_enabled": bool(candidate_stats.get("spot_filter_enabled")),
+        "spot_filter_as_of_date": candidate_stats.get("spot_filter_as_of_date"),
+        "spot_filtered_out_count": int(candidate_stats.get("spot_filtered_out_count") or 0),
+        "spot_missing_count": int(candidate_stats.get("spot_missing_count") or 0),
         "trade_count": len(ledger_rows),
         "total_capital_required": round(quarter_total_capital, 4),
         "total_net_pnl": round(quarter_total_pnl, 4),
@@ -1091,8 +1524,14 @@ def main() -> int:
         ),
         "average_roi_per_trade_pct": round(average_trade_roi, 4),
         "median_roi_per_trade_pct": round(median_trade_roi, 4),
+        "unweighted_median_roi_per_trade_pct": round(unweighted_median_trade_roi, 4),
         "average_weekly_median_roi_per_trade_pct": (
             round(sum(float(item["median_roi_per_trade_pct"]) for item in weekly_rows) / len(weekly_rows), 4) if weekly_rows else 0.0
+        ),
+        "average_weekly_unweighted_median_roi_per_trade_pct": (
+            round(sum(float(item["unweighted_median_roi_per_trade_pct"]) for item in weekly_rows) / len(weekly_rows), 4)
+            if weekly_rows
+            else 0.0
         ),
         "max_applied_symbol_weight_pct": round(max(weights.values()) * 100.0, 4) if weights else 0.0,
         "top3_applied_symbol_weight_pct": round(sum(sorted(weights.values(), reverse=True)[:3]) * 100.0, 4) if weights else 0.0,

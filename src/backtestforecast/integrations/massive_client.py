@@ -300,6 +300,44 @@ class _MassiveClientCore:
         return None
 
     @staticmethod
+    def parse_quotes(results: list[dict[str, Any]], trade_date: date) -> list[OptionQuoteRecord]:
+        quotes: list[OptionQuoteRecord] = []
+        for row in results:
+            bid_price = row.get("bid_price")
+            ask_price = row.get("ask_price")
+            if bid_price is None or ask_price is None:
+                continue
+            try:
+                bid = float(bid_price)
+                ask = float(ask_price)
+            except (TypeError, ValueError):
+                logger.debug("massive_client.quote_parse_skipped", row=row)
+                continue
+            if bid <= 0 or ask <= 0:
+                continue
+            if not math.isfinite(bid) or not math.isfinite(ask):
+                continue
+            if bid > ask:
+                continue
+            quotes.append(
+                OptionQuoteRecord(
+                    trade_date=trade_date,
+                    bid_price=bid,
+                    ask_price=ask,
+                    participant_timestamp=_MassiveClientCore._pick_quote_timestamp(row),
+                    source_option_ticker=row.get("ticker") if isinstance(row.get("ticker"), str) else None,
+                )
+            )
+        quotes.sort(
+            key=lambda item: (
+                item.participant_timestamp if item.participant_timestamp is not None else -1,
+                item.bid_price,
+                item.ask_price,
+            )
+        )
+        return quotes
+
+    @staticmethod
     def parse_snapshot_result(result: dict[str, Any]) -> OptionSnapshotRecord | None:
         details = result.get("details", {})
         ticker = details.get("ticker") or result.get("ticker")
@@ -682,6 +720,13 @@ class MassiveClient(_MassiveClientCore):
         )
         return self.parse_quote(payload.get("results", []), trade_date)
 
+    def list_option_quotes_for_date(self, option_ticker: str, trade_date: date) -> list[OptionQuoteRecord]:
+        rows = self._get_paginated_json(
+            f"/v3/quotes/{quote(option_ticker, safe='')}",
+            params={"timestamp": trade_date.isoformat(), "sort": "participant_timestamp.asc", "limit": 50000},
+        )
+        return self.parse_quotes(rows, trade_date)
+
     def get_option_snapshot(self, underlying: str, option_ticker: str) -> OptionSnapshotRecord | None:
         try:
             payload = self._get_json(
@@ -1038,6 +1083,13 @@ class AsyncMassiveClient(_MassiveClientCore):
             params={"timestamp": trade_date.isoformat(), "sort": "participant_timestamp.desc", "limit": 10},
         )
         return self.parse_quote(payload.get("results", []), trade_date)
+
+    async def list_option_quotes_for_date(self, option_ticker: str, trade_date: date) -> list[OptionQuoteRecord]:
+        rows = await self._get_paginated_json(
+            f"/v3/quotes/{quote(option_ticker, safe='')}",
+            params={"timestamp": trade_date.isoformat(), "sort": "participant_timestamp.asc", "limit": 50000},
+        )
+        return self.parse_quotes(rows, trade_date)
 
     async def get_option_snapshot(self, underlying: str, option_ticker: str) -> OptionSnapshotRecord | None:
         try:

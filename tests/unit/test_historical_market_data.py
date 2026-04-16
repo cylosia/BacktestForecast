@@ -112,6 +112,89 @@ def test_historical_option_gateway_uses_close_as_mid() -> None:
     assert quote.mid_price == 5.25
 
 
+def test_historical_store_can_use_open_price_source_for_contract_mids() -> None:
+    store = _store()
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker="O:AAPL250418C00190000",
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=date(2025, 4, 1),
+            )
+        ]
+    )
+
+    contracts = store.list_option_contracts_for_expiration(
+        symbol="AAPL",
+        as_of_date=date(2025, 4, 1),
+        contract_type="call",
+        expiration_date=date(2025, 4, 18),
+        price_source="open",
+    )
+
+    assert len(contracts) == 1
+    assert contracts[0].as_of_mid_price == 5.1
+
+
+def test_historical_store_can_use_open_price_source_for_quotes_and_series() -> None:
+    store = _store()
+    option_ticker = "O:AAPL250418C00190000"
+    store.upsert_option_day_bars(
+        [
+            HistoricalOptionDayBar(
+                option_ticker=option_ticker,
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 1),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.10"),
+                high_price=Decimal("5.40"),
+                low_price=Decimal("4.80"),
+                close_price=Decimal("5.25"),
+                volume=Decimal("10"),
+                source_file_date=date(2025, 4, 1),
+            ),
+            HistoricalOptionDayBar(
+                option_ticker=option_ticker,
+                underlying_symbol="AAPL",
+                trade_date=date(2025, 4, 2),
+                expiration_date=date(2025, 4, 18),
+                contract_type="call",
+                strike_price=Decimal("190"),
+                open_price=Decimal("5.30"),
+                high_price=Decimal("5.70"),
+                low_price=Decimal("5.00"),
+                close_price=Decimal("5.45"),
+                volume=Decimal("11"),
+                source_file_date=date(2025, 4, 2),
+            ),
+        ]
+    )
+
+    quote = store.get_option_quote_for_date(option_ticker, date(2025, 4, 1), price_source="open")
+    series = store.get_option_quote_series(
+        [option_ticker],
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 2),
+        price_source="open",
+    )
+
+    assert quote is not None
+    assert quote.mid_price == 5.1
+    assert series[option_ticker][date(2025, 4, 1)].mid_price == 5.1
+    assert series[option_ticker][date(2025, 4, 2)].mid_price == 5.3
+
+
 def test_risk_free_rate_curve_prefers_local_store(monkeypatch) -> None:
     store = _store()
     store.upsert_treasury_yields(

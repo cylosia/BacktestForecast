@@ -1,0 +1,38 @@
+Yes. Using slippage as % of entry debit is the cleaner framing.
+
+  For the full latest 22-symbol basket, if “excellent” means keeping median ROI per trade around 75%+, a reasonable
+  target is:
+
+  - <= 3% of entry debit: still very strong
+  - <= 5% to 6%: about the upper end of “excellent”
+  - ~10%: too much, median ROI drops materially
+
+  Basket sensitivity:
+
+  - 1% slippage: median ROI 83.14%
+  - 2.5%: 80.46%
+  - 3%: 79.58%
+  - 5%: 76.16%
+  - 7.5%: 72.07%
+  - 10%: 68.16%
+  - 15%: 60.84%
+
+  Useful breakpoints for the full basket:
+
+  - Keep median ROI >= 80%: slippage <= 2.7%
+  - Keep median ROI >= 75%: slippage <= 5.6%
+  - Keep median ROI >= 70%: slippage <= 8.8%
+
+  So my practical answer for the basket is:
+
+  - Aim for 1% to 3%
+  - 5% is still acceptable
+  - Above 5% to 6% you start giving up the “excellent median ROI” profile
+
+  For MELI alone, it is much more robust:
+
+  - 3% slippage still leaves median ROI at 91.25%
+  - 5%: 87.61%
+  - 10%: 79.08%
+
+  If you want, I can also give the same thresholds as percent per leg instead of percent of total spread debit.

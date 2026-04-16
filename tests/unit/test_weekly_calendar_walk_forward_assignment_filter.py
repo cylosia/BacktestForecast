@@ -5,13 +5,17 @@ import io
 import json
 import sys
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 import run_weekly_calendar_policy_walk_forward as walk_forward
+from backtestforecast.backtests.types import BacktestConfig
+from backtestforecast.schemas.backtests import AvoidEarningsRule
 
 
 def _write_candidate_payload(path: Path, *, median_roi: float, total_roi: float, trade_count: int) -> None:
@@ -211,7 +215,7 @@ def test_load_candidates_filters_assignment_risk_and_attaches_metrics(monkeypatc
     }
 
 
-def test_resolve_candidate_components_supports_refine_only_profit_targets() -> None:
+def test_resolve_candidate_components_supports_refine_only_profit_and_delta_targets() -> None:
     candidate = {
         "symbol": "SIG",
         "payload": {
@@ -227,20 +231,103 @@ def test_resolve_candidate_components_supports_refine_only_profit_targets() -> N
             "rsi_period": 14,
             "bull_filter": "roc0_adx10_rsinone",
             "bear_filter": "roc0_adx14_rsinone",
-            "bull_strategy": "sig_call_d40_pt80",
-            "bear_strategy": "bear_sig_put_d30_pt60",
-            "neutral_strategy": "neutral_sig_call_d50_pt70",
+            "bull_strategy": "sig_call_d45_pt80",
+            "bear_strategy": "bear_sig_put_d35_pt60",
+            "neutral_strategy": "neutral_sig_call_d55_pt70",
         },
     }
 
     components = walk_forward._resolve_candidate_components(candidate)
 
-    assert components["bull_strategy"].label == "sig_call_d40_pt80"
+    assert components["bull_strategy"].label == "sig_call_d45_pt80"
+    assert components["bull_strategy"].delta_target == 45
     assert components["bull_strategy"].profit_target_pct == 80
-    assert components["bear_strategy"].label == "bear_sig_put_d30_pt60"
+    assert components["bear_strategy"].label == "bear_sig_put_d35_pt60"
+    assert components["bear_strategy"].delta_target == 35
     assert components["bear_strategy"].profit_target_pct == 60
-    assert components["neutral_strategy"].label == "neutral_sig_call_d50_pt70"
+    assert components["neutral_strategy"].label == "neutral_sig_call_d55_pt70"
+    assert components["neutral_strategy"].delta_target == 55
     assert components["neutral_strategy"].profit_target_pct == 70
+
+
+def test_resolve_candidate_components_supports_active_heavy_regime_labels() -> None:
+    candidate = {
+        "symbol": "AGQ",
+        "payload": {
+            "period": {
+                "start": "2024-01-01",
+                "requested_end": "2025-12-31",
+                "latest_available_date": "2025-12-31",
+            }
+        },
+        "best": {
+            "regime_mode": "best_regime_only",
+            "active_regime": "heavy_bearish",
+            "roc_period": 63,
+            "adx_period": 14,
+            "rsi_period": 14,
+            "bull_filter": "roc0_adx10_rsinone",
+            "bear_filter": "roc0_adx14_rsinone",
+            "heavy_bull_strategy": "agq_call_d35_pt80",
+            "bull_strategy": "agq_call_d45_pt80",
+            "bear_strategy": "bear_agq_put_d35_pt60",
+            "heavy_bear_strategy": "bear_agq_put_d25_pt70",
+            "neutral_strategy": "neutral_agq_call_d55_pt70",
+        },
+    }
+
+    components = walk_forward._resolve_candidate_components(candidate)
+
+    assert components["regime_mode"] == "best_regime_only"
+    assert components["active_regime"] == "heavy_bearish"
+    assert components["heavy_bull_strategy"].label == "agq_call_d35_pt80"
+    assert components["heavy_bear_strategy"].label == "bear_agq_put_d25_pt70"
+
+
+def test_select_regime_strategy_for_candidate_supports_heavy_and_regular_branches() -> None:
+    bull_filter = walk_forward._build_default_bull_filters()[0]
+    bear_filter = walk_forward._build_default_bear_filters()[0]
+    heavy_bull_strategy = SimpleNamespace(label="agq_call_d30_pt75")
+    bull_strategy = SimpleNamespace(label="agq_call_d40_pt50")
+    bear_strategy = SimpleNamespace(label="bear_agq_put_d40_pt50")
+    heavy_bear_strategy = SimpleNamespace(label="bear_agq_put_d30_pt75")
+    neutral_strategy = SimpleNamespace(label="neutral_agq_call_d40_pt50")
+
+    regime, strategy = walk_forward._select_regime_strategy_for_candidate(
+        indicator_row={"roc63": 8.0, "adx14": 16.0, "rsi14": 70.0},
+        bull_filter=bull_filter,
+        bear_filter=bear_filter,
+        heavy_bull_strategy=heavy_bull_strategy,
+        bull_strategy=bull_strategy,
+        bear_strategy=bear_strategy,
+        heavy_bear_strategy=heavy_bear_strategy,
+        neutral_strategy=neutral_strategy,
+    )
+    assert (regime, strategy.label) == ("heavy_bullish", "agq_call_d30_pt75")
+
+    regime, strategy = walk_forward._select_regime_strategy_for_candidate(
+        indicator_row={"roc63": -8.0, "adx14": 25.0, "rsi14": 30.0},
+        bull_filter=bull_filter,
+        bear_filter=bear_filter,
+        heavy_bull_strategy=heavy_bull_strategy,
+        bull_strategy=bull_strategy,
+        bear_strategy=bear_strategy,
+        heavy_bear_strategy=heavy_bear_strategy,
+        neutral_strategy=neutral_strategy,
+    )
+    assert (regime, strategy.label) == ("heavy_bearish", "bear_agq_put_d30_pt75")
+
+    regime, strategy = walk_forward._select_regime_strategy_for_candidate(
+        indicator_row={"roc63": 2.0, "adx14": 12.0, "rsi14": 55.0},
+        bull_filter=bull_filter,
+        bear_filter=bear_filter,
+        heavy_bull_strategy=heavy_bull_strategy,
+        bull_strategy=bull_strategy,
+        bear_strategy=bear_strategy,
+        heavy_bear_strategy=heavy_bear_strategy,
+        neutral_strategy=neutral_strategy,
+    )
+    assert (regime, strategy.label) == ("bullish", "agq_call_d40_pt50")
 
 
 def test_load_candidate_training_stability_metrics_aggregates_monthly_medians(
@@ -366,3 +453,229 @@ def test_apply_stability_filter_returns_original_candidates_when_disabled() -> N
         "stability_filtered_out_count": 0,
         "stability_survivor_count": 2,
     }
+
+
+def test_build_replay_calendar_config_applies_stop_loss_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    base_config = BacktestConfig(
+        symbol="AAA",
+        strategy_type="calendar_spread",
+        start_date=date(2026, 1, 2),
+        end_date=date(2026, 2, 6),
+        target_dte=7,
+        dte_tolerance_days=3,
+        max_holding_days=10,
+        account_size=Decimal("100000"),
+        risk_per_trade_pct=Decimal("100"),
+        commission_per_contract=Decimal("0"),
+        entry_rules=[],
+        profit_target_pct=50.0,
+        stop_loss_pct=None,
+    )
+    monkeypatch.setattr(walk_forward.two_stage, "_build_calendar_config", lambda **_: base_config)
+
+    config = walk_forward._build_replay_calendar_config(
+        strategy=SimpleNamespace(label="aaa_call_d40_pt50"),
+        entry_date=date(2026, 1, 2),
+        latest_available_date=date(2026, 4, 13),
+        risk_free_curve=SimpleNamespace(default_rate=0.04),
+        stop_loss_pct=15.0,
+        avoid_earnings_days_before=0,
+        avoid_earnings_days_after=0,
+    )
+
+    assert config.stop_loss_pct == 15.0
+    assert config.profit_target_pct == 50.0
+    assert base_config.stop_loss_pct is None
+
+
+def test_build_replay_calendar_config_appends_avoid_earnings_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    base_config = BacktestConfig(
+        symbol="AAA",
+        strategy_type="calendar_spread",
+        start_date=date(2026, 1, 2),
+        end_date=date(2026, 2, 6),
+        target_dte=7,
+        dte_tolerance_days=3,
+        max_holding_days=10,
+        account_size=Decimal("100000"),
+        risk_per_trade_pct=Decimal("100"),
+        commission_per_contract=Decimal("0"),
+        entry_rules=[],
+        profit_target_pct=50.0,
+        stop_loss_pct=None,
+    )
+    monkeypatch.setattr(walk_forward.two_stage, "_build_calendar_config", lambda **_: base_config)
+
+    config = walk_forward._build_replay_calendar_config(
+        strategy=SimpleNamespace(label="aaa_call_d40_pt50"),
+        entry_date=date(2026, 1, 2),
+        latest_available_date=date(2026, 4, 13),
+        risk_free_curve=SimpleNamespace(default_rate=0.04),
+        stop_loss_pct=None,
+        avoid_earnings_days_before=7,
+        avoid_earnings_days_after=2,
+    )
+
+    assert len(config.entry_rules) == 1
+    assert isinstance(config.entry_rules[0], AvoidEarningsRule)
+    assert config.entry_rules[0].days_before == 7
+    assert config.entry_rules[0].days_after == 2
+    assert base_config.entry_rules == []
+
+
+def test_calculate_trade_roi_medians_reports_weighted_and_unweighted_values() -> None:
+    weighted, unweighted = walk_forward._calculate_trade_roi_medians(
+        [10.0, 20.0, 30.0, 40.0],
+        [0.6, 0.2, 0.1, 0.1],
+    )
+
+    assert weighted == 10.0
+    assert unweighted == 25.0
+
+
+def test_parse_args_defaults_to_earnings_blackout_10_before_and_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["run_weekly_calendar_policy_walk_forward.py"])
+
+    args = walk_forward._parse_args()
+
+    assert args.avoid_earnings_days_before == 10
+    assert args.avoid_earnings_days_after == 10
+
+
+def test_install_assignment_exit_ignore_filter_suppresses_selected_reasons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_method = walk_forward.OptionsBacktestEngine._check_early_assignment
+    monkeypatch.setattr(
+        walk_forward.OptionsBacktestEngine,
+        "_check_early_assignment",
+        original_method,
+    )
+
+    def _fake_original(cls, *, position, bar, ex_dividend_dates):
+        return getattr(bar, "reason", None), {"reason": getattr(bar, "reason", None)}
+
+    monkeypatch.setattr(walk_forward, "_ORIGINAL_CHECK_EARLY_ASSIGNMENT", _fake_original)
+
+    ignored = walk_forward._install_assignment_exit_ignore_filter(
+        ignored_assignment_exit_reasons=[
+            "early_assignment_call_ex_div,early_assignment_put_deep_itm",
+            "early_assignment_call_ex_div",
+        ]
+    )
+
+    assert ignored == (
+        "early_assignment_call_ex_div",
+        "early_assignment_put_deep_itm",
+    )
+    assert walk_forward.OptionsBacktestEngine._check_early_assignment(
+        position=object(),
+        bar=SimpleNamespace(reason="early_assignment_call_ex_div"),
+        ex_dividend_dates=set(),
+    ) == (None, None)
+    assert walk_forward.OptionsBacktestEngine._check_early_assignment(
+        position=object(),
+        bar=SimpleNamespace(reason="expiration"),
+        ex_dividend_dates=set(),
+    ) == ("expiration", {"reason": "expiration"})
+
+
+def test_apply_spot_price_filter_excludes_low_spot_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    candidates = [
+        {"symbol": "AAA"},
+        {"symbol": "BBB"},
+        {"symbol": "CCC"},
+    ]
+    monkeypatch.setattr(
+        walk_forward,
+        "_load_latest_spot_price_metrics",
+        lambda **_: {
+            "AAA": {
+                "selection_spot_trade_date": "2026-04-13",
+                "selection_spot_price": 10.0,
+            },
+            "BBB": {
+                "selection_spot_trade_date": "2026-04-13",
+                "selection_spot_price": 4.99,
+            },
+        },
+    )
+
+    survivors, stats = walk_forward._apply_spot_price_filter(
+        candidates=candidates,
+        min_spot_price=5.0,
+        as_of_date=date(2026, 4, 13),
+    )
+
+    assert [candidate["symbol"] for candidate in survivors] == ["AAA"]
+    assert survivors[0]["selection_spot_metrics"] == {
+        "selection_spot_trade_date": "2026-04-13",
+        "selection_spot_price": 10.0,
+    }
+    assert stats == {
+        "spot_filter_enabled": True,
+        "spot_filter_as_of_date": "2026-04-13",
+        "spot_filtered_out_count": 2,
+        "spot_missing_count": 1,
+    }
+
+
+def test_default_output_prefix_includes_runtime_override_suffixes(monkeypatch: pytest.MonkeyPatch) -> None:
+    root = Path("C:/walk-forward-test-root")
+    monkeypatch.setattr(walk_forward, "ROOT", root)
+
+    assert walk_forward._default_output_prefix(
+        top_k=22,
+        stop_loss_pct=None,
+        min_spot_price=None,
+        avoid_earnings_days_before=0,
+        avoid_earnings_days_after=0,
+        ignored_assignment_exit_reasons=(),
+    ) == (
+        root / "logs" / "weekly_calendar_policy_walk_forward_top22_train20251231_q1_2026"
+    )
+    assert walk_forward._default_output_prefix(
+        top_k=22,
+        stop_loss_pct=15.0,
+        min_spot_price=None,
+        avoid_earnings_days_before=0,
+        avoid_earnings_days_after=0,
+        ignored_assignment_exit_reasons=(),
+    ) == (
+        root / "logs" / "weekly_calendar_policy_walk_forward_top22_train20251231_q1_2026_sl15"
+    )
+    assert walk_forward._default_output_prefix(
+        top_k=22,
+        stop_loss_pct=None,
+        min_spot_price=5.0,
+        avoid_earnings_days_before=0,
+        avoid_earnings_days_after=0,
+        ignored_assignment_exit_reasons=(),
+    ) == (
+        root / "logs" / "weekly_calendar_policy_walk_forward_top22_train20251231_q1_2026_minspot5"
+    )
+    assert walk_forward._default_output_prefix(
+        top_k=22,
+        stop_loss_pct=None,
+        min_spot_price=None,
+        avoid_earnings_days_before=7,
+        avoid_earnings_days_after=2,
+        ignored_assignment_exit_reasons=(),
+    ) == (
+        root / "logs" / "weekly_calendar_policy_walk_forward_top22_train20251231_q1_2026_earningsb7a2"
+    )
+    assert walk_forward._default_output_prefix(
+        top_k=22,
+        stop_loss_pct=None,
+        min_spot_price=None,
+        avoid_earnings_days_before=0,
+        avoid_earnings_days_after=0,
+        ignored_assignment_exit_reasons=(
+            "early_assignment_call_ex_div",
+            "early_assignment_put_deep_itm",
+        ),
+    ) == (
+        root
+        / "logs"
+        / "weekly_calendar_policy_walk_forward_top22_train20251231_q1_2026_ignoreassign_call_ex_div__put_deep_itm"
+    )
